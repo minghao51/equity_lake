@@ -1,0 +1,171 @@
+# Equity EOD Data Pipeline - Docker Compose Configuration
+# Orchestrates services for data ingestion and management
+
+services:
+  # =============================================================================
+  # One-time S3 Sync Service
+  # =============================================================================
+  sync:
+    build:
+      context: .
+      target: production
+      dockerfile: Dockerfile
+    container_name: equity-sync
+    environment:
+      # AWS Configuration
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      # S3 Bucket
+      - S3_BUCKET=${S3_BUCKET:-s3://your-bucket/us_equity/}
+      # Project Configuration
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    volumes:
+      # Persist data lake locally
+      - ./data:/app/data
+      # Persist logs
+      - ./logs:/app/logs
+    command: ["python", "-m", "scripts.sync_from_s3", "--bucket", "${S3_BUCKET:-s3://your-bucket/us_equity/}"]
+    profiles:
+      - sync
+
+  # =============================================================================
+  # Daily Ingestion Service (Cron Job)
+  # =============================================================================
+  daily:
+    build:
+      context: .
+      target: production
+      dockerfile: Dockerfile
+    container_name: equity-daily
+    environment:
+      # AWS Configuration (if needed)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      # Project Configuration
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - MARKETS=${MARKETS:-us,cn,hk_sg}
+    volumes:
+      # Mount data lake
+      - ./data:/app/data
+      # Mount logs
+      - ./logs:/app/logs
+    # Cron schedule: Daily at 8 AM (adjust as needed)
+    # Format: minute hour day month weekday
+    # For testing, use: "* * * * *" (every minute)
+    command: >
+      bash -c "
+      echo '🕐 Starting cron scheduler...'
+      echo 'Schedule: ${CRON_SCHEDULE:-0 8 * * *} (Daily at 8 AM)'
+      while true; do
+        echo '📊 Running daily ingestion...'
+        python -m scripts.ingest_daily --markets ${MARKETS:-us,cn,hk_sg}
+        echo '✅ Ingestion complete. Next run: ${CRON_SCHEDULE:-0 8 * * *}'
+        sleep 86400
+      done
+      "
+    restart: unless-stopped
+    profiles:
+      - daily
+
+  # =============================================================================
+  # Query Service (Interactive)
+  # =============================================================================
+  query:
+    build:
+      context: .
+      target: production
+      dockerfile: Dockerfile
+    container_name: equity-query
+    environment:
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+    volumes:
+      - ./data:/app/data
+    stdin_open: true
+    tty: true
+    command: ["python", "-m", "scripts.query_example", "--query", "all"]
+    profiles:
+      - query
+
+  # =============================================================================
+  # Development Service
+  # =============================================================================
+  dev:
+    build:
+      context: .
+      target: development
+      dockerfile: Dockerfile
+    container_name: equity-dev
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET:-}
+      - DATA_DIR=/app/data
+      - LOG_DIR=/app/logs
+      - DEV_MODE=true
+      - USE_TEST_DATA=${USE_TEST_DATA:-false}
+    volumes:
+      # Mount source code for live reload
+      - .:/app
+      # Mount data and logs
+      - ./data:/app/data
+      - ./logs:/app/logs
+      # uv cache
+      - uv-cache:/root/.cache/uv
+    working_dir: /app
+    stdin_open: true
+    tty: true
+    command: ["/bin/bash"]
+    profiles:
+      - dev
+
+  # =============================================================================
+  # Jupyter Notebook Service (Data Exploration)
+  # =============================================================================
+  jupyter:
+    build:
+      context: .
+      target: development
+      dockerfile: Dockerfile
+    container_name: equity-jupyter
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - DATA_DIR=/app/data
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./notebooks:/app/notebooks
+    ports:
+      - "8888:8888"
+    command: [
+      "jupyter", "lab",
+      "--ip=0.0.0.0",
+      "--port=8888",
+      "--no-browser",
+      "--allow-root",
+      "--NotebookApp.token=''"
+    ]
+    profiles:
+      - jupyter
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  uv-cache:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  default:
+    name: equity-pipeline-network
+    driver: bridge

@@ -1,0 +1,960 @@
+# ============================================================================
+# Equity EOD Data Pipeline - Ticker Configuration
+# ============================================================================
+# This file defines all tickers to be fetched by market, along with metadata
+# for filtering, grouping, and validation.
+#
+# Schema:
+#   - symbol: Stock ticker symbol (market-specific format)
+#   - name: Company name
+#   - exchange: Exchange code (NYSE, NASDAQ, HKEX, etc.)
+#   - sector: Business sector (Technology, Finance, etc.)
+#   - tags: List of tags for grouping (blue-chip, FAANG, etc.)
+#   - active: Set to false to skip fetching this ticker
+#   - priority: Higher priority = fetch first (1-10, default: 5)
+# ============================================================================
+
+version: "1.0"
+
+# Global metadata
+metadata:
+  description: "Ticker configuration for equity EOD data pipeline"
+  last_updated: "2025-01-24"
+  maintainer: "data@example.com"
+
+# Market-specific ticker lists
+markets:
+  # ============================================================================
+  # US Equities (NYSE, NASDAQ)
+  # ============================================================================
+  us:
+    currency: USD
+    description: "US Equities - NYSE & NASDAQ"
+    tickers:
+      # Technology / FAANG+
+      - symbol: AAPL
+        name: Apple Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [FAANG, blue-chip, S&P 500, technology, growth]
+        active: true
+        priority: 10
+
+      - symbol: MSFT
+        name: Microsoft Corporation
+        exchange: NASDAQ
+        sector: Technology
+        tags: [FAANG, blue-chip, S&P 500, technology, growth]
+        active: true
+        priority: 10
+
+      - symbol: GOOGL
+        name: Alphabet Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [FAANG, blue-chip, S&P 500, technology, growth]
+        active: true
+        priority: 10
+
+      - symbol: AMZN
+        name: Amazon.com Inc.
+        exchange: NASDAQ
+        sector: Consumer Cyclical
+        tags: [FAANG, blue-chip, S&P 500, ecommerce, growth]
+        active: true
+        priority: 10
+
+      - symbol: META
+        name: Meta Platforms Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [FAANG, blue-chip, S&P 500, technology, growth]
+        active: true
+        priority: 10
+
+      - symbol: NVDA
+        name: NVIDIA Corporation
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, technology, AI, semiconductor, growth]
+        active: true
+        priority: 10
+
+      - symbol: TSLA
+        name: Tesla Inc.
+        exchange: NASDAQ
+        sector: Consumer Cyclical
+        tags: [blue-chip, S&P 500, EV, growth]
+        active: true
+        priority: 9
+
+      # Financial Services
+      - symbol: BRK-B
+        name: Berkshire Hathaway Inc.
+        exchange: NYSE
+        sector: Financial Services
+        tags: [blue-chip, S&P 500, conglomerate]
+        active: true
+        priority: 10
+
+      - symbol: JPM
+        name: JPMorgan Chase & Co.
+        exchange: NYSE
+        sector: Financial Services
+        tags: [blue-chip, S&P 500, banking, JPMorgan]
+        active: true
+        priority: 9
+
+      - symbol: V
+        name: Visa Inc.
+        exchange: NYSE
+        sector: Financial Services
+        tags: [blue-chip, S&P 500, payments]
+        active: true
+        priority: 9
+
+      - symbol: MA
+        name: Mastercard Inc.
+        exchange: NYSE
+        sector: Financial Services
+        tags: [blue-chip, S&P 500, payments]
+        active: true
+        priority: 9
+
+      - symbol: BAC
+        name: Bank of America Corp.
+        exchange: NYSE
+        sector: Financial Services
+        tags: [blue-chip, S&P 500, banking]
+        active: true
+        priority: 8
+
+      - symbol: WFC
+        name: Wells Fargo & Co.
+        exchange: NYSE
+        sector: Financial Services
+        tags: [blue-chip, S&P 500, banking]
+        active: true
+        priority: 8
+
+      # Healthcare
+      - symbol: UNH
+        name: UnitedHealth Group Inc.
+        exchange: NYSE
+        sector: Healthcare
+        tags: [blue-chip, S&P 500, healthcare]
+        active: true
+        priority: 9
+
+      - symbol: JNJ
+        name: Johnson & Johnson
+        exchange: NYSE
+        sector: Healthcare
+        tags: [blue-chip, S&P 500, healthcare, dividend]
+        active: true
+        priority: 9
+
+      - symbol: LLY
+        name: Eli Lilly and Company
+        exchange: NYSE
+        sector: Healthcare
+        tags: [blue-chip, S&P 500, pharmaceutical, growth]
+        active: true
+        priority: 9
+
+      - symbol: TMO
+        name: Thermo Fisher Scientific Inc.
+        exchange: NYSE
+        sector: Healthcare
+        tags: [blue-chip, S&P 500, healthcare]
+        active: true
+        priority: 8
+
+      - symbol: MRK
+        name: Merck & Co. Inc.
+        exchange: NYSE
+        sector: Healthcare
+        tags: [blue-chip, S&P 500, pharmaceutical, dividend]
+        active: true
+        priority: 8
+
+      - symbol: ABT
+        name: Abbott Laboratories
+        exchange: NYSE
+        sector: Healthcare
+        tags: [blue-chip, S&P 500, healthcare, dividend]
+        active: true
+        priority: 8
+
+      - symbol: AVGO
+        name: Broadcom Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, semiconductor, dividend]
+        active: true
+        priority: 9
+
+      # Consumer / Retail
+      - symbol: WMT
+        name: Walmart Inc.
+        exchange: NYSE
+        sector: Consumer Defensive
+        tags: [blue-chip, S&P 500, retail, dividend]
+        active: true
+        priority: 9
+
+      - symbol: PG
+        name: Procter & Gamble Co.
+        exchange: NYSE
+        sector: Consumer Defensive
+        tags: [blue-chip, S&P 500, consumer, dividend]
+        active: true
+        priority: 9
+
+      - symbol: KO
+        name: Coca-Cola Company
+        exchange: NYSE
+        sector: Consumer Defensive
+        tags: [blue-chip, S&P 500, beverage, dividend]
+        active: true
+        priority: 8
+
+      - symbol: PEP
+        name: PepsiCo Inc.
+        exchange: NASDAQ
+        sector: Consumer Defensive
+        tags: [blue-chip, S&P 500, beverage, dividend]
+        active: true
+        priority: 8
+
+      - symbol: COST
+        name: Costco Wholesale Corp.
+        exchange: NASDAQ
+        sector: Consumer Defensive
+        tags: [blue-chip, S&P 500, retail]
+        active: true
+        priority: 8
+
+      - symbol: HD
+        name: Home Depot Inc.
+        exchange: NYSE
+        sector: Consumer Cyclical
+        tags: [blue-chip, S&P 500, retail]
+        active: true
+        priority: 8
+
+      - symbol: MCD
+        name: McDonald's Corporation
+        exchange: NYSE
+        sector: Consumer Cyclical
+        tags: [blue-chip, S&P 500, restaurant, dividend]
+        active: true
+        priority: 8
+
+      - symbol: NKE
+        name: Nike Inc.
+        exchange: NYSE
+        sector: Consumer Cyclical
+        tags: [blue-chip, S&P 500, apparel]
+        active: true
+        priority: 8
+
+      - symbol: DIS
+        name: Walt Disney Company
+        exchange: NYSE
+        sector: Communication Services
+        tags: [blue-chip, S&P 500, entertainment]
+        active: true
+        priority: 8
+
+      - symbol: NFLX
+        name: Netflix Inc.
+        exchange: NASDAQ
+        sector: Communication Services
+        tags: [blue-chip, S&P 500, streaming, growth]
+        active: true
+        priority: 8
+
+      # Energy / Industrial
+      - symbol: XOM
+        name: Exxon Mobil Corp.
+        exchange: NYSE
+        sector: Energy
+        tags: [blue-chip, S&P 500, oil, dividend]
+        active: true
+        priority: 9
+
+      - symbol: CVX
+        name: Chevron Corp.
+        exchange: NYSE
+        sector: Energy
+        tags: [blue-chip, S&P 500, oil, dividend]
+        active: true
+        priority: 9
+
+      - symbol: COP
+        name: ConocoPhillips
+        exchange: NYSE
+        sector: Energy
+        tags: [blue-chip, S&P 500, oil, dividend]
+        active: true
+        priority: 8
+
+      - symbol: CAT
+        name: Caterpillar Inc.
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, industrial]
+        active: true
+        priority: 8
+
+      - symbol: BA
+        name: Boeing Company
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, aerospace]
+        active: true
+        priority: 8
+
+      - symbol: GE
+        name: General Electric Company
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, conglomerate]
+        active: true
+        priority: 8
+
+      - symbol: HON
+        name: Honeywell International Inc.
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, industrial]
+        active: true
+        priority: 8
+
+      - symbol: UNP
+        name: Union Pacific Corp.
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, railroad, dividend]
+        active: true
+        priority: 8
+
+      # Technology (Additional)
+      - symbol: ADBE
+        name: Adobe Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, software, growth]
+        active: true
+        priority: 8
+
+      - symbol: CRM
+        name: Salesforce Inc.
+        exchange: NYSE
+        sector: Technology
+        tags: [blue-chip, S&P 500, software, growth]
+        active: true
+        priority: 8
+
+      - symbol: ORCL
+        name: Oracle Corporation
+        exchange: NYSE
+        sector: Technology
+        tags: [blue-chip, S&P 500, software, dividend]
+        active: true
+        priority: 8
+
+      - symbol: AMD
+        name: Advanced Micro Devices Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, semiconductor, growth]
+        active: true
+        priority: 8
+
+      - symbol: INTC
+        name: Intel Corporation
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, semiconductor, dividend]
+        active: true
+        priority: 7
+
+      - symbol: CSCO
+        name: Cisco Systems Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, networking, dividend]
+        active: true
+        priority: 7
+
+      - symbol: QCOM
+        name: Qualcomm Inc.
+        exchange: NASDAQ
+        sector: Technology
+        tags: [blue-chip, S&P 500, semiconductor]
+        active: true
+        priority: 8
+
+      - symbol: IBM
+        name: International Business Machines
+        exchange: NYSE
+        sector: Technology
+        tags: [blue-chip, S&P 500, software, dividend]
+        active: true
+        priority: 7
+
+      # Communications / Utilities
+      - symbol: VZ
+        name: Verizon Communications Inc.
+        exchange: NYSE
+        sector: Communication Services
+        tags: [blue-chip, S&P 500, telecom, dividend]
+        active: true
+        priority: 8
+
+      - symbol: CMCSA
+        name: Comcast Corp.
+        exchange: NASDAQ
+        sector: Communication Services
+        tags: [blue-chip, S&P 500, cable]
+        active: true
+        priority: 7
+
+      - symbol: DHR
+        name: Danaher Corp.
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, industrial]
+        active: true
+        priority: 8
+
+      - symbol: LIN
+        name: Linde plc
+        exchange: NYSE
+        sector: Industrials
+        tags: [blue-chip, S&P 500, industrial]
+        active: true
+        priority: 8
+
+  # ============================================================================
+  # China A-Shares (SSE, SZSE)
+  # ============================================================================
+  cn:
+    currency: CNY
+    description: "China A-Shares - SSE & SZSE"
+    tickers:
+      # Major Banks
+      - symbol: "000001"
+        name: 平安银行
+        exchange: SZSE
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      - symbol: "600000"
+        name: 浦发银行
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      - symbol: "600036"
+        name: 招商银行
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      # Technology / Internet
+      - symbol: "600519"
+        name: 贵州茅台
+        exchange: SSE
+        sector: Consumer staples
+        tags: [blue-chip, liquor, major]
+        active: true
+        priority: 10
+
+      - symbol: "000858"
+        name: 五粮液
+        exchange: SZSE
+        sector: Consumer staples
+        tags: [blue-chip, liquor, major]
+        active: true
+        priority: 9
+
+      - symbol: "300059"
+        name: 东方财富
+        exchange: SZSE
+        sector: Finance
+        tags: [blue-chip, fintech, major]
+        active: true
+        priority: 9
+
+      - symbol: "002594"
+        name: 比亚迪
+        exchange: SZSE
+        sector: Consumer Cyclical
+        tags: [blue-chip, EV, major]
+        active: true
+        priority: 10
+
+      # Energy
+      - symbol: "601857"
+        name: 中国石油
+        exchange: SSE
+        sector: Energy
+        tags: [blue-chip, oil, SOE, major]
+        active: true
+        priority: 10
+
+      - symbol: "600028"
+        name: 中国石化
+        exchange: SSE
+        sector: Energy
+        tags: [blue-chip, oil, SOE, major]
+        active: true
+        priority: 10
+
+      # Industrials
+      - symbol: "601318"
+        name: 中国平安
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, insurance, major]
+        active: true
+        priority: 10
+
+      - symbol: "600030"
+        name: 中信证券
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, brokerage, major]
+        active: true
+        priority: 9
+
+      - symbol: "601398"
+        name: 工商银行
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, banking, SOE, major]
+        active: true
+        priority: 10
+
+      - symbol: "601288"
+        name: 农业银行
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, banking, SOE, major]
+        active: true
+        priority: 10
+
+      - symbol: "601939"
+        name: 建设银行
+        exchange: SSE
+        sector: Finance
+        tags: [blue-chip, banking, SOE, major]
+        active: true
+        priority: 10
+
+      # Consumer
+      - symbol: "000333"
+        name: 美的集团
+        exchange: SZSE
+        sector: Consumer Cyclical
+        tags: [blue-chip, appliance, major]
+        active: true
+        priority: 9
+
+      - symbol: "600887"
+        name: 伊利股份
+        exchange: SSE
+        sector: Consumer staples
+        tags: [blue-chip, dairy, major]
+        active: true
+        priority: 8
+
+      # Healthcare
+      - symbol: "000661"
+        name: 长春高新
+        exchange: SZSE
+        sector: Healthcare
+        tags: [blue-chip, pharmaceutical, major]
+        active: true
+        priority: 8
+
+      - symbol: "600276"
+        name: 恒瑞医药
+        exchange: SSE
+        sector: Healthcare
+        tags: [blue-chip, pharmaceutical, major]
+        active: true
+        priority: 9
+
+      # Technology / New Economy
+      - symbol: "300750"
+        name: 宁德时代
+        exchange: SZSE
+        sector: Technology
+        tags: [blue-chip, battery, major]
+        active: true
+        priority: 10
+
+      - symbol: "688981"
+        name: 中芯国际
+        exchange: SSE
+        sector: Technology
+        tags: [blue-chip, semiconductor, major]
+        active: true
+        priority: 9
+
+  # ============================================================================
+  # Hong Kong Equities (HKEX)
+  # ============================================================================
+  hk:
+    currency: HKD
+    description: "Hong Kong Equities - HKEX"
+    tickers:
+      # Technology / Internet
+      - symbol: "0700.HK"
+        name: Tencent Holdings
+        exchange: HKEX
+        sector: Technology
+        tags: [blue-chip, internet, major, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "9988.HK"
+        name: Alibaba Group
+        exchange: HKEX
+        sector: Technology
+        tags: [blue-chip, ecommerce, major, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "1024.HK"
+        name: Meituan
+        exchange: HKEX
+        sector: Technology
+        tags: [blue-chip, internet, major]
+        active: true
+        priority: 9
+
+      # Financial Services
+      - symbol: "0939.HK"
+        name: CCBC
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, banking, major, SOE, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "1398.HK"
+        name: ICBC
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, banking, major, SOE, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "2318.HK"
+        name: Ping An Insurance
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, insurance, major, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "1299.HK"
+        name: AIA Group
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, insurance, major, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "0005.HK"
+        name: HSBC Holdings
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, banking, major, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "0011.HK"
+        name: Hang Seng Bank
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, banking, major, HSI]
+        active: true
+        priority: 9
+
+      - symbol: "0027.HK"
+        name: Galaxy Entertainment
+        exchange: HKEX
+        sector: Consumer Cyclical
+        tags: [blue-chip, casino, major]
+        active: true
+        priority: 8
+
+      # Property / Infrastructure
+      - symbol: "0941.HK"
+        name: China Mobile
+        exchange: HKEX
+        sector: Communication Services
+        tags: [blue-chip, telecom, major, SOE, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "0883.HK"
+        name: CNOOC
+        exchange: HKEX
+        sector: Energy
+        tags: [blue-chip, oil, major, SOE, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "0857.HK"
+        name: PetroChina
+        exchange: HKEX
+        sector: Energy
+        tags: [blue-chip, oil, major, SOE, HSI]
+        active: true
+        priority: 10
+
+      - symbol: "1038.HK"
+        name: CK Infrastructure
+        exchange: HKEX
+        sector: Industrials
+        tags: [blue-chip, infrastructure, major]
+        active: true
+        priority: 9
+
+      - symbol: "0016.HK"
+        name: Sun Hung Kai Properties
+        exchange: HKEX
+        sector: Real Estate
+        tags: [blue-chip, property, major]
+        active: true
+        priority: 9
+
+      # Consumer
+      - symbol: "0388.HK"
+        name: HK Exchanges and Clearing
+        exchange: HKEX
+        sector: Finance
+        tags: [blue-chip, exchange, major, HSI]
+        active: true
+        priority: 9
+
+  # ============================================================================
+  # Singapore Equities (SGX)
+  # ============================================================================
+  sg:
+    currency: SGD
+    description: "Singapore Equities - SGX"
+    tickers:
+      # Banking
+      - symbol: "D05.SI"
+        name: DBS Bank
+        exchange: SGX
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      - symbol: "O39.SI"
+        name: Oversea-Chinese Banking Corp
+        exchange: SGX
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      - symbol: "U11.SI"
+        name: United Overseas Bank
+        exchange: SGX
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      # Real Estate / REITs
+      - symbol: "Z74.SI"
+        name: Singapore Telecommunications
+        exchange: SGX
+        sector: Communication Services
+        tags: [blue-chip, telecom, major]
+        active: true
+        priority: 10
+
+      # Industrials
+      - symbol: "C6L.SI"
+        name: Singapore Airlines
+        exchange: SGX
+        sector: Industrials
+        tags: [blue-chip, airline, major]
+        active: true
+        priority: 9
+
+      - symbol: "S68.SI"
+        name: Singapore Exchange
+        exchange: SGX
+        sector: Finance
+        tags: [blue-chip, exchange, major]
+        active: true
+        priority: 9
+
+      # Technology / Industrial
+      - symbol: "BN4.SI"
+        name: Keppel Corp
+        exchange: SGX
+        sector: Industrials
+        tags: [blue-chip, conglomerate, major]
+        active: true
+        priority: 9
+
+      - symbol: "V03.SI"
+        name: Venture Corp
+        exchange: SGX
+        sector: Technology
+        tags: [blue-chip, manufacturing, major]
+        active: true
+        priority: 8
+
+      - symbol: "BS6.SI"
+        name: DBS Group Holdings
+        exchange: SGX
+        sector: Finance
+        tags: [blue-chip, banking, major]
+        active: true
+        priority: 10
+
+      - symbol: "G13.SI"
+        name: Keppel DC REIT
+        exchange: SGX
+        sector: Real Estate
+        tags: [blue-chip, REIT, major]
+        active: true
+        priority: 8
+
+      - symbol: "S63.SI"
+        name: Singtel
+        exchange: SGX
+        sector: Communication Services
+        tags: [blue-chip, telecom, major]
+        active: true
+        priority: 10
+
+# ============================================================================
+# Predefined ticker groups for convenient filtering
+# ============================================================================
+groups:
+  # US Market Groups
+  faang:
+    description: "Big 5 tech companies (FAANG)"
+    markets: [us]
+    tickers: [AAPL, GOOGL, MSFT, AMZN, META]
+
+  faang_plus:
+    description: "FAANG + NVDA + TSLA"
+    markets: [us]
+    tickers: [AAPL, GOOGL, MSFT, AMZN, META, NVDA, TSLA]
+
+  sp500_top_10:
+    description: "Top 10 S&P 500 by market cap"
+    markets: [us]
+    tickers: [AAPL, MSFT, GOOGL, AMZN, NVDA, META, BRK-B, LLY, JPM, V]
+
+  dividend_aristocrats:
+    description: "High dividend paying blue-chips"
+    markets: [us]
+    tickers: [JNJ, PG, KO, PEP, WMT, XOM, CVX, VZ, MMM]
+
+  # Cross-Market Groups
+  asian_banks:
+    description: "Major banks in Asian markets"
+    markets: [cn, hk, sg]
+    tickers:
+      cn: ["600036", "000001", "601398"]
+      hk: ["0939.HK", "1398.HK", "2318.HK"]
+      sg: ["D05.SI", "O39.SI", "U11.SI"]
+
+  chinese_tech:
+    description: "Chinese technology and internet companies"
+    markets: [cn, hk]
+    tickers:
+      cn: ["300059", "300750", "002594"]
+      hk: ["0700.HK", "9988.HK", "1024.HK"]
+
+  # Sector Groups
+  us_semiconductors:
+    description: "US semiconductor companies"
+    markets: [us]
+    tickers: [NVDA, AMD, INTC, QCOM, AVGO]
+
+  us_healthcare:
+    description: "US healthcare giants"
+    markets: [us]
+    tickers: [JNJ, UNH, LLY, TMO, MRK, ABT]
+
+  us_banking:
+    description: "US major banks"
+    markets: [us]
+    tickers: [JPM, BAC, WFC, GS, MS]
+
+# ============================================================================
+# Configuration validation rules
+# ============================================================================
+validation:
+  # Ensure ticker symbols match market-specific formats
+  market_formats:
+    us: "^[A-Z]{1,5}(-[A-Z]{1,2})?$"  # e.g., AAPL, BRK-A
+    cn: "^\\d{6}$"  # 6-digit code
+    hk: "^\\d{4}\\.HK$"  # e.g., 0700.HK
+    sg: "^[A-Z]\\d{2}\\.SI$"  # e.g., D05.SI
+
+  # Required fields for each ticker entry
+  required_fields: [symbol, name, exchange, sector, active]
+
+  # Valid exchanges by market
+  valid_exchanges:
+    us: [NYSE, NASDAQ, AMEX]
+    cn: [SSE, SZSE]
+    hk: [HKEX]
+    sg: [SGX]
+
+  # Valid sectors
+  valid_sectors:
+    - Technology
+    - Financial Services
+    - Healthcare
+    - Consumer Cyclical
+    - Consumer Defensive
+    - Energy
+    - Industrials
+    - Communication Services
+    - Real Estate
+    - Utilities
+    - Basic Materials
+
+  # Valid tags (optional, for consistency)
+  valid_tags:
+    - blue-chip
+    - S&P 500
+    - HSI
+    - FAANG
+    - growth
+    - dividend
+    - SOE
+    - banking
+    - insurance
+    - semiconductor
+    - EV
+    - internet
+    - ecommerce
+    - major
