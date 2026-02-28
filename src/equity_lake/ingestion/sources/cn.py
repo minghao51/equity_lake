@@ -1,0 +1,171 @@
+"""China market source adapter."""
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
+
+import akshare as ak  # type: ignore[import-untyped]
+import pandas as pd  # type: ignore[import-untyped]
+import structlog
+
+from equity_lake.config import TickerConfig
+from equity_lake.core.logging import timer
+from equity_lake.core.runtime import STANDARD_COLUMNS
+from equity_lake.ingestion.models import FilterConfig
+from equity_lake.ingestion.sources.base import MarketDataFetcher
+
+logger = structlog.get_logger()
+
+
+class CNAshareFetcher(MarketDataFetcher):
+    """Fetch China A-share EOD data using akshare."""
+
+    def __init__(
+        self,
+        retry_attempts: int = 3,
+        retry_delay: float = 1.0,
+        ticker_config: TickerConfig | None = None,
+        filters: FilterConfig | None = None,
+        max_workers: int = 10,
+        stock_limit: int = 100,
+    ):
+        super().__init__(retry_attempts, retry_delay)
+        self.ticker_config = ticker_config or TickerConfig()
+        self.filters = filters or {}
+        self.max_workers = max_workers
+        self.stock_limit = stock_limit
+
+    def _fetch_single_stock(
+        self,
+        stock_code: str,
+        date_str: str,
+        trading_date: date,
+    ) -> pd.DataFrame | None:
+        """Fetch one China A-share."""
+        try:
+            stock_data = ak.stock_zh_a_hist(
+                symbol=stock_code,
+                period="daily",
+                start_date=date_str,
+                end_date=date_str,
+                adjust="",
+            )
+            if stock_data.empty:
+                return None
+            stock_data["ticker"] = stock_code
+            stock_data["date"] = trading_date
+            return stock_data
+        except Exception as exc:
+            logger.debug("Failed to fetch %s: %s", stock_code, exc)
+            return None
+
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        """Fetch China A-share data for a trading date."""
+        logger.info(
+            "fetch_cn_ashare_started",
+            date=str(trading_date),
+            max_workers=self.max_workers,
+            stock_limit=self.stock_limit,
+        )
+
+        def _fetch() -> pd.DataFrame:
+            date_str = trading_date.strftime("%Y%m%d")
+            try:
+                logger.info("fetching_stock_list")
+                stock_list = ak.stock_info_a_code_name()
+                logger.info("stock_list_fetched", total_stocks=len(stock_list))
+
+                sample_stocks = stock_list.head(self.stock_limit)
+                logger.info(
+                    "stock_sample_selected",
+                    sample_size=len(sample_stocks),
+                    total_stocks=len(stock_list),
+                )
+
+                frames: list[pd.DataFrame] = []
+                success_count = 0
+                failure_count = 0
+
+                with (
+                    timer("parallel_cn_stock_fetching", stock_count=len(sample_stocks)),
+                    ThreadPoolExecutor(max_workers=self.max_workers) as executor,
+                ):
+                    futures = {
+                        executor.submit(
+                            self._fetch_single_stock,
+                            str(row["code"]),
+                            date_str,
+                            trading_date,
+                        ): str(row["code"])
+                        for _, row in sample_stocks.iterrows()
+                    }
+                    for future in as_completed(futures):
+                        stock_code = futures[future]
+                        try:
+                            result = future.result(timeout=30)
+                            if result is not None:
+                                frames.append(result)
+                                success_count += 1
+                            else:
+                                failure_count += 1
+                        except Exception as exc:
+                            logger.debug(
+                                "stock_fetch_exception",
+                                stock=stock_code,
+                                error=str(exc),
+                            )
+                            failure_count += 1
+
+                logger.info(
+                    "stock_fetch_completed",
+                    success=success_count,
+                    failures=failure_count,
+                    total=len(sample_stocks),
+                )
+
+                if not frames:
+                    logger.warning(
+                        "no_cn_ashare_data",
+                        date=str(trading_date),
+                        message="No data returned for China A-shares",
+                    )
+                    return pd.DataFrame()
+
+                frame = pd.concat(frames, ignore_index=True)
+                frame = frame.rename(
+                    columns={
+                        "开盘": "open",
+                        "最高": "high",
+                        "最低": "low",
+                        "收盘": "close",
+                        "成交量": "volume",
+                    }
+                )
+                if "adj_close" not in frame.columns:
+                    frame["adj_close"] = frame["close"]
+                available_cols = [
+                    column for column in STANDARD_COLUMNS if column in frame.columns
+                ]
+                frame = frame[available_cols]
+                frame = frame.dropna(how="all")
+                unique_tickers = (
+                    int(frame["ticker"].nunique()) if "ticker" in frame else 0
+                )
+                logger.info(
+                    "fetch_cn_ashare_completed",
+                    rows=len(frame),
+                    unique_tickers=unique_tickers,
+                )
+                return frame
+            except Exception as exc:
+                logger.error(
+                    "fetch_cn_ashare_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    date=str(trading_date),
+                )
+                return pd.DataFrame()
+
+        return self._retry_on_failure(_fetch)
+
+
+__all__ = ["CNAshareFetcher"]

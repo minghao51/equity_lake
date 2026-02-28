@@ -67,7 +67,7 @@ ENV PYTHONPATH=/app \
     LOG_DIR=/app/logs
 
 # Default command (can be overridden)
-CMD ["python", "-m", "scripts.ingest_daily"]
+CMD ["uv", "run", "equity-daily"]
 
 # =============================================================================
 # Stage 4: Development Image (with dev tools)

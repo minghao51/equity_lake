@@ -2,20 +2,12 @@
 Pytest configuration and shared fixtures for Equity EOD Data Pipeline tests.
 """
 
-import os
-import sys
-import tempfile
-from datetime import date, datetime
+from collections.abc import Generator
+from datetime import date
 from pathlib import Path
-from typing import Generator
 
 import pandas as pd
 import pytest
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-# Add scripts to path
-sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 # =============================================================================
@@ -81,6 +73,27 @@ def sample_multi_day_data() -> pd.DataFrame:
     return pd.DataFrame(data)
 
 
+@pytest.fixture
+def sample_us_tickers():
+    """Sample US ticker list for testing."""
+    return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'JPM']
+
+
+@pytest.fixture
+def sample_large_ticker_list():
+    """Large ticker list for testing batch functionality."""
+    # Generate 1200 tickers to test batching (default batch size is 500)
+    base_tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'JPM',
+                    'V', 'JNJ', 'WMT', 'PG', 'UNH', 'HD', 'CVX', 'MRK']
+    return base_tickers * 75  # 1200 tickers total
+
+
+@pytest.fixture
+def sample_cn_tickers():
+    """Sample China ticker list for testing."""
+    return ['000001', '000002', '600000', '600036', '601398']
+
+
 # =============================================================================
 # Fixtures for Temporary Directories
 # =============================================================================
@@ -120,9 +133,6 @@ def temp_partitioned_parquet(temp_data_dir: Path, sample_multi_day_data: pd.Data
 def mock_env_vars(monkeypatch) -> dict:
     """Set mock environment variables."""
     env_vars = {
-        'AWS_ACCESS_KEY_ID': 'test_key_id',
-        'AWS_SECRET_ACCESS_KEY': 'test_secret_key',
-        'S3_BUCKET': 's3://test-bucket/us_equity/',
         'DATA_DIR': '/tmp/test_data',
         'LOG_LEVEL': 'DEBUG',
     }
@@ -173,6 +183,70 @@ def mock_akshare_stock_zh_a_hist(monkeypatch):
         })
 
     monkeypatch.setattr('akshare.stock_zh_a_hist', mock_hist)
+
+
+@pytest.fixture
+def mock_akshare_stock_info_a_code_name(monkeypatch):
+    """Mock akshare.stock_info_a_code_name function for stock list."""
+    def mock_info():
+        return pd.DataFrame({
+            'code': ['000001', '000002', '600000', '600036'],
+            'name': ['平安银行', '万科A', '浦发银行', '招商银行']
+        })
+
+    monkeypatch.setattr('akshare.stock_info_a_code_name', mock_info)
+
+
+@pytest.fixture
+def mock_efinance_get_quote_history(monkeypatch):
+    """Mock efinance.stock.get_quote_history function."""
+    def mock_history(stock_code: str, beg: str, end: str):
+        return pd.DataFrame({
+            '股票代码': [stock_code],
+            '日期': [beg],
+            '开盘': [10.5],
+            '收盘': [10.7],
+            '最高': [10.8],
+            '最低': [10.4],
+            '成交量': [1000000],
+            '成交额': [10700000],
+        })
+
+    monkeypatch.setattr('efinance.stock.get_quote_history', mock_history)
+
+
+@pytest.fixture
+def mock_efinance_get_realtime_quotes(monkeypatch):
+    """Mock efinance.stock.get_realtime_quotes function for stock list."""
+    def mock_quotes():
+        return pd.DataFrame({
+            '股票代码': ['000001', '000002', '600000', '600036'],
+            '股票名称': ['平安银行', '万科A', '浦发银行', '招商银行'],
+            '最新价': [10.5, 8.3, 12.7, 35.2],
+        })
+
+    monkeypatch.setattr('efinance.stock.get_realtime_quotes', mock_quotes)
+
+
+@pytest.fixture
+def mock_efinance_module(monkeypatch):
+    """Mock entire efinance module for tests where efinance is not installed."""
+    import sys
+    from unittest.mock import MagicMock
+
+    # Create a mock efinance module
+    mock_efinance = MagicMock()
+    mock_efinance.stock = MagicMock()
+
+    # Only install if not already present
+    if 'efinance' not in sys.modules or sys.modules['efinance'] is None:
+        sys.modules['efinance'] = mock_efinance
+
+    yield mock_efinance
+
+    # Clean up
+    if 'efinance' in sys.modules:
+        del sys.modules['efinance']
 
 
 # =============================================================================

@@ -10,14 +10,14 @@ import time
 from datetime import date
 from pathlib import Path
 
-from scripts.logging_utils import (
+from equity_lake.core.logging import (
     setup_structured_logging,
     timed,
     timer,
     correlation_context,
     get_correlation_id,
 )
-from scripts.parallel_ingest import (
+from equity_lake.ingestion.parallel import (
     fetch_markets_parallel,
     fetch_markets_sequential,
     summarize_results,
@@ -213,7 +213,7 @@ def main():
     print("✅ Demo Complete!")
     print("="*70)
     print("\nTo use these features in your daily ingestion:")
-    print("  python -m scripts.ingest_daily --parallel")
+    print("  uv run equity-daily --parallel")
     print("\nFor more information, see: docs/IMPROVEMENTS_PARALLEL_LOGGING.md")
     print()
 

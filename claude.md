@@ -2,6 +2,8 @@
 
 This document provides context and guidance for Claude Code and other AI assistants working on this equity EOD data pipeline project.
 
+> **📌 For Users:** If you're looking for how to **use** the pipeline, see [Quick Start Guide](docs/getting-started/quickstart.md) or [Pipeline Usage Guide](docs/user-guide/pipeline.md). This document is for AI assistants and developers.
+
 ---
 
 ## 📋 Project Overview & Objectives
@@ -409,9 +411,9 @@ uv run python scripts/generate_test_data.py
 
 **Entry Points:**
 ```bash
-equity-daily    # Runs scripts.ingest_daily:main
-equity-sync     # Runs scripts.sync_from_s3:main
-equity-query    # Runs scripts.query_example:main
+equity-daily    # Runs equity_lake.cli.daily:main
+equity-sync     # Runs equity_lake.cli.sync:main
+equity-query    # Runs equity_lake.cli.query:main
 ```
 
 **Ruff Configuration:**
@@ -758,7 +760,7 @@ uv run pytest -m "not slow"
 # tests/test_ingest.py
 import pytest
 from datetime import date, timedelta
-from scripts.ingest_daily import USEquityFetcher, validate_schema
+from equity_lake.ingestion import USEquityFetcher, validate_schema
 
 def test_us_fetcher_returns_dataframe():
     """Test that USEquityFetcher returns valid DataFrame."""

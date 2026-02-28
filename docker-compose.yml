@@ -27,7 +27,7 @@ services:
       - ./data:/app/data
       # Persist logs
       - ./logs:/app/logs
-    command: ["python", "-m", "scripts.sync_from_s3", "--bucket", "${S3_BUCKET:-s3://your-bucket/us_equity/}"]
+    command: ["uv", "run", "equity-sync", "--bucket", "${S3_BUCKET:-s3://your-bucket/us_equity/}"]
     profiles:
       - sync
 
@@ -64,7 +64,7 @@ services:
       echo 'Schedule: ${CRON_SCHEDULE:-0 8 * * *} (Daily at 8 AM)'
       while true; do
         echo '📊 Running daily ingestion...'
-        python -m scripts.ingest_daily --markets ${MARKETS:-us,cn,hk_sg}
+        uv run equity-daily --markets ${MARKETS:-us,cn,hk_sg}
         echo '✅ Ingestion complete. Next run: ${CRON_SCHEDULE:-0 8 * * *}'
         sleep 86400
       done
@@ -89,7 +89,7 @@ services:
       - ./data:/app/data
     stdin_open: true
     tty: true
-    command: ["python", "-m", "scripts.query_example", "--query", "all"]
+    command: ["uv", "run", "equity-query", "--query", "all"]
     profiles:
       - query
 

@@ -1,4 +1,4 @@
-# Equity EOD Data Pipeline
+# equity-lake
 
 Bootstrap from S3 Parquet → sync once → append daily updates locally → query with DuckDB
 
@@ -82,7 +82,7 @@ sudo mv s5cmd /usr/local/bin/
 
 ```bash
 make sync
-# Or: bash scripts/sync_from_s3.sh
+# Or: uv run equity-sync
 ```
 
 Expected structure after sync:
@@ -98,20 +98,69 @@ data/lake/us_equity/date=2020-01-02/2020-01-02.parquet
 make daily
 
 # Parallel mode (3x faster)
-uv run python scripts/ingest_daily.py --parallel
+uv run equity-daily --parallel
 
 # Parallel with custom worker count
-uv run python scripts/ingest_daily.py --parallel --max-workers 2
+uv run equity-daily --parallel --max-workers 2
 ```
 
-### 5. Query with DuckDB
+### 5. 🚀 Run Full ML Pipeline (New!)
+
+Automated pipeline: **Ingestion → Feature Engineering → ML/AI**
+
+```bash
+# Default entrypoint
+uv run equity-pipeline --verbose
+
+# For a specific date
+uv run equity-pipeline --date 2024-12-01
+
+# Dry run (test without writing)
+uv run equity-pipeline --dry-run
+```
+
+**What it does:**
+1. **Stage 1**: Fetches EOD data from US, CN, HK, SG markets (2-5 min)
+2. **Stage 2**: Computes 40+ technical indicators & features (1-3 min)
+3. **Stage 3**: Runs ML predictions for your tickers (1-2 min)
+
+**Total time**: 4-10 minutes for 10 tickers
+
+**Custom usage:**
+```bash
+# Custom tickers
+uv run equity-pipeline --tickers AAPL,GOOGL,MSFT
+
+# US markets only
+uv run equity-pipeline --markets us
+
+# Skip to ML only (if data exists)
+uv run equity-pipeline --skip-ingestion --skip-features
+```
+
+See [Pipeline Usage Guide](docs/user-guide/pipeline.md) for complete documentation.
+
+### 6. Monitor Pipeline Health
+
+```bash
+# Quick health check
+uv run equity-monitor
+
+# Verbose mode with detailed metrics
+uv run equity-monitor --verbose
+
+# Save health report to JSON
+uv run equity-monitor --output-json health_report.json
+```
+
+### 7. Query with DuckDB
 
 ```bash
 # Interactive SQL shell
 make query
 
-# Python query examples
-uv run python scripts/query_example.py
+# Python query helpers
+uv run equity-query
 ```
 
 ---
@@ -119,26 +168,27 @@ uv run python scripts/query_example.py
 ## Project Structure
 
 ```
-equity-eod/
-├── data/lake/              # Unified data lake
-│   ├── us_equity/          # From S3 (full history)
-│   ├── cn_ashare/          # Local (daily appends)
-│   └── hk_sg_equity/       # Local (daily appends)
-├── scripts/
-│   ├── sync_from_s3.sh     # One-time S3 sync
-│   ├── ingest_daily.py     # Daily append
-│   └── query_example.py    # Query examples
-├── docs/                   # All documentation
-│   ├── implementations/    # Implementation details
-│   ├── analytics/          # Test results & performance
-│   ├── guides/             # User & developer guides
-│   ├── planning/           # Project planning docs
-│   ├── education/          # Educational content
-│   │   ├── concepts/       # Technical concepts
-│   │   └── research/       # Research findings
-│   └── archive/            # Archived documentation
-├── README.md               # Project overview
-└── DOCS_STRUCTURE.md       # Documentation structure guide
+equity-lake/
+├── src/equity_lake/    # Application package
+│   ├── cli/               # Stable CLI entrypoints
+│   ├── core/              # Runtime, paths, logging
+│   ├── ingestion/         # Market ingestion workflows
+│   ├── storage/           # DuckDB + S3 sync
+│   ├── features/          # Feature engineering
+│   ├── ml/                # Forecasting and ML jobs
+│   └── monitoring/        # Health checks
+├── tests/                  # Unit and integration tests
+├── config/                 # Config files and examples
+├── docs/                   # Audience-based documentation
+│   ├── getting-started/
+│   ├── user-guide/
+│   ├── developer-guide/
+│   ├── architecture/
+│   └── reports/
+├── archive/                # Historical documentation snapshots
+├── data/                   # Local runtime artifacts (ignored)
+├── logs/                   # Local runtime logs (ignored)
+└── README.md               # Project overview
 ```
 
 ---
@@ -149,10 +199,19 @@ equity-eod/
 make setup      # Create venv and install dependencies
 make sync       # One-time S3 sync
 make daily      # Run daily append
+make pipeline   # Run full ML pipeline (ingestion → features → ML)
+make monitor    # Run pipeline health checks
 make query      # Open DuckDB interactive shell
 make test       # Run tests
 make clean      # Clean cache and temp files
 make docker-up  # Start Docker container
+```
+
+**New Pipeline Commands:**
+```bash
+uv run equity-pipeline --help
+uv run equity-monitor --help
+uv run equity-query --help
 ```
 
 ---
@@ -200,34 +259,43 @@ s3://your-bucket/
 
 ---
 
-## What's New (v0.2.0)
+## What's New (v0.3.0)
 
-- **Parallel Market Fetching** - 3x faster daily ingestion
-- **Structured Logging** - JSON logs with correlation IDs
-- **CN Fetcher Optimization** - Parallel stock fetching (3-5x faster)
-- **Better Observability** - Progress tracking and error counting
+- **🚀 Full ML Pipeline** - Automated ingestion → feature engineering → ML inference
+- **📊 40+ Technical Indicators** - RSI, MACD, Bollinger Bands, ATR, momentum features
+- **🤖 XGBoost Models** - Price forecasting and risk analysis
+- **🔍 Health Monitoring** - Data quality checks and freshness alerts
+- **📈 Real-time Dashboard** - Streamlit-based visualization (ports 8502/8503)
+- **⚡ Parallel Optimization** - 3x faster multi-market fetching
 
-**Quick Start with Parallel Mode:**
+**Quick Start:**
 ```bash
-# Sequential: ~15 seconds
-python -m scripts.ingest_daily
+# Run full ML pipeline
+uv run equity-pipeline --verbose
 
-# Parallel: ~5 seconds (3x faster)
-python -m scripts.ingest_daily --parallel
+# Check pipeline health
+uv run equity-monitor
 ```
 
-See [Parallel Fetching Guide](docs/guides/parallel-fetching-guide.md) for details.
+**Previous Releases:**
+- **v0.2.0** - Parallel Market Fetching + Structured Logging
+- **v0.1.0** - Initial release with S3 sync and daily ingestion
 
 ---
 
 ## Documentation
 
-- **[User Guide](docs/guides/user-guide.md)** - Comprehensive usage documentation
-- **[Parallel Fetching Guide](docs/guides/parallel-fetching-guide.md)** - Parallel fetching and structured logging
-- **[Implementation Details](docs/implementations/)** - Technical implementation documentation
-- **[Performance & Testing](docs/analytics/test-results.md)** - Test results and benchmarks
-- **[Education](docs/education/)** - Concepts and research guides
-- **[CLAUDE.md](claude.md)** - AI assistant development guide
+### Quick Start Guides
+- **[Quick Start Guide](docs/getting-started/quickstart.md)** - Get started in 5 minutes
+- **[Pipeline Usage Guide](docs/user-guide/pipeline.md)** - Complete ML pipeline documentation
+
+### Comprehensive Guides
+- **[Operations Guide](docs/user-guide/operations.md)** - Day-to-day usage documentation
+- **[Architecture Docs](docs/architecture/)** - System structure and subsystem design
+- **[Developer Guide](docs/developer-guide/project-structure.md)** - Code layout and contribution orientation
+- **[Reports](docs/reports/test-results.md)** - Test results and benchmarks
+- **[Historical Archive](archive/docs-history/README.md)** - Superseded implementation notes
+- **[claude.md](claude.md)** - AI assistant development guide
 
 ---
 

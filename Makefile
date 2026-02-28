@@ -1,7 +1,7 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query test clean docker-up docker-down docker-logs lint format check generate-test-data
+.PHONY: help setup sync daily query pipeline monitor test clean docker-up docker-down docker-logs lint format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test
 
 # Default target
 help:
@@ -19,6 +19,14 @@ help:
 	@echo "  daily      - Run daily EOD data ingestion"
 	@echo "  query      - Run DuckDB query examples"
 	@echo "  generate-test-data - Generate realistic test data"
+	@echo "  news       - Fetch news with sentiment analysis"
+	@echo "  news-dry   - Test news fetching (dry run)"
+	@echo "  sentiment  - Fetch social sentiment (Reddit/Twitter)"
+	@echo "  sentiment-dry - Test social sentiment fetching (dry run)"
+	@echo ""
+	@echo "Backtesting Commands:"
+	@echo "  quick-test - Quick validation of backtesting framework"
+	@echo "  test-backtest - Full backtesting test suite"
 	@echo ""
 	@echo "Docker Commands:"
 	@echo "  docker-up  - Start Docker containers"
@@ -45,8 +53,9 @@ setup:
 dev-setup: setup
 	@echo "🛠️  Installing development dependencies..."
 	uv sync --group dev
-	uv sync --group s3
-	uv sync --group visualization
+	uv sync --extra s3
+	uv sync --extra ml
+	uv sync --extra visualization
 	@echo "✅ Development setup complete!"
 
 # Validation
@@ -62,24 +71,54 @@ validate:
 # Data Pipeline Commands
 sync:
 	@echo "🔄 Starting S3 sync..."
-	@uv run python -m scripts.sync_from_s3
+	@uv run equity-sync
 
 daily:
 	@echo "📊 Running daily EOD data ingestion..."
-	uv run python scripts/ingest_daily.py
+	uv run equity-daily
 
 query:
 	@echo "🦆 Running DuckDB query examples..."
-	uv run python scripts/query_example.py
+	uv run equity-query
+
+pipeline:
+	@echo "🚀 Running the full ingestion → features → ML pipeline..."
+	uv run equity-pipeline
+
+monitor:
+	@echo "🩺 Running pipeline health checks..."
+	uv run equity-monitor
+
+fetch-macro:
+	@echo "📈 Fetching macro indicators for gold ETF analysis..."
+	uv run equity-macro
 
 generate-test-data:
 	@echo "🎲 Generating realistic test data..."
-	uv run python scripts/generate_test_data.py
+	uv run equity-generate-test-data
+
+# News & Sentiment
+news:
+	@echo "📰 Fetching news with sentiment analysis..."
+	uv run equity-news
+
+news-dry:
+	@echo "🔍 Testing news fetching (dry run)..."
+	uv run equity-news --dry-run --verbose
+
+# Social Sentiment
+sentiment:
+	@echo "📱 Fetching social sentiment (Reddit/Twitter)..."
+	uv run equity-sentiment
+
+sentiment-dry:
+	@echo "🔍 Testing social sentiment fetching (dry run)..."
+	uv run equity-sentiment --dry-run --verbose
 
 # Testing
 test:
 	@echo "🧪 Running tests..."
-	uv run pytest -v --cov=scripts --cov-report=html --cov-report=term
+	uv run pytest -v --cov=src/equity_lake --cov-report=html --cov-report=term
 
 test-unit:
 	@echo "🔬 Running unit tests..."
@@ -96,16 +135,16 @@ test-slow:
 # Code Quality
 lint:
 	@echo "🔍 Running code linting..."
-	uv run ruff check scripts/ tests/
+	uv run ruff check src/ tests/
 
 format:
 	@echo "🎨 Formatting code..."
-	uv run ruff format scripts/ tests/
-	uv run ruff check --fix scripts/ tests/
+	uv run ruff format src/ tests/
+	uv run ruff check --fix src/ tests/
 
 check:
 	@echo "🔬 Running type checking..."
-	uv run mypy scripts/
+	uv run mypy src/equity_lake
 
 check-all: lint format check
 	@echo "✅ All code quality checks complete!"
@@ -150,6 +189,15 @@ dev-test: format lint test
 ci: validate check-all test-unit
 	@echo "✅ CI checks complete!"
 
+# Backtesting tests
+quick-test:
+	@echo "🔍 Running quick backtesting validation..."
+	uv run python examples/quick_test.py
+
+test-backtest:
+	@echo "🧪 Running full backtesting test suite..."
+	uv run python examples/backtest_demo.py
+
 # Quick start (for new developers)
 quick-start:
 	@echo "🚀 Quick start for Equity EOD Data Pipeline..."
@@ -163,3 +211,4 @@ quick-start:
 	@echo "  2. Run 'make test' to verify everything works"
 	@echo "  3. Run 'make daily' to fetch test data"
 	@echo "  4. Run 'make query' to explore data"
+	@echo "  5. Run 'make quick-test' to validate backtesting framework"
