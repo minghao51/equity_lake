@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from datetime import date
-from typing import Optional
 
 from equity_lake.signals.models import Signal
 
@@ -24,7 +23,7 @@ class SignalGenerator(ABC):
         self.enabled = config.get("enabled", True)
 
     @abstractmethod
-    def generate(self, ticker: str, date: date) -> Optional[Signal]:
+    def generate(self, ticker: str, date: date) -> Signal | None:
         """Generate a signal for a single ticker on a given date.
 
         Args:

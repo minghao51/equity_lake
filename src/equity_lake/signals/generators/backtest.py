@@ -1,7 +1,6 @@
 """Backtest strategy signal generator."""
 
 from datetime import date, timedelta
-from typing import Optional
 
 import duckdb
 import pandas as pd
@@ -40,7 +39,7 @@ class BacktestSignalGenerator(SignalGenerator):
             # No data available yet
             pass
 
-    def generate(self, ticker: str, target_date: date) -> Optional[Signal]:
+    def generate(self, ticker: str, target_date: date) -> Signal | None:
         """Generate signal based on backtest strategy conditions.
 
         Args:
@@ -100,7 +99,7 @@ class BacktestSignalGenerator(SignalGenerator):
         df: pd.DataFrame,
         strategy: dict,
         target_date: date,
-    ) -> Optional[Signal]:
+    ) -> Signal | None:
         """Check if a single strategy triggers a signal.
 
         For MVP: Simple momentum strategy

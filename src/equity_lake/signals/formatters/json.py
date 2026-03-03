@@ -1,7 +1,6 @@
 """JSON signal formatter."""
 
 import json
-from typing import List
 
 from equity_lake.signals.formatters.base import SignalFormatter
 from equity_lake.signals.models import Signal
@@ -10,7 +9,7 @@ from equity_lake.signals.models import Signal
 class JSONFormatter(SignalFormatter):
     """Format signals as machine-readable JSON."""
 
-    def format(self, signals: List[Signal]) -> str:
+    def format(self, signals: list[Signal]) -> str:
         """Format signals as JSON array.
 
         Args:

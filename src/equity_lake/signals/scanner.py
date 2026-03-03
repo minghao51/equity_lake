@@ -1,7 +1,6 @@
 """Signal scanner orchestrator."""
 
 from datetime import date, timedelta
-from typing import List, Optional
 
 from equity_lake.signals.formatters.json import JSONFormatter
 from equity_lake.signals.formatters.markdown import MarkdownFormatter
@@ -28,7 +27,7 @@ class SignalScanner:
         self.watchlist = watchlist
 
         # Initialize generators
-        self.generators: List[SignalGenerator] = []
+        self.generators: list[SignalGenerator] = []
         if config.is_generator_enabled("backtest"):
             self.generators.append(BacktestSignalGenerator(config.backtest))
         if config.is_generator_enabled("sentiment"):
@@ -43,7 +42,7 @@ class SignalScanner:
             "table": TerminalFormatter(),
         }
 
-    def scan(self, target_date: Optional[date] = None) -> List[Signal]:
+    def scan(self, target_date: date | None = None) -> list[Signal]:
         """Scan all tickers and return aggregated signals.
 
         Args:
@@ -65,7 +64,7 @@ class SignalScanner:
 
         return all_signals
 
-    def _scan_ticker(self, ticker: str, target_date: date) -> List[Signal]:
+    def _scan_ticker(self, ticker: str, target_date: date) -> list[Signal]:
         """Scan a single ticker with all generators.
 
         Args:
@@ -84,12 +83,14 @@ class SignalScanner:
                     signals.append(signal)
             except Exception as e:
                 # Log but continue with other generators
-                print(f"Warning: {generator.__class__.__name__} failed for {ticker}: {e}")
+                print(
+                    f"Warning: {generator.__class__.__name__} failed for {ticker}: {e}"
+                )
                 continue
 
         return signals
 
-    def format_signals(self, signals: List[Signal], format: str = "table") -> str:
+    def format_signals(self, signals: list[Signal], format: str = "table") -> str:
         """Format signals for output.
 
         Args:
@@ -105,7 +106,7 @@ class SignalScanner:
 
         return formatter.format(signals)
 
-    def save_history(self, signals: List[Signal]):
+    def save_history(self, signals: list[Signal]):
         """Save signals to Parquet history.
 
         Args:

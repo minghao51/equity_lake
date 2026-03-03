@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 
 @dataclass
@@ -15,7 +15,7 @@ class Signal:
     action: Literal["BUY", "SELL", "HOLD"]
     confidence: float  # 0-100
     reasoning: str  # Human-readable explanation
-    metadata: Dict[str, Any]  # Strategy-specific details
+    metadata: dict[str, Any]  # Strategy-specific details
 
     def __post_init__(self):
         """Validate confidence score is in range."""
@@ -28,10 +28,10 @@ class Watchlist:
     """Portfolio/watchlist configuration."""
 
     name: str
-    description: Optional[str] = None
-    tickers: List[str] = field(default_factory=list)
-    groups: Optional[Dict[str, List[str]]] = None  # e.g., {"tech": ["AAPL"]}
-    metadata: Optional[Dict[str, Any]] = None
+    description: str | None = None
+    tickers: list[str] = field(default_factory=list)
+    groups: dict[str, list[str]] | None = None  # e.g., {"tech": ["AAPL"]}
+    metadata: dict[str, Any] | None = None
 
     def __post_init__(self):
         # Ensure all tickers in groups are in main list
@@ -46,10 +46,10 @@ class Watchlist:
 class SignalConfig:
     """Signal generation configuration."""
 
-    backtest: Dict[str, Any]
-    sentiment: Dict[str, Any]
-    ml: Dict[str, Any]
-    aggregation: Optional[Dict[str, Any]] = None
+    backtest: dict[str, Any]
+    sentiment: dict[str, Any]
+    ml: dict[str, Any]
+    aggregation: dict[str, Any] | None = None
 
     def is_generator_enabled(self, generator_name: str) -> bool:
         """Check if a signal generator is enabled."""

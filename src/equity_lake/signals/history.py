@@ -2,7 +2,6 @@
 
 from datetime import date
 from pathlib import Path
-from typing import List
 
 import pandas as pd
 
@@ -12,7 +11,7 @@ from equity_lake.signals.models import Signal
 SIGNALS_DIR = Path("data/signals")
 
 
-def save_signals_to_parquet(signals: List[Signal], target_date: date):
+def save_signals_to_parquet(signals: list[Signal], target_date: date):
     """Save signals to partitioned Parquet storage.
 
     Args:
@@ -47,7 +46,7 @@ def save_signals_to_parquet(signals: List[Signal], target_date: date):
     df.to_parquet(output_path, index=False)
 
 
-def load_signals_from_parquet(target_date: date) -> List[Signal]:
+def load_signals_from_parquet(target_date: date) -> list[Signal]:
     """Load signals from Parquet storage.
 
     Args:
@@ -67,7 +66,14 @@ def load_signals_from_parquet(target_date: date) -> List[Signal]:
     signals = []
     for _, row in df.iterrows():
         # Extract metadata columns
-        base_cols = {"ticker", "date", "signal_type", "action", "confidence", "reasoning"}
+        base_cols = {
+            "ticker",
+            "date",
+            "signal_type",
+            "action",
+            "confidence",
+            "reasoning",
+        }
         metadata = {k: v for k, v in row.items() if k not in base_cols and pd.notna(v)}
 
         signal = Signal(

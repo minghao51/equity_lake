@@ -1,7 +1,6 @@
 """Load watchlist and signal configuration from YAML files."""
 
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -11,7 +10,7 @@ DEFAULT_WATCHLIST_PATH = Path("config/watchlist.yaml")
 DEFAULT_SIGNALS_PATH = Path("config/signals.yaml")
 
 
-def load_watchlist(path: Optional[Path] = None) -> Watchlist:
+def load_watchlist(path: Path | None = None) -> Watchlist:
     """Load watchlist from YAML file.
 
     Args:
@@ -29,13 +28,13 @@ def load_watchlist(path: Optional[Path] = None) -> Watchlist:
     if not config_path.exists():
         raise FileNotFoundError(f"Watchlist config not found: {config_path}")
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         data = yaml.safe_load(f)
 
     return Watchlist(**data)
 
 
-def load_signal_config(path: Optional[Path] = None) -> SignalConfig:
+def load_signal_config(path: Path | None = None) -> SignalConfig:
     """Load signal configuration from YAML file.
 
     Args:
@@ -53,7 +52,7 @@ def load_signal_config(path: Optional[Path] = None) -> SignalConfig:
     if not config_path.exists():
         raise FileNotFoundError(f"Signal config not found: {config_path}")
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         data = yaml.safe_load(f)
 
     return SignalConfig(**data)

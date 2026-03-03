@@ -1,7 +1,6 @@
 """Markdown signal formatter."""
 
 from collections import defaultdict
-from typing import List
 
 from equity_lake.signals.formatters.base import SignalFormatter
 from equity_lake.signals.models import Signal
@@ -10,7 +9,7 @@ from equity_lake.signals.models import Signal
 class MarkdownFormatter(SignalFormatter):
     """Format signals as readable Markdown report."""
 
-    def format(self, signals: List[Signal]) -> str:
+    def format(self, signals: list[Signal]) -> str:
         """Format signals as Markdown report.
 
         Args:

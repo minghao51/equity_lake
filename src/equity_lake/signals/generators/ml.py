@@ -2,11 +2,10 @@
 
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Optional
 
+from equity_lake.ml.forecasting import PriceForecaster
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
-from equity_lake.ml.forecasting import PriceForecaster
 
 
 class MLPredictionSignalGenerator(SignalGenerator):
@@ -35,7 +34,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
             except Exception:
                 pass  # Model not available
 
-    def generate(self, ticker: str, target_date: date) -> Optional[Signal]:
+    def generate(self, ticker: str, target_date: date) -> Signal | None:
         """Generate signal based on ML price prediction.
 
         Args:

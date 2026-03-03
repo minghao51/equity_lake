@@ -1,11 +1,10 @@
 """News sentiment signal generator."""
 
 from datetime import date, timedelta
-from typing import Optional
 
+from equity_lake.sentiment.analyzer import SentimentAnalyzer
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
-from equity_lake.sentiment.analyzer import SentimentAnalyzer
 
 
 class SentimentSignalGenerator(SignalGenerator):
@@ -26,7 +25,7 @@ class SentimentSignalGenerator(SignalGenerator):
         # Initialize sentiment analyzer
         self.analyzer = SentimentAnalyzer()
 
-    def generate(self, ticker: str, target_date: date) -> Optional[Signal]:
+    def generate(self, ticker: str, target_date: date) -> Signal | None:
         """Generate signal based on news sentiment.
 
         Args:

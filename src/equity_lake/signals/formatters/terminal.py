@@ -1,7 +1,6 @@
 """Terminal table signal formatter."""
 
 from collections import defaultdict
-from typing import List
 
 try:
     from tabulate import tabulate
@@ -17,7 +16,7 @@ from equity_lake.signals.models import Signal
 class TerminalFormatter(SignalFormatter):
     """Format signals as colored terminal tables."""
 
-    def format(self, signals: List[Signal]) -> str:
+    def format(self, signals: list[Signal]) -> str:
         """Format signals as terminal tables.
 
         Args:
@@ -73,7 +72,9 @@ class TerminalFormatter(SignalFormatter):
                         ]
                     )
                 lines.append(
-                    tabulate(table_data, headers=["Ticker", "Action", "Conf", "Reasoning"])
+                    tabulate(
+                        table_data, headers=["Ticker", "Action", "Conf", "Reasoning"]
+                    )
                 )
             else:
                 # Fallback: simple table
