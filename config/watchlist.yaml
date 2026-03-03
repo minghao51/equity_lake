@@ -1,0 +1,22 @@
+name: "My Portfolio"
+description: "Core holdings and watchlist"
+
+tickers:
+  - AAPL
+  - GOOGL
+  - MSFT
+  - TSLA
+  - NVDA
+
+groups:
+  tech:
+    - AAPL
+    - GOOGL
+    - MSFT
+    - NVDA
+  ev:
+    - TSLA
+
+metadata:
+  benchmark: "SPY"
+  created: "2024-12-01"

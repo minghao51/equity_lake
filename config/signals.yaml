@@ -1,0 +1,32 @@
+# Backtest strategy signals
+backtest:
+  enabled: true
+  strategies:
+    - name: "momentum"
+      lookback_days: 20
+      buy_threshold: 0.02
+      sell_threshold: -0.01
+  min_win_rate: 0.55
+
+# News sentiment signals
+sentiment:
+  enabled: true
+  sources:
+    - "yahoo"
+  buy_threshold: 0.5
+  sell_threshold: -0.3
+  min_articles: 3
+  lookback_days: 7
+
+# ML prediction signals
+ml:
+  enabled: true
+  model_path: "data/models/xgboost_price_forecaster.pkl"
+  horizon_days: 5
+  buy_return_threshold: 0.03
+  sell_return_threshold: -0.02
+  min_confidence: 60
+
+aggregation:
+  agreement_boost: 10
+  unanimous_boost: 20
