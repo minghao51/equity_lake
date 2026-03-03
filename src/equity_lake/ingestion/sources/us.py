@@ -1,7 +1,6 @@
 """US market source adapter."""
 
 from datetime import date, timedelta
-from itertools import islice
 
 import pandas as pd  # type: ignore[import-untyped]
 import structlog
@@ -128,7 +127,8 @@ class USEquityFetcher(MarketDataFetcher):
         if not chunk_list:
             return [[]]
         return [
-            chunk_list[i : i + chunk_size] for i in range(0, len(chunk_list), chunk_size)
+            chunk_list[i : i + chunk_size]
+            for i in range(0, len(chunk_list), chunk_size)
         ]
 
     def _get_fallback_tickers(self) -> list[str]:
@@ -232,7 +232,9 @@ class USEquityFetcher(MarketDataFetcher):
                 # drop valid data when the schema varies.
                 if not isinstance(data.columns, pd.MultiIndex):
                     base_frame = data.reset_index()
-                    tickers = ticker_batch if len(ticker_batch) > 1 else [ticker_batch[0]]
+                    tickers = (
+                        ticker_batch if len(ticker_batch) > 1 else [ticker_batch[0]]
+                    )
                     for ticker in tickers:
                         frame = base_frame.copy()
                         frame["ticker"] = ticker

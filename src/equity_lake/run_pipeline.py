@@ -28,11 +28,11 @@ Usage:
 """
 
 import argparse
-import logging
 import json
+import logging
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import structlog
 
@@ -41,20 +41,26 @@ from equity_lake import (
     run_ingestion_stage,
     run_ml_inference_stage,
 )
+from equity_lake.core.logging import correlation_context, timer
 from equity_lake.core.runtime import (
-    LAKE_DIR,
     LOGS_DIR,
     setup_logging,
 )
-from equity_lake.core.logging import timer, correlation_context
 
 # Logger configuration
 logger = structlog.get_logger()
 
 
+def configure_third_party_logging() -> None:
+    """Keep third-party libraries from flooding pipeline output."""
+    for logger_name in ("yfinance", "peewee", "urllib3", "curl_cffi"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+
 # =============================================================================
 # Pipeline Orchestrator
 # =============================================================================
+
 
 class PipelineOrchestrator:
     """
@@ -65,10 +71,10 @@ class PipelineOrchestrator:
     def __init__(
         self,
         trading_date: date,
-        tickers: List[str],
-        markets: List[str],
+        tickers: list[str],
+        markets: list[str],
         dry_run: bool = False,
-        verbose: bool = False
+        verbose: bool = False,
     ):
         """
         Initialize the pipeline orchestrator.
@@ -87,7 +93,7 @@ class PipelineOrchestrator:
         self.verbose = verbose
 
         # Pipeline results
-        self.results: Dict[str, dict] = {}
+        self.results: dict[str, dict] = {}
         self.start_time = datetime.now()
 
         # Ensure directories exist
@@ -108,7 +114,7 @@ class PipelineOrchestrator:
             "pipeline_stage_started",
             stage=stage,
             date=str(self.trading_date),
-            markets=self.markets
+            markets=self.markets,
         )
 
         try:
@@ -122,9 +128,9 @@ class PipelineOrchestrator:
             success = all(market_results.values())
 
             self.results[stage] = {
-                'success': success,
-                'market_results': market_results,
-                'duration_seconds': (datetime.now() - self.start_time).total_seconds()
+                "success": success,
+                "market_results": market_results,
+                "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
             }
 
             if success:
@@ -132,7 +138,7 @@ class PipelineOrchestrator:
                     "pipeline_stage_completed",
                     stage=stage,
                     successful_markets=sum(market_results.values()),
-                    duration_seconds=self.results[stage]['duration_seconds']
+                    duration_seconds=self.results[stage]["duration_seconds"],
                 )
             else:
                 logger.error(
@@ -150,9 +156,9 @@ class PipelineOrchestrator:
         except Exception as e:
             logger.error(f"{stage} failed with exception: {e}")
             self.results[stage] = {
-                'success': False,
-                'error': str(e),
-                'duration_seconds': (datetime.now() - self.start_time).total_seconds()
+                "success": False,
+                "error": str(e),
+                "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
             }
             return False
 
@@ -168,7 +174,7 @@ class PipelineOrchestrator:
             "pipeline_stage_started",
             stage=stage,
             date=str(self.trading_date),
-            tickers=len(self.tickers)
+            tickers=len(self.tickers),
         )
 
         try:
@@ -179,27 +185,27 @@ class PipelineOrchestrator:
                 )
 
             self.results[stage] = {
-                'success': True,
-                'rows_generated': len(features_df),
-                'feature_count': len(features_df.columns),
-                'duration_seconds': (datetime.now() - self.start_time).total_seconds()
+                "success": True,
+                "rows_generated": len(features_df),
+                "feature_count": len(features_df.columns),
+                "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
             }
 
             logger.info(
                 "pipeline_stage_completed",
                 stage=stage,
-                features_generated=self.results[stage]['rows_generated'],
-                feature_count=self.results[stage]['feature_count'],
-                duration_seconds=self.results[stage]['duration_seconds']
+                features_generated=self.results[stage]["rows_generated"],
+                feature_count=self.results[stage]["feature_count"],
+                duration_seconds=self.results[stage]["duration_seconds"],
             )
 
             return True
         except Exception as e:
             logger.error(f"{stage} failed with exception: {e}")
             self.results[stage] = {
-                'success': False,
-                'error': str(e),
-                'duration_seconds': (datetime.now() - self.start_time).total_seconds()
+                "success": False,
+                "error": str(e),
+                "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
             }
             return False
 
@@ -215,7 +221,7 @@ class PipelineOrchestrator:
             "pipeline_stage_started",
             stage=stage,
             date=str(self.trading_date),
-            tickers=len(self.tickers)
+            tickers=len(self.tickers),
         )
 
         try:
@@ -227,16 +233,16 @@ class PipelineOrchestrator:
         except Exception as e:
             logger.warning(f"ML inference failed with exception: {e}")
             self.results[stage] = {
-                'success': False,
-                'error': str(e),
-                'duration_seconds': (datetime.now() - self.start_time).total_seconds()
+                "success": False,
+                "error": str(e),
+                "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
             }
             return False
 
         self.results[stage] = {
-            'success': all_success,
-            'ticker_results': ticker_results,
-            'duration_seconds': (datetime.now() - self.start_time).total_seconds()
+            "success": all_success,
+            "ticker_results": ticker_results,
+            "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
         }
 
         if all_success:
@@ -244,15 +250,15 @@ class PipelineOrchestrator:
                 "pipeline_stage_completed",
                 stage=stage,
                 predictions_made=len(self.tickers),
-                duration_seconds=self.results[stage]['duration_seconds']
+                duration_seconds=self.results[stage]["duration_seconds"],
             )
         else:
-            success_count = sum(1 for r in ticker_results.values() if r.get('success'))
+            success_count = sum(1 for r in ticker_results.values() if r.get("success"))
             logger.warning(
                 "pipeline_stage_partial",
                 stage=stage,
                 successful=success_count,
-                failed=len(self.tickers) - success_count
+                failed=len(self.tickers) - success_count,
             )
 
         return all_success
@@ -266,7 +272,7 @@ class PipelineOrchestrator:
         skip_ingestion: bool = False,
         skip_features: bool = False,
         skip_ml: bool = False,
-        stop_on_error: bool = True
+        stop_on_error: bool = True,
     ) -> bool:
         """
         Run the complete pipeline.
@@ -286,7 +292,7 @@ class PipelineOrchestrator:
                 date=str(self.trading_date),
                 markets=self.markets,
                 tickers=len(self.tickers),
-                dry_run=self.dry_run
+                dry_run=self.dry_run,
             )
 
             success = True
@@ -327,13 +333,17 @@ class PipelineOrchestrator:
                 logger.info(
                     "pipeline_completed_successfully",
                     duration_seconds=f"{total_duration:.2f}",
-                    stages_completed=len([r for r in self.results.values() if r.get('success')])
+                    stages_completed=len(
+                        [r for r in self.results.values() if r.get("success")]
+                    ),
                 )
             else:
                 logger.warning(
                     "pipeline_completed_with_errors",
                     duration_seconds=f"{total_duration:.2f}",
-                    failed_stages=len([r for r in self.results.values() if not r.get('success')])
+                    failed_stages=len(
+                        [r for r in self.results.values() if not r.get("success")]
+                    ),
                 )
 
             # Print summary
@@ -349,19 +359,23 @@ class PipelineOrchestrator:
 
         print(f"Date: {self.trading_date}")
         print(f"Markets: {', '.join(self.markets).upper()}")
-        print(f"Tickers: {len(self.tickers)} ({', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''})")
+        print(
+            f"Tickers: {len(self.tickers)} ({', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''})"
+        )
         print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
-        print(f"Duration: {(datetime.now() - self.start_time).total_seconds():.2f} seconds")
+        print(
+            f"Duration: {(datetime.now() - self.start_time).total_seconds():.2f} seconds"
+        )
         print()
 
         for stage, result in self.results.items():
-            status = "✅ SUCCESS" if result.get('success') else "❌ FAILED"
-            duration = result.get('duration_seconds', 0)
+            status = "✅ SUCCESS" if result.get("success") else "❌ FAILED"
+            duration = result.get("duration_seconds", 0)
             print(f"{stage.replace('_', ' ').title():<30} {status:<15} {duration:.2f}s")
 
         print("=" * 70 + "\n")
 
-    def save_results(self, output_file: Optional[Path] = None):
+    def save_results(self, output_file: Path | None = None):
         """Save pipeline results to JSON file."""
         if output_file is None:
             output_file = LOGS_DIR / f"pipeline_results_{self.trading_date}.json"
@@ -371,7 +385,7 @@ class PipelineOrchestrator:
         for key, value in self.results.items():
             results_serializable[key] = value
 
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             json.dump(results_serializable, f, indent=2, default=str)
 
         logger.info(f"Results saved to {output_file}")
@@ -380,6 +394,7 @@ class PipelineOrchestrator:
 # =============================================================================
 # CLI Interface
 # =============================================================================
+
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -408,91 +423,77 @@ Examples:
 
   # US markets only, specific tickers
   uv run equity-pipeline --markets us --tickers AAPL,MSFT,NVDA,TSLA
-        """
+        """,
     )
 
     # Date arguments
     parser.add_argument(
-        '--date',
-        type=str,
-        help='Trading date (YYYY-MM-DD format). Default: yesterday'
+        "--date", type=str, help="Trading date (YYYY-MM-DD format). Default: yesterday"
     )
 
     parser.add_argument(
-        '--days-back',
+        "--days-back",
         type=int,
         default=1,
-        help='Days back from today (default: 1 = yesterday)'
+        help="Days back from today (default: 1 = yesterday)",
     )
 
     # Market and ticker arguments
     parser.add_argument(
-        '--markets',
+        "--markets",
         type=str,
-        default='us,cn,hk_sg',
-        help='Comma-separated markets to ingest (default: us,cn,hk_sg)'
+        default="us,cn,hk_sg",
+        help="Comma-separated markets to ingest (default: us,cn,hk_sg)",
     )
 
     parser.add_argument(
-        '--tickers',
+        "--tickers",
         type=str,
-        default='AAPL,GOOGL,MSFT,NVDA,TSLA,META,AMZN,BRK-B,GOOG,AVGO',
-        help='Comma-separated tickers for features/ML (default: top 10 US stocks)'
+        default="AAPL,GOOGL,MSFT,NVDA,TSLA,META,AMZN,BRK-B,GOOG,AVGO",
+        help="Comma-separated tickers for features/ML (default: top 10 US stocks)",
     )
 
     # Pipeline control arguments
-    pipeline_group = parser.add_argument_group('Pipeline Control')
+    pipeline_group = parser.add_argument_group("Pipeline Control")
 
     pipeline_group.add_argument(
-        '--skip-ingestion',
-        action='store_true',
-        help='Skip Stage 1: Data ingestion'
+        "--skip-ingestion", action="store_true", help="Skip Stage 1: Data ingestion"
     )
 
     pipeline_group.add_argument(
-        '--skip-features',
-        action='store_true',
-        help='Skip Stage 2: Feature engineering'
+        "--skip-features", action="store_true", help="Skip Stage 2: Feature engineering"
     )
 
     pipeline_group.add_argument(
-        '--skip-ml',
-        action='store_true',
-        help='Skip Stage 3: ML inference'
+        "--skip-ml", action="store_true", help="Skip Stage 3: ML inference"
     )
 
     pipeline_group.add_argument(
-        '--stop-on-error',
-        action='store_true',
+        "--stop-on-error",
+        action="store_true",
         default=True,
-        help='Stop pipeline if any stage fails (default: True)'
+        help="Stop pipeline if any stage fails (default: True)",
     )
 
     pipeline_group.add_argument(
-        '--continue-on-error',
-        action='store_true',
-        help='Continue pipeline even if stages fail (overrides --stop-on-error)'
+        "--continue-on-error",
+        action="store_true",
+        help="Continue pipeline even if stages fail (overrides --stop-on-error)",
     )
 
     # Execution arguments
-    exec_group = parser.add_argument_group('Execution Options')
+    exec_group = parser.add_argument_group("Execution Options")
 
     exec_group.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Simulate pipeline without writing data'
+        "--dry-run", action="store_true", help="Simulate pipeline without writing data"
     )
 
     exec_group.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging'
+        "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
 
     exec_group.add_argument(
-        '--save-results',
-        action='store_true',
-        help='Save pipeline results to JSON file'
+        "--save-results", action="store_true", help="Save pipeline results to JSON file"
     )
 
     return parser.parse_args()
@@ -505,6 +506,7 @@ def main():
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"
     setup_logging(__name__, level=log_level, log_file="run_pipeline.log")
+    configure_third_party_logging()
 
     # Determine trading date
     if args.date:
@@ -513,11 +515,11 @@ def main():
         trading_date = date.today() - timedelta(days=args.days_back)
 
     # Parse markets and tickers
-    markets = [m.strip() for m in args.markets.split(',')]
-    tickers = [t.strip() for t in args.tickers.split(',')]
+    markets = [m.strip() for m in args.markets.split(",")]
+    tickers = [t.strip() for t in args.tickers.split(",")]
 
     # Validate markets
-    valid_markets = {'us', 'cn', 'hk_sg'}
+    valid_markets = {"us", "cn", "hk_sg"}
     invalid_markets = set(markets) - valid_markets
 
     if invalid_markets:
@@ -534,7 +536,7 @@ def main():
         tickers=tickers,
         markets=markets,
         dry_run=args.dry_run,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
 
     # Run pipeline
@@ -543,7 +545,7 @@ def main():
             skip_ingestion=args.skip_ingestion,
             skip_features=args.skip_features,
             skip_ml=args.skip_ml,
-            stop_on_error=stop_on_error
+            stop_on_error=stop_on_error,
         )
 
         # Save results if requested

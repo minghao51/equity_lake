@@ -6,8 +6,7 @@ strategy execution, portfolio management, and performance analysis.
 """
 
 from datetime import date
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -60,12 +59,12 @@ class BacktestEngine:
     def __init__(
         self,
         strategy: BaseStrategy,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
         initial_cash: float = 100_000.0,
-        markets: Optional[List[str]] = None,
-        config: Optional[Dict[str, Any]] = None,
+        markets: list[str] | None = None,
+        config: dict[str, Any] | None = None,
     ):
         """
         Initialize the backtesting engine.
@@ -91,13 +90,13 @@ class BacktestEngine:
         self.data_loader = BacktestDataLoader()
 
         # Portfolio state (will be set during run())
-        self.cash: Optional[float] = None
-        self.positions: Dict[str, float] = {}
-        self.equity_curve: Optional[pd.Series] = None
-        self.trades: List[Dict[str, Any]] = []
+        self.cash: float | None = None
+        self.positions: dict[str, float] = {}
+        self.equity_curve: pd.Series | None = None
+        self.trades: list[dict[str, Any]] = []
 
         # Performance metrics (will be computed after run())
-        self.metrics: Dict[str, float] = {}
+        self.metrics: dict[str, float] = {}
 
         logger.info(
             "BacktestEngine initialized",
@@ -210,7 +209,7 @@ class BacktestEngine:
 
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_prices = data.xs('close', level='field', axis=1)
+            close_prices = data.xs("close", level="field", axis=1)
         else:
             close_prices = data
 
@@ -231,11 +230,11 @@ class BacktestEngine:
                 row = signals.loc[date_idx]
 
                 # Process entry signals
-                if row.get('entry', False):
+                if row.get("entry", False):
                     self._execute_entry(date_idx, close_prices)
 
                 # Process exit signals
-                if row.get('exit', False):
+                if row.get("exit", False):
                     self._execute_exit(date_idx, close_prices)
 
         self.equity_curve = pd.Series(equity_values, index=data.index)
@@ -243,7 +242,9 @@ class BacktestEngine:
     def _execute_entry(self, date_idx: pd.Timestamp, prices: pd.DataFrame) -> None:
         """Execute entry signals."""
         # Equal-weight position sizing
-        cash_per_stock = self.cash / len([t for t in self.tickers if t in prices.columns])
+        cash_per_stock = self.cash / len(
+            [t for t in self.tickers if t in prices.columns]
+        )
 
         for ticker in self.tickers:
             if ticker in prices.columns:
@@ -257,14 +258,16 @@ class BacktestEngine:
                         self.cash -= cost
                         self.positions[ticker] = self.positions.get(ticker, 0) + shares
 
-                        self.trades.append({
-                            'date': date_idx,
-                            'ticker': ticker,
-                            'action': 'BUY',
-                            'shares': shares,
-                            'price': price,
-                            'value': cost,
-                        })
+                        self.trades.append(
+                            {
+                                "date": date_idx,
+                                "ticker": ticker,
+                                "action": "BUY",
+                                "shares": shares,
+                                "price": price,
+                                "value": cost,
+                            }
+                        )
 
     def _execute_exit(self, date_idx: pd.Timestamp, prices: pd.DataFrame) -> None:
         """Execute exit signals."""
@@ -279,14 +282,16 @@ class BacktestEngine:
                     self.cash += proceeds
                     self.positions[ticker] = 0
 
-                    self.trades.append({
-                        'date': date_idx,
-                        'ticker': ticker,
-                        'action': 'SELL',
-                        'shares': position,
-                        'price': price,
-                        'value': proceeds,
-                    })
+                    self.trades.append(
+                        {
+                            "date": date_idx,
+                            "ticker": ticker,
+                            "action": "SELL",
+                            "shares": position,
+                            "price": price,
+                            "value": proceeds,
+                        }
+                    )
 
     def _compute_metrics(self) -> None:
         """Compute performance metrics."""
@@ -301,7 +306,9 @@ class BacktestEngine:
         # CAGR
         days = (self.equity_curve.index[-1] - self.equity_curve.index[0]).days
         years = days / 365.25
-        cagr = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) ** (1 / years) - 1
+        cagr = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) ** (
+            1 / years
+        ) - 1
 
         # Volatility (annualized)
         volatility = returns.std() * np.sqrt(252)
@@ -317,7 +324,7 @@ class BacktestEngine:
 
         # Win rate
         if self.trades:
-            sell_trades = [t for t in self.trades if t['action'] == 'SELL']
+            sell_trades = [t for t in self.trades if t["action"] == "SELL"]
             if sell_trades:
                 # Simplified win calculation (needs entry price tracking)
                 win_rate = len(sell_trades) / len(self.trades) if self.trades else 0
@@ -327,13 +334,13 @@ class BacktestEngine:
             win_rate = 0
 
         self.metrics = {
-            'total_return': total_return,
-            'cagr': cagr,
-            'volatility': volatility,
-            'sharpe_ratio': sharpe_ratio,
-            'max_drawdown': max_drawdown,
-            'win_rate': win_rate,
-            'num_trades': len(self.trades),
+            "total_return": total_return,
+            "cagr": cagr,
+            "volatility": volatility,
+            "sharpe_ratio": sharpe_ratio,
+            "max_drawdown": max_drawdown,
+            "win_rate": win_rate,
+            "num_trades": len(self.trades),
         }
 
 
@@ -356,14 +363,14 @@ class BacktestResult:
     def __init__(
         self,
         strategy_name: str,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
         initial_cash: float,
         final_cash: float,
         equity_curve: pd.Series,
-        trades: List[Dict[str, Any]],
-        metrics: Dict[str, float],
+        trades: list[dict[str, Any]],
+        metrics: dict[str, float],
     ):
         self.strategy_name = strategy_name
         self.tickers = tickers
@@ -378,52 +385,52 @@ class BacktestResult:
     @property
     def total_return(self) -> float:
         """Total return as a decimal."""
-        return self.metrics.get('total_return', 0)
+        return self.metrics.get("total_return", 0)
 
     @property
     def sharpe_ratio(self) -> float:
         """Sharpe ratio."""
-        return self.metrics.get('sharpe_ratio', 0)
+        return self.metrics.get("sharpe_ratio", 0)
 
     @property
     def max_drawdown(self) -> float:
         """Maximum drawdown as a decimal (negative value)."""
-        return self.metrics.get('max_drawdown', 0)
+        return self.metrics.get("max_drawdown", 0)
 
     def summary(self) -> str:
         """Generate a summary of backtest results."""
         summary = f"""
 Backtest Results: {self.strategy_name}
-{'=' * 60}
+{"=" * 60}
 Period: {self.start_date} to {self.end_date}
 Initial Capital: ${self.initial_cash:,.2f}
 Final Capital: ${self.final_cash:,.2f}
 
 Performance:
   Total Return: {self.total_return:.2%}
-  CAGR: {self.metrics.get('cagr', 0):.2%}
-  Volatility: {self.metrics.get('volatility', 0):.2%}
+  CAGR: {self.metrics.get("cagr", 0):.2%}
+  Volatility: {self.metrics.get("volatility", 0):.2%}
   Sharpe Ratio: {self.sharpe_ratio:.2f}
   Max Drawdown: {self.max_drawdown:.2%}
 
 Trading:
-  Total Trades: {self.metrics.get('num_trades', 0)}
-  Win Rate: {self.metrics.get('win_rate', 0):.1%}
-{'=' * 60}
+  Total Trades: {self.metrics.get("num_trades", 0)}
+  Win Rate: {self.metrics.get("win_rate", 0):.1%}
+{"=" * 60}
         """
         return summary.strip()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert results to dictionary."""
         return {
-            'strategy_name': self.strategy_name,
-            'tickers': self.tickers,
-            'start_date': str(self.start_date),
-            'end_date': str(self.end_date),
-            'initial_cash': self.initial_cash,
-            'final_cash': self.final_cash,
-            'metrics': self.metrics,
-            'num_trades': len(self.trades),
+            "strategy_name": self.strategy_name,
+            "tickers": self.tickers,
+            "start_date": str(self.start_date),
+            "end_date": str(self.end_date),
+            "initial_cash": self.initial_cash,
+            "final_cash": self.final_cash,
+            "metrics": self.metrics,
+            "num_trades": len(self.trades),
         }
 
 

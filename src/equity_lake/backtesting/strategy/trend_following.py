@@ -5,9 +5,7 @@ This module implements trend-following strategies including moving average
 crossovers, breakouts, and MACD-based strategies.
 """
 
-from typing import Dict, Optional
 
-import numpy as np
 import pandas as pd
 import structlog
 
@@ -37,7 +35,7 @@ class SMACrossoverStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "fast_period": 50,
             "slow_period": 200,
@@ -51,13 +49,13 @@ class SMACrossoverStrategy(BaseStrategy):
         """Initialize SMA crossover strategy."""
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
-        fast_period = self.get_param('fast_period')
-        slow_period = self.get_param('slow_period')
-        use_ema = self.get_param('use_ema')
+        fast_period = self.get_param("fast_period")
+        slow_period = self.get_param("slow_period")
+        use_ema = self.get_param("use_ema")
 
         # Compute moving averages
         if use_ema:
@@ -67,9 +65,9 @@ class SMACrossoverStrategy(BaseStrategy):
             fast_ma = close_df.rolling(window=fast_period).mean()
             slow_ma = close_df.rolling(window=slow_period).mean()
 
-        self.indicators['fast_ma'] = fast_ma
-        self.indicators['slow_ma'] = slow_ma
-        self.indicators['close'] = close_df
+        self.indicators["fast_ma"] = fast_ma
+        self.indicators["slow_ma"] = slow_ma
+        self.indicators["close"] = close_df
 
         logger.info(
             "SMACrossoverStrategy initialized",
@@ -88,8 +86,8 @@ class SMACrossoverStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        fast_ma = self.indicators['fast_ma']
-        slow_ma = self.indicators['slow_ma']
+        fast_ma = self.indicators["fast_ma"]
+        slow_ma = self.indicators["slow_ma"]
 
         # Detect crossovers
         # Golden cross: fast crosses above slow
@@ -102,10 +100,12 @@ class SMACrossoverStrategy(BaseStrategy):
         entry_signals = golden_cross.any(axis=1)
         exit_signals = death_cross.any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 
@@ -130,7 +130,7 @@ class DonchianBreakoutStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "channel_period": 20,
             "use_exit_channel": True,
@@ -144,23 +144,31 @@ class DonchianBreakoutStrategy(BaseStrategy):
         """Initialize Donchian breakout strategy."""
         # Extract OHLC data
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
-            high_df = data.xs('high', level='field', axis=1) if 'high' in data.columns.get_level_values(1) else close_df
-            low_df = data.xs('low', level='field', axis=1) if 'low' in data.columns.get_level_values(1) else close_df
+            close_df = data.xs("close", level="field", axis=1)
+            high_df = (
+                data.xs("high", level="field", axis=1)
+                if "high" in data.columns.get_level_values(1)
+                else close_df
+            )
+            low_df = (
+                data.xs("low", level="field", axis=1)
+                if "low" in data.columns.get_level_values(1)
+                else close_df
+            )
         else:
             close_df = data
             high_df = data
             low_df = data
 
-        period = self.get_param('channel_period')
+        period = self.get_param("channel_period")
 
         # Compute Donchian channels
         upper_channel = high_df.rolling(window=period).max()
         lower_channel = low_df.rolling(window=period).min()
 
-        self.indicators['upper_channel'] = upper_channel
-        self.indicators['lower_channel'] = lower_channel
-        self.indicators['close'] = close_df
+        self.indicators["upper_channel"] = upper_channel
+        self.indicators["lower_channel"] = lower_channel
+        self.indicators["close"] = close_df
 
         logger.info(
             "DonchianBreakoutStrategy initialized",
@@ -177,9 +185,9 @@ class DonchianBreakoutStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        close_df = self.indicators['close']
-        upper_channel = self.indicators['upper_channel']
-        lower_channel = self.indicators['lower_channel']
+        close_df = self.indicators["close"]
+        upper_channel = self.indicators["upper_channel"]
+        lower_channel = self.indicators["lower_channel"]
 
         # Detect breakouts
         # Entry: Close breaks above upper channel
@@ -192,10 +200,12 @@ class DonchianBreakoutStrategy(BaseStrategy):
         entry_signals = breakout_up.any(axis=1)
         exit_signals = breakout_down.any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 
@@ -221,7 +231,7 @@ class MACDStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "fast_period": 12,
             "slow_period": 26,
@@ -235,13 +245,13 @@ class MACDStrategy(BaseStrategy):
         """Initialize MACD strategy."""
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
-        fast_period = self.get_param('fast_period')
-        slow_period = self.get_param('slow_period')
-        signal_period = self.get_param('signal_period')
+        fast_period = self.get_param("fast_period")
+        slow_period = self.get_param("slow_period")
+        signal_period = self.get_param("signal_period")
 
         # Compute MACD for each ticker
         macd_line = pd.DataFrame(index=close_df.index, columns=close_df.columns)
@@ -268,9 +278,9 @@ class MACDStrategy(BaseStrategy):
             signal_line[ticker] = signal_values
             histogram[ticker] = hist_values
 
-        self.indicators['macd'] = macd_line
-        self.indicators['signal'] = signal_line
-        self.indicators['histogram'] = histogram
+        self.indicators["macd"] = macd_line
+        self.indicators["signal"] = signal_line
+        self.indicators["histogram"] = histogram
 
         logger.info(
             "MACDStrategy initialized",
@@ -289,9 +299,9 @@ class MACDStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        macd = self.indicators['macd']
-        signal = self.indicators['signal']
-        histogram_threshold = self.get_param('histogram_threshold')
+        macd = self.indicators["macd"]
+        signal = self.indicators["signal"]
+        histogram_threshold = self.get_param("histogram_threshold")
 
         # Detect crossovers
         # Bullish crossover: MACD crosses above signal
@@ -302,7 +312,7 @@ class MACDStrategy(BaseStrategy):
 
         # Apply histogram threshold if specified
         if histogram_threshold > 0:
-            histogram = self.indicators['histogram']
+            histogram = self.indicators["histogram"]
             bullish_cross = bullish_cross & (histogram.abs() > histogram_threshold)
             bearish_cross = bearish_cross & (histogram.abs() > histogram_threshold)
 
@@ -310,10 +320,12 @@ class MACDStrategy(BaseStrategy):
         entry_signals = bullish_cross.any(axis=1)
         exit_signals = bearish_cross.any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 
@@ -341,7 +353,7 @@ class AdaptiveTrendStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "fast_ma_period": 10,
             "slow_ma_period": 30,
@@ -357,34 +369,44 @@ class AdaptiveTrendStrategy(BaseStrategy):
         """Initialize adaptive trend strategy."""
         # Extract OHLC data
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
-            high_df = data.xs('high', level='field', axis=1) if 'high' in data.columns.get_level_values(1) else close_df
-            low_df = data.xs('low', level='field', axis=1) if 'low' in data.columns.get_level_values(1) else close_df
+            close_df = data.xs("close", level="field", axis=1)
+            high_df = (
+                data.xs("high", level="field", axis=1)
+                if "high" in data.columns.get_level_values(1)
+                else close_df
+            )
+            low_df = (
+                data.xs("low", level="field", axis=1)
+                if "low" in data.columns.get_level_values(1)
+                else close_df
+            )
         else:
             close_df = data
             high_df = data
             low_df = data
 
-        fast_period = self.get_param('fast_ma_period')
-        slow_period = self.get_param('slow_ma_period')
+        fast_period = self.get_param("fast_ma_period")
+        slow_period = self.get_param("slow_ma_period")
 
         # Compute moving averages
         fast_ma = close_df.rolling(window=fast_period).mean()
         slow_ma = close_df.rolling(window=slow_period).mean()
 
-        self.indicators['fast_ma'] = fast_ma
-        self.indicators['slow_ma'] = slow_ma
-        self.indicators['close'] = close_df
+        self.indicators["fast_ma"] = fast_ma
+        self.indicators["slow_ma"] = slow_ma
+        self.indicators["close"] = close_df
 
         # Compute ADX (simplified version)
-        adx_period = self.get_param('adx_period')
-        self.indicators['adx'] = self._compute_adx(high_df, low_df, close_df, adx_period)
+        adx_period = self.get_param("adx_period")
+        self.indicators["adx"] = self._compute_adx(
+            high_df, low_df, close_df, adx_period
+        )
 
         logger.info(
             "AdaptiveTrendStrategy initialized",
             fast_ma_period=fast_period,
             slow_ma_period=slow_period,
-            adx_threshold=self.get_param('adx_threshold'),
+            adx_threshold=self.get_param("adx_threshold"),
         )
 
     def _compute_adx(
@@ -440,10 +462,10 @@ class AdaptiveTrendStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        fast_ma = self.indicators['fast_ma']
-        slow_ma = self.indicators['slow_ma']
-        adx = self.indicators['adx']
-        adx_threshold = self.get_param('adx_threshold')
+        fast_ma = self.indicators["fast_ma"]
+        slow_ma = self.indicators["slow_ma"]
+        adx = self.indicators["adx"]
+        adx_threshold = self.get_param("adx_threshold")
 
         # Detect crossovers
         golden_cross = (fast_ma > slow_ma).astype(int).diff() == 1
@@ -457,10 +479,12 @@ class AdaptiveTrendStrategy(BaseStrategy):
         entry_signals = entry_with_filter.any(axis=1)
         exit_signals = death_cross.any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 

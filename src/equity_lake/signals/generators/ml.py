@@ -1,6 +1,6 @@
 """ML prediction signal generator."""
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from equity_lake.ml.forecasting import PriceForecaster
@@ -9,40 +9,43 @@ from equity_lake.signals.models import Signal
 
 
 class MLPredictionSignalGenerator(SignalGenerator):
-    """Generate signals based on XGBoost price forecasts.
+    """Generate signals based on XGBoost next-day direction forecasts.
 
-    Reuses existing ML forecaster to predict future returns.
-    Generates BUY when predicted return is positive and
-    confidence exceeds threshold.
+    Reuses the existing price forecaster to predict next-day direction.
+    Generates BUY when the model predicts an up day and SELL when it
+    predicts a down day, subject to the configured confidence threshold.
     """
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.model_path = Path(
-            config.get("model_path", "data/models/xgboost_price_forecaster.pkl")
+        # Accept legacy `model_path` configs, but treat the setting as a model directory.
+        self.model_dir = Path(
+            config.get("model_dir", config.get("model_path", "data/models"))
         )
         self.horizon_days = config.get("horizon_days", 5)
-        self.buy_threshold = config.get("buy_return_threshold", 0.03)
-        self.sell_threshold = config.get("sell_return_threshold", -0.02)
         self.min_confidence = config.get("min_confidence", 60)
+        default_buy_threshold = self.min_confidence / 100
+        self.buy_threshold = config.get(
+            "buy_probability_threshold", default_buy_threshold
+        )
+        self.sell_threshold = config.get(
+            "sell_probability_threshold", 1 - default_buy_threshold
+        )
 
-        # Initialize forecaster
-        self.forecaster = None
-        if self.model_path.exists():
-            try:
-                self.forecaster = PriceForecaster.load_model(self.model_path)
-            except Exception:
-                pass  # Model not available
+        try:
+            self.forecaster = PriceForecaster(model_dir=str(self.model_dir))
+        except Exception:
+            self.forecaster = None
 
     def generate(self, ticker: str, target_date: date) -> Signal | None:
-        """Generate signal based on ML price prediction.
+        """Generate signal based on ML direction prediction.
 
         Args:
             ticker: Stock symbol
             target_date: Date to generate signal for
 
         Returns:
-            Signal with action based on predicted return
+            Signal with action based on predicted direction
         """
         if not self.is_enabled():
             return None
@@ -51,14 +54,9 @@ class MLPredictionSignalGenerator(SignalGenerator):
             # Model not available
             return None
 
-        # Fetch historical data for features
-        start_date = target_date - timedelta(days=90)
-
         try:
             # Generate prediction
-            prediction = self.forecaster.predict(
-                ticker=ticker, current_date=target_date, horizon=self.horizon_days
-            )
+            prediction = self.forecaster.predict(ticker=ticker, date=target_date)
         except Exception:
             # Prediction failed
             return None
@@ -66,43 +64,55 @@ class MLPredictionSignalGenerator(SignalGenerator):
         if not prediction:
             return None
 
-        # Extract prediction and confidence
-        predicted_return = prediction.get("predicted_return", 0)
-        confidence = prediction.get("confidence", 0)
+        probability = float(prediction.get("probability", 0.0))
+        direction = int(prediction.get("prediction", probability >= 0.5))
+        action = "BUY" if direction == 1 else "SELL"
+        confidence = probability * 100 if action == "BUY" else (1 - probability) * 100
 
-        # Check confidence threshold
+        if action == "BUY" and probability < self.buy_threshold:
+            return None
+
+        if action == "SELL" and probability > self.sell_threshold:
+            return None
+
         if confidence < self.min_confidence:
             return None
 
-        # Generate signal
-        if predicted_return >= self.buy_threshold:
+        if action == "BUY":
             return Signal(
                 ticker=ticker,
                 date=target_date,
                 signal_type="ml",
-                action="BUY",
-                confidence=float(confidence),
-                reasoning=f"ML predicts {predicted_return:.1%} return in {self.horizon_days} days ({confidence:.0f}% confidence)",
+                action=action,
+                confidence=confidence,
+                reasoning=(
+                    f"ML predicts next-day upside "
+                    f"({confidence:.0f}% confidence, p={probability:.2f})"
+                ),
                 metadata={
-                    "predicted_return": predicted_return,
+                    "prediction": direction,
+                    "probability": probability,
                     "horizon_days": self.horizon_days,
                     "confidence": confidence,
-                    "features": prediction.get("important_features", []),
-                },
-            )
-        elif predicted_return <= self.sell_threshold:
-            return Signal(
-                ticker=ticker,
-                date=target_date,
-                signal_type="ml",
-                action="SELL",
-                confidence=float(confidence),
-                reasoning=f"ML predicts {predicted_return:.1%} return in {self.horizon_days} days ({confidence:.0f}% confidence)",
-                metadata={
-                    "predicted_return": predicted_return,
-                    "horizon_days": self.horizon_days,
-                    "confidence": confidence,
+                    "model_version": prediction.get("model_version"),
                 },
             )
 
-        return None
+        return Signal(
+            ticker=ticker,
+            date=target_date,
+            signal_type="ml",
+            action=action,
+            confidence=confidence,
+            reasoning=(
+                f"ML predicts next-day downside "
+                f"({confidence:.0f}% confidence, p={probability:.2f})"
+            ),
+            metadata={
+                "prediction": direction,
+                "probability": probability,
+                "horizon_days": self.horizon_days,
+                "confidence": confidence,
+                "model_version": prediction.get("model_version"),
+            },
+        )

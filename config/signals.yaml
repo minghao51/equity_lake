@@ -21,10 +21,10 @@ sentiment:
 # ML prediction signals
 ml:
   enabled: true
-  model_path: "data/models/xgboost_price_forecaster.pkl"
+  model_dir: "data/models"
   horizon_days: 5
-  buy_return_threshold: 0.03
-  sell_return_threshold: -0.02
+  buy_probability_threshold: 0.60
+  sell_probability_threshold: 0.40
   min_confidence: 60
 
 aggregation:

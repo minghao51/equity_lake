@@ -4,7 +4,6 @@ Overfitting detection for backtesting.
 This module provides tools to detect overfitting in backtest results.
 """
 
-from typing import Dict, Tuple
 
 import structlog
 
@@ -66,9 +65,9 @@ class OverfittingDetector:
 
         # Overall overfitting assessment
         is_overfitted = (
-            perf_degradation > 0.5 or  # >50% performance drop
-            sharpe_drop > 0.5 or  # Sharpe ratio drops by >0.5
-            trade_warning  # Too few trades
+            perf_degradation > 0.5  # >50% performance drop
+            or sharpe_drop > 0.5  # Sharpe ratio drops by >0.5
+            or trade_warning  # Too few trades
         )
 
         report = OverfittingReport(
@@ -105,7 +104,7 @@ class OverfittingDetector:
     def _check_trade_count(self, result: BacktestResult) -> bool:
         """Check if trade count is too low."""
         min_trades = 30  # Minimum 30 trades for statistical significance
-        num_trades = result.metrics.get('num_trades', 0)
+        num_trades = result.metrics.get("num_trades", 0)
 
         return num_trades < min_trades
 
@@ -140,12 +139,12 @@ class OverfittingReport:
         """Generate summary report."""
         summary = f"""
 Overfitting Analysis:
-{'=' * 50}
-Status: {'OVERFITTED' if self.is_overfitted else 'OK'}
+{"=" * 50}
+Status: {"OVERFITTED" if self.is_overfitted else "OK"}
 Performance Degradation: {self.performance_degradation:.1%}
 Sharpe Ratio Drop: {self.sharpe_drop:.2f}
-Low Trade Count: {'Yes' if self.trade_count_warning else 'No'}
-{'=' * 50}
+Low Trade Count: {"Yes" if self.trade_count_warning else "No"}
+{"=" * 50}
         """
         return summary.strip()
 

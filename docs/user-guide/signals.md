@@ -33,6 +33,7 @@ sentiment:
 
 ml:
   enabled: true
+  model_dir: data/models
   min_confidence: 60
 ```
 
@@ -65,9 +66,9 @@ Based on news sentiment analysis:
 - **SELL**: Negative sentiment score
 
 ### ML Prediction Signals
-Based on XGBoost price forecasts:
-- **BUY**: High predicted return + confidence
-- **SELL**: Negative predicted return
+Based on XGBoost next-day direction forecasts:
+- **BUY**: Up-day prediction with probability above the buy threshold
+- **SELL**: Down-day prediction with probability below the sell threshold
 
 ## Cron Setup
 

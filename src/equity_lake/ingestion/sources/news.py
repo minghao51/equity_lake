@@ -77,13 +77,10 @@ class FinnhubNewsFetcher(MarketDataFetcher):
 
         # Initialize sentiment analyzer
         try:
-            self.sentiment_analyzer = SentimentAnalyzer(
-                method=sentiment_method
-            )
+            self.sentiment_analyzer = SentimentAnalyzer(method=sentiment_method)
         except ImportError as e:
             logger.warning(
-                "Sentiment analyzer not available: %s. "
-                "Proceeding without sentiment.",
+                "Sentiment analyzer not available: %s. Proceeding without sentiment.",
                 e,
             )
             self.sentiment_analyzer = None
@@ -380,10 +377,12 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         sentiment_results = []
         for headline in headlines:
             result = self.sentiment_analyzer.analyze(headline)
-            sentiment_results.append({
-                "sentiment_score": result.get("compound", 0.0),
-                "sentiment_label": result.get("label", "neutral"),
-            })
+            sentiment_results.append(
+                {
+                    "sentiment_score": result.get("compound", 0.0),
+                    "sentiment_label": result.get("label", "neutral"),
+                }
+            )
 
         # Add to DataFrame
         sentiment_df = pd.DataFrame(sentiment_results)

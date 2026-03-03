@@ -9,6 +9,7 @@ import structlog
 # Try to import VADER
 try:
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
     VADER_AVAILABLE = True
 except ImportError:
     VADER_AVAILABLE = False
@@ -70,8 +71,7 @@ class SentimentAnalyzer:
         elif method == "finbert":
             # FinBERT support planned for Phase 5
             raise NotImplementedError(
-                "FinBERT method not yet implemented. "
-                "Use method='vader' for now."
+                "FinBERT method not yet implemented. Use method='vader' for now."
             )
         else:
             raise ValueError(f"Unknown method: {method}. Use 'vader' or 'finbert'")

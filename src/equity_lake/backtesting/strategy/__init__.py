@@ -5,9 +5,10 @@ This package contains all trading strategy implementations organized by category
 """
 
 from equity_lake.backtesting.strategy.base import BaseStrategy
-from equity_lake.backtesting.strategy.registry import (
-    StrategyRegistry,
-    get_strategy,
+from equity_lake.backtesting.strategy.mean_reversion import (
+    BBMeanReversionStrategy,
+    CombinedMeanReversionStrategy,
+    RSIMeanReversionStrategy,
 )
 
 # Import all strategies
@@ -15,16 +16,15 @@ from equity_lake.backtesting.strategy.momentum import (
     CrossSectionalMomentumStrategy,
     TimeSeriesMomentumStrategy,
 )
-from equity_lake.backtesting.strategy.mean_reversion import (
-    BBMeanReversionStrategy,
-    RSIMeanReversionStrategy,
-    CombinedMeanReversionStrategy,
+from equity_lake.backtesting.strategy.registry import (
+    StrategyRegistry,
+    get_strategy,
 )
 from equity_lake.backtesting.strategy.trend_following import (
-    SMACrossoverStrategy,
+    AdaptiveTrendStrategy,
     DonchianBreakoutStrategy,
     MACDStrategy,
-    AdaptiveTrendStrategy,
+    SMACrossoverStrategy,
 )
 
 __all__ = [

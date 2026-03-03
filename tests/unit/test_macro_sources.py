@@ -3,11 +3,11 @@
 Tests for macro indicators fetcher.
 """
 
-import pytest
 from datetime import date, timedelta
 from unittest.mock import Mock, patch
 
 import pandas as pd
+import pytest
 
 
 class TestYFinanceFetcher:
@@ -20,14 +20,17 @@ class TestYFinanceFetcher:
         fetcher = YFinanceFetcher(ticker="^DXY", indicator_name="dxy")
 
         with patch("equity_lake.fetch_macro.yf.download") as mock_download:
-            mock_df = pd.DataFrame({
-                "Open": [102.0],
-                "High": [103.0],
-                "Low": [101.5],
-                "Close": [102.5],
-                "Adj Close": [102.5],
-                "Volume": [0],
-            }, index=pd.to_datetime(["2024-12-01"]))
+            mock_df = pd.DataFrame(
+                {
+                    "Open": [102.0],
+                    "High": [103.0],
+                    "Low": [101.5],
+                    "Close": [102.5],
+                    "Adj Close": [102.5],
+                    "Volume": [0],
+                },
+                index=pd.to_datetime(["2024-12-01"]),
+            )
 
             mock_download.return_value = mock_df
 
@@ -45,9 +48,12 @@ class TestYFinanceFetcher:
         fetcher = YFinanceFetcher(ticker="GLD", indicator_name="gld")
 
         with patch("equity_lake.fetch_macro.yf.download") as mock_download:
-            mock_df = pd.DataFrame({
-                "Close": [185.50],
-            }, index=pd.to_datetime(["2024-12-01"]))
+            mock_df = pd.DataFrame(
+                {
+                    "Close": [185.50],
+                },
+                index=pd.to_datetime(["2024-12-01"]),
+            )
 
             mock_download.return_value = mock_df
 
@@ -86,9 +92,7 @@ class TestFredFetcher:
             MockFred.return_value = mock_fred_instance
 
             fetcher = FredFetcher(
-                series_id="DFII10",
-                indicator_name="tips_yield",
-                fred_api_key="test_key"
+                series_id="DFII10", indicator_name="tips_yield", fred_api_key="test_key"
             )
 
             result = fetcher.fetch(date(2024, 12, 1))
@@ -111,7 +115,7 @@ class TestFredFetcher:
             fetcher = FredFetcher(
                 series_id="GEPUI",
                 indicator_name="geopolitical_risk",
-                fred_api_key="test_key"
+                fred_api_key="test_key",
             )
 
             result = fetcher.fetch(date(2024, 12, 1))
@@ -144,13 +148,15 @@ class TestMacroDataPipeline:
             pipeline = MacroDataPipeline()
 
             with patch.object(pipeline.indicators[0], "fetch") as mock_fetch:
-                mock_df = pd.DataFrame({
-                    "date": [date(2024, 12, 1)],
-                    "indicator": ["test"],
-                    "value": [100.0],
-                    "source": ["test"],
-                    "updated_at": ["2024-12-01 10:00:00"],
-                })
+                mock_df = pd.DataFrame(
+                    {
+                        "date": [date(2024, 12, 1)],
+                        "indicator": ["test"],
+                        "value": [100.0],
+                        "source": ["test"],
+                        "updated_at": ["2024-12-01 10:00:00"],
+                    }
+                )
                 mock_fetch.return_value = mock_df
 
                 result = pipeline.fetch_all(date(2024, 12, 1))
@@ -165,13 +171,15 @@ class TestSchemaValidation:
         """Test schema validation with valid DataFrame."""
         from equity_lake.fetch_macro import validate_macro_schema
 
-        df = pd.DataFrame({
-            "date": [date(2024, 12, 1)],
-            "indicator": ["dxy"],
-            "value": [102.5],
-            "source": ["yfinance"],
-            "updated_at": ["2024-12-01 10:00:00"],
-        })
+        df = pd.DataFrame(
+            {
+                "date": [date(2024, 12, 1)],
+                "indicator": ["dxy"],
+                "value": [102.5],
+                "source": ["yfinance"],
+                "updated_at": ["2024-12-01 10:00:00"],
+            }
+        )
 
         assert validate_macro_schema(df) is True
 
@@ -179,11 +187,13 @@ class TestSchemaValidation:
         """Test schema validation with missing columns."""
         from equity_lake.fetch_macro import validate_macro_schema
 
-        df = pd.DataFrame({
-            "date": [date(2024, 12, 1)],
-            "indicator": ["dxy"],
-            # Missing 'value', 'source', 'updated_at'
-        })
+        df = pd.DataFrame(
+            {
+                "date": [date(2024, 12, 1)],
+                "indicator": ["dxy"],
+                # Missing 'value', 'source', 'updated_at'
+            }
+        )
 
         assert validate_macro_schema(df) is False
 
@@ -191,7 +201,9 @@ class TestSchemaValidation:
         """Test schema validation with empty DataFrame."""
         from equity_lake.fetch_macro import validate_macro_schema
 
-        df = pd.DataFrame(columns=["date", "indicator", "value", "source", "updated_at"])
+        df = pd.DataFrame(
+            columns=["date", "indicator", "value", "source", "updated_at"]
+        )
 
         assert validate_macro_schema(df) is True
 
@@ -203,13 +215,15 @@ class TestParquetWrite:
         """Test writing macro data to parquet."""
         from equity_lake.fetch_macro import write_macro_to_parquet
 
-        df = pd.DataFrame({
-            "date": [date(2024, 12, 1)],
-            "indicator": ["dxy"],
-            "value": [102.5],
-            "source": ["yfinance"],
-            "updated_at": ["2024-12-01 10:00:00"],
-        })
+        df = pd.DataFrame(
+            {
+                "date": [date(2024, 12, 1)],
+                "indicator": ["dxy"],
+                "value": [102.5],
+                "source": ["yfinance"],
+                "updated_at": ["2024-12-01 10:00:00"],
+            }
+        )
 
         with patch("equity_lake.fetch_macro.MACRO_INDICATORS_DIR", tmp_path):
             result = write_macro_to_parquet(df, date(2024, 12, 1), dry_run=False)
@@ -242,7 +256,9 @@ class TestIntegration:
 
         if result is not None and not result.empty:
             assert "gld" in result["indicator"].values
-            assert 100.0 < result["value"].values[0] < 500.0  # GLD has increased in price
+            assert (
+                100.0 < result["value"].values[0] < 500.0
+            )  # GLD has increased in price
 
 
 if __name__ == "__main__":

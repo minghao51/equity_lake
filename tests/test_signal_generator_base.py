@@ -1,7 +1,8 @@
 """Test base SignalGenerator class."""
 
-import pytest
 from datetime import date
+
+import pytest
 
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal

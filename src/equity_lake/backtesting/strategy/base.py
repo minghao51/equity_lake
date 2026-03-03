@@ -6,8 +6,7 @@ defining the lifecycle and interface that all strategies must implement.
 """
 
 from abc import ABC, abstractmethod
-from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pandas as pd
 import structlog
@@ -45,7 +44,7 @@ class BaseStrategy(ABC):
         ...         return pd.DataFrame({'entry': entries, 'exit': exits})
     """
 
-    def __init__(self, params: Optional[Dict[str, Any]] = None):
+    def __init__(self, params: dict[str, Any] | None = None):
         """
         Initialize the strategy.
 
@@ -54,7 +53,7 @@ class BaseStrategy(ABC):
         """
         self.params = params or {}
         self.name = self.__class__.__name__
-        self.indicators: Dict[str, Any] = {}
+        self.indicators: dict[str, Any] = {}
 
         logger.debug(
             "Strategy initialized",

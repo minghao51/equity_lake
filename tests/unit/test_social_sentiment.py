@@ -2,7 +2,7 @@
 
 import os
 from datetime import date
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
@@ -39,9 +39,7 @@ def mock_response_reddit():
 @pytest.fixture
 def mock_response_no_data():
     """Fixture providing a mock Finnhub API response with no sentiment data."""
-    return {
-        "sentiment": {}
-    }
+    return {"sentiment": {}}
 
 
 @pytest.fixture
@@ -91,9 +89,11 @@ class TestFinnhubSocialSentimentFetcher:
 
     def test_initialization_without_api_key(self):
         """Test fetcher initialization fails without API key."""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="Finnhub API key not found"):
-                FinnhubSocialSentimentFetcher(tickers=["AAPL"])
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            pytest.raises(ValueError, match="Finnhub API key not found"),
+        ):
+            FinnhubSocialSentimentFetcher(tickers=["AAPL"])
 
     def test_initialization_from_env(self, mock_api_key):
         """Test fetcher initialization reads API key from environment."""
@@ -359,34 +359,36 @@ class TestSchemaValidation:
     def test_social_columns_defined(self):
         """Test that SOCIAL_COLUMNS is properly defined."""
         expected_columns = [
-            'ticker',
-            'date',
-            'datetime',
-            'source',
-            'mention_count',
-            'positive_score',
-            'negative_score',
-            'score',
-            'social_metric',
+            "ticker",
+            "date",
+            "datetime",
+            "source",
+            "mention_count",
+            "positive_score",
+            "negative_score",
+            "score",
+            "social_metric",
         ]
 
-        assert SOCIAL_COLUMNS == expected_columns
+        assert expected_columns == SOCIAL_COLUMNS
 
     def test_validate_social_sentiment_schema(self):
         """Test schema validation with valid social sentiment data."""
-        df = pd.DataFrame([
-            {
-                "ticker": "AAPL",
-                "date": date(2024, 12, 1),
-                "datetime": "2024-12-01 12:00:00",
-                "source": "reddit",
-                "mention_count": 1000,
-                "positive_score": 600.0,
-                "negative_score": 200.0,
-                "score": 0.5,
-                "social_metric": "mention_count",
-            }
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "ticker": "AAPL",
+                    "date": date(2024, 12, 1),
+                    "datetime": "2024-12-01 12:00:00",
+                    "source": "reddit",
+                    "mention_count": 1000,
+                    "positive_score": 600.0,
+                    "negative_score": 200.0,
+                    "score": 0.5,
+                    "social_metric": "mention_count",
+                }
+            ]
+        )
 
         from equity_lake.ingestion.writers import validate_schema
 
@@ -394,13 +396,15 @@ class TestSchemaValidation:
 
     def test_validate_social_sentiment_missing_columns(self):
         """Test schema validation with missing required columns."""
-        df = pd.DataFrame([
-            {
-                "ticker": "AAPL",
-                "date": date(2024, 12, 1),
-                # Missing required columns
-            }
-        ])
+        df = pd.DataFrame(
+            [
+                {
+                    "ticker": "AAPL",
+                    "date": date(2024, 12, 1),
+                    # Missing required columns
+                }
+            ]
+        )
 
         from equity_lake.ingestion.writers import validate_schema
 

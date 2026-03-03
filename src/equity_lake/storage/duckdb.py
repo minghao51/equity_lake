@@ -20,9 +20,8 @@ Usage:
 import argparse
 import logging
 import sys
-from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import duckdb
 import pandas as pd
@@ -30,9 +29,7 @@ import pandas as pd
 from equity_lake.core.runtime import (
     CN_ASHARE_DIR,
     HK_SG_EQUITY_DIR,
-    LOGS_DIR,
     US_EQUITY_DIR,
-    get_project_config,
     setup_logging,
 )
 
@@ -44,10 +41,11 @@ logger = logging.getLogger(__name__)
 # Database Connection and View Creation
 # =============================================================================
 
+
 class EquityDataDB:
     """DuckDB connection manager for equity data queries."""
 
-    def __init__(self, db_path: Optional[str] = ":memory:"):
+    def __init__(self, db_path: str | None = ":memory:"):
         """
         Initialize DuckDB connection.
 
@@ -63,25 +61,13 @@ class EquityDataDB:
         logger.info("Setting up unified views...")
 
         # Create view for US equities
-        self._create_market_view(
-            "us_equity",
-            US_EQUITY_DIR,
-            "us"
-        )
+        self._create_market_view("us_equity", US_EQUITY_DIR, "us")
 
         # Create view for China A-shares
-        self._create_market_view(
-            "cn_ashare",
-            CN_ASHARE_DIR,
-            "cn"
-        )
+        self._create_market_view("cn_ashare", CN_ASHARE_DIR, "cn")
 
         # Create view for HK/SG equities
-        self._create_market_view(
-            "hk_sg_equity",
-            HK_SG_EQUITY_DIR,
-            "hk_sg"
-        )
+        self._create_market_view("hk_sg_equity", HK_SG_EQUITY_DIR, "hk_sg")
 
         # Create unified view across all markets
         self._create_unified_view()
@@ -147,6 +133,7 @@ class EquityDataDB:
 # =============================================================================
 # Example Queries
 # =============================================================================
+
 
 class QueryExamples:
     """Collection of example queries for equity data analysis."""
@@ -397,7 +384,8 @@ class QueryExamples:
 # Performance Benchmarking
 # =============================================================================
 
-def benchmark_queries(db: EquityDataDB) -> Dict[str, float]:
+
+def benchmark_queries(db: EquityDataDB) -> dict[str, float]:
     """Benchmark query execution times."""
     import time
 
@@ -432,6 +420,7 @@ def benchmark_queries(db: EquityDataDB) -> Dict[str, float]:
 # CLI Interface
 # =============================================================================
 
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -463,46 +452,51 @@ Examples:
 
   # Benchmark performance
   uv run equity-query --query benchmark
-        """
+        """,
     )
 
     parser.add_argument(
-        '--query', '-q',
+        "--query",
+        "-q",
         type=str,
-        default='all',
-        help='Query name to run (default: all)',
+        default="all",
+        help="Query name to run (default: all)",
     )
 
     parser.add_argument(
-        '--ticker', '-t',
+        "--ticker",
+        "-t",
         type=str,
-        help='Ticker symbol for ticker-specific queries',
+        help="Ticker symbol for ticker-specific queries",
     )
 
     parser.add_argument(
-        '--days', '-d',
+        "--days",
+        "-d",
         type=int,
         default=7,
-        help='Number of days for rolling calculations (default: 7)',
+        help="Number of days for rolling calculations (default: 7)",
     )
 
     parser.add_argument(
-        '--output', '-o',
+        "--output",
+        "-o",
         type=str,
-        help='Output CSV file path',
+        help="Output CSV file path",
     )
 
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging',
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging",
     )
 
     parser.add_argument(
-        '--db-path',
+        "--db-path",
         type=str,
-        default=':memory:',
-        help='DuckDB database path (default: :memory:)',
+        default=":memory:",
+        help="DuckDB database path (default: :memory:)",
     )
 
     return parser.parse_args()
@@ -526,32 +520,38 @@ def main():
 
         # Map query names to functions
         query_map = {
-            'latest_summary': lambda: queries.query_1_latest_data_summary(),
-            'top_volume': lambda: queries.query_2_top_volume_stocks(args.days),
-            'gainers_losers': lambda: queries.query_3_top_gainers_losers(args.days),
-            'cross_market': lambda: queries.query_4_cross_market_comparison(args.ticker) if args.ticker else pd.DataFrame(),
-            'moving_avg': lambda: queries.query_5_moving_averages(args.ticker, args.days) if args.ticker else pd.DataFrame(),
-            'volatility': lambda: queries.query_6_volatility_analysis(args.days),
-            'market_stats': lambda: queries.query_7_market_summary_stats(),
-            'price_range': lambda: queries.query_8_price_range_analysis(args.days),
+            "latest_summary": lambda: queries.query_1_latest_data_summary(),
+            "top_volume": lambda: queries.query_2_top_volume_stocks(args.days),
+            "gainers_losers": lambda: queries.query_3_top_gainers_losers(args.days),
+            "cross_market": lambda: queries.query_4_cross_market_comparison(args.ticker)
+            if args.ticker
+            else pd.DataFrame(),
+            "moving_avg": lambda: queries.query_5_moving_averages(
+                args.ticker, args.days
+            )
+            if args.ticker
+            else pd.DataFrame(),
+            "volatility": lambda: queries.query_6_volatility_analysis(args.days),
+            "market_stats": lambda: queries.query_7_market_summary_stats(),
+            "price_range": lambda: queries.query_8_price_range_analysis(args.days),
         }
 
         # Execute query
-        if args.query == 'benchmark':
+        if args.query == "benchmark":
             results = benchmark_queries(db)
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             print("Performance Benchmarks")
-            print("="*60)
+            print("=" * 60)
             for name, elapsed in results.items():
                 status = f"{elapsed:.3f}s" if elapsed > 0 else "FAILED"
                 print(f"  {name:20s}: {status}")
 
-        elif args.query == 'all':
+        elif args.query == "all":
             # Run all queries
             for name, query_func in query_map.items():
-                print(f"\n{'='*60}")
+                print(f"\n{'=' * 60}")
                 print(f"Query: {name}")
-                print(f"{'='*60}")
+                print(f"{'=' * 60}")
 
                 df = query_func()
                 if not df.empty:
@@ -570,13 +570,13 @@ def main():
 
             if df.empty:
                 logger.warning("No results returned")
-                if args.query in ['cross_market', 'moving_avg'] and not args.ticker:
+                if args.query in ["cross_market", "moving_avg"] and not args.ticker:
                     logger.error("This query requires --ticker parameter")
                     sys.exit(1)
             else:
-                print(f"\n{'='*60}")
+                print(f"\n{'=' * 60}")
                 print(f"Query: {args.query}")
-                print(f"{'='*60}\n")
+                print(f"{'=' * 60}\n")
                 print(df.to_string(index=False))
 
                 # Export to CSV if requested

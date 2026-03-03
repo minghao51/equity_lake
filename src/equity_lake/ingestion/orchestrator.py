@@ -20,10 +20,12 @@ import argparse
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import pandas as pd  # type: ignore[import-untyped]
+import structlog
 
+from equity_lake.config import TickerConfig
+from equity_lake.core.logging import correlation_context, timer
 from equity_lake.core.runtime import (
     LAKE_DIR,
     get_project_config,
@@ -33,21 +35,22 @@ from equity_lake.fetch_macro import (
     MacroDataPipeline,
     write_macro_to_parquet,
 )
-from equity_lake.config import TickerConfig
 from equity_lake.ingestion.filters import build_filters_from_args
-from equity_lake.ingestion.gap_detection import GapDetector, print_gap_report, print_coverage_stats
+from equity_lake.ingestion.gap_detection import (
+    GapDetector,
+    print_coverage_stats,
+    print_gap_report,
+)
 from equity_lake.ingestion.parallel import (
     fetch_markets_parallel,
     summarize_results,
 )
 from equity_lake.ingestion.sources import (
-    CNAshareFetcher,
+    CNHybridFetcher,
     HKSGEquityFetcher,
     USEquityFetcher,
 )
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
-from equity_lake.core.logging import correlation_context, timer
-import structlog
 
 # Logger configuration - use structlog for structured logging
 logger = structlog.get_logger()
@@ -57,14 +60,15 @@ logger = structlog.get_logger()
 # Main Pipeline
 # =============================================================================
 
+
 def fetch_market_data(
     market: str,
     trading_date: date,
-    config: Dict,
-    ticker_config: Optional[TickerConfig] = None,
-    filters: Optional[Dict] = None,
-    explicit_tickers: Optional[List[str]] = None,
-) -> Optional[pd.DataFrame]:
+    config: dict,
+    ticker_config: TickerConfig | None = None,
+    filters: dict | None = None,
+    explicit_tickers: list[str] | None = None,
+) -> pd.DataFrame | None:
     """
     Fetch data for a specific market.
 
@@ -92,6 +96,7 @@ def fetch_market_data(
 # =============================================================================
 # CLI Interface
 # =============================================================================
+
 
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -141,141 +146,143 @@ Examples:
 
   # Dry run (no writes)
   uv run equity-daily --dry-run --verbose
-        """
+        """,
     )
 
     # Basic arguments
     parser.add_argument(
-        '--date',
+        "--date",
         type=str,
-        help='Trading date (YYYY-MM-DD). Default: yesterday',
+        help="Trading date (YYYY-MM-DD). Default: yesterday",
     )
 
     parser.add_argument(
-        '--markets',
+        "--markets",
         type=str,
-        default='us,cn,hk_sg',
-        help='Comma-separated list of markets (default: us,cn,hk_sg)',
+        default="us,cn,hk_sg",
+        help="Comma-separated list of markets (default: us,cn,hk_sg)",
     )
 
     parser.add_argument(
-        '--macro',
-        action='store_true',
-        help='Also fetch macro indicators for gold ETF analysis',
+        "--macro",
+        action="store_true",
+        help="Also fetch macro indicators for gold ETF analysis",
     )
 
     parser.add_argument(
-        '--config',
+        "--config",
         type=str,
-        help='Path to custom ticker config YAML file (default: config/tickers.yaml)',
+        help="Path to custom ticker config YAML file (default: config/tickers.yaml)",
     )
 
     # Ticker filtering arguments
-    filter_group = parser.add_argument_group('Ticker Filtering (from config)')
+    filter_group = parser.add_argument_group("Ticker Filtering (from config)")
 
     filter_group.add_argument(
-        '--tickers',
+        "--tickers",
         type=str,
-        help='Comma-separated list of explicit tickers (overrides config)',
+        help="Comma-separated list of explicit tickers (overrides config)",
     )
 
     filter_group.add_argument(
-        '--tags',
+        "--tags",
         type=str,
-        help='Comma-separated list of tags to filter tickers (e.g., blue-chip,FAANG)',
+        help="Comma-separated list of tags to filter tickers (e.g., blue-chip,FAANG)",
     )
 
     filter_group.add_argument(
-        '--sectors',
+        "--sectors",
         type=str,
-        nargs='+',
-        help='Space-separated list of sectors to filter (e.g., Technology Finance)',
+        nargs="+",
+        help="Space-separated list of sectors to filter (e.g., Technology Finance)",
     )
 
     filter_group.add_argument(
-        '--groups',
+        "--groups",
         type=str,
-        help='Comma-separated list of predefined groups (e.g., faang,sp500_top_10)',
+        help="Comma-separated list of predefined groups (e.g., faang,sp500_top_10)",
     )
 
     filter_group.add_argument(
-        '--min-priority',
+        "--min-priority",
         type=int,
         choices=range(1, 11),
-        metavar='1-10',
-        help='Minimum priority level (1-10, higher = more important)',
+        metavar="1-10",
+        help="Minimum priority level (1-10, higher = more important)",
     )
 
     filter_group.add_argument(
-        '--match-all-tags',
-        action='store_true',
-        help='When using --tags, require ALL tags instead of ANY tag',
+        "--match-all-tags",
+        action="store_true",
+        help="When using --tags, require ALL tags instead of ANY tag",
     )
 
     # Utility arguments
     parser.add_argument(
-        '--list-tickers',
-        action='store_true',
-        help='List all available tickers from config and exit',
+        "--list-tickers",
+        action="store_true",
+        help="List all available tickers from config and exit",
     )
 
     parser.add_argument(
-        '--list-stats',
-        action='store_true',
-        help='Show config statistics and exit',
+        "--list-stats",
+        action="store_true",
+        help="Show config statistics and exit",
     )
 
     # Gap detection arguments
-    gap_group = parser.add_argument_group('Gap Detection')
+    gap_group = parser.add_argument_group("Gap Detection")
 
     gap_group.add_argument(
-        '--detect-gaps',
-        action='store_true',
-        help='Detect and report missing data points (no fetching)',
+        "--detect-gaps",
+        action="store_true",
+        help="Detect and report missing data points (no fetching)",
     )
 
     gap_group.add_argument(
-        '--coverage-stats',
-        action='store_true',
-        help='Show coverage statistics for all tickers',
+        "--coverage-stats",
+        action="store_true",
+        help="Show coverage statistics for all tickers",
     )
 
     gap_group.add_argument(
-        '--days-back',
+        "--days-back",
         type=int,
         default=90,
-        help='Number of days to check for missing data (default: 90)',
+        help="Number of days to check for missing data (default: 90)",
     )
 
     gap_group.add_argument(
-        '--include-weekends',
-        action='store_true',
-        help='Include weekends in gap detection (default: business days only)',
+        "--include-weekends",
+        action="store_true",
+        help="Include weekends in gap detection (default: business days only)",
     )
 
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Skip actual Parquet writes (for testing)',
+        "--dry-run",
+        action="store_true",
+        help="Skip actual Parquet writes (for testing)",
     )
 
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging',
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging",
     )
 
     parser.add_argument(
-        '--parallel', '-p',
-        action='store_true',
-        help='Enable parallel fetching of multiple markets (3x speedup)',
+        "--parallel",
+        "-p",
+        action="store_true",
+        help="Enable parallel fetching of multiple markets (3x speedup)",
     )
 
     parser.add_argument(
-        '--max-workers',
+        "--max-workers",
         type=int,
         default=None,
-        help='Maximum number of parallel workers (default: number of markets)',
+        help="Maximum number of parallel workers (default: number of markets)",
     )
 
     return parser.parse_args()
@@ -320,9 +327,9 @@ def main():
     else:
         trading_date = date.today() - timedelta(days=1)
 
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Daily EOD Data Ingestion - {trading_date}")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     # Log filters if applied
     if filters:
@@ -331,8 +338,8 @@ def main():
             logger.info(f"  - {key}: {value}")
 
     # Parse markets
-    markets = [m.strip() for m in args.markets.split(',')]
-    valid_markets = {'us', 'cn', 'hk_sg', 'macro', 'us_news', 'us_social_sentiment'}
+    markets = [m.strip() for m in args.markets.split(",")]
+    valid_markets = {"us", "cn", "hk_sg", "macro", "us_news", "us_social_sentiment"}
     invalid = set(markets) - valid_markets
 
     if invalid:
@@ -341,8 +348,8 @@ def main():
         sys.exit(1)
 
     # Add macro market if --macro flag is set
-    if args.macro and 'macro' not in markets:
-        markets.append('macro')
+    if args.macro and "macro" not in markets:
+        markets.append("macro")
         logger.info("Added 'macro' market for gold ETF analysis")
 
     logger.info(f"Markets to process: {markets}")
@@ -369,9 +376,9 @@ def main():
         )
 
         # Summary
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info("Summary")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
 
         for market, success in results.items():
             status = "✅ SUCCESS" if success else "❌ FAILED"
@@ -394,13 +401,13 @@ def list_tickers_command(ticker_config: TickerConfig, args: argparse.Namespace) 
         ticker_config: Loaded ticker configuration
         args: Parsed command-line arguments
     """
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"Tickers from: {ticker_config.config_path}")
-    print(f"{'='*80}\n")
+    print(f"{'=' * 80}\n")
 
     # Get markets to list
     if args.markets:
-        markets = [m.strip() for m in args.markets.split(',')]
+        markets = [m.strip() for m in args.markets.split(",")]
     else:
         markets = ticker_config.get_markets()
 
@@ -418,18 +425,26 @@ def list_tickers_command(ticker_config: TickerConfig, args: argparse.Namespace) 
         print(f"  Total: {len(market_info.tickers)} tickers")
         print(f"  Active: {len(active_tickers)}")
         print(f"  Inactive: {len(inactive_tickers)}")
-        print(f"  Exchanges: {', '.join(sorted(set(t.exchange for t in market_info.tickers)))}")
-        print(f"  Sectors: {', '.join(sorted(set(t.sector for t in market_info.tickers)))}")
+        print(
+            f"  Exchanges: {', '.join(sorted(set(t.exchange for t in market_info.tickers)))}"
+        )
+        print(
+            f"  Sectors: {', '.join(sorted(set(t.sector for t in market_info.tickers)))}"
+        )
 
         if args.verbose:
-            print(f"\n  Active Tickers:")
-            for ticker in sorted(active_tickers, key=lambda t: t.priority, reverse=True):
-                tags_str = ', '.join(ticker.tags[:3]) if ticker.tags else 'none'
-                print(f"    {ticker.symbol:12} | {ticker.name:30} | "
-                      f"{ticker.sector:20} | Prio: {ticker.priority} | {tags_str}")
+            print("\n  Active Tickers:")
+            for ticker in sorted(
+                active_tickers, key=lambda t: t.priority, reverse=True
+            ):
+                tags_str = ", ".join(ticker.tags[:3]) if ticker.tags else "none"
+                print(
+                    f"    {ticker.symbol:12} | {ticker.name:30} | "
+                    f"{ticker.sector:20} | Prio: {ticker.priority} | {tags_str}"
+                )
 
             if inactive_tickers:
-                print(f"\n  Inactive Tickers:")
+                print("\n  Inactive Tickers:")
                 for ticker in sorted(inactive_tickers, key=lambda t: t.symbol):
                     print(f"    {ticker.symbol:12} | {ticker.name:30} | INACTIVE")
 
@@ -443,32 +458,36 @@ def list_stats_command(ticker_config: TickerConfig) -> None:
     """
     stats = ticker_config.get_stats()
 
-    print(f"\n{'='*80}")
-    print(f"Ticker Configuration Statistics")
-    print(f"{'='*80}\n")
+    print(f"\n{'=' * 80}")
+    print("Ticker Configuration Statistics")
+    print(f"{'=' * 80}\n")
 
     print(f"Config Version: {stats.get('version', 'N/A')}")
     print(f"Total Markets: {stats.get('total_markets', 0)}")
     print(f"Total Groups: {stats.get('total_groups', 0)}")
 
     # Market statistics
-    markets = stats.get('markets', {})
+    markets = stats.get("markets", {})
     if markets:
-        print(f"\n{'Market':<10} {'Currency':<8} {'Total':<8} {'Active':<8} "
-              f"{'Inactive':<10} {'Exchanges':<30}")
+        print(
+            f"\n{'Market':<10} {'Currency':<8} {'Total':<8} {'Active':<8} "
+            f"{'Inactive':<10} {'Exchanges':<30}"
+        )
         print("-" * 80)
 
         for market_name, market_stats in sorted(markets.items()):
-            exchanges = ', '.join(market_stats.get('exchanges', [])[:3])
-            if len(market_stats.get('exchanges', [])) > 3:
+            exchanges = ", ".join(market_stats.get("exchanges", [])[:3])
+            if len(market_stats.get("exchanges", [])) > 3:
                 exchanges += f" (+{len(market_stats.get('exchanges', [])) - 3})"
 
-            print(f"{market_name.upper():<10} "
-                  f"{market_stats.get('currency', ''):<8} "
-                  f"{market_stats.get('total_tickers', 0):<8} "
-                  f"{market_stats.get('active_tickers', 0):<8} "
-                  f"{market_stats.get('inactive_tickers', 0):<10} "
-                  f"{exchanges:<30}")
+            print(
+                f"{market_name.upper():<10} "
+                f"{market_stats.get('currency', ''):<8} "
+                f"{market_stats.get('total_tickers', 0):<8} "
+                f"{market_stats.get('active_tickers', 0):<8} "
+                f"{market_stats.get('inactive_tickers', 0):<10} "
+                f"{exchanges:<30}"
+            )
 
     # Available groups
     groups = ticker_config.get_groups()
@@ -490,30 +509,30 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
 
     # Parse markets
     if args.markets:
-        markets = [m.strip() for m in args.markets.split(',')]
+        markets = [m.strip() for m in args.markets.split(",")]
         # Map short names to full directory names
         market_map = {
-            'us': 'us_equity',
-            'cn': 'cn_ashare',
-            'hk': 'hk_sg_equity',
-            'sg': 'hk_sg_equity',
-            'hk_sg': 'hk_sg_equity'
+            "us": "us_equity",
+            "cn": "cn_ashare",
+            "hk": "hk_sg_equity",
+            "sg": "hk_sg_equity",
+            "hk_sg": "hk_sg_equity",
         }
         markets = [market_map.get(m, m) for m in markets]
     else:
-        markets = ['us_equity', 'cn_ashare', 'hk_sg_equity']
+        markets = ["us_equity", "cn_ashare", "hk_sg_equity"]
 
     # Calculate date range
     end_date = date.today()
     start_date = end_date - timedelta(days=args.days_back)
     business_days_only = not args.include_weekends
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"Gap Detection: {start_date} to {end_date}")
     valid_markets = [m for m in markets if m is not None]
     print(f"Markets: {', '.join(valid_markets)}")
     print(f"Business days only: {business_days_only}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     for market in markets:
         if market is None:
@@ -527,7 +546,7 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
             continue
 
         # Get short market name for display
-        market_short = market_str.replace('_equity', '').replace('_ashare', '')
+        market_short = market_str.replace("_equity", "").replace("_ashare", "")
 
         if args.coverage_stats:
             # Show coverage statistics
@@ -535,10 +554,7 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
             print("-" * 70)
 
             stats = detector.get_coverage_stats(
-                market,
-                start_date,
-                end_date,
-                business_days_only
+                market, start_date, end_date, business_days_only
             )
 
             if stats:
@@ -553,25 +569,25 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
                 ticker=None,  # Check all tickers
                 start_date=start_date,
                 end_date=end_date,
-                business_days_only=business_days_only
+                business_days_only=business_days_only,
             )
 
             print(f"\n{market_short.upper()} Market:")
             print_gap_report(missing_dates, verbose=args.verbose)
 
-    print(f"\n{'='*70}\n")
+    print(f"\n{'=' * 70}\n")
 
 
 def run_daily_ingestion(
     trading_date: date,
-    markets: List[str],
+    markets: list[str],
     dry_run: bool = False,
-    ticker_config: Optional[TickerConfig] = None,
-    filters: Optional[Dict] = None,
-    explicit_tickers: Optional[str] = None,
+    ticker_config: TickerConfig | None = None,
+    filters: dict | None = None,
+    explicit_tickers: str | None = None,
     parallel: bool = False,
-    max_workers: Optional[int] = None,
-) -> Dict[str, bool]:
+    max_workers: int | None = None,
+) -> dict[str, bool]:
     """
     Run daily ingestion for specified markets.
 
@@ -593,7 +609,7 @@ def run_daily_ingestion(
     # Parse explicit tickers if provided
     explicit_ticker_list = None
     if explicit_tickers:
-        explicit_ticker_list = [t.strip() for t in explicit_tickers.split(',')]
+        explicit_ticker_list = [t.strip() for t in explicit_tickers.split(",")]
 
     if parallel:
         # Parallel fetching mode
@@ -601,7 +617,7 @@ def run_daily_ingestion(
             logger.info(
                 "parallel_ingestion_mode",
                 markets=markets,
-                max_workers=max_workers or len(markets)
+                max_workers=max_workers or len(markets),
             )
 
             # Build fetch function map for parallel execution
@@ -615,13 +631,16 @@ def run_daily_ingestion(
                             date,
                             ticker_config=config,
                             filters=fltrs,
-                            explicit_tickers=explicit_list if mkt == 'us' else None,
+                            explicit_tickers=explicit_list if mkt == "us" else None,
                         )
+
                     return fetch_func
 
                 fetch_func_map[market] = (
-                    make_fetch_func(market, explicit_ticker_list, ticker_config, filters),
-                    {}
+                    make_fetch_func(
+                        market, explicit_ticker_list, ticker_config, filters
+                    ),
+                    {},
                 )
 
             # Fetch all markets in parallel
@@ -630,28 +649,28 @@ def run_daily_ingestion(
                     markets=markets,
                     trading_date=trading_date,
                     fetch_func_map=fetch_func_map,
-                    max_workers=max_workers
+                    max_workers=max_workers,
                 )
 
             # Process results
             market_dir_map = {
-                'us': 'us_equity',
-                'cn': 'cn_ashare',
-                'hk_sg': 'hk_sg_equity',
-                'macro': 'macro_indicators',
-                'us_news': 'us_news',
-                'us_social_sentiment': 'us_social_sentiment',
+                "us": "us_equity",
+                "cn": "cn_ashare",
+                "hk_sg": "hk_sg_equity",
+                "macro": "macro_indicators",
+                "us_news": "us_news",
+                "us_social_sentiment": "us_social_sentiment",
             }
 
             for market, fetch_result in fetch_results.items():
-                logger.info(f"\n{'='*60}")
+                logger.info(f"\n{'=' * 60}")
                 logger.info(f"Processing market: {market.upper()}")
-                logger.info(f"{'='*60}")
+                logger.info(f"{'=' * 60}")
 
                 if not fetch_result.success:
                     logger.error(
                         f"{market} fetch failed: {fetch_result.error}",
-                        duration_seconds=fetch_result.duration_seconds
+                        duration_seconds=fetch_result.duration_seconds,
                     )
                     results[market] = False
                     continue
@@ -666,35 +685,27 @@ def run_daily_ingestion(
                 market_dir = market_dir_map.get(market, market)
 
                 with timer(f"write_{market}_parquet", market=market):
-                    if market == 'macro':
+                    if market == "macro":
                         success = write_macro_to_parquet(
-                            df,
-                            trading_date,
-                            dry_run=dry_run
+                            df, trading_date, dry_run=dry_run
                         )
                     else:
                         success = write_to_partitioned_parquet(
-                            df,
-                            market_dir,
-                            trading_date,
-                            dry_run=dry_run
+                            df, market_dir, trading_date, dry_run=dry_run
                         )
 
                 results[market] = success
 
             # Log summary statistics
             summary = summarize_results(fetch_results)
-            logger.info(
-                "parallel_ingestion_summary",
-                **summary
-            )
+            logger.info("parallel_ingestion_summary", **summary)
 
     else:
         # Sequential fetching mode (original behavior)
         for market in markets:
-            logger.info(f"\n{'='*60}")
+            logger.info(f"\n{'=' * 60}")
             logger.info(f"Processing market: {market.upper()}")
-            logger.info(f"{'='*60}")
+            logger.info(f"{'=' * 60}")
 
             try:
                 # Fetch data
@@ -705,7 +716,9 @@ def run_daily_ingestion(
                         config=get_project_config(),
                         ticker_config=ticker_config,
                         filters=filters,
-                        explicit_tickers=explicit_ticker_list if market == 'us' else None,
+                        explicit_tickers=explicit_ticker_list
+                        if market == "us"
+                        else None,
                     )
 
                 if df is None or df.empty:
@@ -715,28 +728,23 @@ def run_daily_ingestion(
 
                 # Write to Parquet
                 market_dir_map = {
-                    'us': 'us_equity',
-                    'cn': 'cn_ashare',
-                    'hk_sg': 'hk_sg_equity',
-                    'macro': 'macro_indicators',
-                    'us_news': 'us_news',
-                    'us_social_sentiment': 'us_social_sentiment',
+                    "us": "us_equity",
+                    "cn": "cn_ashare",
+                    "hk_sg": "hk_sg_equity",
+                    "macro": "macro_indicators",
+                    "us_news": "us_news",
+                    "us_social_sentiment": "us_social_sentiment",
                 }
                 market_dir = market_dir_map.get(market, market)
 
                 with timer(f"write_{market}_parquet", market=market):
-                    if market == 'macro':
+                    if market == "macro":
                         success = write_macro_to_parquet(
-                            df,
-                            trading_date,
-                            dry_run=dry_run
+                            df, trading_date, dry_run=dry_run
                         )
                     else:
                         success = write_to_partitioned_parquet(
-                            df,
-                            market_dir,
-                            trading_date,
-                            dry_run=dry_run
+                            df, market_dir, trading_date, dry_run=dry_run
                         )
 
                 results[market] = success
@@ -751,11 +759,11 @@ def run_daily_ingestion(
 def fetch_market_data_with_config(
     market: str,
     trading_date: date,
-    project_config: Optional[Dict] = None,
-    ticker_config: Optional[TickerConfig] = None,
-    filters: Optional[Dict] = None,
-    explicit_tickers: Optional[List[str]] = None,
-) -> Optional[pd.DataFrame]:
+    project_config: dict | None = None,
+    ticker_config: TickerConfig | None = None,
+    filters: dict | None = None,
+    explicit_tickers: list[str] | None = None,
+) -> pd.DataFrame | None:
     """
     Fetch data for a specific market with config support.
 
@@ -771,8 +779,8 @@ def fetch_market_data_with_config(
         DataFrame with fetched data or None
     """
     runtime_config = project_config or get_project_config()
-    retry_attempts: int = int(runtime_config.get('retry_attempts', 3))
-    retry_delay: float = float(runtime_config.get('retry_delay', 1.0))
+    retry_attempts: int = int(runtime_config.get("retry_attempts", 3))
+    retry_delay: float = float(runtime_config.get("retry_delay", 1.0))
 
     if market == "us":
         fetcher = USEquityFetcher(
@@ -783,7 +791,7 @@ def fetch_market_data_with_config(
             filters=filters,
         )
     elif market == "cn":
-        fetcher = CNAshareFetcher(
+        fetcher = CNHybridFetcher(
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
             ticker_config=ticker_config,
@@ -798,6 +806,7 @@ def fetch_market_data_with_config(
         )
     elif market == "us_news":
         import os
+
         api_key = os.getenv("FINNHUB_API_KEY")
         if not api_key:
             logger.error("FINNHUB_API_KEY not set, cannot fetch news")
@@ -808,8 +817,12 @@ def fetch_market_data_with_config(
         # Get top 100 tickers by priority if not explicitly specified
         if not explicit_tickers and ticker_config:
             all_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
-            explicit_tickers = sorted(all_tickers, key=lambda t: getattr(t, 'priority', 5), reverse=True)[:100]
-            explicit_tickers = [t.symbol for t in explicit_tickers] if explicit_tickers else None
+            explicit_tickers = sorted(
+                all_tickers, key=lambda t: getattr(t, "priority", 5), reverse=True
+            )[:100]
+            explicit_tickers = (
+                [t.symbol for t in explicit_tickers] if explicit_tickers else None
+            )
 
         fetcher = FinnhubNewsFetcher(
             api_key=api_key,
@@ -819,18 +832,25 @@ def fetch_market_data_with_config(
         )
     elif market == "us_social_sentiment":
         import os
+
         api_key = os.getenv("FINNHUB_API_KEY")
         if not api_key:
             logger.error("FINNHUB_API_KEY not set, cannot fetch social sentiment")
             return None
 
-        from equity_lake.ingestion.sources.sentiment import FinnhubSocialSentimentFetcher
+        from equity_lake.ingestion.sources.sentiment import (
+            FinnhubSocialSentimentFetcher,
+        )
 
         # Get top 100 tickers by priority if not explicitly specified
         if not explicit_tickers and ticker_config:
             all_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
-            explicit_tickers = sorted(all_tickers, key=lambda t: getattr(t, 'priority', 5), reverse=True)[:100]
-            explicit_tickers = [t.symbol for t in explicit_tickers] if explicit_tickers else None
+            explicit_tickers = sorted(
+                all_tickers, key=lambda t: getattr(t, "priority", 5), reverse=True
+            )[:100]
+            explicit_tickers = (
+                [t.symbol for t in explicit_tickers] if explicit_tickers else None
+            )
 
         fetcher = FinnhubSocialSentimentFetcher(
             api_key=api_key,

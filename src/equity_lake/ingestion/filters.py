@@ -24,4 +24,5 @@ def build_filters_from_args(args: argparse.Namespace) -> FilterConfig:
 
     return filters
 
+
 __all__ = ["build_filters_from_args"]

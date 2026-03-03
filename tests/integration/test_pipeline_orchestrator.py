@@ -31,7 +31,10 @@ def test_run_ingestion_uses_direct_stage_helper(monkeypatch):
     success = orchestrator.run_ingestion()
 
     assert success is False
-    assert orchestrator.results["ingestion"]["market_results"] == {"us": True, "cn": False}
+    assert orchestrator.results["ingestion"]["market_results"] == {
+        "us": True,
+        "cn": False,
+    }
 
 
 def test_run_feature_engineering_uses_direct_stage_helper(monkeypatch):
@@ -98,4 +101,7 @@ def test_run_ml_inference_uses_direct_stage_helper(monkeypatch):
     success = orchestrator.run_ml_inference()
 
     assert success is True
-    assert orchestrator.results["ml_inference"]["ticker_results"]["AAPL"]["success"] is True
+    assert (
+        orchestrator.results["ml_inference"]["ticker_results"]["AAPL"]["success"]
+        is True
+    )

@@ -6,8 +6,7 @@ and performance measurement.
 """
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
-from typing import Dict, List, Optional
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -32,6 +31,7 @@ class Position:
         unrealized_pnl: Unrealized profit/loss
         total_cost: Total cost basis
     """
+
     ticker: str
     shares: float
     avg_cost: float
@@ -65,9 +65,10 @@ class PortfolioSnapshot:
         daily_pnl: Daily profit/loss
         returns: Cumulative returns
     """
+
     date: date
     cash: float
-    positions: Dict[str, Position] = field(default_factory=dict)
+    positions: dict[str, Position] = field(default_factory=dict)
     total_value: float = 0.0
     daily_pnl: float = 0.0
     returns: float = 0.0
@@ -102,7 +103,7 @@ class Portfolio:
     def __init__(
         self,
         initial_cash: float = 100_000.0,
-        broker: Optional[Broker] = None,
+        broker: Broker | None = None,
     ):
         """
         Initialize portfolio.
@@ -113,9 +114,9 @@ class Portfolio:
         """
         self.initial_cash = initial_cash
         self.cash = initial_cash
-        self.positions: Dict[str, Position] = {}
-        self.snapshots: List[PortfolioSnapshot] = []
-        self.executions: List[Execution] = []
+        self.positions: dict[str, Position] = {}
+        self.snapshots: list[PortfolioSnapshot] = []
+        self.executions: list[Execution] = []
         self.broker = broker
 
         logger.info(
@@ -126,7 +127,7 @@ class Portfolio:
     def update(
         self,
         date: date,
-        prices: Dict[str, float],
+        prices: dict[str, float],
     ) -> PortfolioSnapshot:
         """
         Update portfolio with current prices.
@@ -184,7 +185,9 @@ class Portfolio:
                 # Update existing position
                 pos = self.positions[execution.ticker]
                 total_shares = pos.shares + execution.quantity
-                total_cost = (pos.shares * pos.avg_cost) + (execution.quantity * execution.price)
+                total_cost = (pos.shares * pos.avg_cost) + (
+                    execution.quantity * execution.price
+                )
                 pos.avg_cost = total_cost / total_shares if total_shares > 0 else 0
                 pos.shares = total_shares
             else:
@@ -208,7 +211,9 @@ class Portfolio:
                     del self.positions[execution.ticker]
 
             # Add cash (proceeds minus commission)
-            self.cash += (abs(execution.quantity) * execution.price) - execution.commission
+            self.cash += (
+                abs(execution.quantity) * execution.price
+            ) - execution.commission
 
         logger.debug(
             "Execution added to portfolio",
@@ -221,7 +226,7 @@ class Portfolio:
 
     def get_total_value(
         self,
-        prices: Optional[Dict[str, float]] = None,
+        prices: dict[str, float] | None = None,
     ) -> float:
         """
         Calculate total portfolio value.
@@ -235,12 +240,16 @@ class Portfolio:
         total_value = self.cash
 
         for ticker, position in self.positions.items():
-            price = prices.get(ticker, position.current_price) if prices else position.current_price
+            price = (
+                prices.get(ticker, position.current_price)
+                if prices
+                else position.current_price
+            )
             total_value += position.shares * price
 
         return total_value
 
-    def get_position(self, ticker: str) -> Optional[Position]:
+    def get_position(self, ticker: str) -> Position | None:
         """
         Get position for a ticker.
 
@@ -252,7 +261,7 @@ class Portfolio:
         """
         return self.positions.get(ticker)
 
-    def get_positions(self) -> Dict[str, Position]:
+    def get_positions(self) -> dict[str, Position]:
         """Get all positions."""
         return dict(self.positions)
 
@@ -285,7 +294,7 @@ class Portfolio:
 
         return equity_curve.pct_change().dropna()
 
-    def get_summary(self) -> Dict[str, object]:
+    def get_summary(self) -> dict[str, object]:
         """
         Get portfolio summary.
 

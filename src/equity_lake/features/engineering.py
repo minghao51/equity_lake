@@ -541,21 +541,39 @@ class FeatureEngineer:
             )
 
             # Fill missing social sentiment (no data that day) with neutral values
-            merged_df["social_mention_count"] = merged_df["social_mention_count"].fillna(0).astype(int)
-            merged_df["social_sentiment_score"] = merged_df["social_sentiment_score"].fillna(0.0)
-            merged_df["social_positive_score"] = merged_df["social_positive_score"].fillna(0.0)
-            merged_df["social_negative_score"] = merged_df["social_negative_score"].fillna(0.0)
-            merged_df["social_reddit_mentions"] = merged_df["social_reddit_mentions"].fillna(0).astype(int)
-            merged_df["social_twitter_mentions"] = merged_df["social_twitter_mentions"].fillna(0).astype(int)
+            merged_df["social_mention_count"] = (
+                merged_df["social_mention_count"].fillna(0).astype(int)
+            )
+            merged_df["social_sentiment_score"] = merged_df[
+                "social_sentiment_score"
+            ].fillna(0.0)
+            merged_df["social_positive_score"] = merged_df[
+                "social_positive_score"
+            ].fillna(0.0)
+            merged_df["social_negative_score"] = merged_df[
+                "social_negative_score"
+            ].fillna(0.0)
+            merged_df["social_reddit_mentions"] = (
+                merged_df["social_reddit_mentions"].fillna(0).astype(int)
+            )
+            merged_df["social_twitter_mentions"] = (
+                merged_df["social_twitter_mentions"].fillna(0).astype(int)
+            )
 
             # Compute momentum metrics (5-day change)
             merged_df = merged_df.sort_values(["ticker", "date"])
-            merged_df["social_momentum"] = merged_df.groupby("ticker")["social_mention_count"].pct_change(5)
-            merged_df["social_sentiment_momentum"] = merged_df.groupby("ticker")["social_sentiment_score"].diff(5)
+            merged_df["social_momentum"] = merged_df.groupby("ticker")[
+                "social_mention_count"
+            ].pct_change(5)
+            merged_df["social_sentiment_momentum"] = merged_df.groupby("ticker")[
+                "social_sentiment_score"
+            ].diff(5)
 
             # Fill NaN momentum values for first 5 days
             merged_df["social_momentum"] = merged_df["social_momentum"].fillna(0.0)
-            merged_df["social_sentiment_momentum"] = merged_df["social_sentiment_momentum"].fillna(0.0)
+            merged_df["social_sentiment_momentum"] = merged_df[
+                "social_sentiment_momentum"
+            ].fillna(0.0)
 
             logger.info(
                 "Merged social sentiment features: %s rows with data, %s rows without data",

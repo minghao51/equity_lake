@@ -5,15 +5,10 @@ This module provides HTML and JSON report generation for backtest results.
 """
 
 import json
-from datetime import date
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
-import pandas as pd
 import structlog
-
-from equity_lake.backtesting.analysis.attribution import AttributionAnalyzer
-from equity_lake.backtesting.analysis.metrics import PerformanceMetrics
 
 logger = structlog.get_logger(__name__)
 
@@ -48,7 +43,7 @@ class ReportGenerator:
         """
         html_content = self._build_html_report(result, include_charts)
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             f.write(html_content)
 
         logger.info("HTML report generated", path=str(output_path))
@@ -66,9 +61,9 @@ class ReportGenerator:
             output_path: Output file path
         """
         # Convert result to dictionary
-        data = result.to_dict() if hasattr(result, 'to_dict') else vars(result)
+        data = result.to_dict() if hasattr(result, "to_dict") else vars(result)
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(data, f, indent=2, default=str)
 
         logger.info("JSON report generated", path=str(output_path))
@@ -124,13 +119,13 @@ class ReportGenerator:
         """
 
         # Extract result data
-        strategy_name = getattr(result, 'strategy_name', 'Unknown Strategy')
-        start_date = str(getattr(result, 'start_date', ''))
-        end_date = str(getattr(result, 'end_date', ''))
-        initial_cash = getattr(result, 'initial_cash', 0)
-        final_cash = getattr(result, 'final_cash', 0)
-        metrics = getattr(result, 'metrics', {})
-        trades = getattr(result, 'trades', [])
+        strategy_name = getattr(result, "strategy_name", "Unknown Strategy")
+        start_date = str(getattr(result, "start_date", ""))
+        end_date = str(getattr(result, "end_date", ""))
+        initial_cash = getattr(result, "initial_cash", 0)
+        final_cash = getattr(result, "final_cash", 0)
+        metrics = getattr(result, "metrics", {})
+        trades = getattr(result, "trades", [])
 
         # Build metrics HTML
         metrics_html = self._build_metrics_html(metrics)
@@ -158,15 +153,15 @@ class ReportGenerator:
 
         return html
 
-    def _build_metrics_html(self, metrics: Dict[str, float]) -> str:
+    def _build_metrics_html(self, metrics: dict[str, float]) -> str:
         """Build HTML for metrics display."""
         key_metrics = [
-            ('Total Return', 'total_return', '{:.2%}'),
-            ('CAGR', 'cagr', '{:.2%}'),
-            ('Sharpe Ratio', 'sharpe_ratio', '{:.2f}'),
-            ('Max Drawdown', 'max_drawdown', '{:.2%}'),
-            ('Volatility', 'volatility', '{:.2%}'),
-            ('Win Rate', 'win_rate', '{:.1%}'),
+            ("Total Return", "total_return", "{:.2%}"),
+            ("CAGR", "cagr", "{:.2%}"),
+            ("Sharpe Ratio", "sharpe_ratio", "{:.2f}"),
+            ("Max Drawdown", "max_drawdown", "{:.2%}"),
+            ("Volatility", "volatility", "{:.2%}"),
+            ("Win Rate", "win_rate", "{:.1%}"),
         ]
 
         html_parts = []

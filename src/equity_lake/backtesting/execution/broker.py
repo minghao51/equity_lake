@@ -8,18 +8,20 @@ slippage, and market impact.
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
 
-import pandas as pd
 import structlog
 
-from equity_lake.backtesting.execution.costs import TransactionCost, get_default_cost_model
+from equity_lake.backtesting.execution.costs import (
+    TransactionCost,
+    get_default_cost_model,
+)
 
 logger = structlog.get_logger(__name__)
 
 
 class OrderType(Enum):
     """Order types supported by the broker."""
+
     MARKET = "MARKET"
     LIMIT = "LIMIT"
     STOP = "STOP"
@@ -28,6 +30,7 @@ class OrderType(Enum):
 
 class OrderSide(Enum):
     """Order sides."""
+
     BUY = "BUY"
     SELL = "SELL"
 
@@ -47,14 +50,15 @@ class Order:
         order_id: Unique order identifier
         created_at: Order creation timestamp
     """
+
     ticker: str
     side: OrderSide
     order_type: OrderType
     quantity: float
-    price: Optional[float] = None
-    stop_price: Optional[float] = None
-    order_id: Optional[str] = None
-    created_at: Optional[datetime] = None
+    price: float | None = None
+    stop_price: float | None = None
+    order_id: str | None = None
+    created_at: datetime | None = None
 
 
 @dataclass
@@ -73,6 +77,7 @@ class Execution:
         total_cost: Total transaction cost
         executed_at: Execution timestamp
     """
+
     order_id: str
     ticker: str
     side: OrderSide
@@ -120,7 +125,7 @@ class Broker:
         self,
         initial_cash: float = 100_000.0,
         market: str = "us",
-        cost_model: Optional[TransactionCost] = None,
+        cost_model: TransactionCost | None = None,
     ):
         """
         Initialize broker.
@@ -132,10 +137,10 @@ class Broker:
         """
         self.initial_cash = initial_cash
         self.cash = initial_cash
-        self.positions: Dict[str, float] = {}
+        self.positions: dict[str, float] = {}
         self.cost_model = cost_model or get_default_cost_model(market)
-        self.pending_orders: List[Order] = []
-        self.execution_history: List[Execution] = []
+        self.pending_orders: list[Order] = []
+        self.execution_history: list[Execution] = []
 
         logger.info(
             "Broker initialized",
@@ -147,7 +152,7 @@ class Broker:
         self,
         order: Order,
         price: float,
-        volume: Optional[float] = None,
+        volume: float | None = None,
         allow_partial_fill: bool = False,
     ) -> Execution:
         """
@@ -167,7 +172,9 @@ class Broker:
         """
         # Generate order ID if not provided
         if order.order_id is None:
-            order.order_id = f"{order.ticker}_{order.side.value}_{datetime.now().timestamp()}"
+            order.order_id = (
+                f"{order.ticker}_{order.side.value}_{datetime.now().timestamp()}"
+            )
 
         logger.debug(
             "Executing order",
@@ -224,7 +231,9 @@ class Broker:
 
             # Update cash and positions
             self.cash -= required_cash
-            self.positions[order.ticker] = self.positions.get(order.ticker, 0) + order.quantity
+            self.positions[order.ticker] = (
+                self.positions.get(order.ticker, 0) + order.quantity
+            )
 
         else:  # SELL
             # Check sufficient shares
@@ -282,7 +291,7 @@ class Broker:
 
     def get_portfolio_value(
         self,
-        prices: Dict[str, float],
+        prices: dict[str, float],
     ) -> float:
         """
         Calculate total portfolio value.
@@ -301,7 +310,7 @@ class Broker:
 
         return total_value
 
-    def get_open_orders(self) -> List[Order]:
+    def get_open_orders(self) -> list[Order]:
         """Get list of pending orders."""
         return self.pending_orders.copy()
 
@@ -332,7 +341,7 @@ class Broker:
         self.execution_history.clear()
         logger.info("Broker reset")
 
-    def get_summary(self) -> Dict[str, object]:
+    def get_summary(self) -> dict[str, object]:
         """
         Get broker summary.
 

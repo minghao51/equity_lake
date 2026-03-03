@@ -7,14 +7,16 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.signals.history import load_signals_from_parquet, save_signals_to_parquet
+from equity_lake.signals.history import (
+    load_signals_from_parquet,
+    save_signals_to_parquet,
+)
 from equity_lake.signals.models import Signal
 
 
 @pytest.fixture
 def temp_signals_dir():
     """Create temporary signals directory."""
-    original_dir = Path("data/signals")
     temp_dir = Path(tempfile.mkdtemp())
 
     # Mock SIGNALS_DIR

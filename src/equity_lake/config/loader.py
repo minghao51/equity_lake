@@ -33,7 +33,7 @@ class TickerConfig:
     """Centralized ticker configuration manager."""
 
     DEFAULT_CONFIG_PATH = (
-        Path(__file__).resolve().parents[2] / "config" / "tickers.yaml"
+        Path(__file__).resolve().parents[3] / "config" / "tickers.yaml"
     )
 
     def __init__(self, config_path: Path | None = None):

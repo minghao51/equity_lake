@@ -79,7 +79,8 @@ def write_to_partitioned_parquet(
                         row["ticker"],
                         row["datetime"],
                         row["source"],
-                    ) in existing_keys,
+                    )
+                    in existing_keys,
                     axis=1,
                 )
             else:
@@ -91,8 +92,7 @@ def write_to_partitioned_parquet(
                     ).tolist()
                 )
                 duplicate_mask = df.apply(
-                    lambda row: (row["ticker"], row["date"])
-                    in existing_keys,
+                    lambda row: (row["ticker"], row["date"]) in existing_keys,
                     axis=1,
                 )
 

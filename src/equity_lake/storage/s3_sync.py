@@ -19,16 +19,12 @@ Usage:
 
 import argparse
 import logging
-import os
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from equity_lake.core.runtime import (
-    LAKE_DIR,
-    LOGS_DIR,
     US_EQUITY_DIR,
     get_project_config,
     setup_logging,
@@ -42,6 +38,7 @@ logger = logging.getLogger(__name__)
 # S3 Sync Implementation
 # =============================================================================
 
+
 class S3Syncer:
     """Handle S3 to local synchronization."""
 
@@ -51,7 +48,7 @@ class S3Syncer:
         target_dir: Path,
         workers: int = 16,
         dry_run: bool = False,
-        tool: str = "auto"
+        tool: str = "auto",
     ):
         """
         Initialize S3 syncer.
@@ -76,9 +73,7 @@ class S3Syncer:
         # Check for s5cmd first (faster)
         try:
             result = subprocess.run(
-                ["s5cmd", "--version"],
-                capture_output=True,
-                timeout=5
+                ["s5cmd", "--version"], capture_output=True, timeout=5
             )
             if result.returncode == 0:
                 logger.info("✅ Detected s5cmd (recommended)")
@@ -89,9 +84,7 @@ class S3Syncer:
         # Check for AWS CLI
         try:
             result = subprocess.run(
-                ["aws", "--version"],
-                capture_output=True,
-                timeout=5
+                ["aws", "--version"], capture_output=True, timeout=5
             )
             if result.returncode == 0:
                 logger.info("✅ Detected AWS CLI")
@@ -114,12 +107,7 @@ class S3Syncer:
             else:  # aws
                 cmd = ["aws", "s3", "ls", self.bucket, "--no-sign-request"]
 
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
             if result.returncode == 0:
                 logger.info("✅ S3 bucket accessible")
@@ -141,10 +129,11 @@ class S3Syncer:
 
         cmd = [
             "s5cmd",
-            "--numworkers", str(self.workers),
+            "--numworkers",
+            str(self.workers),
             "sync",
             f"{self.bucket}",
-            f"{self.target_dir}/"
+            f"{self.target_dir}/",
         ]
 
         if self.dry_run:
@@ -159,7 +148,7 @@ class S3Syncer:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
             )
 
             # Stream output
@@ -175,13 +164,15 @@ class S3Syncer:
 
     def sync_with_aws_cli(self) -> bool:
         """Sync using AWS CLI (slower but widely available)."""
-        logger.info(f"Starting sync with AWS CLI")
+        logger.info("Starting sync with AWS CLI")
 
         cmd = [
-            "aws", "s3", "sync",
+            "aws",
+            "s3",
+            "sync",
             self.bucket,
             str(self.target_dir),
-            "--no-sign-request"  # For public buckets
+            "--no-sign-request",  # For public buckets
         ]
 
         # Add progress indicator
@@ -194,12 +185,7 @@ class S3Syncer:
         try:
             logger.info(f"Running: {' '.join(cmd)}")
 
-            result = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True
-            )
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
 
             logger.info(result.stdout)
             return True
@@ -235,9 +221,9 @@ class S3Syncer:
 
     def sync(self) -> bool:
         """Execute S3 sync process."""
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("S3 Historical Data Sync")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info(f"Source: {self.bucket}")
         logger.info(f"Target: {self.target_dir}")
         logger.info(f"Tool: {self.tool}")
@@ -284,6 +270,7 @@ class S3Syncer:
 # CLI Interface
 # =============================================================================
 
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -305,47 +292,50 @@ Examples:
 
   # Sync to custom directory
   uv run equity-sync --target /path/to/data
-        """
+        """,
     )
 
     parser.add_argument(
-        '--bucket',
+        "--bucket",
         type=str,
-        help='S3 bucket path (e.g., s3://my-bucket/us_equity/)',
+        help="S3 bucket path (e.g., s3://my-bucket/us_equity/)",
     )
 
     parser.add_argument(
-        '--target',
+        "--target",
         type=Path,
         default=US_EQUITY_DIR,
-        help=f'Local target directory (default: {US_EQUITY_DIR})',
+        help=f"Local target directory (default: {US_EQUITY_DIR})",
     )
 
     parser.add_argument(
-        '--workers', '-w',
+        "--workers",
+        "-w",
         type=int,
         default=16,
-        help='Number of parallel workers (default: 16)',
+        help="Number of parallel workers (default: 16)",
     )
 
     parser.add_argument(
-        '--tool', '-t',
+        "--tool",
+        "-t",
         type=str,
-        choices=['auto', 's5cmd', 'aws'],
-        default='auto',
-        help='Sync tool to use (default: auto)',
+        choices=["auto", "s5cmd", "aws"],
+        default="auto",
+        help="Sync tool to use (default: auto)",
     )
 
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Test without downloading files',
+        "--dry-run",
+        action="store_true",
+        help="Test without downloading files",
     )
 
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging',
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging",
     )
 
     return parser.parse_args()
@@ -366,7 +356,9 @@ def main():
         bucket = config.get("s3_bucket", "")
 
     if not bucket:
-        logger.error("No S3 bucket specified. Use --bucket or set S3_BUCKET environment variable")
+        logger.error(
+            "No S3 bucket specified. Use --bucket or set S3_BUCKET environment variable"
+        )
         logger.error("\nPublic buckets with US equity data:")
         logger.error("  (Add your bucket URL here)")
         sys.exit(1)
@@ -377,7 +369,7 @@ def main():
         target_dir=args.target,
         workers=args.workers,
         dry_run=args.dry_run,
-        tool=args.tool
+        tool=args.tool,
     )
 
     # Execute sync

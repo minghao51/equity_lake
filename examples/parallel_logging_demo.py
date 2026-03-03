@@ -8,39 +8,39 @@ Run this to see the improvements in action!
 
 import time
 from datetime import date
-from pathlib import Path
+
+import pandas as pd
 
 from equity_lake.core.logging import (
+    correlation_context,
+    get_correlation_id,
     setup_structured_logging,
     timed,
     timer,
-    correlation_context,
-    get_correlation_id,
 )
 from equity_lake.ingestion.parallel import (
     fetch_markets_parallel,
     fetch_markets_sequential,
     summarize_results,
-    MarketFetchResult,
 )
 
 
 # Mock fetch functions for demonstration
-def mock_fetch_us(trading_date: date) -> 'pd.DataFrame':
+def mock_fetch_us(trading_date: date) -> "pd.DataFrame":
     """Mock US market fetch (simulates 2 second API call)."""
     time.sleep(2)
     print("  [Simulated] Fetched 5000 rows from US market")
     return None  # Would return DataFrame in real usage
 
 
-def mock_fetch_cn(trading_date: date) -> 'pd.DataFrame':
+def mock_fetch_cn(trading_date: date) -> "pd.DataFrame":
     """Mock China market fetch (simulates 2 second API call)."""
     time.sleep(2)
     print("  [Simulated] Fetched 3000 rows from China market")
     return None  # Would return DataFrame in real usage
 
 
-def mock_fetch_hk_sg(trading_date: date) -> 'pd.DataFrame':
+def mock_fetch_hk_sg(trading_date: date) -> "pd.DataFrame":
     """Mock HK/SG market fetch (simulates 2 second API call)."""
     time.sleep(2)
     print("  [Simulated] Fetched 1500 rows from HK/SG market")
@@ -49,15 +49,15 @@ def mock_fetch_hk_sg(trading_date: date) -> 'pd.DataFrame':
 
 def demo_structured_logging():
     """Demonstrate structured logging features."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 1: Structured Logging with Timing")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     # Setup structured logging
     logger = setup_structured_logging(
         level="INFO",
         json_output=True,  # JSON format for machine readability
-        console=True
+        console=True,
     )
 
     # Demonstrate @timed decorator
@@ -86,20 +86,20 @@ def demo_structured_logging():
 
 def demo_sequential_fetching():
     """Demonstrate sequential fetching (original behavior)."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 2: Sequential Market Fetching (Original)")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     trading_date = date.today()
 
     # Build fetch function map
     fetch_func_map = {
-        'us': (mock_fetch_us, {}),
-        'cn': (mock_fetch_cn, {}),
-        'hk_sg': (mock_fetch_hk_sg, {}),
+        "us": (mock_fetch_us, {}),
+        "cn": (mock_fetch_cn, {}),
+        "hk_sg": (mock_fetch_hk_sg, {}),
     }
 
-    markets = ['us', 'cn', 'hk_sg']
+    markets = ["us", "cn", "hk_sg"]
 
     print(f"Fetching {len(markets)} markets sequentially...")
     print("(Each market takes ~2 seconds, so total ~6 seconds)\n")
@@ -107,9 +107,7 @@ def demo_sequential_fetching():
     start_time = time.time()
 
     results = fetch_markets_sequential(
-        markets=markets,
-        trading_date=trading_date,
-        fetch_func_map=fetch_func_map
+        markets=markets, trading_date=trading_date, fetch_func_map=fetch_func_map
     )
 
     elapsed = time.time() - start_time
@@ -125,20 +123,20 @@ def demo_sequential_fetching():
 
 def demo_parallel_fetching():
     """Demonstrate parallel fetching (new feature)."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 3: Parallel Market Fetching (New Feature!) 🚀")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     trading_date = date.today()
 
     # Build fetch function map
     fetch_func_map = {
-        'us': (mock_fetch_us, {}),
-        'cn': (mock_fetch_cn, {}),
-        'hk_sg': (mock_fetch_hk_sg, {}),
+        "us": (mock_fetch_us, {}),
+        "cn": (mock_fetch_cn, {}),
+        "hk_sg": (mock_fetch_hk_sg, {}),
     }
 
-    markets = ['us', 'cn', 'hk_sg']
+    markets = ["us", "cn", "hk_sg"]
 
     print(f"Fetching {len(markets)} markets in parallel...")
     print("(All markets fetched concurrently, so total ~2 seconds)\n")
@@ -149,7 +147,7 @@ def demo_parallel_fetching():
         markets=markets,
         trading_date=trading_date,
         fetch_func_map=fetch_func_map,
-        max_workers=len(markets)
+        max_workers=len(markets),
     )
 
     elapsed = time.time() - start_time
@@ -168,24 +166,24 @@ def demo_parallel_fetching():
 
 def demo_comparison():
     """Compare sequential vs parallel performance."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("DEMO 4: Performance Comparison")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     print("Running both modes to compare performance...\n")
 
     # Run sequential
     sequential_time = demo_sequential_fetching()
 
-    print("\n" + "-"*70 + "\n")
+    print("\n" + "-" * 70 + "\n")
 
     # Run parallel
     parallel_time = demo_parallel_fetching()
 
     # Show comparison
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("COMPARISON RESULTS")
-    print("="*70)
+    print("=" * 70)
     print(f"Sequential time: {sequential_time:.2f}s")
     print(f"Parallel time:   {parallel_time:.2f}s")
     print(f"Speedup:         {sequential_time / parallel_time:.2f}x 🚀")
@@ -194,9 +192,9 @@ def demo_comparison():
 
 def main():
     """Run all demos."""
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🎯 Parallel Fetching & Structured Logging Demo")
-    print("="*70)
+    print("=" * 70)
     print("\nThis demo showcases the new features:")
     print("  1. Structured logging with automatic timing")
     print("  2. Parallel market fetching for 3x speedup")
@@ -209,9 +207,9 @@ def main():
     # Demo 2 & 3 & 4: Sequential vs Parallel comparison
     demo_comparison()
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("✅ Demo Complete!")
-    print("="*70)
+    print("=" * 70)
     print("\nTo use these features in your daily ingestion:")
     print("  uv run equity-daily --parallel")
     print("\nFor more information, see: docs/IMPROVEMENTS_PARALLEL_LOGGING.md")

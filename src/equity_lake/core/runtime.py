@@ -5,7 +5,6 @@ __author__ = "Equity Data Pipeline Team"
 
 import logging
 from pathlib import Path
-from typing import Dict, Optional, Union
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -48,7 +47,10 @@ MACRO_INDICATOR_CONFIG = {
     "vix": {"source": "yfinance", "ticker": "^VIX"},
     "gld": {"source": "yfinance", "ticker": "GLD"},
     "iau": {"source": "yfinance", "ticker": "IAU"},
-    "policy_uncertainty": {"source": "fred", "series": "USEPUINDXD"},  # US Economic Policy Uncertainty Index
+    "policy_uncertainty": {
+        "source": "fred",
+        "series": "USEPUINDXD",
+    },  # US Economic Policy Uncertainty Index
 }
 
 # Standard OHLCV schema
@@ -60,41 +62,40 @@ STANDARD_COLUMNS = [
     "low",
     "close",
     "volume",
-    "adj_close"
+    "adj_close",
 ]
 
 # News schema
 NEWS_COLUMNS = [
-    'ticker',           # STRING: Stock symbol
-    'date',             # DATE: Published date (partition key)
-    'datetime',         # DATETIME: Exact publication timestamp
-    'source',           # STRING: News source
-    'headline',         # STRING: Article title
-    'summary',          # STRING: Article summary
-    'url',              # STRING: Article URL
-    'category',         # STRING: News category
-    'sentiment_score',  # FLOAT: VADER score (-1.0 to 1.0)
-    'sentiment_label',  # STRING: 'positive', 'negative', 'neutral'
-    'relevance_score',  # FLOAT: API relevance (0.0 to 1.0)
+    "ticker",  # STRING: Stock symbol
+    "date",  # DATE: Published date (partition key)
+    "datetime",  # DATETIME: Exact publication timestamp
+    "source",  # STRING: News source
+    "headline",  # STRING: Article title
+    "summary",  # STRING: Article summary
+    "url",  # STRING: Article URL
+    "category",  # STRING: News category
+    "sentiment_score",  # FLOAT: VADER score (-1.0 to 1.0)
+    "sentiment_label",  # STRING: 'positive', 'negative', 'neutral'
+    "relevance_score",  # FLOAT: API relevance (0.0 to 1.0)
 ]
 
 # Social sentiment schema
 SOCIAL_COLUMNS = [
-    'ticker',              # STRING: Stock symbol
-    'date',                # DATE: Date of measurement (partition key)
-    'datetime',            # DATETIME: Exact timestamp
-    'source',              # STRING: 'reddit', 'twitter', etc.
-    'mention_count',       # INT: Number of mentions
-    'positive_score',      # FLOAT: Positive sentiment score
-    'negative_score',      # FLOAT: Negative sentiment score
-    'score',               # FLOAT: Normalized sentiment (-1.0 to 1.0)
-    'social_metric',       # STRING: Metric type
+    "ticker",  # STRING: Stock symbol
+    "date",  # DATE: Date of measurement (partition key)
+    "datetime",  # DATETIME: Exact timestamp
+    "source",  # STRING: 'reddit', 'twitter', etc.
+    "mention_count",  # INT: Number of mentions
+    "positive_score",  # FLOAT: Positive sentiment score
+    "negative_score",  # FLOAT: Negative sentiment score
+    "score",  # FLOAT: Normalized sentiment (-1.0 to 1.0)
+    "social_metric",  # STRING: Metric type
 ]
 
+
 def setup_logging(
-    name: str,
-    level: str = "INFO",
-    log_file: Optional[str] = None
+    name: str, level: str = "INFO", log_file: str | None = None
 ) -> logging.Logger:
     """
     Setup logging configuration for equity_lake.
@@ -119,10 +120,7 @@ def setup_logging(
 
     # Setup structured logging (JSON output by default)
     setup_structured_logging(
-        level=level,
-        log_file=log_path,
-        json_output=True,
-        console=True
+        level=level, log_file=log_path, json_output=True, console=True
     )
 
     # Return standard library logger for backward compatibility
@@ -131,14 +129,16 @@ def setup_logging(
 
     return stdlib_logger
 
-def get_project_config() -> Dict[str, Union[str, int, float, bool]]:
+
+def get_project_config() -> dict[str, str | int | float | bool]:
     """Get project configuration from environment variables."""
     import os
+
     from dotenv import load_dotenv
 
     load_dotenv()
 
-    config: Dict[str, Union[str, int, float, bool]] = {
+    config: dict[str, str | int | float | bool] = {
         "db_path": os.getenv("DB_PATH", "equity_data.duckdb"),
         "log_level": os.getenv("LOG_LEVEL", "INFO"),
         "log_dir": os.getenv("LOG_DIR", "logs"),
@@ -152,14 +152,10 @@ def get_project_config() -> Dict[str, Union[str, int, float, bool]]:
 
     return config
 
+
 def validate_data_directories() -> bool:
     """Validate that all required data directories exist."""
-    required_dirs = [
-        US_EQUITY_DIR,
-        CN_ASHARE_DIR,
-        HK_SG_EQUITY_DIR,
-        LOGS_DIR
-    ]
+    required_dirs = [US_EQUITY_DIR, CN_ASHARE_DIR, HK_SG_EQUITY_DIR, LOGS_DIR]
 
     for dir_path in required_dirs:
         if not dir_path.exists():
@@ -167,6 +163,7 @@ def validate_data_directories() -> bool:
             print(f"Created directory: {dir_path}")
 
     return True
+
 
 __all__ = [
     "PROJECT_ROOT",
@@ -189,5 +186,5 @@ __all__ = [
     "MACRO_INDICATOR_CONFIG",
     "setup_logging",
     "get_project_config",
-    "validate_data_directories"
+    "validate_data_directories",
 ]

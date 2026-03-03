@@ -18,13 +18,10 @@ Usage:
 """
 
 from datetime import date
-from functools import lru_cache
-from pathlib import Path
-from typing import List, Optional, Union
 
 import duckdb
-import numpy as np
 import pandas as pd
+import structlog
 from joblib import Memory
 
 from equity_lake.core.runtime import (
@@ -33,7 +30,6 @@ from equity_lake.core.runtime import (
     LOGS_DIR,
     US_EQUITY_DIR,
 )
-import structlog
 
 logger = structlog.get_logger(__name__)
 
@@ -140,11 +136,11 @@ class BacktestDataLoader:
 
     def load(
         self,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
-        markets: Optional[List[str]] = None,
-        columns: Optional[List[str]] = None,
+        markets: list[str] | None = None,
+        columns: list[str] | None = None,
         wide_format: bool = True,
         fill_method: str = "ffill",
     ) -> pd.DataFrame:
@@ -179,7 +175,16 @@ class BacktestDataLoader:
 
         # Default columns to load
         if columns is None:
-            columns = ["ticker", "date", "open", "high", "low", "close", "volume", "adj_close"]
+            columns = [
+                "ticker",
+                "date",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "adj_close",
+            ]
 
         logger.info(
             "Loading backtest data",
@@ -218,11 +223,11 @@ class BacktestDataLoader:
 
     def _query_data(
         self,
-        tickers: List[str],
+        tickers: list[str],
         start_date: date,
         end_date: date,
-        markets: List[str],
-        columns: List[str],
+        markets: list[str],
+        columns: list[str],
     ) -> pd.DataFrame:
         """Execute DuckDB query to load data."""
 
@@ -231,17 +236,15 @@ class BacktestDataLoader:
         for market in markets:
             if market in ["us", "cn", "hk_sg"]:
                 view_name = f"backtest_{market}"
-                union_queries.append(
-                    f"SELECT {', '.join(columns)} FROM {view_name}"
-                )
+                union_queries.append(f"SELECT {', '.join(columns)} FROM {view_name}")
 
         if not union_queries:
             logger.warning("No valid markets specified")
             return pd.DataFrame()
 
         sql = f"""
-        {' UNION ALL '.join(union_queries)}
-        WHERE ticker IN ({', '.join([f"'{t}'" for t in tickers])})
+        {" UNION ALL ".join(union_queries)}
+        WHERE ticker IN ({", ".join([f"'{t}'" for t in tickers])})
         AND date >= '{start_date}'
         AND date <= '{end_date}'
         ORDER BY ticker, date
@@ -264,7 +267,7 @@ class BacktestDataLoader:
     def _clean_data(
         self,
         data: pd.DataFrame,
-        fill_method: Optional[str] = "ffill",
+        fill_method: str | None = "ffill",
     ) -> pd.DataFrame:
         """
         Clean and prepare data.
@@ -332,9 +335,8 @@ class BacktestDataLoader:
         wide_df = pd.DataFrame(
             index=close_df.index,
             columns=pd.MultiIndex.from_product(
-                [close_df.columns, ["close", "volume"]],
-                names=["ticker", "field"]
-            )
+                [close_df.columns, ["close", "volume"]], names=["ticker", "field"]
+            ),
         )
 
         # Fill in data
@@ -398,8 +400,8 @@ class BacktestDataLoader:
     def get_available_tickers(
         self,
         market: str,
-        as_of_date: Optional[date] = None,
-    ) -> List[str]:
+        as_of_date: date | None = None,
+    ) -> list[str]:
         """
         Get list of available tickers for a market.
 
@@ -440,8 +442,8 @@ class BacktestDataLoader:
     def get_date_range(
         self,
         market: str,
-        ticker: Optional[str] = None,
-    ) -> tuple[Optional[date], Optional[date]]:
+        ticker: str | None = None,
+    ) -> tuple[date | None, date | None]:
         """
         Get available date range for a market or ticker.
 

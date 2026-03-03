@@ -12,10 +12,10 @@ Usage:
 """
 
 import sys
+import time
 from datetime import date, timedelta
 from pathlib import Path
-from typing import List, Dict, Any
-import time
+from typing import Any
 
 import pandas as pd
 
@@ -23,11 +23,11 @@ import pandas as pd
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
-from equity_lake.backtesting import BacktestEngine, BacktestDataLoader
+from equity_lake.backtesting import BacktestDataLoader, BacktestEngine
 from equity_lake.backtesting.strategy import (
-    SMACrossoverStrategy,
-    CrossSectionalMomentumStrategy,
     BBMeanReversionStrategy,
+    CrossSectionalMomentumStrategy,
+    SMACrossoverStrategy,
 )
 
 
@@ -84,7 +84,7 @@ class TestResults:
         for warning in self.warnings:
             print(f"  ⚠️  {warning}")
 
-        print(f"\nPerformance:")
+        print("\nPerformance:")
         for test_name, duration in sorted(self.performance_data.items()):
             print(f"  ⏱️  {test_name}: {duration:.2f}s")
 
@@ -96,7 +96,7 @@ class TestResults:
         print("=" * 70)
 
 
-def check_data_availability() -> Dict[str, Any]:
+def check_data_availability() -> dict[str, Any]:
     """Check what data is available for testing."""
     print("\n" + "=" * 70)
     print("STEP 1: Checking Data Availability")
@@ -142,12 +142,15 @@ def check_data_availability() -> Dict[str, Any]:
                     results["date_range"] = (min_date, max_date)
                     print(f"  ✅ Date range for {ticker}: {min_date} to {max_date}")
                 else:
-                    print(f"  ⚠️  Could not determine date range")
+                    print("  ⚠️  Could not determine date range")
             except Exception as e:
                 print(f"  ❌ Date range check failed: {e}")
 
         # Briefly check other markets
-        for market_name, market_key in [("China A-shares", "cn"), ("HK/SG Equity", "hk_sg")]:
+        for market_name, market_key in [
+            ("China A-shares", "cn"),
+            ("HK/SG Equity", "hk_sg"),
+        ]:
             try:
                 tickers = loader.get_available_tickers(market_key)
                 if tickers:
@@ -165,7 +168,7 @@ def check_data_availability() -> Dict[str, Any]:
     return results
 
 
-def test_data_loader(data_info: Dict[str, Any]) -> TestResults:
+def test_data_loader(data_info: dict[str, Any]) -> TestResults:
     """Test BacktestDataLoader functionality."""
     print("\n" + "=" * 70)
     print("STEP 2: Testing BacktestDataLoader")
@@ -175,13 +178,11 @@ def test_data_loader(data_info: Dict[str, Any]) -> TestResults:
 
     if not data_info["sample_tickers"]:
         results.add_fail(
-            "DataLoader Initialization",
-            "No sample tickers available for testing"
+            "DataLoader Initialization", "No sample tickers available for testing"
         )
         return results
 
     try:
-        start_time = time.time()
         loader = BacktestDataLoader()
         results.add_pass("DataLoader Initialization")
 
@@ -209,17 +210,23 @@ def test_data_loader(data_info: Dict[str, Any]) -> TestResults:
             results.add_pass(
                 "Data Loading",
                 f"Loaded {data.shape[0]} rows for {len(data_info['sample_tickers'])} tickers "
-                f"in {load_duration:.2f}s"
+                f"in {load_duration:.2f}s",
             )
             results.add_performance("Data Loading", load_duration)
 
             # Inspect data structure
-            print(f"\n  Data structure:")
+            print("\n  Data structure:")
             print(f"    Shape: {data.shape}")
-            print(f"    Index: {data.index.name} ({data.index.min()} to {data.index.max()})")
+            print(
+                f"    Index: {data.index.name} ({data.index.min()} to {data.index.max()})"
+            )
             if isinstance(data.columns, pd.MultiIndex):
-                print(f"    Columns: MultiIndex with {len(data.columns.get_level_values(0).unique())} tickers")
-                print(f"    Fields: {data.columns.get_level_values(1).unique().tolist()}")
+                print(
+                    f"    Columns: MultiIndex with {len(data.columns.get_level_values(0).unique())} tickers"
+                )
+                print(
+                    f"    Fields: {data.columns.get_level_values(1).unique().tolist()}"
+                )
             else:
                 print(f"    Columns: {data.columns.tolist()}")
 
@@ -228,13 +235,14 @@ def test_data_loader(data_info: Dict[str, Any]) -> TestResults:
     except Exception as e:
         results.add_fail("DataLoader Test", str(e))
         import traceback
-        print(f"\n  Full error traceback:")
+
+        print("\n  Full error traceback:")
         traceback.print_exc()
 
     return results
 
 
-def test_sma_crossover_strategy(data_info: Dict[str, Any]) -> TestResults:
+def test_sma_crossover_strategy(data_info: dict[str, Any]) -> TestResults:
     """Test SMA Crossover Strategy."""
     print("\n" + "=" * 70)
     print("STEP 3: Testing SMA Crossover Strategy")
@@ -243,20 +251,19 @@ def test_sma_crossover_strategy(data_info: Dict[str, Any]) -> TestResults:
     results = TestResults()
 
     if not data_info["sample_tickers"]:
-        results.add_fail(
-            "SMA Crossover Strategy",
-            "No sample tickers available"
-        )
+        results.add_fail("SMA Crossover Strategy", "No sample tickers available")
         return results
 
     try:
         # Initialize strategy with shorter periods for testing
-        strategy = SMACrossoverStrategy(params={
-            "fast_period": 10,  # Shorter for testing
-            "slow_period": 30,
-            "use_ema": False,
-        })
-        results.add_pass("SMA Crossover Initialization", f"Fast=10, Slow=30")
+        strategy = SMACrossoverStrategy(
+            params={
+                "fast_period": 10,  # Shorter for testing
+                "slow_period": 30,
+                "use_ema": False,
+            }
+        )
+        results.add_pass("SMA Crossover Initialization", "Fast=10, Slow=30")
 
         # Set up backtest
         end_date = date.today() - timedelta(days=30)
@@ -273,7 +280,7 @@ def test_sma_crossover_strategy(data_info: Dict[str, Any]) -> TestResults:
         results.add_pass("BacktestEngine Initialization")
 
         # Run backtest
-        print(f"\n  Running backtest...")
+        print("\n  Running backtest...")
         backtest_start = time.time()
         result = engine.run()
         backtest_duration = time.time() - backtest_start
@@ -285,10 +292,10 @@ def test_sma_crossover_strategy(data_info: Dict[str, Any]) -> TestResults:
         print(f"\n  {result.summary()}")
 
         # Validate results
-        if result.total_return != 0 or result.metrics.get('num_trades', 0) > 0:
+        if result.total_return != 0 or result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "SMA Crossover Results",
-                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}"
+                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}",
             )
         else:
             results.add_warning(
@@ -299,8 +306,7 @@ def test_sma_crossover_strategy(data_info: Dict[str, Any]) -> TestResults:
         # Check equity curve
         if result.equity_curve is not None and not result.equity_curve.empty:
             results.add_pass(
-                "Equity Curve Generation",
-                f"{len(result.equity_curve)} data points"
+                "Equity Curve Generation", f"{len(result.equity_curve)} data points"
             )
         else:
             results.add_fail("Equity Curve Generation", "Equity curve is empty")
@@ -308,13 +314,14 @@ def test_sma_crossover_strategy(data_info: Dict[str, Any]) -> TestResults:
     except Exception as e:
         results.add_fail("SMA Crossover Strategy", str(e))
         import traceback
-        print(f"\n  Full error traceback:")
+
+        print("\n  Full error traceback:")
         traceback.print_exc()
 
     return results
 
 
-def test_momentum_strategy(data_info: Dict[str, Any]) -> TestResults:
+def test_momentum_strategy(data_info: dict[str, Any]) -> TestResults:
     """Test Cross-Sectional Momentum Strategy."""
     print("\n" + "=" * 70)
     print("STEP 4: Testing Momentum Strategy")
@@ -323,24 +330,23 @@ def test_momentum_strategy(data_info: Dict[str, Any]) -> TestResults:
     results = TestResults()
 
     if not data_info["sample_tickers"]:
-        results.add_fail(
-            "Momentum Strategy",
-            "No sample tickers available"
-        )
+        results.add_fail("Momentum Strategy", "No sample tickers available")
         return results
 
     try:
         # Initialize momentum strategy with shorter lookback for testing
         # Note: With only 2 tickers, cross-sectional momentum won't work well
         # This is more of a sanity check that the code runs
-        strategy = CrossSectionalMomentumStrategy(params={
-            "lookback_days": 60,  # 2 months instead of 1 year
-            "skip_days": 5,
-            "top_pct": 0.5,  # With 2 tickers, pick top 50%
-            "rebalance_days": 21,
-            "long_only": True,
-            "min_stocks": 2,  # Allow 2 stocks minimum
-        })
+        strategy = CrossSectionalMomentumStrategy(
+            params={
+                "lookback_days": 60,  # 2 months instead of 1 year
+                "skip_days": 5,
+                "top_pct": 0.5,  # With 2 tickers, pick top 50%
+                "rebalance_days": 21,
+                "long_only": True,
+                "min_stocks": 2,  # Allow 2 stocks minimum
+            }
+        )
         results.add_pass("Momentum Strategy Initialization")
 
         # Set up backtest
@@ -358,7 +364,7 @@ def test_momentum_strategy(data_info: Dict[str, Any]) -> TestResults:
         results.add_pass("BacktestEngine Initialization")
 
         # Run backtest
-        print(f"\n  Running backtest...")
+        print("\n  Running backtest...")
         backtest_start = time.time()
         result = engine.run()
         backtest_duration = time.time() - backtest_start
@@ -370,10 +376,10 @@ def test_momentum_strategy(data_info: Dict[str, Any]) -> TestResults:
         print(f"\n  {result.summary()}")
 
         # Validate results
-        if result.metrics.get('num_trades', 0) > 0:
+        if result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "Momentum Results",
-                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}"
+                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}",
             )
         else:
             results.add_warning(
@@ -384,13 +390,14 @@ def test_momentum_strategy(data_info: Dict[str, Any]) -> TestResults:
     except Exception as e:
         results.add_fail("Momentum Strategy", str(e))
         import traceback
-        print(f"\n  Full error traceback:")
+
+        print("\n  Full error traceback:")
         traceback.print_exc()
 
     return results
 
 
-def test_mean_reversion_strategy(data_info: Dict[str, Any]) -> TestResults:
+def test_mean_reversion_strategy(data_info: dict[str, Any]) -> TestResults:
     """Test Bollinger Bands Mean Reversion Strategy."""
     print("\n" + "=" * 70)
     print("STEP 5: Testing Mean Reversion Strategy")
@@ -399,20 +406,19 @@ def test_mean_reversion_strategy(data_info: Dict[str, Any]) -> TestResults:
     results = TestResults()
 
     if not data_info["sample_tickers"]:
-        results.add_fail(
-            "Mean Reversion Strategy",
-            "No sample tickers available"
-        )
+        results.add_fail("Mean Reversion Strategy", "No sample tickers available")
         return results
 
     try:
         # Initialize BB mean reversion strategy
-        strategy = BBMeanReversionStrategy(params={
-            "period": 20,
-            "num_std": 2.0,
-            "use_trend_filter": True,  # Only trade when above 200 MA
-            "stop_loss_pct": 0.05,
-        })
+        strategy = BBMeanReversionStrategy(
+            params={
+                "period": 20,
+                "num_std": 2.0,
+                "use_trend_filter": True,  # Only trade when above 200 MA
+                "stop_loss_pct": 0.05,
+            }
+        )
         results.add_pass("BB Mean Reversion Initialization")
 
         # Set up backtest
@@ -430,7 +436,7 @@ def test_mean_reversion_strategy(data_info: Dict[str, Any]) -> TestResults:
         results.add_pass("BacktestEngine Initialization")
 
         # Run backtest
-        print(f"\n  Running backtest...")
+        print("\n  Running backtest...")
         backtest_start = time.time()
         result = engine.run()
         backtest_duration = time.time() - backtest_start
@@ -442,10 +448,10 @@ def test_mean_reversion_strategy(data_info: Dict[str, Any]) -> TestResults:
         print(f"\n  {result.summary()}")
 
         # Validate results
-        if result.metrics.get('num_trades', 0) > 0:
+        if result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "Mean Reversion Results",
-                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}"
+                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}",
             )
         else:
             results.add_warning(
@@ -456,7 +462,8 @@ def test_mean_reversion_strategy(data_info: Dict[str, Any]) -> TestResults:
     except Exception as e:
         results.add_fail("Mean Reversion Strategy", str(e))
         import traceback
-        print(f"\n  Full error traceback:")
+
+        print("\n  Full error traceback:")
         traceback.print_exc()
 
     return results
@@ -485,7 +492,9 @@ def main():
             print("❌ CANNOT PROCEED: No test data available")
             print("=" * 70)
             print("\nTo fix this issue:")
-            print("  1. Generate test data using: uv run python -m equity_lake.devtools.test_data")
+            print(
+                "  1. Generate test data using: uv run python -m equity_lake.devtools.test_data"
+            )
             print("  2. Or run daily ingestion: make daily")
             print("  3. Or sync from S3: make sync")
             return
@@ -527,7 +536,8 @@ def main():
     except Exception as e:
         all_results.add_fail("Test Suite", f"Unexpected error: {e}")
         import traceback
-        print(f"\n  Fatal error traceback:")
+
+        print("\n  Fatal error traceback:")
         traceback.print_exc()
 
     # Print final summary
@@ -539,20 +549,23 @@ def main():
     print("=" * 70)
 
     critical_failures = [
-        name for name, _ in all_results.failed_tests
+        name
+        for name, _ in all_results.failed_tests
         if "Initialization" in name or "Data Loading" in name
     ]
 
     if not all_results.failed_tests:
         print("✅ READY: All core functionality is working correctly")
-        print("\nThe backtesting framework is ready for production use with the following notes:")
+        print(
+            "\nThe backtesting framework is ready for production use with the following notes:"
+        )
         print("  • Data loading from Parquet files works correctly")
         print("  • All three tested strategies execute successfully")
         print("  • Performance metrics are calculated properly")
         print("  • Equity curves are generated correctly")
     elif critical_failures:
         print("❌ NOT READY: Critical failures detected")
-        print(f"\nCritical issues must be fixed before production use:")
+        print("\nCritical issues must be fixed before production use:")
         for failure in critical_failures:
             print(f"  • {failure}")
     else:

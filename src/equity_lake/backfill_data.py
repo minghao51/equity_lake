@@ -49,7 +49,7 @@ def backfill_date_range(
     start_date: date,
     end_date: date,
     markets: str = "us,cn,hk_sg",
-    parallel: bool = True
+    parallel: bool = True,
 ):
     """
     Backfill data for a date range.
@@ -70,26 +70,30 @@ def backfill_date_range(
     fail_count = 0
 
     for i, trading_date in enumerate(trading_days, 1):
-        date_str = trading_date.strftime('%Y-%m-%d')
+        date_str = trading_date.strftime("%Y-%m-%d")
         logger.info(f"[{i}/{len(trading_days)}] Fetching {date_str}")
 
         try:
             # Build command
             cmd = [
-                "uv", "run", "equity-daily",
-                '--date', date_str,
-                '--markets', markets
+                "uv",
+                "run",
+                "equity-daily",
+                "--date",
+                date_str,
+                "--markets",
+                markets,
             ]
 
             if parallel:
-                cmd.append('--parallel')
+                cmd.append("--parallel")
 
             # Run command
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300  # 5 minute timeout per day
+                timeout=300,  # 5 minute timeout per day
             )
 
             if result.returncode == 0:
@@ -113,39 +117,27 @@ def backfill_date_range(
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(
-        description="Backfill historical equity data"
+    parser = argparse.ArgumentParser(description="Backfill historical equity data")
+
+    parser.add_argument("--start", type=str, help="Start date (YYYY-MM-DD format)")
+
+    parser.add_argument(
+        "--end", type=str, help="End date (YYYY-MM-DD format, default: today)"
     )
 
     parser.add_argument(
-        '--start',
+        "--days-back", type=int, help="Number of trading days back from today"
+    )
+
+    parser.add_argument(
+        "--markets",
         type=str,
-        help='Start date (YYYY-MM-DD format)'
+        default="us,cn,hk_sg",
+        help="Markets to fetch (default: us,cn,hk_sg)",
     )
 
     parser.add_argument(
-        '--end',
-        type=str,
-        help='End date (YYYY-MM-DD format, default: today)'
-    )
-
-    parser.add_argument(
-        '--days-back',
-        type=int,
-        help='Number of trading days back from today'
-    )
-
-    parser.add_argument(
-        '--markets',
-        type=str,
-        default='us,cn,hk_sg',
-        help='Markets to fetch (default: us,cn,hk_sg)'
-    )
-
-    parser.add_argument(
-        '--parallel',
-        action='store_true',
-        help='Enable parallel fetching'
+        "--parallel", action="store_true", help="Enable parallel fetching"
     )
 
     args = parser.parse_args()
@@ -160,8 +152,8 @@ def main():
         # Approximate: days_back / 5 * 7 (account for weekends)
         start_date = end_date - timedelta(days=args.days_back * 7 // 5)
     elif args.start and args.end:
-        start_date = datetime.strptime(args.start, '%Y-%m-%d').date()
-        end_date = datetime.strptime(args.end, '%Y-%m-%d').date()
+        start_date = datetime.strptime(args.start, "%Y-%m-%d").date()
+        end_date = datetime.strptime(args.end, "%Y-%m-%d").date()
     else:
         logger.error("Must specify --days-back OR both --start and --end")
         sys.exit(1)
@@ -173,9 +165,9 @@ def main():
         start_date=start_date,
         end_date=end_date,
         markets=args.markets,
-        parallel=args.parallel
+        parallel=args.parallel,
     )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

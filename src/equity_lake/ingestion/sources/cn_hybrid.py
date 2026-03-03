@@ -5,6 +5,7 @@ in order and falls back to alternatives if one fails. This improves reliability
 and data completeness.
 """
 
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import date
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -47,6 +48,7 @@ class CNHybridFetcher(MarketDataFetcher):
         stock_limit: int = 100,
         enable_efinance: bool = True,
         enable_akshare: bool = True,
+        efinance_timeout_seconds: float = 45.0,
     ):
         """Initialize hybrid fetcher with configurable sources.
 
@@ -59,6 +61,8 @@ class CNHybridFetcher(MarketDataFetcher):
             stock_limit: Maximum number of stocks to fetch
             enable_efinance: Use efinance as primary source
             enable_akshare: Use akshare as fallback source
+            efinance_timeout_seconds: Maximum time to wait for efinance before
+                falling back to akshare
         """
         super().__init__(retry_attempts, retry_delay)
         self.ticker_config = ticker_config or TickerConfig()
@@ -67,6 +71,7 @@ class CNHybridFetcher(MarketDataFetcher):
         self.stock_limit = stock_limit
         self.enable_efinance = enable_efinance and CNEfinanceFetcher is not None
         self.enable_akshare = enable_akshare
+        self.efinance_timeout_seconds = efinance_timeout_seconds
 
         # Initialize fetchers
         self.efinance_fetcher: CNEfinanceFetcher | None = None
@@ -75,8 +80,8 @@ class CNHybridFetcher(MarketDataFetcher):
         if self.enable_efinance:
             try:
                 self.efinance_fetcher = CNEfinanceFetcher(
-                    retry_attempts=retry_attempts,
-                    retry_delay=retry_delay,
+                    retry_attempts=max(retry_attempts, 4),
+                    retry_delay=max(retry_delay, 2.0),
                     ticker_config=ticker_config,
                     filters=filters,
                     max_workers=max_workers,
@@ -118,6 +123,28 @@ class CNHybridFetcher(MarketDataFetcher):
                 "Install efinance or ensure akshare is working."
             )
 
+    def _fetch_efinance_with_timeout(self, trading_date: date) -> pd.DataFrame:
+        """Run efinance with a bounded wait so fallback is not delayed indefinitely."""
+        if self.efinance_fetcher is None:
+            return pd.DataFrame()
+
+        executor = ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(self.efinance_fetcher.fetch, trading_date)
+        try:
+            return future.result(timeout=self.efinance_timeout_seconds)
+        except TimeoutError as exc:
+            future.cancel()
+            logger.warning(
+                "efinance_fetch_timeout",
+                timeout_seconds=self.efinance_timeout_seconds,
+                message="Falling back to akshare",
+            )
+            raise TimeoutError(
+                f"efinance exceeded {self.efinance_timeout_seconds}s timeout"
+            ) from exc
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     def fetch(self, trading_date: date) -> pd.DataFrame:
         """Fetch China A-share data with automatic fallback.
 
@@ -142,7 +169,7 @@ class CNHybridFetcher(MarketDataFetcher):
         if self.enable_efinance and self.efinance_fetcher:
             try:
                 logger.info("trying_efinance_source")
-                efinance_result = self.efinance_fetcher.fetch(trading_date)
+                efinance_result = self._fetch_efinance_with_timeout(trading_date)
                 row_count = len(efinance_result)
 
                 logger.info(
@@ -229,9 +256,7 @@ class CNHybridFetcher(MarketDataFetcher):
         if df.empty:
             return df
 
-        available_cols = [
-            column for column in STANDARD_COLUMNS if column in df.columns
-        ]
+        available_cols = [column for column in STANDARD_COLUMNS if column in df.columns]
         result = df[available_cols].copy()
         result = result.dropna(how="all")
 

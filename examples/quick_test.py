@@ -4,6 +4,7 @@ Quick validation script for backtesting framework.
 
 This performs basic checks to verify the backtesting module is working.
 """
+
 import sys
 from pathlib import Path
 
@@ -11,12 +12,18 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root / "src"))
 
+
 def test_imports():
     """Test that all backtesting modules can be imported."""
     print("Testing imports...")
 
     try:
-        from equity_lake.backtesting import BacktestEngine, BacktestDataLoader, BacktestResult
+        from equity_lake.backtesting import (
+            BacktestDataLoader,
+            BacktestEngine,
+            BacktestResult,
+        )
+
         print("  ✅ Core backtesting modules imported")
     except ImportError as e:
         print(f"  ❌ Failed to import core modules: {e}")
@@ -24,11 +31,12 @@ def test_imports():
 
     try:
         from equity_lake.backtesting.strategy import (
-            SMACrossoverStrategy,
-            CrossSectionalMomentumStrategy,
-            BBMeanReversionStrategy,
             BaseStrategy,
+            BBMeanReversionStrategy,
+            CrossSectionalMomentumStrategy,
+            SMACrossoverStrategy,
         )
+
         print("  ✅ Strategy modules imported")
     except ImportError as e:
         print(f"  ❌ Failed to import strategy modules: {e}")
@@ -36,8 +44,9 @@ def test_imports():
 
     try:
         import duckdb
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+
         print("  ✅ Dependencies available (duckdb, pandas, numpy)")
     except ImportError as e:
         print(f"  ❌ Missing dependency: {e}")
@@ -77,6 +86,7 @@ def test_data_loader():
     except Exception as e:
         print(f"  ❌ DataLoader test failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -87,9 +97,9 @@ def test_strategy_init():
 
     try:
         from equity_lake.backtesting.strategy import (
-            SMACrossoverStrategy,
-            CrossSectionalMomentumStrategy,
             BBMeanReversionStrategy,
+            CrossSectionalMomentumStrategy,
+            SMACrossoverStrategy,
         )
 
         # Test SMA Crossover
@@ -109,6 +119,7 @@ def test_strategy_init():
     except Exception as e:
         print(f"  ❌ Strategy initialization failed: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 

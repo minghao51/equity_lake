@@ -5,7 +5,7 @@ This module provides Pydantic models for backtesting configuration.
 """
 
 from datetime import date
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -15,13 +15,17 @@ class BacktestConfig(BaseModel):
 
     # Strategy settings
     strategy_name: str = Field(..., description="Strategy name")
-    strategy_params: Dict[str, Any] = Field(default_factory=dict, description="Strategy parameters")
+    strategy_params: dict[str, Any] = Field(
+        default_factory=dict, description="Strategy parameters"
+    )
 
     # Data settings
     start_date: date = Field(..., description="Backtest start date")
     end_date: date = Field(..., description="Backtest end date")
-    tickers: List[str] = Field(..., description="Ticker symbols")
-    markets: List[str] = Field(default=["us", "cn", "hk_sg"], description="Markets to query")
+    tickers: list[str] = Field(..., description="Ticker symbols")
+    markets: list[str] = Field(
+        default=["us", "cn", "hk_sg"], description="Markets to query"
+    )
 
     # Execution settings
     initial_cash: float = Field(default=100_000.0, description="Starting capital")
@@ -29,12 +33,14 @@ class BacktestConfig(BaseModel):
     slippage_rate: float = Field(default=0.0001, description="Slippage rate")
 
     # Validation settings
-    use_walk_forward: bool = Field(default=False, description="Use walk-forward validation")
+    use_walk_forward: bool = Field(
+        default=False, description="Use walk-forward validation"
+    )
     train_size: int = Field(default=252, description="Training size (days)")
     test_size: int = Field(default=63, description="Test size (days)")
 
     # Output settings
-    output_path: Optional[str] = Field(default=None, description="Output file path")
+    output_path: str | None = Field(default=None, description="Output file path")
     verbose: bool = Field(default=False, description="Verbose logging")
 
 

@@ -1,9 +1,10 @@
 """Test signal data models."""
 
-import pytest
 from datetime import date
 
-from equity_lake.signals.models import Signal, Watchlist, SignalConfig
+import pytest
+
+from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 
 
 def test_signal_creation_valid():
@@ -61,8 +62,8 @@ def test_signal_config_generator_enabled():
     config = SignalConfig(
         backtest={"enabled": True, "min_win_rate": 0.55},
         sentiment={"enabled": False, "buy_threshold": 0.5},
-        ml={"enabled": True, "model_path": "model.pkl"},
+        ml={"enabled": True, "model_dir": "models"},
     )
-    assert config.is_generator_enabled("backtest") == True
-    assert config.is_generator_enabled("sentiment") == False
-    assert config.is_generator_enabled("ml") == True
+    assert config.is_generator_enabled("backtest")
+    assert not config.is_generator_enabled("sentiment")
+    assert config.is_generator_enabled("ml")

@@ -1,8 +1,8 @@
 """Integration tests for signal scanning."""
 
-import pytest
 from datetime import date, timedelta
-from pathlib import Path
+
+import pytest
 
 from equity_lake.signals.config import load_signal_config, load_watchlist
 from equity_lake.signals.scanner import SignalScanner

@@ -221,8 +221,10 @@ class PriceForecaster:
 
             X_test = df.iloc[test_idx : test_idx + 1][feature_cols].fillna(0)
             y_true = (
-                df.iloc[test_idx : test_idx + 1]["next_day_return"] > 0
-            ).astype(int).values[0]
+                (df.iloc[test_idx : test_idx + 1]["next_day_return"] > 0)
+                .astype(int)
+                .values[0]
+            )
             proba = float(model.predict_proba(X_test)[0][1])
             pred = int(proba > 0.5)
             results.append(

@@ -1,6 +1,5 @@
 """Pydantic configuration models."""
 
-
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 
@@ -89,6 +88,7 @@ class TickerConfigRoot(BaseModel):
     markets: dict[str, MarketConfig] = Field(default_factory=dict)
     groups: dict[str, GroupConfig] = Field(default_factory=dict)
     validation: ValidationConfig | None = None
+
 
 __all__ = [
     "GroupConfig",

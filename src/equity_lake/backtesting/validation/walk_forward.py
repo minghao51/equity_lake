@@ -5,7 +5,6 @@ This module implements walk-forward analysis to prevent overfitting
 and validate strategy robustness.
 """
 
-from typing import List, Tuple
 
 import pandas as pd
 import structlog
@@ -57,7 +56,7 @@ class WalkForwardValidator:
     def validate(
         self,
         strategy: BaseStrategy,
-        tickers: List[str],
+        tickers: list[str],
         data: pd.DataFrame,
         initial_cash: float = 100_000.0,
     ) -> "WalkForwardResult":
@@ -127,7 +126,7 @@ class WalkForwardValidator:
     def _generate_folds(
         self,
         data: pd.DataFrame,
-    ) -> List[Tuple[pd.DataFrame, pd.DataFrame]]:
+    ) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
         """Generate train/test folds."""
         folds = []
 
@@ -162,7 +161,7 @@ class WalkForwardResult:
 
     def __init__(
         self,
-        folds: List[BacktestResult],
+        folds: list[BacktestResult],
         train_size: int,
         test_size: int,
         step_size: int,
@@ -177,15 +176,18 @@ class WalkForwardResult:
         """Mean Sharpe ratio across folds."""
         if not self.folds:
             return 0.0
-        return sum(f.metrics.get('sharpe_ratio', 0) for f in self.folds) / len(self.folds)
+        return sum(f.metrics.get("sharpe_ratio", 0) for f in self.folds) / len(
+            self.folds
+        )
 
     @property
     def std_sharpe(self) -> float:
         """Standard deviation of Sharpe ratio."""
         if len(self.folds) < 2:
             return 0.0
-        sharpe_values = [f.metrics.get('sharpe_ratio', 0) for f in self.folds]
+        sharpe_values = [f.metrics.get("sharpe_ratio", 0) for f in self.folds]
         import statistics
+
         return statistics.stdev(sharpe_values)
 
     @property
@@ -199,8 +201,7 @@ class WalkForwardResult:
             return 0.0
 
         positive_sharpe = sum(
-            1 for f in self.folds
-            if f.metrics.get('sharpe_ratio', 0) > 0
+            1 for f in self.folds if f.metrics.get("sharpe_ratio", 0) > 0
         )
 
         return positive_sharpe / len(self.folds)

@@ -221,7 +221,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
                     error_type=type(exc).__name__,
                     date=str(trading_date),
                 )
-                return pd.DataFrame()
+                raise
 
         return self._retry_on_failure(_fetch)
 

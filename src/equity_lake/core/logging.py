@@ -10,11 +10,12 @@ import logging
 import sys
 import time
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, Generator, Optional
+from typing import Any
 
 import structlog
 
@@ -39,7 +40,9 @@ def set_correlation_id(cid: str) -> None:
 
 
 @contextmanager
-def correlation_context(correlation_id: Optional[str] = None) -> Generator[None, None, None]:
+def correlation_context(
+    correlation_id: str | None = None,
+) -> Generator[None, None, None]:
     """
     Context manager for correlation ID scope.
 
@@ -55,7 +58,9 @@ def correlation_context(correlation_id: Optional[str] = None) -> Generator[None,
         _correlation_id.reset(token)
 
 
-def add_correlation_id(logger, method_name, event_dict: Dict[str, Any]) -> Dict[str, Any]:
+def add_correlation_id(
+    logger, method_name, event_dict: dict[str, Any]
+) -> dict[str, Any]:
     """
     Structlog processor to add correlation ID to all log entries.
     """
@@ -63,15 +68,19 @@ def add_correlation_id(logger, method_name, event_dict: Dict[str, Any]) -> Dict[
     return event_dict
 
 
-def add_timestamp(logger, method_name, event_dict: Dict[str, Any]) -> Dict[str, Any]:
+def add_timestamp(logger, method_name, event_dict: dict[str, Any]) -> dict[str, Any]:
     """
     Structlog processor to add ISO-format timestamp.
     """
-    event_dict["timestamp"] = datetime.utcnow().isoformat() + "Z"
+    event_dict["timestamp"] = (
+        datetime.now(UTC).isoformat().replace("+00:00", "Z")
+    )
     return event_dict
 
 
-def drop_color_message_key(logger, method_name, event_dict: Dict[str, Any]) -> Dict[str, Any]:
+def drop_color_message_key(
+    logger, method_name, event_dict: dict[str, Any]
+) -> dict[str, Any]:
     """
     Structlog processor to remove color message keys for clean JSON output.
     """
@@ -81,9 +90,9 @@ def drop_color_message_key(logger, method_name, event_dict: Dict[str, Any]) -> D
 
 def setup_structured_logging(
     level: str = "INFO",
-    log_file: Optional[Path] = None,
+    log_file: Path | None = None,
     json_output: bool = True,
-    console: bool = True
+    console: bool = True,
 ) -> structlog.stdlib.BoundLogger:
     """
     Configure structured logging with structlog.
@@ -129,8 +138,7 @@ def setup_structured_logging(
         processors.append(drop_color_message_key)
         processors.append(
             structlog.dev.ConsoleRenderer(
-                colors=True,
-                exception_formatter=structlog.dev.plain_traceback
+                colors=True, exception_formatter=structlog.dev.plain_traceback
             )
         )
 
@@ -175,7 +183,8 @@ def setup_structured_logging(
 # Timing Metrics Decorator
 # =============================================================================
 
-def timed(logger: Optional[structlog.stdlib.BoundLogger] = None, **log_kwargs):
+
+def timed(logger: structlog.stdlib.BoundLogger | None = None, **log_kwargs):
     """
     Decorator to automatically log function execution time.
 
@@ -197,6 +206,7 @@ def timed(logger: Optional[structlog.stdlib.BoundLogger] = None, **log_kwargs):
         >>> def fetch_market_data(date: str):
         >>>     return data
     """
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -204,11 +214,7 @@ def timed(logger: Optional[structlog.stdlib.BoundLogger] = None, **log_kwargs):
             func_name = func.__name__
 
             start_time = time.time()
-            _logger.debug(
-                f"{func_name}_started",
-                function=func_name,
-                **log_kwargs
-            )
+            _logger.debug(f"{func_name}_started", function=func_name, **log_kwargs)
 
             try:
                 result = func(*args, **kwargs)
@@ -219,7 +225,7 @@ def timed(logger: Optional[structlog.stdlib.BoundLogger] = None, **log_kwargs):
                     function=func_name,
                     duration_seconds=round(duration, 3),
                     status="success",
-                    **log_kwargs
+                    **log_kwargs,
                 )
 
                 return result
@@ -234,19 +240,20 @@ def timed(logger: Optional[structlog.stdlib.BoundLogger] = None, **log_kwargs):
                     status="error",
                     error=str(e),
                     error_type=type(e).__name__,
-                    **log_kwargs
+                    **log_kwargs,
                 )
                 raise
 
         return wrapper
+
     return decorator
 
 
 @contextmanager
 def timer(
     operation_name: str,
-    logger: Optional[structlog.stdlib.BoundLogger] = None,
-    **log_kwargs
+    logger: structlog.stdlib.BoundLogger | None = None,
+    **log_kwargs,
 ) -> Generator[None, None, None]:
     """
     Context manager to time an operation and log duration.
@@ -265,11 +272,7 @@ def timer(
     _logger = logger or structlog.get_logger()
     start_time = time.time()
 
-    _logger.debug(
-        f"{operation_name}_started",
-        operation=operation_name,
-        **log_kwargs
-    )
+    _logger.debug(f"{operation_name}_started", operation=operation_name, **log_kwargs)
 
     try:
         yield
@@ -280,7 +283,7 @@ def timer(
             f"{operation_name}_completed",
             operation=operation_name,
             duration_seconds=round(duration, 3),
-            **log_kwargs
+            **log_kwargs,
         )
 
 
@@ -288,10 +291,9 @@ def timer(
 # Backward Compatibility Wrapper
 # =============================================================================
 
+
 def setup_logging(
-    name: str,
-    level: str = "INFO",
-    log_file: Optional[str] = None
+    name: str, level: str = "INFO", log_file: str | None = None
 ) -> logging.Logger:
     """
     Backward-compatible wrapper for setup_logging.
@@ -318,10 +320,7 @@ def setup_logging(
 
     # Setup structured logging
     structlog_logger = setup_structured_logging(
-        level=level,
-        log_file=log_path,
-        json_output=json_output,
-        console=True
+        level=level, log_file=log_path, json_output=json_output, console=True
     )
 
     # Return standard library logger for backward compatibility

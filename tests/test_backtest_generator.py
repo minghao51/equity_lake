@@ -1,7 +1,8 @@
 """Test BacktestSignalGenerator."""
 
-import pytest
 from datetime import date, timedelta
+
+import pytest
 
 from equity_lake.signals.generators.backtest import BacktestSignalGenerator
 

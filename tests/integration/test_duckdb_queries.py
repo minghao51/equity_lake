@@ -1,16 +1,16 @@
 """Integration tests for DuckDB query helpers."""
 
-import pytest
 from unittest.mock import patch
 
 import pandas as pd
+import pytest
 
 from equity_lake.storage.duckdb import EquityDataDB, QueryExamples
-
 
 # =============================================================================
 # Test Database Connection
 # =============================================================================
+
 
 class TestEquityDataDB:
     """Tests for DuckDB database connection manager."""
@@ -23,7 +23,7 @@ class TestEquityDataDB:
 
     def test_initialization_file_db(self, tmp_path):
         """Test initialization with file-based database."""
-        db_path = tmp_path / 'test.duckdb'
+        db_path = tmp_path / "test.duckdb"
         db = EquityDataDB(db_path=str(db_path))
         assert db.db_path == str(db_path)
         assert db.con is not None
@@ -33,8 +33,10 @@ class TestEquityDataDB:
         db = EquityDataDB(db_path=":memory:")
 
         # Mock the directory constants
-        with patch('equity_lake.storage.duckdb.US_EQUITY_DIR', temp_partitioned_parquet):
-            db._create_market_view('us_equity', temp_partitioned_parquet, 'us')
+        with patch(
+            "equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet
+        ):
+            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
 
         # Should not raise exception
         assert True
@@ -44,15 +46,17 @@ class TestEquityDataDB:
         db = EquityDataDB(db_path=":memory:")
 
         # Create view
-        with patch('equity_lake.storage.duckdb.US_EQUITY_DIR', temp_partitioned_parquet):
-            db._create_market_view('us_equity', temp_partitioned_parquet, 'us')
+        with patch(
+            "equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet
+        ):
+            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
 
         # Execute simple query
         sql = "SELECT COUNT(*) as count FROM us_equity"
         result = db.query(sql)
 
         assert isinstance(result, pd.DataFrame)
-        assert 'count' in result.columns
+        assert "count" in result.columns
 
     def test_query_error_handling(self):
         """Test query error handling."""
@@ -67,13 +71,14 @@ class TestEquityDataDB:
 # Test Query Examples
 # =============================================================================
 
+
 @pytest.fixture
 def db_with_data(temp_partitioned_parquet):
     """Create a reusable database with test data."""
     db = EquityDataDB(db_path=":memory:")
 
-    with patch('equity_lake.storage.duckdb.US_EQUITY_DIR', temp_partitioned_parquet):
-        db._create_market_view('us_equity', temp_partitioned_parquet, 'us')
+    with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
+        db._create_market_view("us_equity", temp_partitioned_parquet, "us")
         db._create_unified_view()
 
     return db
@@ -89,7 +94,7 @@ class TestQueryExamples:
 
         assert isinstance(result, pd.DataFrame)
         # Check for expected columns
-        expected_cols = ['market', 'latest_date', 'num_tickers']
+        expected_cols = ["market", "latest_date", "num_tickers"]
         assert any(col in result.columns for col in expected_cols)
 
     def test_query_2_top_volume_stocks(self, db_with_data):
@@ -100,8 +105,8 @@ class TestQueryExamples:
         assert isinstance(result, pd.DataFrame)
         # Should have some results
         if not result.empty:
-            assert 'ticker' in result.columns
-            assert 'total_volume' in result.columns
+            assert "ticker" in result.columns
+            assert "total_volume" in result.columns
 
     def test_query_3_top_gainers_losers(self, db_with_data):
         """Test Query 3: Top gainers and losers."""
@@ -110,20 +115,20 @@ class TestQueryExamples:
 
         assert isinstance(result, pd.DataFrame)
         if not result.empty:
-            assert 'ticker' in result.columns
-            assert 'pct_change' in result.columns
+            assert "ticker" in result.columns
+            assert "pct_change" in result.columns
 
     def test_query_4_cross_market_comparison(self, db_with_data):
         """Test Query 4: Cross-market comparison."""
         queries = QueryExamples(db_with_data)
-        result = queries.query_4_cross_market_comparison(ticker='AAPL')
+        result = queries.query_4_cross_market_comparison(ticker="AAPL")
 
         assert isinstance(result, pd.DataFrame)
 
     def test_query_5_moving_averages(self, db_with_data):
         """Test Query 5: Moving averages."""
         queries = QueryExamples(db_with_data)
-        result = queries.query_5_moving_averages(ticker='AAPL', ma_days=20)
+        result = queries.query_5_moving_averages(ticker="AAPL", ma_days=20)
 
         assert isinstance(result, pd.DataFrame)
 
@@ -153,6 +158,7 @@ class TestQueryExamples:
 # Test Edge Cases
 # =============================================================================
 
+
 class TestQueryEdgeCases:
     """Tests for edge cases in queries."""
 
@@ -168,7 +174,7 @@ class TestQueryEdgeCases:
     def test_invalid_ticker_query(self, db_with_data):
         """Test query with invalid ticker."""
         queries = QueryExamples(db_with_data)
-        result = queries.query_4_cross_market_comparison(ticker='INVALID_TICKER_123')
+        result = queries.query_4_cross_market_comparison(ticker="INVALID_TICKER_123")
 
         # Should return empty DataFrame
         assert isinstance(result, pd.DataFrame)
@@ -187,6 +193,7 @@ class TestQueryEdgeCases:
 # =============================================================================
 # Test Performance
 # =============================================================================
+
 
 class TestQueryPerformance:
     """Performance tests for queries."""
@@ -224,6 +231,7 @@ class TestQueryPerformance:
 # Test Data Validation
 # =============================================================================
 
+
 class TestDataValidation:
     """Tests for data validation in queries."""
 
@@ -232,8 +240,8 @@ class TestDataValidation:
         queries = QueryExamples(db_with_data)
         result = queries.query_1_latest_data_summary()
 
-        if not result.empty and 'latest_date' in result.columns:
-            assert result['latest_date'].dtype is not None
+        if not result.empty and "latest_date" in result.columns:
+            assert result["latest_date"].dtype is not None
 
     def test_null_value_handling(self, db_with_data):
         """Test handling of null values."""
@@ -248,6 +256,7 @@ class TestDataValidation:
 # Test Integration
 # =============================================================================
 
+
 class TestQueryIntegration:
     """Integration tests for query functionality."""
 
@@ -257,8 +266,10 @@ class TestQueryIntegration:
         db = EquityDataDB(db_path=":memory:")
 
         # Setup views
-        with patch('equity_lake.storage.duckdb.US_EQUITY_DIR', temp_partitioned_parquet):
-            db._create_market_view('us_equity', temp_partitioned_parquet, 'us')
+        with patch(
+            "equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet
+        ):
+            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
             db._create_unified_view()
 
         # Run queries
@@ -266,9 +277,9 @@ class TestQueryIntegration:
 
         # Execute multiple queries
         results = {
-            'summary': queries.query_1_latest_data_summary(),
-            'volume': queries.query_2_top_volume_stocks(7),
-            'stats': queries.query_7_market_summary_stats(),
+            "summary": queries.query_1_latest_data_summary(),
+            "volume": queries.query_2_top_volume_stocks(7),
+            "stats": queries.query_7_market_summary_stats(),
         }
 
         # All should succeed

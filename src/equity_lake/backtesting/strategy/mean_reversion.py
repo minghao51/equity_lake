@@ -5,9 +5,7 @@ This module implements mean reversion strategies including Bollinger Bands
 and RSI-based strategies.
 """
 
-from typing import Dict, Optional
 
-import numpy as np
 import pandas as pd
 import structlog
 
@@ -38,7 +36,7 @@ class BBMeanReversionStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "period": 20,
             "num_std": 2.0,
@@ -53,26 +51,26 @@ class BBMeanReversionStrategy(BaseStrategy):
         """Initialize Bollinger Bands strategy."""
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
-        period = self.get_param('period')
-        num_std = self.get_param('num_std')
-        use_trend_filter = self.get_param('use_trend_filter')
+        period = self.get_param("period")
+        num_std = self.get_param("num_std")
+        use_trend_filter = self.get_param("use_trend_filter")
 
         # Compute Bollinger Bands for each ticker
         sma = close_df.rolling(window=period).mean()
         std = close_df.rolling(window=period).std()
 
-        self.indicators['upper_band'] = sma + (num_std * std)
-        self.indicators['middle_band'] = sma
-        self.indicators['lower_band'] = sma - (num_std * std)
-        self.indicators['close'] = close_df
+        self.indicators["upper_band"] = sma + (num_std * std)
+        self.indicators["middle_band"] = sma
+        self.indicators["lower_band"] = sma - (num_std * std)
+        self.indicators["close"] = close_df
 
         # Optional trend filter (200 MA)
         if use_trend_filter:
-            self.indicators['trend_filter'] = close_df.rolling(window=200).mean()
+            self.indicators["trend_filter"] = close_df.rolling(window=200).mean()
 
         logger.info(
             "BBMeanReversionStrategy initialized",
@@ -91,11 +89,11 @@ class BBMeanReversionStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        close_df = self.indicators['close']
-        upper_band = self.indicators['upper_band']
-        lower_band = self.indicators['lower_band']
-        middle_band = self.indicators['middle_band']
-        use_trend_filter = self.get_param('use_trend_filter')
+        close_df = self.indicators["close"]
+        upper_band = self.indicators["upper_band"]
+        lower_band = self.indicators["lower_band"]
+        middle_band = self.indicators["middle_band"]
+        use_trend_filter = self.get_param("use_trend_filter")
 
         # Detect band touches
         # Entry: close crosses below lower band
@@ -108,8 +106,8 @@ class BBMeanReversionStrategy(BaseStrategy):
         returns_to_middle = (close_df > middle_band).astype(int).diff() == 1
 
         # Apply trend filter if enabled
-        if use_trend_filter and 'trend_filter' in self.indicators:
-            trend_filter = self.indicators['trend_filter']
+        if use_trend_filter and "trend_filter" in self.indicators:
+            trend_filter = self.indicators["trend_filter"]
             # Only take long signals when price above 200 MA
             touches_lower = touches_lower & (close_df > trend_filter)
 
@@ -117,10 +115,12 @@ class BBMeanReversionStrategy(BaseStrategy):
         entry_signals = touches_lower.any(axis=1)
         exit_signals = (touches_upper | returns_to_middle).any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 
@@ -147,7 +147,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "period": 14,
             "oversold_threshold": 30,
@@ -162,23 +162,23 @@ class RSIMeanReversionStrategy(BaseStrategy):
         """Initialize RSI strategy."""
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
-        period = self.get_param('period')
+        period = self.get_param("period")
 
         # Compute RSI for each ticker
         rsi_df = close_df.apply(lambda col: self._compute_rsi(col, period))
 
-        self.indicators['rsi'] = rsi_df
-        self.indicators['close'] = close_df
+        self.indicators["rsi"] = rsi_df
+        self.indicators["close"] = close_df
 
         logger.info(
             "RSIMeanReversionStrategy initialized",
             period=period,
-            oversold=self.get_param('oversold_threshold'),
-            overbought=self.get_param('overbought_threshold'),
+            oversold=self.get_param("oversold_threshold"),
+            overbought=self.get_param("overbought_threshold"),
         )
 
     def _compute_rsi(self, prices: pd.Series, period: int) -> pd.Series:
@@ -219,13 +219,13 @@ class RSIMeanReversionStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        rsi_df = self.indicators['rsi']
+        rsi_df = self.indicators["rsi"]
 
-        oversold = self.get_param('oversold_threshold')
-        overbought = self.get_param('overbought_threshold')
+        oversold = self.get_param("oversold_threshold")
+        overbought = self.get_param("overbought_threshold")
 
         # Use extreme thresholds if specified
-        if self.get_param('use_extreme'):
+        if self.get_param("use_extreme"):
             oversold = 10
             overbought = 90
 
@@ -240,10 +240,12 @@ class RSIMeanReversionStrategy(BaseStrategy):
         entry_signals = oversold_signal.any(axis=1)
         exit_signals = overbought_signal.any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 
@@ -268,7 +270,7 @@ class CombinedMeanReversionStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "bb_period": 20,
             "bb_std": 2.0,
@@ -283,23 +285,23 @@ class CombinedMeanReversionStrategy(BaseStrategy):
         """Initialize combined strategy."""
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
         # Bollinger Bands
-        bb_period = self.get_param('bb_period')
-        bb_std = self.get_param('bb_std')
+        bb_period = self.get_param("bb_period")
+        bb_std = self.get_param("bb_std")
         sma = close_df.rolling(window=bb_period).mean()
         std = close_df.rolling(window=bb_period).std()
-        self.indicators['bb_lower'] = sma - (bb_std * std)
-        self.indicators['bb_upper'] = sma + (bb_std * std)
-        self.indicators['close'] = close_df
+        self.indicators["bb_lower"] = sma - (bb_std * std)
+        self.indicators["bb_upper"] = sma + (bb_std * std)
+        self.indicators["close"] = close_df
 
         # RSI
-        rsi_period = self.get_param('rsi_period')
+        rsi_period = self.get_param("rsi_period")
         rsi_df = close_df.apply(lambda col: self._compute_rsi(col, rsi_period))
-        self.indicators['rsi'] = rsi_df
+        self.indicators["rsi"] = rsi_df
 
         logger.info(
             "CombinedMeanReversionStrategy initialized",
@@ -328,13 +330,13 @@ class CombinedMeanReversionStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        close_df = self.indicators['close']
-        bb_lower = self.indicators['bb_lower']
-        bb_upper = self.indicators['bb_upper']
-        rsi_df = self.indicators['rsi']
+        close_df = self.indicators["close"]
+        bb_lower = self.indicators["bb_lower"]
+        bb_upper = self.indicators["bb_upper"]
+        rsi_df = self.indicators["rsi"]
 
-        rsi_oversold = self.get_param('rsi_oversold')
-        rsi_overbought = self.get_param('rsi_overbought')
+        rsi_oversold = self.get_param("rsi_oversold")
+        rsi_overbought = self.get_param("rsi_overbought")
 
         # BB signals
         bb_entry = (close_df < bb_lower).astype(int).diff() == 1
@@ -348,10 +350,12 @@ class CombinedMeanReversionStrategy(BaseStrategy):
         entry_signals = (bb_entry & rsi_entry).any(axis=1)
         exit_signals = (bb_exit & rsi_exit).any(axis=1)
 
-        result = pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals,
+                "exit": exit_signals,
+            }
+        )
 
         return result
 

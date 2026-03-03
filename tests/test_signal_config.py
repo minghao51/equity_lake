@@ -1,7 +1,8 @@
 """Test signal configuration loading."""
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from equity_lake.signals.config import load_signal_config, load_watchlist
 

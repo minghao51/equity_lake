@@ -14,15 +14,14 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import duckdb
 import pandas as pd
+import structlog
 
 from equity_lake.core.runtime import LAKE_DIR, LOGS_DIR, setup_logging
-import structlog
 
 logger = structlog.get_logger()
 
@@ -34,7 +33,7 @@ class PipelineMonitor:
         self,
         max_age_days: int = 2,
         null_threshold_pct: float = 5.0,
-        verbose: bool = False
+        verbose: bool = False,
     ):
         """
         Initialize pipeline monitor.
@@ -49,8 +48,8 @@ class PipelineMonitor:
         self.verbose = verbose
 
         self.conn = duckdb.connect(":memory:")
-        self.alerts: List[str] = []
-        self.metrics: Dict = {}
+        self.alerts: list[str] = []
+        self.metrics: dict = {}
 
     # -------------------------------------------------------------------------
     # Health Checks
@@ -93,9 +92,9 @@ class PipelineMonitor:
             stale_markets = []
 
             for _, row in df.iterrows():
-                market = row['market']
-                latest_date = row['latest_date']
-                date_count = row['date_count']
+                market = row["market"]
+                latest_date = row["latest_date"]
+                date_count = row["date_count"]
 
                 if pd.isna(latest_date):
                     self.alerts.append(f"❌ {market}: No data found")
@@ -106,7 +105,9 @@ class PipelineMonitor:
                 age_days = (today - latest_date).days
 
                 status = "✅" if age_days <= self.max_age_days else "⚠️"
-                logger.info(f"{status} {market}: Latest data = {latest_date} ({age_days} days old, {date_count} dates total)")
+                logger.info(
+                    f"{status} {market}: Latest data = {latest_date} ({age_days} days old, {date_count} dates total)"
+                )
 
                 if age_days > self.max_age_days:
                     self.alerts.append(
@@ -117,10 +118,10 @@ class PipelineMonitor:
                     fresh_markets.append(market)
 
             # Store metrics
-            self.metrics['data_freshness'] = {
-                'fresh_markets': fresh_markets,
-                'stale_markets': stale_markets,
-                'timestamp': datetime.now().isoformat()
+            self.metrics["data_freshness"] = {
+                "fresh_markets": fresh_markets,
+                "stale_markets": stale_markets,
+                "timestamp": datetime.now().isoformat(),
             }
 
             return len(stale_markets) == 0
@@ -165,16 +166,16 @@ class PipelineMonitor:
             quality_issues = []
 
             for _, row in df.iterrows():
-                market = row['market']
-                total_rows = row['total_rows']
+                market = row["market"]
+                total_rows = row["total_rows"]
 
                 if total_rows == 0:
                     self.alerts.append(f"⚠️  {market}: No data in last 7 days")
                     quality_issues.append(market)
                     continue
 
-                null_pct_close = (row['null_close'] / total_rows) * 100
-                null_pct_volume = (row['null_volume'] / total_rows) * 100
+                null_pct_close = (row["null_close"] / total_rows) * 100
+                null_pct_volume = (row["null_volume"] / total_rows) * 100
 
                 if self.verbose:
                     logger.info(
@@ -196,10 +197,10 @@ class PipelineMonitor:
                     )
                     quality_issues.append(market)
 
-            self.metrics['data_quality'] = {
-                'issues_found': len(quality_issues),
-                'markets_with_issues': quality_issues,
-                'timestamp': datetime.now().isoformat()
+            self.metrics["data_quality"] = {
+                "issues_found": len(quality_issues),
+                "markets_with_issues": quality_issues,
+                "timestamp": datetime.now().isoformat(),
             }
 
             return len(quality_issues) == 0
@@ -221,7 +222,7 @@ class PipelineMonitor:
         log_files = [
             LOGS_DIR / "run_pipeline.log",
             LOGS_DIR / "ingest_daily.log",
-            LOGS_DIR / "feature_engineering.log"
+            LOGS_DIR / "feature_engineering.log",
         ]
 
         total_errors = 0
@@ -234,17 +235,19 @@ class PipelineMonitor:
 
             try:
                 # Read last 100 lines
-                with open(log_file, 'r') as f:
+                with open(log_file) as f:
                     lines = f.readlines()[-100:]
 
-                error_count = sum(1 for line in lines if 'ERROR' in line.upper())
-                warning_count = sum(1 for line in lines if 'WARNING' in line.upper())
+                error_count = sum(1 for line in lines if "ERROR" in line.upper())
+                warning_count = sum(1 for line in lines if "WARNING" in line.upper())
 
                 total_errors += error_count
                 total_warnings += warning_count
 
                 if self.verbose and (error_count > 0 or warning_count > 0):
-                    logger.info(f"  {log_file.name}: {error_count} errors, {warning_count} warnings")
+                    logger.info(
+                        f"  {log_file.name}: {error_count} errors, {warning_count} warnings"
+                    )
 
             except Exception as e:
                 logger.debug(f"Could not read {log_file.name}: {e}")
@@ -256,10 +259,10 @@ class PipelineMonitor:
         if total_warnings > 10:
             self.alerts.append(f"⚠️  Found {total_warnings} warnings in recent logs")
 
-        self.metrics['pipeline_logs'] = {
-            'error_count': total_errors,
-            'warning_count': total_warnings,
-            'timestamp': datetime.now().isoformat()
+        self.metrics["pipeline_logs"] = {
+            "error_count": total_errors,
+            "warning_count": total_warnings,
+            "timestamp": datetime.now().isoformat(),
         }
 
         return total_errors == 0
@@ -292,13 +295,13 @@ class PipelineMonitor:
         try:
             df = self.conn.execute(query).df()
 
-            if df.empty or df['total_rows'].iloc[0] == 0:
+            if df.empty or df["total_rows"].iloc[0] == 0:
                 self.alerts.append("⚠️  No features in last 7 days")
                 return False
 
-            total_rows = df['total_rows'].iloc[0]
-            unique_tickers = df['unique_tickers'].iloc[0]
-            latest_date = df['latest_date'].iloc[0]
+            total_rows = df["total_rows"].iloc[0]
+            unique_tickers = df["unique_tickers"].iloc[0]
+            latest_date = df["latest_date"].iloc[0]
 
             age_days = (date.today() - pd.to_datetime(latest_date).date()).days
 
@@ -308,13 +311,15 @@ class PipelineMonitor:
                 )
                 return False
 
-            logger.info(f"✅ Features: {total_rows:,} rows, {unique_tickers} tickers, latest: {latest_date}")
+            logger.info(
+                f"✅ Features: {total_rows:,} rows, {unique_tickers} tickers, latest: {latest_date}"
+            )
 
-            self.metrics['feature_store'] = {
-                'total_rows': int(total_rows),
-                'unique_tickers': int(unique_tickers),
-                'latest_date': str(latest_date),
-                'timestamp': datetime.now().isoformat()
+            self.metrics["feature_store"] = {
+                "total_rows": int(total_rows),
+                "unique_tickers": int(unique_tickers),
+                "latest_date": str(latest_date),
+                "timestamp": datetime.now().isoformat(),
             }
 
             return True
@@ -343,7 +348,7 @@ class PipelineMonitor:
             ("Data Freshness", self.check_data_freshness()),
             ("Data Quality", self.check_data_quality()),
             ("Pipeline Logs", self.check_pipeline_logs()),
-            ("Feature Store", self.check_feature_store())
+            ("Feature Store", self.check_feature_store()),
         ]
 
         all_healthy = True
@@ -373,12 +378,12 @@ class PipelineMonitor:
     def save_report(self, output_file: Path):
         """Save health report to JSON file."""
         report = {
-            'alerts': self.alerts,
-            'metrics': self.metrics,
-            'timestamp': datetime.now().isoformat()
+            "alerts": self.alerts,
+            "metrics": self.metrics,
+            "timestamp": datetime.now().isoformat(),
         }
 
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             json.dump(report, f, indent=2, default=str)
 
         logger.info(f"Health report saved to {output_file}")
@@ -388,36 +393,31 @@ class PipelineMonitor:
 # CLI Interface
 # =============================================================================
 
+
 def parse_arguments():
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Pipeline Health Monitoring"
-    )
+    parser = argparse.ArgumentParser(description="Pipeline Health Monitoring")
 
     parser.add_argument(
-        '--max-age-days',
+        "--max-age-days",
         type=int,
         default=2,
-        help='Maximum allowed data age in days (default: 2)'
+        help="Maximum allowed data age in days (default: 2)",
     )
 
     parser.add_argument(
-        '--null-threshold-pct',
+        "--null-threshold-pct",
         type=float,
         default=5.0,
-        help='Max acceptable null percentage (default: 5.0)'
+        help="Max acceptable null percentage (default: 5.0)",
     )
 
     parser.add_argument(
-        '--output-json',
-        type=str,
-        help='Save health report to JSON file'
+        "--output-json", type=str, help="Save health report to JSON file"
     )
 
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging'
+        "--verbose", "-v", action="store_true", help="Enable verbose logging"
     )
 
     return parser.parse_args()
@@ -435,7 +435,7 @@ def main():
     monitor = PipelineMonitor(
         max_age_days=args.max_age_days,
         null_threshold_pct=args.null_threshold_pct,
-        verbose=args.verbose
+        verbose=args.verbose,
     )
 
     healthy = monitor.run_health_check()

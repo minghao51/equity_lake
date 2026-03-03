@@ -126,7 +126,8 @@ def main():
         if args.output:
             result.to_dict()
             import json
-            with open(args.output, 'w') as f:
+
+            with open(args.output, "w") as f:
                 json.dump(result.to_dict(), f, indent=2, default=str)
             logger.info(f"Results saved to {args.output}")
 

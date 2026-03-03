@@ -96,13 +96,21 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # scan subcommand
-    scan_parser = subparsers.add_parser("scan", help="Scan watchlist and generate signals")
-
-    scan_parser.add_argument(
-        "--format", "-f", choices=["json", "md", "table"], default="table", help="Output format (default: table)"
+    scan_parser = subparsers.add_parser(
+        "scan", help="Scan watchlist and generate signals"
     )
 
-    scan_parser.add_argument("--date", "-d", help="Target date (YYYY-MM-DD, default: yesterday)")
+    scan_parser.add_argument(
+        "--format",
+        "-f",
+        choices=["json", "md", "table"],
+        default="table",
+        help="Output format (default: table)",
+    )
+
+    scan_parser.add_argument(
+        "--date", "-d", help="Target date (YYYY-MM-DD, default: yesterday)"
+    )
 
     scan_parser.add_argument("--watchlist", "-w", help="Path to watchlist config")
 
@@ -110,9 +118,13 @@ def main():
 
     scan_parser.add_argument("--output", "-o", help="Save output to file")
 
-    scan_parser.add_argument("--dry-run", action="store_true", help="Don't save to history")
+    scan_parser.add_argument(
+        "--dry-run", action="store_true", help="Don't save to history"
+    )
 
-    scan_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    scan_parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable verbose logging"
+    )
 
     args = parser.parse_args()
 

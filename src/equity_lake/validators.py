@@ -7,7 +7,6 @@ and market-specific rules. Used by configuration module and fetchers.
 
 import logging
 import re
-from typing import Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -17,17 +16,17 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 MARKET_FORMATS = {
-    'us': r'^[A-Z]{1,5}(-[A-Z]{1,2})?$',  # e.g., AAPL, BRK-A
-    'cn': r'^\d{6}$',  # 6-digit code, e.g., 000001, 600000
-    'hk': r'^\d{4}\.HK$',  # e.g., 0700.HK, 9988.HK
-    'sg': r'^[A-Z]\d{2}\.SI$',  # e.g., D05.SI, O39.SI
+    "us": r"^[A-Z]{1,5}(-[A-Z]{1,2})?$",  # e.g., AAPL, BRK-A
+    "cn": r"^\d{6}$",  # 6-digit code, e.g., 000001, 600000
+    "hk": r"^\d{4}\.HK$",  # e.g., 0700.HK, 9988.HK
+    "sg": r"^[A-Z]\d{2}\.SI$",  # e.g., D05.SI, O39.SI
 }
 
 MARKET_EXAMPLES = {
-    'us': ['AAPL', 'GOOGL', 'MSFT', 'BRK-A', 'MMM'],
-    'cn': ['000001', '600000', '000002', '600036'],
-    'hk': ['0700.HK', '9988.HK', '0005.HK', '0941.HK'],
-    'sg': ['D05.SI', 'O39.SI', 'U11.SI', 'Z74.SI'],
+    "us": ["AAPL", "GOOGL", "MSFT", "BRK-A", "MMM"],
+    "cn": ["000001", "600000", "000002", "600036"],
+    "hk": ["0700.HK", "9988.HK", "0005.HK", "0941.HK"],
+    "sg": ["D05.SI", "O39.SI", "U11.SI", "Z74.SI"],
 }
 
 
@@ -36,10 +35,10 @@ MARKET_EXAMPLES = {
 # =============================================================================
 
 VALID_EXCHANGES = {
-    'us': ['NYSE', 'NASDAQ', 'AMEX'],
-    'cn': ['SSE', 'SZSE'],  # Shanghai Stock Exchange, Shenzhen Stock Exchange
-    'hk': ['HKEX'],  # Hong Kong Exchanges and Clearing
-    'sg': ['SGX'],  # Singapore Exchange
+    "us": ["NYSE", "NASDAQ", "AMEX"],
+    "cn": ["SSE", "SZSE"],  # Shanghai Stock Exchange, Shenzhen Stock Exchange
+    "hk": ["HKEX"],  # Hong Kong Exchanges and Clearing
+    "sg": ["SGX"],  # Singapore Exchange
 }
 
 
@@ -48,17 +47,17 @@ VALID_EXCHANGES = {
 # =============================================================================
 
 VALID_SECTORS = [
-    'Technology',
-    'Financial Services',
-    'Healthcare',
-    'Consumer Cyclical',
-    'Consumer Defensive',
-    'Energy',
-    'Industrials',
-    'Communication Services',
-    'Real Estate',
-    'Utilities',
-    'Basic Materials',
+    "Technology",
+    "Financial Services",
+    "Healthcare",
+    "Consumer Cyclical",
+    "Consumer Defensive",
+    "Energy",
+    "Industrials",
+    "Communication Services",
+    "Real Estate",
+    "Utilities",
+    "Basic Materials",
 ]
 
 
@@ -68,20 +67,36 @@ VALID_SECTORS = [
 
 COMMON_TAGS = {
     # Investment style
-    'blue-chip', 'growth', 'value', 'dividend',
-
+    "blue-chip",
+    "growth",
+    "value",
+    "dividend",
     # Market indices
-    'S&P 500', 'DOW', 'NASDAQ', 'HSI',
-
+    "S&P 500",
+    "DOW",
+    "NASDAQ",
+    "HSI",
     # Sector groups
-    'FAANG', 'technology', 'semiconductor', 'banking', 'insurance',
-    'ecommerce', 'internet', 'EV', 'healthcare', 'pharmaceutical',
-
+    "FAANG",
+    "technology",
+    "semiconductor",
+    "banking",
+    "insurance",
+    "ecommerce",
+    "internet",
+    "EV",
+    "healthcare",
+    "pharmaceutical",
     # Special status
-    'major', 'SOE', 'conglomerate', 'REIT',
-
+    "major",
+    "SOE",
+    "conglomerate",
+    "REIT",
     # Other
-    'penny-stock', 'small-cap', 'mid-cap', 'large-cap',
+    "penny-stock",
+    "small-cap",
+    "mid-cap",
+    "large-cap",
 }
 
 
@@ -89,7 +104,8 @@ COMMON_TAGS = {
 # Validation Functions
 # =============================================================================
 
-def validate_ticker_format(symbol: str, market: str) -> Tuple[bool, Optional[str]]:
+
+def validate_ticker_format(symbol: str, market: str) -> tuple[bool, str | None]:
     """
     Validate ticker symbol format for a specific market.
 
@@ -117,13 +133,16 @@ def validate_ticker_format(symbol: str, market: str) -> Tuple[bool, Optional[str
         if re.match(pattern, symbol):
             return True, None
         else:
-            examples = ', '.join(MARKET_EXAMPLES.get(market, []))
-            return False, f"Invalid {market.upper()} ticker format. Examples: {examples}"
+            examples = ", ".join(MARKET_EXAMPLES.get(market, []))
+            return (
+                False,
+                f"Invalid {market.upper()} ticker format. Examples: {examples}",
+            )
     except re.error as e:
         return False, f"Invalid regex pattern: {e}"
 
 
-def validate_exchange(exchange: str, market: str) -> Tuple[bool, Optional[str]]:
+def validate_exchange(exchange: str, market: str) -> tuple[bool, str | None]:
     """
     Validate exchange code for a specific market.
 
@@ -146,10 +165,13 @@ def validate_exchange(exchange: str, market: str) -> Tuple[bool, Optional[str]]:
     if exchange in valid_exchanges:
         return True, None
     else:
-        return False, f"Invalid exchange for {market.upper()}: {exchange}. Valid: {', '.join(valid_exchanges)}"
+        return (
+            False,
+            f"Invalid exchange for {market.upper()}: {exchange}. Valid: {', '.join(valid_exchanges)}",
+        )
 
 
-def validate_sector(sector: str) -> Tuple[bool, Optional[str]]:
+def validate_sector(sector: str) -> tuple[bool, str | None]:
     """
     Validate sector name.
 
@@ -167,10 +189,13 @@ def validate_sector(sector: str) -> Tuple[bool, Optional[str]]:
     if sector in VALID_SECTORS:
         return True, None
     else:
-        return False, f"Invalid sector: {sector}. Valid sectors: {', '.join(VALID_SECTORS)}"
+        return (
+            False,
+            f"Invalid sector: {sector}. Valid sectors: {', '.join(VALID_SECTORS)}",
+        )
 
 
-def validate_tags(tags: List[str]) -> Tuple[bool, List[str]]:
+def validate_tags(tags: list[str]) -> tuple[bool, list[str]]:
     """
     Validate and normalize tags.
 
@@ -207,7 +232,7 @@ def validate_tags(tags: List[str]) -> Tuple[bool, List[str]]:
     return True, warnings
 
 
-def validate_priority(priority: int) -> Tuple[bool, Optional[str]]:
+def validate_priority(priority: int) -> tuple[bool, str | None]:
     """
     Validate priority value.
 
@@ -230,7 +255,8 @@ def validate_priority(priority: int) -> Tuple[bool, Optional[str]]:
 # Duplicate Detection
 # =============================================================================
 
-def find_duplicate_symbols(tickers: List[Dict], market: str) -> List[str]:
+
+def find_duplicate_symbols(tickers: list[dict], market: str) -> list[str]:
     """
     Find duplicate ticker symbols within a market.
 
@@ -241,7 +267,7 @@ def find_duplicate_symbols(tickers: List[Dict], market: str) -> List[str]:
     Returns:
         List of duplicate symbols
     """
-    symbols = [t.get('symbol') for t in tickers if 'symbol' in t]
+    symbols = [t.get("symbol") for t in tickers if "symbol" in t]
     seen = set()
     duplicates = set()
 
@@ -256,7 +282,7 @@ def find_duplicate_symbols(tickers: List[Dict], market: str) -> List[str]:
     return list(duplicates)
 
 
-def find_cross_market_duplicates(config: Dict) -> Dict[str, List[str]]:
+def find_cross_market_duplicates(config: dict) -> dict[str, list[str]]:
     """
     Find ticker symbols that appear in multiple markets.
 
@@ -266,11 +292,11 @@ def find_cross_market_duplicates(config: Dict) -> Dict[str, List[str]]:
     Returns:
         Dictionary mapping symbol to list of markets it appears in
     """
-    symbol_markets: Dict[str, List[str]] = {}
+    symbol_markets: dict[str, list[str]] = {}
 
-    for market_name, market_config in config.get('markets', {}).items():
-        for ticker in market_config.get('tickers', []):
-            symbol = ticker.get('symbol')
+    for market_name, market_config in config.get("markets", {}).items():
+        for ticker in market_config.get("tickers", []):
+            symbol = ticker.get("symbol")
 
             if symbol:
                 if symbol not in symbol_markets:
@@ -294,7 +320,8 @@ def find_cross_market_duplicates(config: Dict) -> Dict[str, List[str]]:
 # Market Detection
 # =============================================================================
 
-def detect_market_from_symbol(symbol: str) -> Optional[str]:
+
+def detect_market_from_symbol(symbol: str) -> str | None:
     """
     Attempt to detect market from ticker symbol format.
 
@@ -317,7 +344,7 @@ def detect_market_from_symbol(symbol: str) -> Optional[str]:
     return None
 
 
-def detect_market_from_exchange(exchange: str) -> Optional[str]:
+def detect_market_from_exchange(exchange: str) -> str | None:
     """
     Attempt to detect market from exchange code.
 
@@ -340,7 +367,8 @@ def detect_market_from_exchange(exchange: str) -> Optional[str]:
 # Schema Validation
 # =============================================================================
 
-def validate_ticker_entry(ticker: Dict, market: str) -> Tuple[bool, List[str]]:
+
+def validate_ticker_entry(ticker: dict, market: str) -> tuple[bool, list[str]]:
     """
     Validate a complete ticker entry.
 
@@ -354,51 +382,53 @@ def validate_ticker_entry(ticker: Dict, market: str) -> Tuple[bool, List[str]]:
     errors = []
 
     # Required fields
-    required_fields = ['symbol', 'name', 'exchange', 'sector', 'active']
+    required_fields = ["symbol", "name", "exchange", "sector", "active"]
 
     for field in required_fields:
         if field not in ticker:
             errors.append(f"Missing required field: {field}")
 
     # Validate symbol
-    if 'symbol' in ticker:
-        is_valid, error = validate_ticker_format(ticker['symbol'], market)
+    if "symbol" in ticker:
+        is_valid, error = validate_ticker_format(ticker["symbol"], market)
         if not is_valid:
             errors.append(f"Symbol validation failed: {error}")
 
     # Validate exchange
-    if 'exchange' in ticker:
-        is_valid, error = validate_exchange(ticker['exchange'], market)
+    if "exchange" in ticker:
+        is_valid, error = validate_exchange(ticker["exchange"], market)
         if not is_valid:
             errors.append(f"Exchange validation failed: {error}")
 
     # Validate sector
-    if 'sector' in ticker:
-        is_valid, error = validate_sector(ticker['sector'])
+    if "sector" in ticker:
+        is_valid, error = validate_sector(ticker["sector"])
         if not is_valid:
             errors.append(f"Sector validation failed: {error}")
 
     # Validate tags (if present)
-    if 'tags' in ticker:
-        is_valid, warnings = validate_tags(ticker['tags'])
+    if "tags" in ticker:
+        is_valid, warnings = validate_tags(ticker["tags"])
         if not is_valid:
             errors.extend(warnings)
 
     # Validate priority (if present)
-    if 'priority' in ticker:
-        is_valid, error = validate_priority(ticker['priority'])
+    if "priority" in ticker:
+        is_valid, error = validate_priority(ticker["priority"])
         if not is_valid:
             errors.append(f"Priority validation failed: {error}")
 
     # Validate active field type
-    if 'active' in ticker:
-        if not isinstance(ticker['active'], bool):
+    if "active" in ticker:
+        if not isinstance(ticker["active"], bool):
             errors.append(f"Active field must be boolean, got {type(ticker['active'])}")
 
     return len(errors) == 0, errors
 
 
-def validate_market_config(market_config: Dict, market_name: str) -> Tuple[bool, List[str]]:
+def validate_market_config(
+    market_config: dict, market_name: str
+) -> tuple[bool, list[str]]:
     """
     Validate entire market configuration.
 
@@ -412,15 +442,15 @@ def validate_market_config(market_config: Dict, market_name: str) -> Tuple[bool,
     errors = []
 
     # Check required fields
-    if 'currency' not in market_config:
+    if "currency" not in market_config:
         errors.append(f"Market {market_name}: Missing 'currency' field")
 
-    if 'tickers' not in market_config:
+    if "tickers" not in market_config:
         errors.append(f"Market {market_name}: Missing 'tickers' field")
         return False, errors
 
     # Validate each ticker
-    tickers = market_config.get('tickers', [])
+    tickers = market_config.get("tickers", [])
 
     if not isinstance(tickers, list):
         errors.append(f"Market {market_name}: 'tickers' must be a list")
@@ -430,7 +460,9 @@ def validate_market_config(market_config: Dict, market_name: str) -> Tuple[bool,
         is_valid, ticker_errors = validate_ticker_entry(ticker, market_name)
 
         if not is_valid:
-            errors.append(f"Market {market_name}, ticker #{i+1}: {', '.join(ticker_errors)}")
+            errors.append(
+                f"Market {market_name}, ticker #{i + 1}: {', '.join(ticker_errors)}"
+            )
 
     # Check for duplicates
     duplicates = find_duplicate_symbols(tickers, market_name)
@@ -440,7 +472,7 @@ def validate_market_config(market_config: Dict, market_name: str) -> Tuple[bool,
     return len(errors) == 0, errors
 
 
-def validate_full_config(config: Dict) -> Tuple[bool, Dict[str, List[str]]]:
+def validate_full_config(config: dict) -> tuple[bool, dict[str, list[str]]]:
     """
     Validate entire configuration file.
 
@@ -454,12 +486,12 @@ def validate_full_config(config: Dict) -> Tuple[bool, Dict[str, List[str]]]:
     warnings = []
 
     # Check top-level structure
-    if 'markets' not in config:
+    if "markets" not in config:
         errors.append("Missing 'markets' section in configuration")
-        return False, {'errors': errors, 'warnings': warnings}
+        return False, {"errors": errors, "warnings": warnings}
 
     # Validate each market
-    for market_name, market_config in config['markets'].items():
+    for market_name, market_config in config["markets"].items():
         is_valid, market_errors = validate_market_config(market_config, market_name)
         errors.extend(market_errors)
 
@@ -469,18 +501,15 @@ def validate_full_config(config: Dict) -> Tuple[bool, Dict[str, List[str]]]:
         warnings.append(f"Tickers in multiple markets: {duplicates}")
 
     # Validate groups (if present)
-    if 'groups' in config:
-        group_errors = validate_groups(config['groups'], config['markets'])
-        errors.extend(group_errors['errors'])
-        warnings.extend(group_errors['warnings'])
+    if "groups" in config:
+        group_errors = validate_groups(config["groups"], config["markets"])
+        errors.extend(group_errors["errors"])
+        warnings.extend(group_errors["warnings"])
 
-    return len(errors) == 0, {'errors': errors, 'warnings': warnings}
+    return len(errors) == 0, {"errors": errors, "warnings": warnings}
 
 
-def validate_groups(
-    groups: Dict,
-    markets: Dict
-) -> Dict[str, List[str]]:
+def validate_groups(groups: dict, markets: dict) -> dict[str, list[str]]:
     """
     Validate ticker groups.
 
@@ -495,13 +524,13 @@ def validate_groups(
     warnings = []
 
     if not groups:
-        return {'errors': errors, 'warnings': warnings}
+        return {"errors": errors, "warnings": warnings}
 
     # Build symbol registry
     symbol_registry = set()
     for market_name, market_config in markets.items():
-        for ticker in market_config.get('tickers', []):
-            symbol_registry.add(ticker.get('symbol'))
+        for ticker in market_config.get("tickers", []):
+            symbol_registry.add(ticker.get("symbol"))
 
     # Validate each group
     for group_name, group_config in groups.items():
@@ -510,15 +539,15 @@ def validate_groups(
             continue
 
         # Check required fields
-        if 'markets' not in group_config:
+        if "markets" not in group_config:
             errors.append(f"Group '{group_name}': Missing 'markets' field")
 
-        if 'tickers' not in group_config:
+        if "tickers" not in group_config:
             errors.append(f"Group '{group_name}': Missing 'tickers' field")
             continue
 
         # Validate ticker references
-        tickers = group_config['tickers']
+        tickers = group_config["tickers"]
 
         if isinstance(tickers, list):
             # Simple format
@@ -542,12 +571,13 @@ def validate_groups(
                             f"not found in market '{market_name}'"
                         )
 
-    return {'errors': errors, 'warnings': warnings}
+    return {"errors": errors, "warnings": warnings}
 
 
 # =============================================================================
 # Utility Functions
 # =============================================================================
+
 
 def normalize_symbol(symbol: str, market: str) -> str:
     """
@@ -562,22 +592,22 @@ def normalize_symbol(symbol: str, market: str) -> str:
     """
     symbol = symbol.strip().upper()
 
-    if market == 'cn':
+    if market == "cn":
         # Ensure 6-digit format with leading zeros
         return symbol.zfill(6)
-    elif market == 'hk':
+    elif market == "hk":
         # Ensure format: 0123.HK
-        if not symbol.endswith('.HK'):
-            parts = symbol.split('.')
+        if not symbol.endswith(".HK"):
+            parts = symbol.split(".")
             if len(parts) == 1:
                 # Add .HK suffix
                 num_part = parts[0].zfill(4)
                 return f"{num_part}.HK"
         return symbol
-    elif market == 'sg':
+    elif market == "sg":
         # Ensure format: X00.SI
-        if not symbol.endswith('.SI'):
-            parts = symbol.split('.')
+        if not symbol.endswith(".SI"):
+            parts = symbol.split(".")
             if len(parts) == 1:
                 num_part = parts[0][1:].zfill(2)
                 letter = parts[0][0].upper()
@@ -587,7 +617,7 @@ def normalize_symbol(symbol: str, market: str) -> str:
         return symbol
 
 
-def get_market_examples(market: str, count: int = 5) -> List[str]:
+def get_market_examples(market: str, count: int = 5) -> list[str]:
     """
     Get example ticker symbols for a market.
 
@@ -603,9 +633,7 @@ def get_market_examples(market: str, count: int = 5) -> List[str]:
 
 
 def print_validation_results(
-    is_valid: bool,
-    errors: List[str],
-    warnings: List[str]
+    is_valid: bool, errors: list[str], warnings: list[str]
 ) -> None:
     """
     Print validation results in a human-readable format.

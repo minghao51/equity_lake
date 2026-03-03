@@ -22,15 +22,12 @@ import logging
 import sys
 import time
 from datetime import date, datetime, timedelta
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import yfinance as yf
 from fredapi import Fred
 
 from equity_lake.core.runtime import (
-    LOGS_DIR,
     MACRO_COLUMNS,
     MACRO_INDICATOR_CONFIG,
     MACRO_INDICATORS_DIR,
@@ -48,15 +45,13 @@ class MacroIndicatorFetcher:
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
 
-    def fetch(self, trading_date: date) -> Optional[pd.DataFrame]:
+    def fetch(self, trading_date: date) -> pd.DataFrame | None:
         """Fetch data for a specific date."""
         raise NotImplementedError("Subclasses must implement fetch()")
 
-    def _retry_on_failure(
-        self, func, *args, **kwargs
-    ) -> Optional[pd.DataFrame]:
+    def _retry_on_failure(self, func, *args, **kwargs) -> pd.DataFrame | None:
         """Retry logic for API calls."""
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         for attempt in range(self.retry_attempts):
             try:
                 result = func(*args, **kwargs)
@@ -86,10 +81,10 @@ class YFinanceFetcher(MacroIndicatorFetcher):
         self.ticker = ticker
         self.indicator_name = indicator_name
 
-    def fetch(self, trading_date: date) -> Optional[pd.DataFrame]:
+    def fetch(self, trading_date: date) -> pd.DataFrame | None:
         """Fetch indicator value for given date."""
 
-        def _fetch() -> Optional[pd.DataFrame]:
+        def _fetch() -> pd.DataFrame | None:
             start_date = trading_date.strftime("%Y-%m-%d")
             end_date = (trading_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -102,7 +97,9 @@ class YFinanceFetcher(MacroIndicatorFetcher):
                 )
 
                 if data is None or data.empty:
-                    logger.warning(f"No data for {self.indicator_name} on {trading_date}")
+                    logger.warning(
+                        f"No data for {self.indicator_name} on {trading_date}"
+                    )
                     return None
 
                 if "Close" in data.columns:
@@ -139,7 +136,11 @@ class FredFetcher(MacroIndicatorFetcher):
     """Fetch data from FRED API."""
 
     def __init__(
-        self, series_id: str, indicator_name: str, fred_api_key: str, retry_attempts: int = 3
+        self,
+        series_id: str,
+        indicator_name: str,
+        fred_api_key: str,
+        retry_attempts: int = 3,
     ):
         super().__init__(retry_attempts)
         self.series_id = series_id
@@ -147,10 +148,10 @@ class FredFetcher(MacroIndicatorFetcher):
         self.fred_api_key = fred_api_key
         self.fred = Fred(api_key=fred_api_key)
 
-    def fetch(self, trading_date: date) -> Optional[pd.DataFrame]:
+    def fetch(self, trading_date: date) -> pd.DataFrame | None:
         """Fetch indicator value for given date from FRED."""
 
-        def _fetch() -> Optional[pd.DataFrame]:
+        def _fetch() -> pd.DataFrame | None:
             try:
                 data = self.fred.get_series(
                     self.series_id,
@@ -191,7 +192,7 @@ class FredFetcher(MacroIndicatorFetcher):
 class MacroDataPipeline:
     """Orchestrates macro indicator fetching."""
 
-    def __init__(self, config: Optional[Dict] = None):
+    def __init__(self, config: dict | None = None):
         self.config = config or get_project_config()
         self.fred_api_key = self._get_fred_api_key()
         self.indicators = self._initialize_fetchers()
@@ -199,6 +200,7 @@ class MacroDataPipeline:
     def _get_fred_api_key(self) -> str:
         """Get FRED API key from environment."""
         import os
+
         from dotenv import load_dotenv
 
         load_dotenv()
@@ -211,7 +213,7 @@ class MacroDataPipeline:
             )
         return api_key
 
-    def _initialize_fetchers(self) -> List[MacroIndicatorFetcher]:
+    def _initialize_fetchers(self) -> list[MacroIndicatorFetcher]:
         """Initialize fetchers based on configuration."""
         fetchers = []
 
@@ -230,9 +232,7 @@ class MacroDataPipeline:
 
                 elif source == "fred":
                     if not self.fred_api_key:
-                        logger.warning(
-                            f"Skipping {indicator_name} - no FRED API key"
-                        )
+                        logger.warning(f"Skipping {indicator_name} - no FRED API key")
                         continue
 
                     series_id = indicator_config["series"]
@@ -283,7 +283,7 @@ class MacroDataPipeline:
         return df
 
     def fetch_with_fallback(
-        self, trading_date: date, fallback_date: Optional[date] = None
+        self, trading_date: date, fallback_date: date | None = None
     ) -> pd.DataFrame:
         """Fetch macro indicators, falling back to previous date if needed."""
         df = self.fetch_all(trading_date)
@@ -352,7 +352,9 @@ def write_macro_to_parquet(
         df_write.to_parquet(output_file, index=False, compression="snappy")
 
         file_size = output_file.stat().st_size / 1024
-        logger.info(f"Wrote {len(df_write)} indicators to {output_file} ({file_size:.1f} KB)")
+        logger.info(
+            f"Wrote {len(df_write)} indicators to {output_file} ({file_size:.1f} KB)"
+        )
         return True
 
     except Exception as e:
@@ -409,7 +411,8 @@ Examples:
     )
 
     parser.add_argument(
-        "--verbose", "-v",
+        "--verbose",
+        "-v",
         action="store_true",
         help="Enable verbose logging",
     )

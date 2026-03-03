@@ -6,9 +6,7 @@ including commissions, slippage, and market impact.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Optional
 
-import pandas as pd
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -191,7 +189,9 @@ class SlippageModel(ABC):
     """Abstract base class for slippage models."""
 
     @abstractmethod
-    def calculate(self, price: float, shares: float, volume: Optional[float] = None) -> float:
+    def calculate(
+        self, price: float, shares: float, volume: float | None = None
+    ) -> float:
         """
         Calculate slippage for a trade.
 
@@ -224,7 +224,9 @@ class FixedSlippage(SlippageModel):
     def __init__(self, slippage_rate: float = 0.0001):
         self.slippage_rate = slippage_rate
 
-    def calculate(self, price: float, shares: float, volume: Optional[float] = None) -> float:
+    def calculate(
+        self, price: float, shares: float, volume: float | None = None
+    ) -> float:
         """Calculate fixed slippage."""
         if shares >= 0:  # Buying
             return price * (1 + self.slippage_rate)
@@ -255,7 +257,9 @@ class VolumeShareSlippage(SlippageModel):
         self.base_slippage = base_slippage
         self.impact_factor = impact_factor
 
-    def calculate(self, price: float, shares: float, volume: Optional[float] = None) -> float:
+    def calculate(
+        self, price: float, shares: float, volume: float | None = None
+    ) -> float:
         """Calculate volume-based slippage."""
         # Base slippage
         total_slippage = self.base_slippage
@@ -263,7 +267,7 @@ class VolumeShareSlippage(SlippageModel):
         # Add market impact if volume provided
         if volume is not None and volume > 0:
             volume_share = abs(shares) / volume
-            impact = self.impact_factor * (volume_share ** 2)
+            impact = self.impact_factor * (volume_share**2)
             total_slippage += impact
 
         # Apply slippage
@@ -304,8 +308,8 @@ class TransactionCost:
         self,
         price: float,
         shares: float,
-        volume: Optional[float] = None,
-    ) -> Dict[str, float]:
+        volume: float | None = None,
+    ) -> dict[str, float]:
         """
         Calculate total transaction cost breakdown.
 

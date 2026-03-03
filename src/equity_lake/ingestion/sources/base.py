@@ -58,4 +58,5 @@ class MarketDataFetcher:
                     raise last_error from exc
         return pd.DataFrame()
 
+
 __all__ = ["MacroIndicatorFetcher", "MarketDataFetcher"]

@@ -9,17 +9,15 @@ Example:
     Fetching 3 markets in parallel:   5 seconds (3x speedup)
 """
 
-import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
-from typing import Callable, Dict, List, Optional, Tuple
 
 import pandas as pd
 import structlog
 
-from equity_lake.core.logging import timer, get_correlation_id, set_correlation_id
-
+from equity_lake.core.logging import get_correlation_id, timer
 
 # Use structlog for structured logging (supports keyword arguments)
 logger = structlog.get_logger()
@@ -31,8 +29,8 @@ class MarketFetchResult:
 
     market: str
     success: bool
-    data: Optional[pd.DataFrame] = None
-    error: Optional[str] = None
+    data: pd.DataFrame | None = None
+    error: str | None = None
     duration_seconds: float = 0.0
 
     def __bool__(self) -> bool:
@@ -44,7 +42,7 @@ def fetch_market_with_timing(
     market: str,
     trading_date: date,
     fetch_func: Callable,
-    fetch_func_kwargs: Optional[dict] = None
+    fetch_func_kwargs: dict | None = None,
 ) -> MarketFetchResult:
     """
     Fetch data for a single market with timing and error handling.
@@ -59,7 +57,6 @@ def fetch_market_with_timing(
         MarketFetchResult with data or error information
     """
     import time
-    from equity_lake.core.logging import get_correlation_id
 
     kwargs = fetch_func_kwargs or {}
     start_time = time.time()
@@ -68,7 +65,7 @@ def fetch_market_with_timing(
         "market_fetch_started",
         market=market,
         trading_date=str(trading_date),
-        correlation_id=get_correlation_id()
+        correlation_id=get_correlation_id(),
     )
 
     try:
@@ -88,7 +85,7 @@ def fetch_market_with_timing(
                 success=False,
                 data=None,
                 error="No data returned",
-                duration_seconds=round(duration, 3)
+                duration_seconds=round(duration, 3),
             )
 
         logger.info(
@@ -99,10 +96,7 @@ def fetch_market_with_timing(
         )
 
         return MarketFetchResult(
-            market=market,
-            success=True,
-            data=df,
-            duration_seconds=round(duration, 3)
+            market=market, success=True, data=df, duration_seconds=round(duration, 3)
         )
 
     except Exception as e:
@@ -114,7 +108,7 @@ def fetch_market_with_timing(
             market=market,
             error=error_msg,
             duration_seconds=round(duration, 3),
-            exc_info=True
+            exc_info=True,
         )
 
         return MarketFetchResult(
@@ -122,17 +116,17 @@ def fetch_market_with_timing(
             success=False,
             data=None,
             error=error_msg,
-            duration_seconds=round(duration, 3)
+            duration_seconds=round(duration, 3),
         )
 
 
 def fetch_markets_parallel(
-    markets: List[str],
+    markets: list[str],
     trading_date: date,
-    fetch_func_map: Dict[str, Tuple[Callable, dict]],
-    max_workers: Optional[int] = None,
-    timeout_seconds: int = 300
-) -> Dict[str, MarketFetchResult]:
+    fetch_func_map: dict[str, tuple[Callable, dict]],
+    max_workers: int | None = None,
+    timeout_seconds: int = 300,
+) -> dict[str, MarketFetchResult]:
     """
     Fetch multiple markets concurrently using thread pool.
 
@@ -183,13 +177,13 @@ def fetch_markets_parallel(
                     logger.error(
                         "fetch_function_not_found",
                         market=market,
-                        available_markets=list(fetch_func_map.keys())
+                        available_markets=list(fetch_func_map.keys()),
                     )
                     results[market] = MarketFetchResult(
                         market=market,
                         success=False,
                         error=f"No fetch function defined for market: {market}",
-                        duration_seconds=0.0
+                        duration_seconds=0.0,
                     )
                     continue
 
@@ -201,7 +195,7 @@ def fetch_markets_parallel(
                     market=market,
                     trading_date=trading_date,
                     fetch_func=fetch_func,
-                    fetch_func_kwargs=fetch_kwargs
+                    fetch_func_kwargs=fetch_kwargs,
                 )
 
                 future_to_market[future] = market
@@ -221,13 +215,13 @@ def fetch_markets_parallel(
                         "future_result_exception",
                         market=market,
                         error=str(e),
-                        exc_info=True
+                        exc_info=True,
                     )
                     results[market] = MarketFetchResult(
                         market=market,
                         success=False,
                         error=f"Future execution failed: {str(e)}",
-                        duration_seconds=0.0
+                        duration_seconds=0.0,
                     )
 
     # Log summary
@@ -248,10 +242,10 @@ def fetch_markets_parallel(
 
 
 def fetch_markets_sequential(
-    markets: List[str],
+    markets: list[str],
     trading_date: date,
-    fetch_func_map: Dict[str, Tuple[Callable, dict]]
-) -> Dict[str, MarketFetchResult]:
+    fetch_func_map: dict[str, tuple[Callable, dict]],
+) -> dict[str, MarketFetchResult]:
     """
     Fetch multiple markets sequentially (for fallback or comparison).
 
@@ -267,9 +261,7 @@ def fetch_markets_sequential(
         This function is primarily for testing or fallback when parallel execution fails.
     """
     logger.info(
-        "sequential_fetch_started",
-        markets=markets,
-        trading_date=str(trading_date)
+        "sequential_fetch_started", markets=markets, trading_date=str(trading_date)
     )
 
     results = {}
@@ -281,7 +273,7 @@ def fetch_markets_sequential(
                 market=market,
                 success=False,
                 error=f"No fetch function defined for market: {market}",
-                duration_seconds=0.0
+                duration_seconds=0.0,
             )
             continue
 
@@ -290,7 +282,7 @@ def fetch_markets_sequential(
             market=market,
             trading_date=trading_date,
             fetch_func=fetch_func,
-            fetch_func_kwargs=fetch_kwargs
+            fetch_func_kwargs=fetch_kwargs,
         )
 
         results[market] = result
@@ -298,7 +290,7 @@ def fetch_markets_sequential(
     return results
 
 
-def summarize_results(results: Dict[str, MarketFetchResult]) -> Dict[str, any]:
+def summarize_results(results: dict[str, MarketFetchResult]) -> dict[str, any]:
     """
     Generate summary statistics from fetch results.
 
@@ -310,12 +302,12 @@ def summarize_results(results: Dict[str, MarketFetchResult]) -> Dict[str, any]:
     """
     if not results:
         return {
-            'total_markets': 0,
-            'successful': 0,
-            'failed': 0,
-            'success_rate': 0.0,
-            'total_duration_seconds': 0.0,
-            'avg_duration_seconds': 0.0,
+            "total_markets": 0,
+            "successful": 0,
+            "failed": 0,
+            "success_rate": 0.0,
+            "total_duration_seconds": 0.0,
+            "avg_duration_seconds": 0.0,
         }
 
     successful = sum(1 for r in results.values() if r.success)
@@ -323,14 +315,18 @@ def summarize_results(results: Dict[str, MarketFetchResult]) -> Dict[str, any]:
     total_duration = sum(r.duration_seconds for r in results.values())
 
     return {
-        'total_markets': len(results),
-        'successful': successful,
-        'failed': failed,
-        'success_rate': successful / len(results),
-        'total_duration_seconds': round(total_duration, 3),
-        'avg_duration_seconds': round(total_duration / len(results), 3),
-        'slowest_market': max(results.items(), key=lambda x: x[1].duration_seconds)[0] if results else None,
-        'fastest_market': min(results.items(), key=lambda x: x[1].duration_seconds)[0] if results else None,
+        "total_markets": len(results),
+        "successful": successful,
+        "failed": failed,
+        "success_rate": successful / len(results),
+        "total_duration_seconds": round(total_duration, 3),
+        "avg_duration_seconds": round(total_duration / len(results), 3),
+        "slowest_market": max(results.items(), key=lambda x: x[1].duration_seconds)[0]
+        if results
+        else None,
+        "fastest_market": min(results.items(), key=lambda x: x[1].duration_seconds)[0]
+        if results
+        else None,
     }
 
 

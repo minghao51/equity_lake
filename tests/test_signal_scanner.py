@@ -2,8 +2,8 @@
 
 from datetime import date
 
-from equity_lake.signals.scanner import SignalScanner
 from equity_lake.signals.models import Signal, SignalConfig, Watchlist
+from equity_lake.signals.scanner import SignalScanner
 
 
 def test_scanner_initialization():

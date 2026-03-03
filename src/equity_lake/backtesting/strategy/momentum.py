@@ -5,10 +5,7 @@ This module implements various momentum strategies including cross-sectional
 momentum and time-series momentum.
 """
 
-from datetime import timedelta
-from typing import Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 import structlog
 
@@ -42,7 +39,7 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "lookback_days": 252,  # 1 year
             "skip_days": 21,  # 1 month
@@ -64,12 +61,12 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         """
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
         # Store close prices for signal generation
-        self.indicators['close'] = close_df
+        self.indicators["close"] = close_df
 
         logger.info(
             "CrossSectionalMomentumStrategy initialized",
@@ -85,15 +82,15 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns for each ticker
         """
-        close_df = self.indicators['close']
+        close_df = self.indicators["close"]
 
-        lookback = self.get_param('lookback_days')
-        skip_days = self.get_param('skip_days')
-        top_pct = self.get_param('top_pct')
-        bottom_pct = self.get_param('bottom_pct')
-        rebalance_days = self.get_param('rebalance_days')
-        long_only = self.get_param('long_only')
-        min_stocks = self.get_param('min_stocks')
+        lookback = self.get_param("lookback_days")
+        skip_days = self.get_param("skip_days")
+        top_pct = self.get_param("top_pct")
+        bottom_pct = self.get_param("bottom_pct")
+        rebalance_days = self.get_param("rebalance_days")
+        long_only = self.get_param("long_only")
+        min_stocks = self.get_param("min_stocks")
 
         # Compute returns
         returns = close_df.pct_change(lookback).shift(skip_days)
@@ -155,10 +152,12 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         entry_signals = signals.notna() & (signals == True)
         exit_signals = signals.notna() & (signals == False)
 
-        result = pd.DataFrame({
-            'entry': entry_signals.any(axis=1),
-            'exit': exit_signals.any(axis=1),
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals.any(axis=1),
+                "exit": exit_signals.any(axis=1),
+            }
+        )
 
         return result
 
@@ -182,7 +181,7 @@ class TimeSeriesMomentumStrategy(BaseStrategy):
         ... })
     """
 
-    def __init__(self, params: Optional[Dict[str, object]] = None):
+    def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "lookback_days": 126,  # 6 months
             "volatility_target": 0.15,  # 15% vol target
@@ -195,11 +194,11 @@ class TimeSeriesMomentumStrategy(BaseStrategy):
         """Initialize time-series momentum strategy."""
         # Extract close prices
         if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
+            close_df = data.xs("close", level="field", axis=1)
         else:
             close_df = data
 
-        self.indicators['close'] = close_df
+        self.indicators["close"] = close_df
 
         logger.info(
             "TimeSeriesMomentumStrategy initialized",
@@ -213,8 +212,8 @@ class TimeSeriesMomentumStrategy(BaseStrategy):
         Returns:
             DataFrame with 'entry' and 'exit' columns
         """
-        close_df = self.indicators['close']
-        lookback = self.get_param('lookback_days')
+        close_df = self.indicators["close"]
+        lookback = self.get_param("lookback_days")
 
         # Compute past returns
         past_returns = close_df.pct_change(lookback)
@@ -225,10 +224,12 @@ class TimeSeriesMomentumStrategy(BaseStrategy):
         # Generate exit signals (momentum turns negative)
         exit_signals = (past_returns < 0).astype(int).diff() == 1
 
-        result = pd.DataFrame({
-            'entry': entry_signals.any(axis=1),
-            'exit': exit_signals.any(axis=1),
-        })
+        result = pd.DataFrame(
+            {
+                "entry": entry_signals.any(axis=1),
+                "exit": exit_signals.any(axis=1),
+            }
+        )
 
         return result
 

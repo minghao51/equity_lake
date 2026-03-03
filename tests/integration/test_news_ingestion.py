@@ -7,16 +7,14 @@ Most tests use mocking to avoid API quota usage.
 
 import os
 from datetime import date, datetime
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
+from equity_lake.core.runtime import NEWS_COLUMNS
 from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
-from equity_lake.core.runtime import NEWS_COLUMNS, US_NEWS_DIR
-
 
 # =============================================================================
 # Schema Validation Tests
@@ -28,19 +26,21 @@ class TestNewsSchemaValidation:
 
     def test_valid_news_schema_passes(self):
         """Test that valid news DataFrame passes validation."""
-        df = pd.DataFrame({
-            "ticker": ["AAPL", "GOOGL"],
-            "date": [date(2024, 1, 1), date(2024, 1, 1)],
-            "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-            "source": ["Reuters", "Bloomberg"],
-            "headline": ["AAPL stock rises", "GOOGL falls"],
-            "summary": ["Strong earnings", "Weak guidance"],
-            "url": ["https://example.com/1", "https://example.com/2"],
-            "category": ["earnings", "guidance"],
-            "sentiment_score": [0.5, -0.3],
-            "sentiment_label": ["positive", "negative"],
-            "relevance_score": [1.0, 0.9],
-        })
+        df = pd.DataFrame(
+            {
+                "ticker": ["AAPL", "GOOGL"],
+                "date": [date(2024, 1, 1), date(2024, 1, 1)],
+                "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
+                "source": ["Reuters", "Bloomberg"],
+                "headline": ["AAPL stock rises", "GOOGL falls"],
+                "summary": ["Strong earnings", "Weak guidance"],
+                "url": ["https://example.com/1", "https://example.com/2"],
+                "category": ["earnings", "guidance"],
+                "sentiment_score": [0.5, -0.3],
+                "sentiment_label": ["positive", "negative"],
+                "relevance_score": [1.0, 0.9],
+            }
+        )
 
         result = validate_schema(df, "us_news")
 
@@ -48,10 +48,12 @@ class TestNewsSchemaValidation:
 
     def test_missing_columns_fails_validation(self):
         """Test that missing required columns fails validation."""
-        df = pd.DataFrame({
-            "ticker": ["AAPL"],
-            # Missing required columns
-        })
+        df = pd.DataFrame(
+            {
+                "ticker": ["AAPL"],
+                # Missing required columns
+            }
+        )
 
         result = validate_schema(df, "us_news")
 
@@ -82,19 +84,23 @@ class TestNewsParquetWrite:
         """Test writing news data to Hive-partitioned Parquet."""
         # Patch the US_NEWS_DIR to use temp path
         with patch("equity_lake.ingestion.writers.US_NEWS_DIR", tmp_path):
-            df = pd.DataFrame({
-                "ticker": ["AAPL", "GOOGL"],
-                "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-                "source": ["Reuters", "Bloomberg"],
-                "headline": ["Test headline 1", "Test headline 2"],
-                "summary": ["Test summary 1", "Test summary 2"],
-                "url": ["https://example.com/1", "https://example.com/2"],
-                "category": ["general", "general"],
-                "sentiment_score": [0.5, -0.3],
-                "sentiment_label": ["positive", "negative"],
-                "relevance_score": [1.0, 0.9],
-            })
+            df = pd.DataFrame(
+                {
+                    "ticker": ["AAPL", "GOOGL"],
+                    "date": [date(2024, 1, 1), date(2024, 1, 1)],
+                    "datetime": pd.to_datetime(
+                        ["2024-01-01 10:00", "2024-01-01 11:00"]
+                    ),
+                    "source": ["Reuters", "Bloomberg"],
+                    "headline": ["Test headline 1", "Test headline 2"],
+                    "summary": ["Test summary 1", "Test summary 2"],
+                    "url": ["https://example.com/1", "https://example.com/2"],
+                    "category": ["general", "general"],
+                    "sentiment_score": [0.5, -0.3],
+                    "sentiment_label": ["positive", "negative"],
+                    "relevance_score": [1.0, 0.9],
+                }
+            )
 
             success = write_to_partitioned_parquet(
                 df,
@@ -118,19 +124,21 @@ class TestNewsParquetWrite:
     def test_dry_run_skips_write(self, tmp_path):
         """Test that dry run mode skips actual write."""
         with patch("equity_lake.ingestion.writers.US_NEWS_DIR", tmp_path):
-            df = pd.DataFrame({
-                "ticker": ["AAPL"],
-                "date": [date(2024, 1, 1)],
-                "datetime": pd.to_datetime(["2024-01-01 10:00"]),
-                "source": ["Reuters"],
-                "headline": ["Test"],
-                "summary": ["Test"],
-                "url": ["https://example.com"],
-                "category": ["general"],
-                "sentiment_score": [0.5],
-                "sentiment_label": ["positive"],
-                "relevance_score": [1.0],
-            })
+            df = pd.DataFrame(
+                {
+                    "ticker": ["AAPL"],
+                    "date": [date(2024, 1, 1)],
+                    "datetime": pd.to_datetime(["2024-01-01 10:00"]),
+                    "source": ["Reuters"],
+                    "headline": ["Test"],
+                    "summary": ["Test"],
+                    "url": ["https://example.com"],
+                    "category": ["general"],
+                    "sentiment_score": [0.5],
+                    "sentiment_label": ["positive"],
+                    "relevance_score": [1.0],
+                }
+            )
 
             success = write_to_partitioned_parquet(
                 df,
@@ -148,19 +156,23 @@ class TestNewsParquetWrite:
     def test_deduplication_by_url(self, tmp_path):
         """Test that duplicate articles (by URL) are skipped."""
         with patch("equity_lake.ingestion.writers.US_NEWS_DIR", tmp_path):
-            df1 = pd.DataFrame({
-                "ticker": ["AAPL", "GOOGL"],
-                "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-                "source": ["Reuters", "Bloomberg"],
-                "headline": ["Test 1", "Test 2"],
-                "summary": ["Summary 1", "Summary 2"],
-                "url": ["https://example.com/1", "https://example.com/2"],
-                "category": ["general", "general"],
-                "sentiment_score": [0.5, -0.3],
-                "sentiment_label": ["positive", "negative"],
-                "relevance_score": [1.0, 0.9],
-            })
+            df1 = pd.DataFrame(
+                {
+                    "ticker": ["AAPL", "GOOGL"],
+                    "date": [date(2024, 1, 1), date(2024, 1, 1)],
+                    "datetime": pd.to_datetime(
+                        ["2024-01-01 10:00", "2024-01-01 11:00"]
+                    ),
+                    "source": ["Reuters", "Bloomberg"],
+                    "headline": ["Test 1", "Test 2"],
+                    "summary": ["Summary 1", "Summary 2"],
+                    "url": ["https://example.com/1", "https://example.com/2"],
+                    "category": ["general", "general"],
+                    "sentiment_score": [0.5, -0.3],
+                    "sentiment_label": ["positive", "negative"],
+                    "relevance_score": [1.0, 0.9],
+                }
+            )
 
             # Write initial data
             write_to_partitioned_parquet(
@@ -171,19 +183,23 @@ class TestNewsParquetWrite:
             )
 
             # Try to write duplicate data (same URLs)
-            df2 = pd.DataFrame({
-                "ticker": ["AAPL", "GOOGL"],
-                "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-                "source": ["Reuters", "Bloomberg"],
-                "headline": ["Test 1", "Test 2"],
-                "summary": ["Summary 1", "Summary 2"],
-                "url": ["https://example.com/1", "https://example.com/2"],
-                "category": ["general", "general"],
-                "sentiment_score": [0.5, -0.3],
-                "sentiment_label": ["positive", "negative"],
-                "relevance_score": [1.0, 0.9],
-            })
+            df2 = pd.DataFrame(
+                {
+                    "ticker": ["AAPL", "GOOGL"],
+                    "date": [date(2024, 1, 1), date(2024, 1, 1)],
+                    "datetime": pd.to_datetime(
+                        ["2024-01-01 10:00", "2024-01-01 11:00"]
+                    ),
+                    "source": ["Reuters", "Bloomberg"],
+                    "headline": ["Test 1", "Test 2"],
+                    "summary": ["Summary 1", "Summary 2"],
+                    "url": ["https://example.com/1", "https://example.com/2"],
+                    "category": ["general", "general"],
+                    "sentiment_score": [0.5, -0.3],
+                    "sentiment_label": ["positive", "negative"],
+                    "relevance_score": [1.0, 0.9],
+                }
+            )
 
             # Should skip duplicates
             success = write_to_partitioned_parquet(
@@ -224,6 +240,7 @@ class TestNewsIngestionE2E:
 
         # Patch US_NEWS_DIR to return our temp path
         import equity_lake.ingestion.writers as writers_module
+
         original_dir = writers_module.US_NEWS_DIR
         writers_module.US_NEWS_DIR = news_dir
 
@@ -286,10 +303,7 @@ class TestNewsIngestionE2E:
 # =============================================================================
 
 
-@pytest.mark.skipif(
-    not os.getenv("FINNHUB_API_KEY"),
-    reason="FINNHUB_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("FINNHUB_API_KEY"), reason="FINNHUB_API_KEY not set")
 @pytest.mark.integration
 class TestRealFinnhubAPI:
     """Tests with real Finnhub API (requires API key)."""
@@ -306,6 +320,7 @@ class TestRealFinnhubAPI:
 
         # Fetch recent news (within last 2 days)
         from datetime import timedelta
+
         trading_date = date.today() - timedelta(days=2)
 
         result = fetcher.fetch(trading_date)
@@ -320,10 +335,7 @@ class TestRealFinnhubAPI:
             assert "sentiment_score" in result.columns
 
 
-@pytest.mark.skipif(
-    not os.getenv("FINNHUB_API_KEY"),
-    reason="FINNHUB_API_KEY not set"
-)
+@pytest.mark.skipif(not os.getenv("FINNHUB_API_KEY"), reason="FINNHUB_API_KEY not set")
 @pytest.mark.integration
 class TestSentimentAccuracy:
     """Test sentiment accuracy on real headlines."""

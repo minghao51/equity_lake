@@ -10,14 +10,13 @@ Tests cover:
 """
 
 from datetime import date, datetime
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
 from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
 from equity_lake.sentiment import SentimentAnalyzer
-
 
 # =============================================================================
 # SentimentAnalyzer Tests
@@ -103,12 +102,14 @@ class TestAnalyzeSentimentScores:
         """Test that sentiment scores are added to DataFrame."""
         from equity_lake.sentiment import analyze_sentiment_scores
 
-        df = pd.DataFrame({
-            "headline": [
-                "AAPL stock surges on earnings",
-                "GOOGL declines on weak guidance",
-            ],
-        })
+        df = pd.DataFrame(
+            {
+                "headline": [
+                    "AAPL stock surges on earnings",
+                    "GOOGL declines on weak guidance",
+                ],
+            }
+        )
 
         result_df = analyze_sentiment_scores(df, text_column="headline")
 
@@ -148,9 +149,11 @@ class TestFinnhubNewsFetcherInit:
 
     def test_initialization_without_api_key_raises_error(self):
         """Test that missing API key raises ValueError."""
-        with patch.dict("os.environ", {}, clear=True):
-            with pytest.raises(ValueError, match="API key"):
-                FinnhubNewsFetcher(tickers=["AAPL"])
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            pytest.raises(ValueError, match="API key"),
+        ):
+            FinnhubNewsFetcher(tickers=["AAPL"])
 
     def test_initialization_from_env_var(self):
         """Test initialization from environment variable."""
@@ -285,7 +288,7 @@ class TestFinnhubNewsFetcherFetch:
 
         def mock_fetch(self, ticker, trading_date):
             # Apply the limit in the mock
-            return large_response[:self.max_articles_per_ticker]
+            return large_response[: self.max_articles_per_ticker]
 
         with patch.object(
             FinnhubNewsFetcher,
@@ -415,6 +418,7 @@ class TestFinnhubNewsFetcherRetry:
         mock_sleep,
     ):
         """Test that fetch continues when one ticker fails."""
+
         def side_effect(ticker, *args, **kwargs):
             if ticker == "AAPL":
                 raise Exception("Network error")

@@ -6,9 +6,8 @@ partitioned Parquet files using DuckDB for high-performance queries.
 """
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import duckdb
 
@@ -25,7 +24,7 @@ class GapDetector:
     LEFT JOIN with existing Parquet data to find missing dates.
     """
 
-    def __init__(self, lake_path: Optional[Path] = None):
+    def __init__(self, lake_path: Path | None = None):
         """
         Initialize GapDetector.
 
@@ -38,11 +37,11 @@ class GapDetector:
     def find_missing_dates(
         self,
         market: str,
-        ticker: Optional[str] = None,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        business_days_only: bool = True
-    ) -> Dict[str, List[date]]:
+        ticker: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        business_days_only: bool = True,
+    ) -> dict[str, list[date]]:
         """
         Find missing dates for tickers in a market.
 
@@ -102,7 +101,7 @@ class GapDetector:
         ticker: str,
         start_date: date,
         end_date: date,
-        business_days_only: bool
+        business_days_only: bool,
     ) -> str:
         """Build SQL to find missing dates for a single ticker."""
         market_path = self.lake_path / market
@@ -110,7 +109,9 @@ class GapDetector:
         business_day_filter = ""
         if business_days_only:
             # DuckDB EXTRACT(DOW) returns 0=Monday, 6=Sunday
-            business_day_filter = "WHERE EXTRACT(DOW FROM generate_series) BETWEEN 0 AND 4"
+            business_day_filter = (
+                "WHERE EXTRACT(DOW FROM generate_series) BETWEEN 0 AND 4"
+            )
 
         return f"""
         WITH date_range AS (
@@ -132,18 +133,16 @@ class GapDetector:
         """
 
     def _build_all_tickers_query(
-        self,
-        market: str,
-        start_date: date,
-        end_date: date,
-        business_days_only: bool
+        self, market: str, start_date: date, end_date: date, business_days_only: bool
     ) -> str:
         """Build SQL to find missing dates for all tickers."""
         market_path = self.lake_path / market
 
         business_day_filter = ""
         if business_days_only:
-            business_day_filter = "WHERE EXTRACT(DOW FROM generate_series) BETWEEN 0 AND 4"
+            business_day_filter = (
+                "WHERE EXTRACT(DOW FROM generate_series) BETWEEN 0 AND 4"
+            )
 
         return f"""
         WITH date_range AS (
@@ -172,7 +171,7 @@ class GapDetector:
         ORDER BY dt.ticker, dt.date
         """
 
-    def get_latest_date(self, market: str, ticker: str) -> Optional[date]:
+    def get_latest_date(self, market: str, ticker: str) -> date | None:
         """
         Get the most recent date for a ticker.
 
@@ -201,10 +200,10 @@ class GapDetector:
     def get_coverage_stats(
         self,
         market: str,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        business_days_only: bool = True
-    ) -> Dict[str, Dict]:
+        start_date: date | None = None,
+        end_date: date | None = None,
+        business_days_only: bool = True,
+    ) -> dict[str, dict]:
         """
         Get coverage statistics for all tickers in a market.
 
@@ -252,13 +251,15 @@ class GapDetector:
             for row in results:
                 ticker, actual_days = row[0], row[1]
                 missing_days = max(0, expected_days - actual_days)
-                coverage_pct = (actual_days / expected_days * 100) if expected_days > 0 else 0
+                coverage_pct = (
+                    (actual_days / expected_days * 100) if expected_days > 0 else 0
+                )
 
                 stats[ticker] = {
-                    'expected': expected_days,
-                    'actual': actual_days,
-                    'missing': missing_days,
-                    'coverage_pct': round(coverage_pct, 2)
+                    "expected": expected_days,
+                    "actual": actual_days,
+                    "missing": missing_days,
+                    "coverage_pct": round(coverage_pct, 2),
                 }
 
             return stats
@@ -284,10 +285,10 @@ class GapDetector:
         self,
         market: str,
         ticker: str,
-        start_date: Optional[date] = None,
-        end_date: Optional[date] = None,
-        business_days_only: bool = True
-    ) -> List[Tuple[date, date]]:
+        start_date: date | None = None,
+        end_date: date | None = None,
+        business_days_only: bool = True,
+    ) -> list[tuple[date, date]]:
         """
         Get missing dates grouped into contiguous ranges.
 
@@ -330,7 +331,9 @@ class GapDetector:
         return ranges
 
 
-def print_gap_report(missing_dates: Dict[str, List[date]], verbose: bool = False) -> None:
+def print_gap_report(
+    missing_dates: dict[str, list[date]], verbose: bool = False
+) -> None:
     """
     Print a human-readable gap report.
 
@@ -345,12 +348,12 @@ def print_gap_report(missing_dates: Dict[str, List[date]], verbose: bool = False
     total_missing = sum(len(dates) for dates in missing_dates.values())
     total_tickers = len(missing_dates)
 
-    print(f"\n{'='*70}")
-    print(f"Gap Detection Report")
-    print(f"{'='*70}")
+    print(f"\n{'=' * 70}")
+    print("Gap Detection Report")
+    print(f"{'=' * 70}")
     print(f"Total tickers with gaps: {total_tickers}")
     print(f"Total missing data points: {total_missing}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     # Group by gap severity
     low_gaps = {}  # 1-5 missing days
@@ -369,7 +372,9 @@ def print_gap_report(missing_dates: Dict[str, List[date]], verbose: bool = False
     # Print high gaps first
     if high_gaps:
         print(f"🔴 HIGH GAPS (20+ missing days): {len(high_gaps)} tickers")
-        for ticker, dates in sorted(high_gaps.items(), key=lambda x: len(x[1]), reverse=True):
+        for ticker, dates in sorted(
+            high_gaps.items(), key=lambda x: len(x[1]), reverse=True
+        ):
             print(f"  {ticker:10} | {len(dates):3} missing days")
             if verbose:
                 print(f"             Missing: {', '.join(str(d) for d in dates[:10])}")
@@ -378,18 +383,22 @@ def print_gap_report(missing_dates: Dict[str, List[date]], verbose: bool = False
 
     if medium_gaps:
         print(f"\n🟡 MEDIUM GAPS (6-20 missing days): {len(medium_gaps)} tickers")
-        for ticker, dates in sorted(medium_gaps.items(), key=lambda x: len(x[1]), reverse=True):
+        for ticker, dates in sorted(
+            medium_gaps.items(), key=lambda x: len(x[1]), reverse=True
+        ):
             print(f"  {ticker:10} | {len(dates):3} missing days")
 
     if low_gaps:
         print(f"\n🟢 LOW GAPS (1-5 missing days): {len(low_gaps)} tickers")
-        for ticker, dates in sorted(low_gaps.items(), key=lambda x: len(x[1]), reverse=True):
+        for ticker, dates in sorted(
+            low_gaps.items(), key=lambda x: len(x[1]), reverse=True
+        ):
             print(f"  {ticker:10} | {len(dates):3} missing days")
 
-    print(f"\n{'='*70}\n")
+    print(f"\n{'=' * 70}\n")
 
 
-def print_coverage_stats(stats: Dict[str, Dict]) -> None:
+def print_coverage_stats(stats: dict[str, dict]) -> None:
     """
     Print coverage statistics for all tickers.
 
@@ -400,16 +409,26 @@ def print_coverage_stats(stats: Dict[str, Dict]) -> None:
         print("No coverage data available")
         return
 
-    print(f"\n{'Ticker':<10} {'Expected':<10} {'Actual':<10} {'Missing':<10} {'Coverage':<10}")
+    print(
+        f"\n{'Ticker':<10} {'Expected':<10} {'Actual':<10} {'Missing':<10} {'Coverage':<10}"
+    )
     print("-" * 60)
 
     # Sort by coverage percentage
-    sorted_tickers = sorted(stats.items(), key=lambda x: x[1]['coverage_pct'])
+    sorted_tickers = sorted(stats.items(), key=lambda x: x[1]["coverage_pct"])
 
     for ticker, ticker_stats in sorted_tickers:
-        coverage_color = "✅" if ticker_stats['coverage_pct'] >= 95 else "⚠️" if ticker_stats['coverage_pct'] >= 80 else "❌"
+        coverage_color = (
+            "✅"
+            if ticker_stats["coverage_pct"] >= 95
+            else "⚠️"
+            if ticker_stats["coverage_pct"] >= 80
+            else "❌"
+        )
 
-        print(f"{ticker:<10} {ticker_stats['expected']:<10} {ticker_stats['actual']:<10} "
-              f"{ticker_stats['missing']:<10} {ticker_stats['coverage_pct']:>6.2f}% {coverage_color}")
+        print(
+            f"{ticker:<10} {ticker_stats['expected']:<10} {ticker_stats['actual']:<10} "
+            f"{ticker_stats['missing']:<10} {ticker_stats['coverage_pct']:>6.2f}% {coverage_color}"
+        )
 
     print()

@@ -5,7 +5,6 @@ This module provides a central registry for all trading strategies,
 allowing dynamic strategy creation and configuration.
 """
 
-from typing import Dict, List, Type, Optional
 
 import structlog
 
@@ -39,13 +38,13 @@ class StrategyRegistry:
         ['sma_cross', 'momentum', 'mean_reversion']
     """
 
-    _strategies: Dict[str, Type[BaseStrategy]] = {}
+    _strategies: dict[str, type[BaseStrategy]] = {}
 
     @classmethod
     def register(
         cls,
         name: str,
-        strategy_class: Type[BaseStrategy],
+        strategy_class: type[BaseStrategy],
         overwrite: bool = False,
     ) -> None:
         """
@@ -91,7 +90,7 @@ class StrategyRegistry:
     def create(
         cls,
         name: str,
-        params: Optional[Dict[str, object]] = None,
+        params: dict[str, object] | None = None,
     ) -> BaseStrategy:
         """
         Create a strategy instance by name.
@@ -115,8 +114,7 @@ class StrategyRegistry:
         if name not in cls._strategies:
             available = ", ".join(cls.list_strategies())
             raise ValueError(
-                f"Unknown strategy: '{name}'. "
-                f"Available strategies: {available}"
+                f"Unknown strategy: '{name}'. Available strategies: {available}"
             )
 
         strategy_class = cls._strategies[name]
@@ -132,7 +130,7 @@ class StrategyRegistry:
         return strategy
 
     @classmethod
-    def list_strategies(cls) -> List[str]:
+    def list_strategies(cls) -> list[str]:
         """
         List all registered strategy names.
 
@@ -146,7 +144,7 @@ class StrategyRegistry:
         return list(cls._strategies.keys())
 
     @classmethod
-    def get_strategy_class(cls, name: str) -> Type[BaseStrategy]:
+    def get_strategy_class(cls, name: str) -> type[BaseStrategy]:
         """
         Get the strategy class by name.
 
@@ -187,9 +185,7 @@ class StrategyRegistry:
             >>> StrategyRegistry.unregister("old_strategy")
         """
         if name not in cls._strategies:
-            raise ValueError(
-                f"Cannot unregister unknown strategy: '{name}'"
-            )
+            raise ValueError(f"Cannot unregister unknown strategy: '{name}'")
 
         del cls._strategies[name]
 
@@ -225,7 +221,8 @@ class StrategyRegistry:
             ...     def generate_signals(self, data):
             ...         pass
         """
-        def decorator(strategy_class: Type[BaseStrategy]):
+
+        def decorator(strategy_class: type[BaseStrategy]):
             cls.register(name, strategy_class)
             return strategy_class
 
@@ -233,7 +230,7 @@ class StrategyRegistry:
 
 
 # Convenience function for common operations
-def get_strategy(name: str, params: Optional[Dict[str, object]] = None) -> BaseStrategy:
+def get_strategy(name: str, params: dict[str, object] | None = None) -> BaseStrategy:
     """
     Get a strategy instance by name.
 

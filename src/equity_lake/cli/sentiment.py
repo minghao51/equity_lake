@@ -49,44 +49,45 @@ Examples:
 
   # Dry run (test without writing)
   equity-sentiment --dry-run --verbose
-        """
+        """,
     )
 
     parser.add_argument(
-        '--date',
+        "--date",
         type=str,
-        help='Trading date (YYYY-MM-DD). Default: yesterday',
+        help="Trading date (YYYY-MM-DD). Default: yesterday",
     )
 
     parser.add_argument(
-        '--tickers',
+        "--tickers",
         type=str,
         help='Comma-separated list of tickers (e.g., "AAPL,GOOGL,MSFT")',
     )
 
     parser.add_argument(
-        '--max-workers',
+        "--max-workers",
         type=int,
         default=1,
-        help='Maximum parallel workers (default: 1, sequential)',
+        help="Maximum parallel workers (default: 1, sequential)",
     )
 
     parser.add_argument(
-        '--api-key',
+        "--api-key",
         type=str,
-        help='Finnhub API key (default: from FINNHUB_API_KEY env var)',
+        help="Finnhub API key (default: from FINNHUB_API_KEY env var)",
     )
 
     parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Skip actual Parquet writes (for testing)',
+        "--dry-run",
+        action="store_true",
+        help="Skip actual Parquet writes (for testing)",
     )
 
     parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose logging',
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Enable verbose logging",
     )
 
     return parser.parse_args()
@@ -123,17 +124,17 @@ def main():
     else:
         trading_date = date.today() - timedelta(days=1)
 
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
     logger.info(f"Social Sentiment Ingestion - {trading_date}")
-    logger.info(f"{'='*60}")
+    logger.info(f"{'=' * 60}")
 
     # Parse tickers
     tickers = None
     if args.tickers:
-        tickers = [t.strip().upper() for t in args.tickers.split(',')]
-        ticker_preview = ', '.join(tickers[:5])
+        tickers = [t.strip().upper() for t in args.tickers.split(",")]
+        ticker_preview = ", ".join(tickers[:5])
         if len(tickers) > 5:
-            ticker_preview += '...'
+            ticker_preview += "..."
         logger.info(f"Tickers: {len(tickers)} specified ({ticker_preview})")
     else:
         logger.info("No tickers specified, use --tickers to fetch specific stocks")
@@ -167,9 +168,9 @@ def main():
             sys.exit(1)
 
         # Log summary
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info("Summary")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
         logger.info(f"Total records: {len(df)}")
         logger.info(f"Tickers: {df['ticker'].nunique()}")
         logger.info(f"Date: {df['date'].min()}")
