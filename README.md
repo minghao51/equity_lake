@@ -259,6 +259,24 @@ s3://your-bucket/
 
 ---
 
+## What's New (v0.4.0)
+
+- **📊 Signal Scanner** - Generate buy/sell/hold signals for watchlists
+- **🎯 3 Signal Types** - Backtest strategies, news sentiment, ML predictions
+- **📝 Multi-Format Output** - JSON, Markdown, terminal tables
+- **💾 Signal History** - Track past signals in Parquet storage
+
+**Quick Start:**
+```bash
+# Configure watchlist in config/watchlist.yaml
+# Generate signals
+equity-signal scan --format md
+```
+
+See [Signal Scanner Guide](docs/user-guide/signals.md) for details.
+
+---
+
 ## What's New (v0.3.0)
 
 - **🚀 Full ML Pipeline** - Automated ingestion → feature engineering → ML inference
@@ -288,6 +306,7 @@ uv run equity-monitor
 ### Quick Start Guides
 - **[Quick Start Guide](docs/getting-started/quickstart.md)** - Get started in 5 minutes
 - **[Pipeline Usage Guide](docs/user-guide/pipeline.md)** - Complete ML pipeline documentation
+- **[Signal Scanner Guide](docs/user-guide/signals.md)** - Signal scanning and generation
 
 ### Comprehensive Guides
 - **[Operations Guide](docs/user-guide/operations.md)** - Day-to-day usage documentation
