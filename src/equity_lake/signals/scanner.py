@@ -10,6 +10,7 @@ from equity_lake.signals.generators.backtest import BacktestSignalGenerator
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.generators.ml import MLPredictionSignalGenerator
 from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
+from equity_lake.signals.history import save_signals_to_parquet
 from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 
 
@@ -110,5 +111,8 @@ class SignalScanner:
         Args:
             signals: List of Signal objects to save
         """
-        # TODO: Implement in Task 12
-        pass
+        if not signals:
+            return
+
+        target_date = signals[0].date
+        save_signals_to_parquet(signals, target_date)
