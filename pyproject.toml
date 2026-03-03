@@ -132,6 +132,7 @@ equity-price-forecast = "equity_lake.cli.price_forecaster:main"
 equity-backtest = "equity_lake.cli.backtest:main"
 equity-news = "equity_lake.cli.news:main"
 equity-sentiment = "equity_lake.cli.sentiment:main"
+equity-signal = "equity_lake.cli.signal:main"
 
 [build-system]
 requires = ["hatchling"]
