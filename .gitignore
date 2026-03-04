@@ -197,6 +197,10 @@ Thumbs.db
 test_results/
 coverage_reports/
 benchmarks/
+models-dir/
+
+# Local tool metadata
+.claude/
 
 # Backup files
 *.bak
