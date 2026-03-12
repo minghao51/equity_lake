@@ -484,22 +484,22 @@ loader.close()
 
 ```bash
 # Run quick validation check
-python examples/quick_test.py
+uv run python examples/quick_test.py
 ```
 
 ### Full Test Suite
 
 ```bash
 # Run comprehensive backtesting tests
-python examples/backtest_demo.py
+uv run python examples/backtest_demo.py
 ```
 
 ## Getting Help
 
 1. **Check examples**: `examples/` directory
-2. **Read test report**: `examples/BACKTEST_TEST_REPORT.md`
-3. **Review source code**: `src/equity_lake/backtesting/`
-4. **Check logs**: `logs/backtest_cache/` for data loader issues
+2. **Review source code**: `src/equity_lake/backtesting/`
+3. **Check logs**: `logs/backtest_cache/` for data loader issues
+4. **Open the archive**: `archive/docs-history/backtesting/` for historical design and test notes
 
 ## Next Steps
 

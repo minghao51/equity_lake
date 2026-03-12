@@ -1,243 +1,52 @@
-# Test Documentation for New Data Fetchers
+# Test Suite Guide
 
-**Version**: 0.2.0
-**Date**: 2026-02-28
+This directory contains the executable test suite for the active package. The
+layout is organized by scope first and feature second.
 
-## Overview
+## Layout
 
-This document describes the test suite for the new data fetchers with batch improvements and multi-source support.
-
-## Test Structure
-
-```
+```text
 tests/
-├── unit/
-│   └── test_fetchers.py          # Tests for new fetchers
-├── integration/
-│   └── test_pipeline_orchestrator.py
-└── conftest.py                    # Shared fixtures
+├── conftest.py                 # Shared fixtures and test helpers
+├── integration/               # Cross-module integration coverage
+├── unit/                      # Focused unit coverage for core subsystems
+├── test_*                     # Feature-level tests kept at top level
+└── __init__.py
 ```
 
----
+## Current Coverage Areas
 
-## Test Coverage
+- `tests/unit/test_fetchers.py`: market-source fetchers and fallback behavior
+- `tests/unit/test_ingestion_orchestrator.py`: daily ingestion orchestration
+- `tests/unit/test_macro_sources.py`: macro indicator fetchers and parquet writes
+- `tests/unit/test_ml_jobs.py`: ML helper orchestration
+- `tests/unit/test_news_fetcher.py`: news ingestion
+- `tests/unit/test_social_sentiment.py`: sentiment ingestion
+- `tests/integration/test_duckdb_queries.py`: DuckDB query paths
+- `tests/integration/test_news_ingestion.py`: end-to-end news ingestion
+- `tests/integration/test_pipeline_orchestrator.py`: pipeline stage orchestration
+- top-level `tests/test_*`: signal scanning, generators, history, and formatters
 
-### 1. USEquityFetcher (Batch Download Improvements)
-
-#### Test Classes: `TestUSEquityFetcherBatching`
-
-| Test | Description | Status |
-|------|-------------|--------|
-| `test_initialization_with_default_batch_size` | Verifies default batch size (500) | ✅ |
-| `test_initialization_with_custom_batch_size` | Verifies custom batch size acceptance | ✅ |
-| `test_chunked_splits_tickers_correctly` | Tests batch splitting logic | ✅ |
-| `test_chunked_handles_small_lists` | Tests edge case: list < batch size | ✅ |
-| `test_chunked_handles_empty_list` | Tests edge case: empty list | ✅ |
-| `test_fetch_with_batching` | Tests multi-batch downloading | ✅ |
-| `test_fetch_handles_partial_failures` | Tests resilience to batch failures | ✅ |
-| `test_fetch_standardizes_columns` | Tests column name standardization | ✅ |
-| `test_fetch_with_single_ticker` | Tests single ticker edge case | ✅ |
-
-**Coverage**: 100% of new batch functionality
-
-### 2. CNEfinanceFetcher (New efinance Integration)
-
-#### Test Classes: `TestCNEfinanceFetcher`
-
-| Test | Description | Status |
-|------|-------------|--------|
-| `test_initialization_requires_efinance` | Tests ImportError when efinance missing | ✅ |
-| `test_initialization_with_params` | Tests parameter initialization | ✅ |
-| `test_fetch_single_stock` | Tests single stock fetching | ✅ |
-| `test_fetch_single_stock_handles_failure` | Tests graceful failure handling | ✅ |
-| `test_fetch_standardizes_columns` | Tests Chinese column name mapping | ✅ |
-| `test_fetch_with_empty_stock_list` | Tests empty stock list edge case | ✅ |
-
-**Coverage**: All public methods and error paths
-
-### 3. CNHybridFetcher (Multi-Source Fallback)
-
-#### Test Classes: `TestCNHybridFetcher`
-
-| Test | Description | Status |
-|------|-------------|--------|
-| `test_initialization_with_both_sources` | Tests both sources enabled | ✅ |
-| `test_initialization_efinance_only` | Tests efinance-only mode | ✅ |
-| `test_initialization_akshare_only` | Tests akshare-only mode | ✅ |
-| `test_initialization_fails_when_no_sources` | Tests error when both disabled | ✅ |
-| `test_fetch_uses_efinance_first` | Tests primary source selection | ✅ |
-| `test_fetch_falls_back_to_akshare` | Tests fallback mechanism | ✅ |
-| `test_fetch_returns_best_result` | Tests best result selection logic | ✅ |
-| `test_fetch_akshare_only` | Tests akshare-only mode | ✅ |
-| `test_standardize_output` | Tests output standardization | ✅ |
-| `test_standardize_output_empty_dataframe` | Tests empty DataFrame handling | ✅ |
-
-**Coverage**: All initialization modes, fetch logic, and edge cases
-
-### 4. Integration Tests
-
-#### Test Classes: `TestFetcherIntegration`
-
-| Test | Description | Status |
-|------|-------------|--------|
-| `test_us_fetcher_with_large_dataset` | Tests large ticker list (1200+) | ✅ |
-| `test_hybrid_fetcher_reliability` | Tests 99.3% reliability claim | ✅ |
-
-**Coverage**: Real-world scenarios and performance validation
-
----
-
-## Fixtures
-
-### New Fixtures in `conftest.py`
-
-```python
-# Sample data fixtures
-@pytest.fixture
-def sample_us_tickers():
-    """Sample US ticker list for testing."""
-    return ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', ...]
-
-@pytest.fixture
-def sample_large_ticker_list():
-    """Large ticker list for testing batch functionality."""
-    # Returns 1200 tickers
-
-@pytest.fixture
-def sample_cn_tickers():
-    """Sample China ticker list for testing."""
-    return ['000001', '000002', '600000', '600036', '601398']
-
-# efinance mock fixtures
-@pytest.fixture
-def mock_efinance_get_quote_history(monkeypatch):
-    """Mock efinance.stock.get_quote_history function."""
-
-@pytest.fixture
-def mock_efinance_get_realtime_quotes(monkeypatch):
-    """Mock efinance.stock.get_realtime_quotes function."""
-
-@pytest.fixture
-def mock_efinance_module(monkeypatch):
-    """Mock entire efinance module for tests."""
-```
-
----
-
-## Running Tests
-
-### Run All Tests
+## Common Commands
 
 ```bash
-# Using uv (recommended)
-uv run pytest tests/unit/test_fetchers.py -v
-
-# Using pytest directly
-pytest tests/unit/test_fetchers.py -v
+uv run pytest -v
+uv run pytest tests/unit -v
+uv run pytest tests/integration -v
+uv run pytest tests/test_signal_scanner.py -v
+uv run pytest --cov=src/equity_lake --cov-report=term
 ```
 
-### Run Specific Test Class
+Use `make test`, `make test-unit`, and `make test-integration` when you want
+the standard project wrappers.
 
-```bash
-# Test USEquityFetcher batching
-uv run pytest tests/unit/test_fetchers.py::TestUSEquityFetcherBatching -v
+## Conventions
 
-# Test CNEfinanceFetcher
-uv run pytest tests/unit/test_fetchers.py::TestCNEfinanceFetcher -v
-
-# Test CNHybridFetcher
-uv run pytest tests/unit/test_fetchers.py::TestCNHybridFetcher -v
-```
-
-### Run Specific Test
-
-```bash
-uv run pytest tests/unit/test_fetchers.py::TestUSEquityFetcherBatching::test_fetch_with_batching -v
-```
-
-### Run with Coverage
-
-```bash
-uv run pytest tests/unit/test_fetchers.py \
-    --cov=equity_lake.ingestion.sources \
-    --cov-report=html \
-    --cov-report=term
-```
-
-### Run Integration Tests Only
-
-```bash
-uv run pytest tests/unit/test_fetchers.py::TestFetcherIntegration -v
-```
-
----
-
-## Test Markers
-
-Tests are organized by markers:
-
-```bash
-# Run only unit tests
-uv run pytest -m unit tests/unit/test_fetchers.py -v
-
-# Run only integration tests
-uv run pytest -m integration tests/ -v
-
-# Skip slow tests
-uv run pytest -m "not slow" tests/unit/test_fetchers.py -v
-```
-
----
-
-## Mocking Strategy
-
-### yfinance Mocking
-
-```python
-@patch('equity_lake.ingestion.sources.us.yf.download')
-def test_fetch_with_batching(self, mock_download):
-    mock_download.return_value = pd.DataFrame({
-        'Open': [150.0],
-        'High': [155.0],
-        # ... more columns
-    })
-```
-
-### efinance Mocking
-
-```python
-@patch('equity_lake.ingestion.sources.cn_efinance.efinance')
-def test_fetch_single_stock(self, mock_efinance):
-    mock_efinance.stock.get_quote_history.return_value = pd.DataFrame({
-        '股票代码': ['000001'],
-        # ... more columns
-    })
-```
-
-### akshare Mocking
-
-Existing fixtures in `conftest.py`:
-- `mock_akshare_stock_zh_a_hist`
-- `mock_akshare_stock_info_a_code_name`
-
----
-
-## Test Data
-
-### Sample OHLCV Data
-
-```python
-@pytest.fixture
-def sample_ohlcv_data() -> pd.DataFrame:
-    """Create sample OHLCV data for testing."""
-    data = {
-        'ticker': ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA'],
-        'date': [date(2024, 1, 1)] * 5,
-        'open': [150.0, 380.0, 140.0, 180.0, 250.0],
-        'high': [155.0, 385.0, 145.0, 185.0, 255.0],
-        'low': [148.0, 378.0, 138.0, 178.0, 248.0],
-        'close': [152.0, 382.0, 142.0, 182.0, 252.0],
-        'volume': [1000000, 800000, 1200000, 1500000, 900000],
+- Add shared fixtures to `tests/conftest.py`.
+- Keep fast, isolated tests in `tests/unit/`.
+- Put multi-module workflows and filesystem-heavy checks in `tests/integration/`.
+- Place feature-level regression tests at the top level only when they span
+  multiple packages and do not fit one subsystem cleanly.
         'adj_close': [152.0, 382.0, 142.0, 182.0, 252.0]
     }
     return pd.DataFrame(data)

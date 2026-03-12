@@ -212,7 +212,7 @@ def main():
     print("=" * 70)
     print("\nTo use these features in your daily ingestion:")
     print("  uv run equity-daily --parallel")
-    print("\nFor more information, see: docs/IMPROVEMENTS_PARALLEL_LOGGING.md")
+    print("\nFor more information, see: docs/architecture/parallel-ingestion.md")
     print()
 
 

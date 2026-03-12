@@ -1,189 +1,242 @@
-# STACK.md - Technology Stack
+# Tech Stack
 
-## Overview
-
-Local-first equity EOD (End-of-Day) data pipeline with S3 bootstrap and daily incremental updates.
+**Last Updated**: 2026-03-05
+**Project**: Equity EOD Data Pipeline
 
 ## Language & Runtime
 
-- **Language**: Python 3.12+
-- **Runtime**: CPython (3.12, 3.13 supported)
-- **Package Manager**: [uv](https://github.com/astral-sh/uv) - Ultra-fast Python package manager
-- **Build System**: Hatchling (via pyproject.toml)
+### Python
+- **Version**: 3.11+ (specified in `.python-version`)
+- **Package Manager**: uv (ultra-fast Python package manager written in Rust)
+- **Virtual Environment**: uv-managed `.venv`
+
+### Why uv?
+- 10-100x faster dependency resolution than pip
+- Zero-config virtual environment management
+- Built-in dependency caching
+- Compatible with existing `pyproject.toml` and `requirements.txt`
 
 ## Core Dependencies
 
-### Data Sources
-- **yfinance** (>=0.2.50) - US/HK/SG market data from Yahoo Finance API
-- **akshare** (>=1.15.0) - China A-shares market data
-- **fredapi** (>=0.5.2) - FRED economic indicators (macro data)
+### Data Acquisition
+- **yfinance** (>=0.2.50): Yahoo Finance API for US/HK/SG market data
+- **akshare** (>=1.15.0): China A-shares market data
+- **efinance**: Alternative Chinese market data source
+
+### Data Processing
+- **pandas** (>=2.2.0): Data manipulation and analysis
+- **numpy**: Numerical computing foundation
+- **pyarrow** (>=18.0.0): Parquet I/O and columnar storage
 
 ### Storage & Query
-- **DuckDB** (>=1.0.0) - SQL query engine with native Parquet support
-- **pandas** (>=2.2.0) - Data manipulation and analysis
-- **PyArrow** (>=18.0.0) - Parquet I/O and Arrow data structures
+- **duckdb** (>=1.0.0): SQL query engine for analytics
+- **fastparquet**: Alternative Parquet reader/writer
+
+### Cloud & Storage
+- **boto3**: AWS SDK for Python (S3 operations)
+- **s5cmd**: High-performance S3 sync tool (external binary)
 
 ### Utilities
-- **python-dotenv** (>=1.0.0) - Environment variable management
-- **requests** (>=2.31.0) - HTTP client for API calls
-- **numpy** (>=1.24.0) - Numerical computations
-- **tqdm** (>=4.66.0) - Progress bars
-- **pydantic** (>=2.5.0) - Data validation and settings management
-- **structlog** (>=24.1.0) - Structured logging
-- **PyYAML** (>=6.0.2) - YAML configuration parsing
+- **python-dotenv** (>=1.0.0): Environment variable management
+- **requests**: HTTP client library
+- **typer**: CLI framework for modern command-line interfaces
+- **rich**: Terminal formatting and progress bars
 
-## Development Dependencies
-
-### Testing
-- **pytest** (>=8.0.0) - Test framework
-- **pytest-cov** (>=5.0.0) - Coverage reporting
-- **pytest-mock** (>=3.12.0) - Mocking support
+## Development Tools
 
 ### Code Quality
-- **ruff** (>=0.8.0) - Linting and formatting (replaces flake8, black, isort)
-- **mypy** (>=1.11.0) - Static type checking
-- **pre-commit** (>=3.6.0) - Git hooks for code quality
-- **black** (>=24.0.0) - Additional code formatting
-- **isort** (>=5.13.0) - Import sorting
+- **ruff** (>=0.8.0): Ultra-fast Python linter and formatter
+  - Replaces flake8, black, isort
+  - Configuration in `pyproject.toml`
+- **mypy** (>=1.11.0): Static type checker
+  - Strict mode enabled
+  - Comprehensive type checking
 
-### Development Tools
-- **Jupyter** (>=1.0.0) - Notebook support
-- **ipykernel** (>=6.29.0) - Jupyter kernel for Python
+### Testing
+- **pytest** (>=8.0.0): Testing framework
+- **pytest-cov** (>=5.0.0): Coverage plugin
+- **pytest-mock**: Mocking utilities
+- **pytest-asyncio**: Async test support
 
-## Optional Dependencies
+### Build & Automation
+- **make**: Build automation via Makefile
+- **pre-commit**: Git hooks for pre-commit checks
+- **docker**: Containerization
+- **docker-compose**: Multi-container orchestration
 
-### S3 Operations
-- **boto3** (>=1.34.0) - AWS SDK for Python
-- **s5cmd** (>=0.3.3) - Fast S3 sync tool (binary)
+## Configuration Files
 
-### ML & Analytics
-- **xgboost** (>=3.1.3) - Gradient boosting
-- **scikit-learn** (>=1.8.0) - Machine learning algorithms
-- **shap** (>=0.49.1) - Model interpretability
-- **pandas-ta** (>=0.4.71b0) - Technical analysis indicators
-- **seaborn** (>=0.13.2) - Statistical visualization
-- **networkx** (>=3.6.1) - Graph algorithms
-- **scipy** (>=1.17.0) - Scientific computing
-- **statsmodels** (>=0.14.6) - Statistical modeling
+### Project Configuration
+- **`pyproject.toml`**: Primary project configuration
+  - Dependencies (production and dev)
+  - Ruff configuration
+  - Mypy settings
+  - Project metadata
+  - CLI entry points
 
-### Visualization
-- **matplotlib** (>=3.8.0) - Plotting library
-- **plotly** (>=6.5.0) - Interactive visualizations
+### Python Configuration
+- **`.python-version`**: Specifies Python 3.12
+- **`requirements.txt`**: Legacy pip-compatible dependency list
 
-## Deployment & Infrastructure
+### Container Configuration
+- **`Dockerfile`**: Multi-stage Python container image
+- **`docker-compose.yml`**: Container orchestration for pipeline services
 
-### Containerization
-- **Docker** - Container runtime
-- **docker-compose** - Multi-container orchestration
-- **Base Image**: `python:3.11-slim`
-- **Package Installer**: uv (in-container)
+### Development Configuration
+- **`Makefile`**: Convenience commands for common operations
+  - `make setup`: Initialize development environment
+  - `make daily`: Run daily ingestion
+  - `make test`: Run test suite
+  - `make lint`: Run ruff linting
+  - `make format`: Format code with ruff
 
-### Build & Release
-- **Build Tool**: Hatchling
-- **Package Format**: Wheel
-- **Source Layout**: `src/equity_lake/`
+### Git Configuration
+- **`.gitignore`**: Excludes artifacts (`.venv/`, `data/`, `__pycache__/`)
+- **`.pre-commit-config.yaml`**: Pre-commit hook definitions
 
-## Environment Configuration
+## Frameworks & Patterns
 
-### Environment Variables
-```bash
-# AWS (for S3 sync)
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
-S3_BUCKET
+### Architecture Patterns
+- **ETL Pipeline**: Extract-Transform-Load pattern for data ingestion
+- **Data Lake**: Hive-partitioned Parquet storage
+- **Strategy Pattern**: Pluggable market data fetchers
+- **Template Method**: Base classes with customizable fetch logic
 
-# Data & Logging
-DATA_DIR=data
-LOG_DIR=logs
-DB_PATH=equity_data.duckdb
+### Code Organization
+- **Modular Design**: Clear separation of concerns
+  - `src/equity_lake/core/`: Shared utilities and constants
+  - `src/equity_lake/ingestion/`: Data fetchers and orchestration
+  - `src/equity_lake/storage/`: Data persistence and querying
+  - `src/equity_lake/features/`: Feature engineering
+  - `src/equity_lake/signals/`: Trading signal generation
 
-# Markets
-MARKETS=us,cn,hk,sg
+### Design Principles
+- **Local-First**: After initial S3 sync, run completely locally
+- **Idempotent Operations**: Safe to re-run without side effects
+- **Graceful Degradation**: Continue processing if one market fails
+- **Observable Operations**: Comprehensive logging for debugging
 
-# API Behavior
-API_RETRY_ATTEMPTS=3
-API_RETRY_DELAY=1.0
+## Data Stack
 
-# Logging
-LOG_LEVEL=INFO
+### Storage Format
+- **Parquet**: Columnar storage format
+  - Compression: Snappy
+  - Partitioning: Hive-style by date (`date=YYYY-MM-DD/`)
 
-# Development
-DEV_MODE=false
-USE_TEST_DATA=false
+### Query Engine
+- **DuckDB**: In-memory SQL database
+  - Zero-copy Parquet reading
+  - Hive partitioning support
+  - Python API integration
 
-# FRED API
-FRED_API_KEY
-ENABLE_MACRO_INDICATORS=true
-MACRO_INDICATORS=dxy,treasury_10y,tips_yield,...
+### Data Lake Structure
 ```
-
-### Configuration Files
-- `.env` - Local environment (git-ignored)
-- `.env.example` - Template
-- `config/tickers.yaml` - Market ticker lists
-- `pyproject.toml` - Project config
-- `Makefile` - Development commands
-
-## Build & Runtime Requirements
-
-### Minimum Requirements
-- Python 3.12+
-- 500MB disk space for dependencies
-- 2GB RAM (4GB recommended for large datasets)
-
-### Recommended for Production
-- Python 3.12
-- 8GB RAM
-- SSD storage (for Parquet I/O)
-- Stable internet connection (for API calls)
+data/lake/
+├── us_equity/         # US stocks (from S3)
+├── cn_ashare/         # China A-shares (local fetch)
+└── hk_sg_equity/      # HK/SG stocks (local fetch)
+```
 
 ## CLI Entry Points
 
-Installed via `pyproject.toml [project.scripts]`:
+### Primary Commands
+- **`equity-daily`**: Run daily EOD ingestion (`src/equity_lake/cli/daily.py`)
+- **`equity-sync`**: S3 historical data sync (`src/equity_lake/cli/sync.py`)
+- **`equity-query`**: DuckDB query interface (`src/equity_lake/cli/query.py`)
 
+### Installation
 ```bash
-equity-daily              # Daily EOD ingestion
-equity-sync               # S3 bootstrap sync
-equity-query              # DuckDB queries
-equity-pipeline           # Full pipeline orchestration
-equity-monitor            # Health checks
-equity-backfill           # Historical backfill
-equity-macro              # Macro indicator fetching
-equity-generate-test-data # Test data generation
-equity-price-forecast     # Price forecasting
+# Using uv
+uv pip install -e .
+
+# Or traditional pip
+pip install -e .
 ```
+
+## Version Management
+
+### Dependency Strategy
+- **Pin Major Versions**: Production dependencies pinned to major versions
+- **Dev Dependencies**: Latest compatible versions allowed
+- **uv Lock File**: `.uv.lock` for reproducible builds
+
+### Compatibility
+- **Python**: 3.11+ required
+- **Platform**: macOS, Linux (WSL supported)
+- **Architecture**: x86_64, arm64 (Apple Silicon)
+
+## Performance Optimizations
+
+### Parallel Processing
+- **S3 Sync**: s5cmd with 32 parallel workers
+- **Data Fetching**: Concurrent API calls where possible
+- **DuckDB**: Automatic query parallelization
+
+### Memory Efficiency
+- **Chunked Reading**: Process large datasets in chunks
+- **Lazy Loading**: DuckDB zero-copy Parquet reading
+- **Streaming**: Minimize in-memory data retention
 
 ## Development Workflow
 
+### Quick Start
 ```bash
-# Setup
-uv venv
-source .venv/bin/activate
+# 1. Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 2. Create venv and install dependencies
+uv venv && source .venv/bin/activate
 uv sync
 
-# Development
-uv sync --group dev
-make format
-make lint
-make check
+# 3. Run tests
 make test
 
-# Running CLI
-uv run equity-daily
-# or
-make daily
+# 4. Run linting
+make lint
 ```
 
-## Version Control
+### Code Quality Pipeline
+```bash
+# Format code
+make format
 
-- **Git** - Version control
-- **pre-commit** - Git hooks (code quality on commit)
-- **.gitignore** - Standard Python ignores (venv, __pycache__, *.pyc, .env)
+# Run linter
+make lint
 
-## Documentation
+# Type check
+make check
 
-- **README.md** - Project overview
-- **CLAUDE.md** - AI development guide
-- **docs/** - Comprehensive documentation (guides, architecture, decisions)
-- **QUICKSTART.md** - Getting started guide
-- **PIPELINE_USAGE.md** - Pipeline operations guide
+# Run tests with coverage
+make test
+```
+
+## Known Limitations
+
+### Platform-Specific
+- **s5cmd**: Linux/macOS only (Windows uses AWS CLI fallback)
+- **Cron**: Native cron on Linux/macOS (Windows Task Scheduler equivalent)
+
+### API Limitations
+- **yfinance**: Rate limiting, occasional downtime
+- **akshare**: May require VPN for China access
+- **Free APIs**: No service level guarantees
+
+## Future Stack Considerations
+
+### Potential Additions
+- **Apache Airflow**: Workflow orchestration
+- **Prefect/Dask**: Modern workflow alternatives
+- **Redis**: Caching layer for API responses
+- **PostgreSQL**: Metadata and config storage
+- **FastAPI**: REST API for data access
+
+### Migration Path
+- Current stack optimized for local development
+- Cloud-native migration path available via Docker
+- Microservices architecture possible if needed
+
+---
+
+**Total Dependencies**: 20+ production packages, 10+ dev packages
+**Python Version**: 3.11+ (tested on 3.12)
+**Package Manager**: uv (primary), pip (fallback)

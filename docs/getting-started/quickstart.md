@@ -166,8 +166,8 @@ ls -la data/lake/
 
 ### "ImportError: No module named 'x'"
 ```bash
-# Solution: Install dependencies
-uv sync
+# Solution: Install the optional pipeline dependencies
+uv sync --extra ml
 ```
 
 ### Pipeline takes too long
@@ -197,7 +197,7 @@ tail -f logs/run_pipeline.log
 ## 📚 Full Documentation
 
 - **Pipeline Usage**: [Pipeline Usage Guide](../user-guide/pipeline.md)
-- **Development Guide**: [claude.md](../../claude.md)
+- **Project Structure**: [Developer Guide](../developer-guide/project-structure.md)
 - **Project README**: [README.md](../../README.md)
 
 ---
@@ -214,4 +214,4 @@ tail -f logs/run_pipeline.log
 
 **Ready to automate?** → Set up the cron job and let it run daily!
 
-**Questions?** → Check [Pipeline Usage Guide](../user-guide/pipeline.md) or [claude.md](../../claude.md)
+**Questions?** → Check [Pipeline Usage Guide](../user-guide/pipeline.md) or [Project Structure](../developer-guide/project-structure.md)

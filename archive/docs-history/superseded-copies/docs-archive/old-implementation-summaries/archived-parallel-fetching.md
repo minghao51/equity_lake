@@ -34,7 +34,7 @@ Successfully implemented two major improvements to the equity EOD data pipeline:
   - `summarize_results()` - Performance statistics
 
 ### Documentation
-- ✅ `docs/IMPROVEMENTS_PARALLEL_LOGGING.md`
+- ✅ `docs/architecture/parallel-ingestion.md`
   - Comprehensive feature documentation
   - Usage examples and CLI reference
   - Migration guide
@@ -282,7 +282,7 @@ Potential improvements:
 
 ## 📝 Documentation
 
-- ✅ Feature documentation: `docs/IMPROVEMENTS_PARALLEL_LOGGING.md`
+- ✅ Feature documentation: `docs/architecture/parallel-ingestion.md`
 - ✅ Implementation summary: `docs/IMPLEMENTATION_SUMMARY.md`
 - ✅ Updated README with new features
 - ✅ Demo script: `examples/parallel_logging_demo.py`
@@ -326,7 +326,7 @@ Both features are:
 ## 📞 Support
 
 For questions or issues:
-- See documentation: `docs/IMPROVEMENTS_PARALLEL_LOGGING.md`
+- See documentation: `docs/architecture/parallel-ingestion.md`
 - Run demo: `python examples/parallel_logging_demo.py`
 - Check logs: `tail -f logs/ingest_daily.log | jq '.'`
 

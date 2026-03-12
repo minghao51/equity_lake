@@ -1,388 +1,563 @@
-# INTEGRATIONS.md - External Integrations
+# Integrations
 
-## Overview
+**Last Updated**: 2026-03-05
+**Project**: Equity EOD Data Pipeline
 
-The pipeline integrates with multiple external data sources, storage systems, and services to fetch, store, and query equity market data.
+## External APIs
 
-## Data Source Integrations
+### yfinance API
 
-### Yahoo Finance API (via yfinance)
-
-**Purpose**: Fetch EOD data for US, Hong Kong, and Singapore markets
-
-**Library**: `yfinance>=0.2.50`
+**Purpose**: Fetch EOD market data for US, Hong Kong, and Singapore equities
 
 **Usage Locations**:
-- `src/equity_lake/ingestion/sources/us.py` - US equities
-- `src/equity_lake/ingestion/sources/hk_sg.py` - Hong Kong and Singapore equities
+- `src/equity_lake/ingestion/sources/yfinance_source.py` (287 lines)
+- `src/equity_lake/ingestion/sources/us_equity.py` (USEquityFetcher)
+- `src/equity_lake/ingestion/sources/hk_sg_equity.py` (HKSGEquityFetcher)
+
+**Implementation Details**:
+```python
+import yfinance as yf
+
+# Single ticker download
+data = yf.download('AAPL', start='2024-12-01', end='2024-12-02')
+
+# Batch download (multiple tickers)
+tickers = ['AAPL', 'GOOGL', 'MSFT']
+data = yf.download(tickers, start=start, end=end, group_by='ticker')
+```
+
+**Rate Limiting**:
+- Built-in delay: 0.5-1 second between requests
+- Exponential backoff on failures (3 retries)
+- Batch downloads to reduce API calls
 
 **Data Retrieved**:
 - OHLCV (Open, High, Low, Close, Volume)
-- Adjusted close price
-- Date stamps
-
-**Ticker Formats**:
-- US: `AAPL`, `GOOGL`, `MSFT`
-- Hong Kong: `0700.HK`, `9988.HK`
-- Singapore: `D05.SI`, `O39.SI`
-
-**Rate Limits**:
-- No official rate limit (best-effort)
-- Implements exponential backoff retry logic (3 attempts)
-- 500ms delay between requests
+- Adjusted close prices
+- Date range queries
+- Ticker metadata
 
 **Error Handling**:
-- Retry on connection errors
-- Retry on timeout
-- Continue with fallback ticker list on API failures
+- Network timeout handling
+- Retry logic with exponential backoff
+- Graceful degradation on API failures
 
-**Example**:
-```python
-import yfinance as yf
-data = yf.download('AAPL', start='2024-01-01', end='2024-01-02')
-```
+**Dependencies**:
+- `yfinance>=0.2.50`
+- Internet connectivity required
+- No API key needed (free public API)
 
-### Akshare API (China A-shares)
+---
 
-**Purpose**: Fetch EOD data for China A-shares market
+### akshare API
 
-**Library**: `akshare>=1.15.0`
+**Purpose**: Fetch China A-shares EOD market data
 
-**Usage Location**: `src/equity_lake/ingestion/sources/cn.py`
+**Usage Locations**:
+- `src/equity_lake/ingestion/sources/akshare_source.py` (171 lines)
+- `src/equity_lake/ingestion/sources/cn_ashare.py` (CNAshareFetcher)
+- `src/equity_lake/ingestion/sources/cn_hybrid.py` (CNHybridFetcher)
 
-**Data Retrieved**:
-- OHLCV (Chinese column names: 开盘, 最高, 最低, 收盘, 成交量)
-- Date stamps
-
-**Ticker Format**:
-- 6-digit codes: `000001`, `600000`, `002415`
-
-**Column Mapping**:
-```python
-'开盘' → 'open'
-'最高' → 'high'
-'最低' → 'low'
-'收盘' → 'close'
-'成交量' → 'volume'
-```
-
-**Rate Limits**:
-- No official rate limit
-- Implements retry logic with exponential backoff
-- 100ms delay between stock requests
-
-**Error Handling**:
-- Retry on connection errors
-- Graceful degradation (skip failed stocks)
-- Network requirement: May need VPN for China access
-
-**Example**:
+**Implementation Details**:
 ```python
 import akshare as ak
-df = ak.stock_zh_a_hist(symbol='000001', period='daily', start_date='20240101', end_date='20240102')
+
+# Fetch stock list
+stock_list = ak.stock_info_a_code_name()
+
+# Fetch historical data
+df = ak.stock_zh_a_hist(
+    symbol='000001',
+    period='daily',
+    start_date='20241201',
+    end_date='20241202',
+    adjust='qfq'  # Forward-adjusted prices
+)
 ```
 
-### FRED API (Federal Reserve Economic Data)
+**Column Mapping Required**:
+- Chinese column names → English
+- '开盘' → 'open'
+- '最高' → 'high'
+- '最低' → 'low'
+- '收盘' → 'close'
+- '成交量' → 'volume'
 
-**Purpose**: Fetch macroeconomic indicators for analysis
-
-**Library**: `fredapi>=0.5.2`
-
-**Usage Location**: `src/equity_lake/ingestion/sources/macro.py`
-
-**API Key**: Required (free registration at https://fred.stlouisfed.org/docs/api/api_key.html)
+**Rate Limiting**:
+- Delay: 0.1 second between stock requests
+- Retry logic: 3 attempts with exponential backoff
+- Batch processing for multiple tickers
 
 **Data Retrieved**:
-- DXY (Dollar Index)
-- 10-Year Treasury Yield
-- TIPS Yield
-- Breakeven Inflation
-- VIX (CBOE Volatility Index)
-- Gold ETF prices (GLD, IAU)
-- Economic Policy Uncertainty
+- OHLCV for A-shares (Shanghai + Shenzhen)
+- Stock list and metadata
+- Adjusted prices (前复权)
+- Trading calendar
 
-**Environment Variables**:
-```bash
-FRED_API_KEY=your_api_key_here
-ENABLE_MACRO_INDICATORS=true
-MACRO_INDICATORS=dxy,treasury_10y,tips_yield,...
-```
+**Error Handling**:
+- Connection error handling
+- VPN requirements for China access
+- Fallback to alternative sources
 
-**Rate Limits**:
-- 120 requests per minute (free tier)
-- Implements retry logic
+**Dependencies**:
+- `akshare>=1.15.0`
+- May require VPN for mainland China access
+- No API key needed (free public API)
 
-**Example**:
+---
+
+### efinance API
+
+**Purpose**: Alternative Chinese market data source
+
+**Usage Locations**:
+- `src/equity_lake/ingestion/sources/efinance_source.py`
+
+**Implementation Details**:
 ```python
-from fredapi import Fred
-fred = Fred(api_key='your_key')
-dxy = fred.get_series('DTWEXBGS')
+import efinance as ef
+
+# Fetch stock data
+df = ef.stock.get_quote_history()
 ```
 
-## Storage Integrations
+**Use Case**:
+- Backup/fallback for akshare
+- Faster for certain queries
+- Different data coverage
 
-### AWS S3 (Bootstrap)
+**Dependencies**:
+- `efinance` package
+- Similar network requirements as akshare
 
-**Purpose**: One-time download of historical US equity data
+---
 
-**Library**: `boto3>=1.34.0`, AWS CLI, s5cmd
+## Databases
 
-**Usage Location**: `src/equity_lake/storage/s3_sync.py`, `src/equity_lake/cli/sync.py`
+### DuckDB
 
-**Operations**:
-- Download from S3 bucket
-- Parallel sync with s5cmd (32 workers default)
-- Integrity validation
+**Purpose**: SQL query engine for analytics and data exploration
 
-**Environment Variables**:
-```bash
-AWS_ACCESS_KEY_ID=your_key
-AWS_SECRET_ACCESS_KEY=your_secret
-S3_BUCKET=s3://your-bucket/path/
+**Usage Locations**:
+- `src/equity_lake/storage/duckdb.py` (main query interface)
+- `src/equity_lake/cli/query.py` (CLI entry point)
+
+**Implementation Details**:
+```python
+import duckdb
+
+# Create connection
+con = duckdb.connect(':memory:')
+
+# Query Parquet files directly
+df = con.execute("""
+    SELECT ticker, close, volume
+    FROM 'data/lake/us_equity/date=*.parquet'
+    WHERE date >= '2024-01-01'
+""").df()
+
+# Create unified view
+con.execute("""
+    CREATE OR REPLACE VIEW equity_all AS
+    SELECT *, 'us' as market FROM 'data/lake/us_equity/date=*/*.parquet'
+    UNION ALL
+    SELECT *, 'cn' as market FROM 'data/lake/cn_ashare/date=*/*.parquet'
+""")
 ```
 
-**Bucket Structure** (expected):
-```
-s3://bucket/
-└── us_equity/
-    ├── date=2020-01-01/
-    │   └── 2020-01-01.parquet
-    ├── date=2020-01-02/
-    │   └── 2020-01-02.parquet
-    └── ...
-```
+**Features Used**:
+- Zero-copy Parquet reading
+- Hive partitioning support
+- SQL query optimization
+- In-memory processing
 
-**Tools**:
-- **s5cmd** (preferred): Fast parallel sync (10-100x AWS CLI)
-- **AWS CLI** (fallback): `aws s3 cp --recursive`
+**Performance Optimizations**:
+- Partition pruning (date filtering)
+- Column projection (SELECT specific columns)
+- Materialized views for frequent queries
+- Parallel query execution
 
-**Example**:
-```bash
-# Using s5cmd
-s5cmd cp s3://bucket/us_equity/date=*/*.parquet data/lake/us_equity/
+**Integration Pattern**:
+- Read-only access to Parquet files
+- No database server needed
+- Embedded in Python process
 
-# Using AWS CLI
-aws s3 cp s3://bucket/us_equity/ data/lake/us_equity/ --recursive
-```
+---
 
-### Local Parquet Files
+### Parquet Data Lake
 
-**Purpose**: Primary storage for all market data
-
-**Library**: `PyArrow>=18.0.0`, `pandas>=2.2.0`
+**Purpose**: Primary storage for EOD market data
 
 **Storage Structure**:
 ```
 data/lake/
 ├── us_equity/
-│   ├── date=2024-01-01/
-│   │   └── 2024-01-01.parquet
-│   └── date=2024-01-02/
-│       └── 2024-01-02.parquet
+│   ├── date=2024-12-01/
+│   │   └── 2024-12-01.parquet
+│   ├── date=2024-12-02/
+│   │   └── 2024-12-02.parquet
+│   └── ...
 ├── cn_ashare/
-│   └── date=2024-01-01/
-│       └── 2024-01-01.parquet
+│   └── ... (same structure)
 └── hk_sg_equity/
-    └── date=2024-01-01/
-        └── 2024-01-01.parquet
-```
-
-**Partitioning**: Hive-style (`date=YYYY-MM-DD/`)
-
-**Schema**:
-```
-ticker: string
-date: date
-open: float64
-high: float64
-low: float64
-close: float64
-volume: int64
-adj_close: float64 (optional)
-```
-
-**Usage**:
-```python
-import pandas as pd
-df = pd.read_parquet('data/lake/us_equity/date=2024-01-01/2024-01-01.parquet')
-```
-
-### DuckDB (Query Engine)
-
-**Purpose**: SQL query engine for analytics
-
-**Library**: `duckdb>=1.0.0`
-
-**Usage Location**: `src/equity_lake/storage/duckdb.py`
-
-**Features**:
-- Zero-copy Parquet queries
-- Hive partition pruning (by date)
-- Unified view across markets
-- Materialized views
-
-**Database File**: `equity_data.duckdb` (local)
-
-**Example**:
-```python
-import duckdb
-con = duckdb.connect('equity_data.duckdb')
-df = con.execute("""
-    SELECT ticker, close, volume
-    FROM read_parquet('data/lake/**/*.parquet')
-    WHERE date >= '2024-01-01'
-""").df()
-```
-
-**Views Created**:
-- `equity_all` - Unified view of all markets
-- Market-specific views (us_equity, cn_ashare, hk_sg_equity)
-
-## Configuration Integrations
-
-### YAML Configuration Files
-
-**Purpose**: Manage ticker lists and market configurations
-
-**Library**: `PyYAML>=6.0.2`
-
-**Location**: `config/tickers.yaml`
-
-**Usage**:
-```yaml
-us_equity:
-  fallback:
-    - AAPL
-    - GOOGL
-    - MSFT
-
-cn_ashare:
-  fallback:
-    - "000001"
-    - "600000"
-```
-
-**Accessed via**: `src/equity_lake/config/` modules
-
-### Environment Variables
-
-**Library**: `python-dotenv>=1.0.0`
-
-**File**: `.env` (git-ignored)
-
-**Usage**: `src/equity_lake/config/loader.py`
-
-## Development Integrations
-
-### Pre-commit Hooks
-
-**Purpose**: Code quality enforcement on git commit
-
-**Framework**: `pre-commit>=3.6.0`
-
-**Hooks configured** (in `.pre-commit-config.yaml`):
-- ruff (linting and formatting)
-- mypy (type checking)
-
-**Installation**:
-```bash
-pre-commit install
-```
-
-### Logging
-
-**Library**: `structlog>=24.1.0`
-
-**Usage**: Structured logging throughout the pipeline
-
-**Configuration**: `src/equity_lake/core/logging.py`
-
-**Log Files**: `logs/` directory
-- `ingest_daily.log`
-- `sync_from_s3.log`
-- `run_pipeline.log`
-- `fetch_macro.log`
-
-## Monitoring & Health
-
-No external monitoring integrations currently. Health checks are local:
-
-**Location**: `src/equity_lake/monitoring/health.py`
-
-**Checks**:
-- Data directory existence
-- Parquet file integrity
-- Database connectivity
-- Log file health
-
-## Deployment Integrations
-
-### Docker
-
-**Purpose**: Containerize the pipeline for production deployment
-
-**Orchestration**: `docker-compose.yml`
-
-**Services**:
-- **sync** - One-time S3 bootstrap
-- **daily** - Cron-based daily ingestion
-- **query** - Interactive query interface
-- **dev** - Development environment
-- **jupyter** - Jupyter Lab for exploration
-
-**Example**:
-```bash
-docker compose --profile daily up -d
-```
-
-## Authentication & Authorization
-
-### AWS S3
-
-**Method**: Access key authentication
-
-**Credentials**:
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-
-**Storage**: `.env` file (git-ignored)
-
-**No IAM roles** configured (local-only deployment)
-
-### FRED API
-
-**Method**: API key in query string
-
-**Credential**: `FRED_API_KEY` environment variable
-
-**No OAuth** required
-
-## Error Handling & Retry Logic
-
-All external integrations implement retry logic:
-
-**Configuration**:
-```bash
-API_RETRY_ATTEMPTS=3
-API_RETRY_DELAY=1.0  # Exponential backoff
+    └── ... (same structure)
 ```
 
 **Implementation**:
-- `src/equity_lake/ingestion/sources/base.py` - Base retry decorator
-- Applied to all fetcher classes
+- **Format**: Apache Parquet (columnar storage)
+- **Compression**: Snappy (default)
+- **Partitioning**: Hive-style by date
+- **Library**: pyarrow for read/write operations
 
-## Security Considerations
+**Code Locations**:
+- `src/equity_lake/storage/parquet.py` (read/write utilities)
+- `scripts/ingest_daily.py` (write operations)
+- `scripts/query_example.py` (read operations)
 
-- **No hardcoded secrets** - All credentials via environment variables
-- **.env git-ignored** - Prevents accidental credential commits
-- **.env.example** provided - Template without actual values
-- **Read-only operations** - No write operations to external systems
-- **No data exfiltration** - All data stays local
+**Schema**:
+```python
+STANDARD_COLUMNS = [
+    'ticker',      # STRING
+    'date',        # DATE (partition key)
+    'open',        # FLOAT64
+    'high',        # FLOAT64
+    'low',         # FLOAT64
+    'close',       # FLOAT64
+    'volume',      # INT64
+    'adj_close'    # FLOAT64 (optional)
+]
+```
 
-## Future Integrations (Planned)
+**Write Operations**:
+```python
+import pyarrow as pa
+import pyarrow.parquet as pq
 
-- Additional data sources (Bloomberg, Reuters)
-- Time-series databases (TimescaleDB)
-- Message queues (RabbitMQ, Redis)
-- Monitoring (Prometheus, Grafana)
-- Alerting (PagerDuty, Slack webhooks)
+# Write to partitioned directory
+table = pa.Table.from_pandas(df)
+pq.write_table(
+    table,
+    f'data/lake/us_equity/date={date}/{date}.parquet',
+    compression='snappy'
+)
+```
+
+**Read Operations**:
+```python
+import pandas as pd
+
+# Read single file
+df = pd.read_parquet('data/lake/us_equity/date=2024-12-01/2024-12-01.parquet')
+
+# Read multiple partitions with DuckDB
+df = con.execute("""
+    SELECT * FROM 'data/lake/us_equity/date=*/*.parquet'
+    WHERE date >= '2024-12-01'
+""").df()
+```
+
+---
+
+## Cloud Storage
+
+### AWS S3
+
+**Purpose**: Bootstrap historical US equity data (one-time sync)
+
+**Usage Locations**:
+- `src/equity_lake/storage/s3_sync.py` (S3 sync orchestration)
+- `scripts/sync_from_s3.py` (legacy sync script)
+- `src/equity_lake/cli/sync.py` (CLI entry point)
+
+**Authentication**:
+```bash
+# AWS credentials (from environment or ~/.aws/credentials)
+export AWS_ACCESS_KEY_ID=your_key
+export AWS_SECRET_ACCESS_KEY=your_secret
+export AWS_DEFAULT_REGION=us-east-1
+```
+
+**Configuration**:
+```python
+# Environment variables
+S3_BUCKET = os.getenv('S3_BUCKET', 's3://default-bucket/us_equity/')
+AWS_PROFILE = os.getenv('AWS_PROFILE', 'default')
+```
+
+**Implementation**:
+- **Tool 1**: s5cmd (preferred, high-performance)
+  ```bash
+  s5cmd cp --workers 32 s3://bucket/us_equity/* data/lake/us_equity/
+  ```
+
+- **Tool 2**: AWS CLI (fallback)
+  ```bash
+  aws s3 sync s3://bucket/us_equity/ data/lake/us_equity/
+  ```
+
+- **Tool 3**: boto3 (Python SDK)
+  ```python
+  import boto3
+  s3 = boto3.client('s3')
+  paginator = s3.get_paginator('list_objects_v2')
+  ```
+
+**Data Sync Pattern**:
+```
+S3 Bucket (Historical)
+    ↓ One-time sync
+Local Parquet Lake
+    ↓ Daily appends
+Query via DuckDB
+```
+
+**Error Handling**:
+- Access denied handling
+- Network timeout retries
+- Integrity verification (Parquet validation)
+- Partial sync resume capability
+
+**Dependencies**:
+- `boto3` (AWS SDK)
+- `s5cmd` (external binary, optional)
+- AWS CLI (external binary, fallback)
+
+---
+
+## Authentication & Security
+
+### AWS Credentials
+
+**Configuration Sources** (in order of precedence):
+1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
+2. AWS credentials file (`~/.aws/credentials`)
+3. IAM role (for EC2 instances)
+4. S3 bucket policy (public buckets)
+
+**Best Practices**:
+- Never commit credentials to git
+- Use `.env` file for local development (git-ignored)
+- Rotate credentials regularly
+- Use IAM roles for production
+- Principle of least privilege
+
+---
+
+### API Keys
+
+**Current Status**: No API keys required for core functionality
+- yfinance: Free public API, no key needed
+- akshare: Free public API, no key needed
+- efinance: Free public API, no key needed
+
+**Future Integrations** (if needed):
+- Alpha Vantage (requires API key)
+- Finnhub (requires API key)
+- FRED Economic Data (requires API key)
+- Polygon.io (requires API key)
+
+**Configuration Pattern** (for future APIs):
+```python
+# .env file (git-ignored)
+ALPHA_VANTAGE_API_KEY=your_key_here
+FINNHUB_API_KEY=your_key_here
+
+# Load in Python
+from dotenv import load_dotenv
+load_dotenv()
+
+api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
+```
+
+---
+
+## Scheduling & Automation
+
+### Cron Jobs
+
+**Purpose**: Schedule daily EOD data ingestion
+
+**Implementation Options**:
+
+1. **System Cron** (Linux/macOS):
+   ```crontab
+   # Run daily at 6:00 PM (after market close)
+   0 18 * * 1-5 cd /path/to/equity_lake && .venv/bin/python -m equity_lake.cli.daily >> logs/cron.log 2>&1
+   ```
+
+2. **Docker Cron**:
+   ```yaml
+   # docker-compose.yml
+   services:
+     scheduler:
+       image: equity-lake:latest
+       command: cron -f
+       volumes:
+         - ./data:/app/data
+   ```
+
+3. **Python Schedule** (alternative):
+   ```python
+   import schedule
+   schedule.every().day.at("18:00").do(run_daily_ingestion)
+   ```
+
+**Current Implementation**: Manual execution via CLI
+```bash
+# Run daily ingestion manually
+make daily
+# or
+uv run python -m equity_lake.cli.daily
+```
+
+---
+
+## Data Sources Summary
+
+### Primary Data Sources
+
+| Market | Source | API | Cost | Coverage |
+|--------|--------|-----|------|----------|
+| US Equities | yfinance | Yahoo Finance | Free | 7000+ stocks |
+| China A-shares | akshare | Various Chinese exchanges | Free | 5000+ stocks |
+| Hong Kong | yfinance | Yahoo Finance | Free | 2000+ stocks |
+| Singapore | yfinance | Yahoo Finance | Free | 600+ stocks |
+
+### Bootstrap Source
+
+| Data Type | Source | Method | Frequency |
+|-----------|--------|--------|-----------|
+| US Historical | AWS S3 | One-time sync | Once |
+| US Daily | yfinance | API fetch | Daily |
+| China Daily | akshare | API fetch | Daily |
+| HK/SG Daily | yfinance | API fetch | Daily |
+
+---
+
+## Error Handling & Resilience
+
+### API Failure Handling
+
+**Retry Strategy**:
+- Exponential backoff: 1s, 2s, 4s delays
+- Max retries: 3 attempts
+- Timeout: 30 seconds per request
+
+**Graceful Degradation**:
+```python
+# Continue processing other markets if one fails
+try:
+    us_data = fetch_us_market(date)
+except Exception as e:
+    logger.error(f"US market failed: {e}")
+    us_data = None
+
+# Process successful fetches only
+if cn_data is not None:
+    write_to_partition(cn_data, 'cn_ashare')
+```
+
+**Logging**:
+- All API errors logged to `logs/ingest_daily.log`
+- Structured logging with correlation IDs
+- Error metrics and statistics
+
+---
+
+## Network Requirements
+
+### Connectivity
+
+**Required Endpoints**:
+- `query1.finance.yahoo.com` (yfinance)
+- `akshare.akfamily.xyz` (akshare)
+- `*.amazonaws.com` (S3, if using)
+
+**Firewall Considerations**:
+- Outbound HTTPS (443) required
+- No inbound ports needed
+- May need VPN for China sources
+
+**Bandwidth**:
+- Initial S3 sync: ~5-10 GB (US historical)
+- Daily updates: ~5-50 MB per market
+- Query operations: Local (no network needed)
+
+---
+
+## Integration Testing
+
+### Mock Strategy
+
+**External APIs**:
+- Mock yfinance responses: `tests/unit/sources/test_yfinance_source.py`
+- Mock akshare responses: `tests/unit/sources/test_akshare_source.py`
+- Mock S3 operations: `tests/unit/storage/test_s3_sync.py`
+
+**Example**:
+```python
+from unittest.mock import patch
+
+@patch('yfinance.download')
+def test_us_fetcher(mock_download):
+    mock_download.return_value = sample_dataframe
+    fetcher = USEquityFetcher()
+    df = fetcher.fetch(date(2024, 12, 1))
+    assert not df.empty
+```
+
+---
+
+## Monitoring & Observability
+
+### Logging
+
+**Log Files**:
+- `logs/ingest_daily.log`: Daily ingestion logs
+- `logs/sync_from_s3.log`: S3 sync logs
+- `logs/query.log`: Query operation logs
+
+**Log Format**:
+- Structured JSON logs (via structlog)
+- Include: timestamp, level, message, context
+- Correlation IDs for request tracking
+
+**Metrics to Track**:
+- API success/failure rates
+- Data latency (time to fetch)
+- Row counts per market
+- Query performance
+
+---
+
+## Future Integrations
+
+### Potential Additions
+
+1. **Workflow Orchestration**:
+   - Apache Airflow
+   - Prefect
+   - Dagster
+
+2. **Caching Layer**:
+   - Redis (API response caching)
+   - Memcached
+
+3. **Message Queue**:
+   - RabbitMQ (async task processing)
+   - Redis Queue (lightweight alternative)
+
+4. **Additional Data Sources**:
+   - Crypto (CoinGecko API)
+   - Commodities (Alpha Vantage)
+   - Economic indicators (FRED API)
+
+5. **Notification**:
+   - Slack webhooks (alerts)
+   - Email notifications (failures)
+
+---
+
+**Total Integrations**: 4 external APIs, 2 databases, 1 cloud storage service
+**Authentication**: AWS credentials (optional, for S3 sync)
+**Scheduling**: Manual/cron (future: Airflow/Prefect)

@@ -543,7 +543,7 @@ fetcher = CNAshareFetcher(max_workers=5)
 ## 📚 Related Documentation
 
 - [Architecture Overview](../../docs/architecture/parallel-ingestion.md)
-- [Test Results](../../docs/reports/test-results.md)
+- [Test Results](../reports/parallel-fetching-and-logging-test-results.md)
 - [Implementation Summary](./IMPLEMENTATION-SUMMARY.md)
 - [Main README](../../../README.md)
 

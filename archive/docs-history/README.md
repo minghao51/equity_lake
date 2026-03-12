@@ -5,6 +5,8 @@ tree during the 2026 consolidation.
 
 ## Sections
 
+- `backtesting/` contains archived backtesting summaries and detailed test
+  writeups from the first framework rollout.
 - `implementations/` contains detailed implementation writeups and feature
   summaries that are no longer front-door docs.
 - `decisions/` contains historical decision notes that may still be useful for
@@ -23,10 +25,11 @@ The current, user-facing docs live under `docs/`:
 - `docs/getting-started/quickstart.md`
 - `docs/user-guide/pipeline.md`
 - `docs/user-guide/operations.md`
+- `docs/user-guide/backtesting.md`
 - `docs/developer-guide/project-structure.md`
 - `docs/architecture/parallel-ingestion.md`
 - `docs/architecture/ml-analytics-platform.md`
-- `docs/reports/test-results.md`
+- `docs/reports/README.md`
 - `docs/reports/equity-data-sources-analysis-2026.md`
 
 Use this archive for historical context only.

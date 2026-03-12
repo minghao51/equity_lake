@@ -7,7 +7,7 @@
 help:
 	@echo "Equity EOD Data Pipeline - Available Commands:"
 	@echo ""
-	@echo "  setup      - Create virtual environment and install dependencies"
+	@echo "  setup      - Create virtual environment and install core dependencies"
 	@echo "  test       - Run tests with coverage"
 	@echo "  lint       - Run code linting (ruff)"
 	@echo "  format     - Format code (ruff)"
@@ -48,6 +48,7 @@ setup:
 	uv sync
 	@echo "✅ Setup complete!"
 	@echo "Activate with: source .venv/bin/activate"
+	@echo "For the full ML pipeline: uv sync --extra ml"
 	@echo "Run tests with: make test"
 
 dev-setup: setup

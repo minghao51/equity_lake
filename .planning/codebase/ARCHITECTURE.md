@@ -1,452 +1,769 @@
-# ARCHITECTURE.md - System Architecture
+# Architecture
 
-## Overview
+**Last Updated**: 2026-03-05
+**Project**: Equity EOD Data Pipeline
 
-Local-first equity EOD data pipeline with modular architecture supporting multiple markets, extensible data sources, and unified SQL access.
+## Overall Architecture Pattern
 
-## Architectural Principles
-
-1. **Local-First**: After initial S3 bootstrap, all operations are local
-2. **Modular Design**: Clear separation between ingestion, storage, and query layers
-3. **Configuration-Driven**: Ticker lists and markets managed via YAML
-4. **Graceful Degradation**: Pipeline continues if one market or source fails
-5. **Idempotent Operations**: Safe to re-run without data duplication
-6. **Hive Partitioning**: Efficient time-range queries via date partitioning
-
-## High-Level Architecture
+### Hybrid ETL Pipeline with Local-First Design
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     CLI Entry Points                        │
-│  (daily, sync, query, pipeline, monitor, backfill, macro)  │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                  Orchestrator Layer                         │
-│  - Coordinates multi-market ingestion                       │
-│  - Parallel execution support                              │
-│  - Error aggregation and reporting                         │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-┌───────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐
-│ US Market    │  │ CN Market   │  │ HK/SG Market│
-│ (yfinance)   │  │ (akshare)   │  │ (yfinance)  │
-└───────┬──────┘  └──────┬──────┘  └──────┬──────┘
-        │                 │                 │
-        └─────────────────┼─────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                    Writer Layer                             │
-│  - Schema validation                                        │
-│  - Hive partition creation                                  │
-│  - Parquet file writing                                     │
-└─────────────────────────┬───────────────────────────────────┘
-                          │
-┌─────────────────────────▼───────────────────────────────────┐
-│                   Storage Layer                             │
-│  - Parquet files (Hive-partitioned)                        │
-│  - DuckDB (query engine)                                    │
-│  - S3 sync (bootstrap only)                                │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Cloud (S3)    │    │   Local APIs    │    │   Local APIs    │
+│ US Historical   │    │  US/HK/SG Data  │    │  China A-shares │
+└────────┬────────┘    └────────┬────────┘    └────────┬────────┘
+         │                      │                      │
+         │ One-time sync        │ Daily fetch          │ Daily fetch
+         ▼                      ▼                      ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Ingestion Layer                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │ S3 Syncer   │  │ yfinance    │  │ akshare     │              │
+│  │ (bootstrap) │  │ Fetcher     │  │ Fetcher     │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+│         │                │                    │                  │
+│         └────────────────┴────────────────────┘                  │
+│                          │                                       │
+│                   Orchestrator                                   │
+│                   (retry, validation)                            │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Storage Layer                               │
+│                  Hive-Partitioned Parquet                        │
+│  data/lake/{market}/date=YYYY-MM-DD/*.parquet                   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       Query Layer                                │
+│                    DuckDB SQL Engine                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
+│  │ Raw Queries │  │ Views       │  │ Analytics   │              │
+│  └─────────────┘  └─────────────┘  └─────────────┘              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-## Layer Breakdown
+### Key Design Principles
 
-### 1. CLI Layer
+1. **Local-First**: After initial S3 bootstrap, all operations run locally
+2. **Idempotent**: Safe to re-run any operation without side effects
+3. **Graceful Degradation**: Continue processing if one market/source fails
+4. **Partitioned Storage**: Hive-style date partitioning for efficient queries
+5. **Zero-Copy Queries**: DuckDB reads Parquet files directly without loading
 
-**Location**: `src/equity_lake/cli/`
+---
 
-**Responsibilities**:
-- Parse command-line arguments
-- Load configuration
-- Invoke orchestrators
-- Display results
+## System Layers
 
-**Entry Points**:
-- `daily.py` - Daily EOD ingestion
-- `sync.py` - S3 bootstrap
-- `query.py` - SQL queries
-- `pipeline.py` - Full pipeline orchestration
-- `monitor.py` - Health checks
-- `backfill.py` - Historical backfill
-- `macro.py` - Macro indicator fetching
-- `generate_test_data.py` - Test data generation
-- `price_forecaster.py` - Price forecasting
+### 1. Ingestion Layer
 
-**Pattern**: Command pattern - Each CLI module implements `main()` function
-
-### 2. Configuration Layer
-
-**Location**: `src/equity_lake/config/`
-
-**Modules**:
-- `models.py` - Pydantic models for configuration
-- `loader.py` - Load from YAML and environment
-- `selectors.py` - Ticker list selection
-- `validation.py` - Configuration validation
-
-**Data Flow**:
-```
-config/tickers.yaml → ConfigLoader → Pydantic Models → Application
-.env files           ↓
-                    Environment variables
-```
-
-**Configuration Objects**:
-- `MarketConfig` - Per-market settings
-- `TickerConfig` - Ticker lists
-- `PipelineConfig` - Pipeline orchestration settings
-
-### 3. Ingestion Layer
+**Purpose**: Fetch market data from external APIs and write to local storage
 
 **Location**: `src/equity_lake/ingestion/`
 
-**Sub-layers**:
+**Key Components**:
 
-#### 3.1 Sources Layer (`ingestion/sources/`)
+#### Base Fetcher (`sources/base.py`)
+```python
+class MarketDataFetcher(ABC):
+    @abstractmethod
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        """Fetch data for specific date"""
+        pass
 
-**Base Class**: `BaseMarketDataFetcher`
-- Retry logic with exponential backoff
-- Abstract `fetch()` method
-- Error handling and logging
+    def _retry_on_failure(self, func, *args, **kwargs):
+        """Exponential backoff retry logic"""
+        pass
+```
 
-**Implementations**:
-- `USEquityFetcher` - Yahoo Finance (US market)
-- `CNAshareFetcher` - Akshare (China A-shares)
-- `HKSGEquityFetcher` - Yahoo Finance (HK/SG markets)
-- `MacroSourceFetcher` - FRED API (macro indicators)
+#### Market-Specific Fetchers
+- **USEquityFetcher** (`sources/us_equity.py`):
+  - Fetches US market data via yfinance
+  - Batch downloads for efficiency
+  - Rate limiting: 0.5s delay between requests
 
-**Pattern**: Strategy pattern - Each fetcher implements the same interface
+- **CNAshareFetcher** (`sources/cn_ashare.py`):
+  - Fetches China A-shares via akshare
+  - Column mapping: Chinese → English
+  - Rate limiting: 0.1s delay between stocks
 
-#### 3.2 Orchestrator (`ingestion/orchestrator.py`)
+- **HKSGEquityFetcher** (`sources/hk_sg_equity.py`):
+  - Fetches HK/SG markets via yfinance
+  - Separate ticker formats (.HK, .SI)
 
-**Responsibilities**:
-- Coordinate multiple markets
-- Parallel execution support
-- Error aggregation
-- Progress tracking
+- **CNHybridFetcher** (`sources/cn_hybrid.py`):
+  - Combines akshare + efinance
+  - Fallback logic for reliability
 
-**Key Methods**:
-- `orchestrate_ingestion()` - Run multi-market ingestion
-- `_run_market_ingestion()` - Execute single market
-- `_aggregate_results()` - Collect and report results
+#### Orchestrator (`orchestrator.py`)
+- **Purpose**: Coordinate multi-market ingestion
+- **Key Functions**:
+  - `run_daily_ingestion()`: Main entry point
+  - `fetch_market_data()`: Router for market-specific fetchers
+  - `validate_schema()`: Ensure OHLCV compliance
+  - `write_to_partitioned_parquet()`: Write to data lake
 
-**Pattern**: Facade pattern - Simplifies complex multi-source operations
+**Data Flow**:
+```
+CLI Request → Orchestrator → Market Fetchers → Validation → Partitioned Parquet
+```
 
-#### 3.3 Parallel Execution (`ingestion/parallel.py`)
+---
 
-**Responsibilities**:
-- Thread-based parallel fetching
-- Concurrency limiting
-- Result aggregation
+### 2. Storage Layer
 
-**Pattern**: Executor pattern - Uses `concurrent.futures.ThreadPoolExecutor`
-
-#### 3.4 Filters (`ingestion/filters.py`)
-
-**Responsibilities**:
-- Data validation
-- Null value filtering
-- Outlier detection
-
-**Pattern**: Filter chain - Composable filter functions
-
-#### 3.5 Gap Detection (`ingestion/gap_detection.py`)
-
-**Responsibilities**:
-- Detect missing dates in data
-- Identify gaps in time series
-- Generate gap reports
-
-**Pattern**: Analysis pattern - Scan and analyze existing data
-
-#### 3.6 Models (`ingestion/models.py`)
-
-**Data Structures**:
-- `IngestionResult` - Result of ingestion operation
-- `MarketData` - Standardized market data model
-- `GapInfo` - Gap detection result
-
-**Pattern**: Data transfer objects - Immutable data containers
-
-#### 3.7 Writers (`ingestion/writers.py`)
-
-**Responsibilities**:
-- Write to Hive-partitioned Parquet
-- Schema validation
-- Partition directory creation
-
-**Pattern**: Repository pattern - Abstraction over storage
-
-### 4. Storage Layer
+**Purpose**: Persist and retrieve market data efficiently
 
 **Location**: `src/equity_lake/storage/`
 
-#### 4.1 Parquet Storage (`storage/parquet.py`)
+#### S3 Sync Module (`s3_sync.py`)
+```python
+class S3Syncer:
+    def sync_with_s5cmd(self, bucket, destination):
+        """High-performance parallel sync"""
+        pass
 
-**Responsibilities**:
-- Read/write Parquet files
-- Schema management
-- Partition handling
+    def sync_with_aws_cli(self, bucket, destination):
+        """Fallback sync method"""
+        pass
 
-**Key Methods**:
-- `write_to_partitioned_parquet()` - Write with Hive partitioning
-- `read_parquet_with_filter()` - Read with date filter
-- `validate_parquet_schema()` - Verify schema compliance
+    def verify_download(self):
+        """Validate Parquet structure"""
+        pass
+```
 
-#### 4.2 DuckDB Storage (`storage/duckdb.py`)
+**Purpose**: One-time bootstrap of US historical data from S3
 
-**Responsibilities**:
-- Database connection management
-- View creation
-- Query execution
+**Pattern**:
+1. Auto-detect available tool (s5cmd > AWS CLI > boto3)
+2. Parallel download with configurable workers
+3. Integrity verification post-download
 
-**Key Methods**:
-- `_setup_views()` - Create unified `equity_all` view
-- `query()` - Execute SQL and return DataFrame
-- `create_materialized_view()` - Cache frequently used queries
+#### Parquet Module (`parquet.py`)
+```python
+def write_to_partitioned_parquet(df, market, trading_date):
+    """Write DataFrame to Hive-partitioned directory"""
+    partition_dir = f"data/lake/{market}/date={trading_date}/"
+    os.makedirs(partition_dir, exist_ok=True)
+    df.to_parquet(f"{partition_dir}/{trading_date}.parquet")
 
-**Pattern**: Active Record pattern - Database operations encapsulated in objects
+def read_partitioned_parquet(market, date_range=None):
+    """Read Parquet partitions with optional filtering"""
+    pass
+```
 
-#### 4.3 S3 Sync (`storage/s3_sync.py`)
+**Storage Pattern**:
+- **Format**: Parquet (columnar, compressed)
+- **Partitioning**: Hive-style by date
+- **Compression**: Snappy (balance of speed/ratio)
+- **Schema**: Standardized OHLCV across all markets
 
-**Responsibilities**:
-- Download from S3
-- Tool detection (s5cmd vs AWS CLI)
-- Integrity validation
+#### DuckDB Module (`duckdb.py`)
+```python
+class EquityDataDB:
+    def __init__(self):
+        self.con = duckdb.connect(':memory:')
+        self._setup_views()
 
-**Key Methods**:
-- `sync_with_s5cmd()` - Fast parallel sync
-- `sync_with_aws_cli()` - Fallback sync method
-- `verify_download()` - Validate Parquet structure
+    def _setup_views(self):
+        """Create unified equity_all view"""
+        pass
 
-**Pattern**: Adapter pattern - Unified interface over multiple sync tools
+    def query(self, sql, params=None):
+        """Execute SQL and return DataFrame"""
+        pass
+```
 
-### 5. Feature Engineering Layer
+**Purpose**: SQL query interface for analytics
+
+---
+
+### 3. Query Layer
+
+**Purpose**: Provide SQL access to data lake for analytics
+
+**Location**: `src/equity_lake/storage/duckdb.py`
+
+**Unified View**:
+```sql
+CREATE OR REPLACE VIEW equity_all AS
+SELECT
+    ticker, date, open, high, low, close, volume, adj_close,
+    'us' as market
+FROM 'data/lake/us_equity/date=*/*.parquet'
+
+UNION ALL
+
+SELECT
+    ticker, date, open, high, low, close, volume,
+    NULL as adj_close,  -- China markets don't have adj_close
+    'cn' as market
+FROM 'data/lake/cn_ashare/date=*/*.parquet'
+
+UNION ALL
+
+SELECT
+    ticker, date, open, high, low, close, volume, adj_close,
+    'hk_sg' as market
+FROM 'data/lake/hk_sg_equity/date=*/*.parquet'
+```
+
+**Query Patterns**:
+- **Time-series**: `SELECT * FROM equity_all WHERE ticker = 'AAPL'`
+- **Cross-market**: `SELECT * FROM equity_all WHERE date >= '2024-01-01'`
+- **Aggregations**: `SELECT market, AVG(volume) FROM equity_all GROUP BY market`
+- **Joins**: Self-joins for moving averages, technical indicators
+
+---
+
+### 4. Feature Engineering Layer (Optional)
+
+**Purpose**: Transform raw OHLCV into analytical features
 
 **Location**: `src/equity_lake/features/`
 
-**Modules**:
-- `engineering.py` - Feature computation (SMA, EMA, RSI, etc.)
-- `jobs.py` - Feature generation orchestration
-- `__init__.py` - Public API
-
-**Features**:
+**Key Features**:
 - Moving averages (SMA, EMA)
-- Momentum indicators (RSI, MACD)
-- Volatility measures (Bollinger Bands)
-- Volume indicators
+- Price momentum (RSI, MACD)
+- Volatility metrics (Bollinger Bands, ATR)
+- Volume indicators (OBV, VWAP)
+- Price returns (daily, weekly, monthly)
 
-**Pattern**: Builder pattern - Build features incrementally
+**Pattern**:
+```python
+def calculate_sma(df, window=20):
+    """Calculate simple moving average"""
+    return df['close'].rolling(window=window).mean()
 
-### 6. Machine Learning Layer
+def calculate_rsi(df, window=14):
+    """Calculate Relative Strength Index"""
+    pass
+```
 
-**Location**: `src/equity_lake/ml/`
+---
 
-**Modules**:
-- `forecasting.py` - Price forecasting models
-- `training.py` - Model training pipeline
-- `jobs.py` - ML orchestration
+### 5. Signal Generation Layer (Optional)
 
-**Algorithms**:
-- XGBoost
-- scikit-learn models
-- SHAP for interpretability
+**Purpose**: Generate trading signals from features
 
-**Pattern**: Pipeline pattern - Sequential ML operations
+**Location**: `src/equity_lake/signals/`
 
-### 7. Monitoring Layer
+**Signal Types**:
+- Trend following (moving average crossovers)
+- Mean reversion (RSI overbought/oversold)
+- Breakout (price channel breaks)
+- Momentum (relative strength)
 
-**Location**: `src/equity_lake/monitoring/`
+**Pattern**:
+```python
+def generate_ma_cross_signals(df):
+    """Generate moving average crossover signals"""
+    df['signal'] = np.where(
+        df['sma_short'] > df['sma_long'],
+        'buy',
+        'sell'
+    )
+    return df
+```
 
-**Modules**:
-- `health.py` - Health checks
+---
 
-**Checks**:
-- Data directory existence
-- Parquet file integrity
-- Database connectivity
-- Log file health
+## Design Patterns
 
-**Pattern**: Observer pattern - Monitor system state
+### 1. Strategy Pattern
 
-### 8. Core Layer
+**Context**: Market-specific data fetching
 
-**Location**: `src/equity_lake/core/`
+**Implementation**:
+```python
+# Base strategy (abstract)
+class MarketDataFetcher(ABC):
+    @abstractmethod
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        pass
 
-**Modules**:
-- `constants.py` - Application constants
-- `logging.py` - Structured logging setup
-- `paths.py` - Path resolution
-- `runtime.py` - Runtime configuration
+# Concrete strategies
+class USEquityFetcher(MarketDataFetcher):
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        # US-specific implementation
+        pass
 
-**Responsibilities**:
-- Shared utilities
-- Logging configuration
-- Path management
+class CNAshareFetcher(MarketDataFetcher):
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        # China-specific implementation
+        pass
 
-### 9. Devtools Layer
+# Strategy selector
+fetcher_map = {
+    'us': USEquityFetcher(),
+    'cn': CNAshareFetcher(),
+    'hk_sg': HKSGEquityFetcher()
+}
 
-**Location**: `src/equity_lake/devtools/`
+fetcher = fetcher_map[market]
+df = fetcher.fetch(date)
+```
 
-**Modules**:
-- `test_data.py` - Realistic test data generation
+**Benefits**:
+- Easy to add new markets (new fetcher class)
+- Consistent interface across markets
+- Isolated market-specific logic
 
-**Responsibilities**:
-- Generate sample data for testing
-- Create test scenarios
+---
+
+### 2. Template Method Pattern
+
+**Context**: Base fetcher with common workflow
+
+**Implementation**:
+```python
+class MarketDataFetcher(ABC):
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        # Template method
+        df = self._fetch_from_source(trading_date)  # Abstract
+        df = self._standardize_columns(df)          # Common
+        df = self._validate_data(df)                # Common
+        return df
+
+    @abstractmethod
+    def _fetch_from_source(self, trading_date: date) -> pd.DataFrame:
+        pass
+
+    def _standardize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Common column mapping logic
+        pass
+
+    def _validate_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        # Common validation logic
+        pass
+```
+
+**Benefits**:
+- Reusable workflow steps
+- Consistent data processing
+- Flexible implementation in subclasses
+
+---
+
+### 3. Factory Pattern
+
+**Context**: Creating market-specific fetchers
+
+**Implementation**:
+```python
+class FetcherFactory:
+    @staticmethod
+    def create_fetcher(market: str) -> MarketDataFetcher:
+        fetchers = {
+            'us': USEquityFetcher,
+            'cn': CNAshareFetcher,
+            'hk_sg': HKSGEquityFetcher
+        }
+        fetcher_class = fetchers.get(market)
+        if not fetcher_class:
+            raise ValueError(f"Unknown market: {market}")
+        return fetcher_class()
+
+# Usage
+fetcher = FetcherFactory.create_fetcher('us')
+df = fetcher.fetch(date)
+```
+
+**Benefits**:
+- Centralized fetcher creation
+- Easy to extend with new markets
+- Error handling for invalid markets
+
+---
+
+### 4. Repository Pattern
+
+**Context**: Data access abstraction
+
+**Implementation**:
+```python
+class EquityRepository:
+    def __init__(self, db: duckdb.DuckDBPyConnection):
+        self.db = db
+
+    def get_ticker_data(self, ticker: str, start_date, end_date):
+        """Abstract SQL query behind method"""
+        return self.db.execute("""
+            SELECT * FROM equity_all
+            WHERE ticker = ? AND date BETWEEN ? AND ?
+        """, [ticker, start_date, end_date]).df()
+
+    def get_latest_data(self, market: str):
+        """Encapsulate complex query logic"""
+        pass
+
+# Usage
+repo = EquityRepository(db)
+aapl_data = repo.get_ticker_data('AAPL', start, end)
+```
+
+**Benefits**:
+- Encapsulates SQL logic
+- Type-safe interface
+- Easier to test (mock repository)
+
+---
 
 ## Data Flow
 
 ### Daily Ingestion Flow
 
 ```
-User runs: equity-daily
-    │
-    ├─► Load config (tickers.yaml, .env)
-    │
-    ├─► Orchestrator.orchestrate_ingestion()
-    │       │
-    │       ├─► USEquityFetcher.fetch(date)
-    │       │       └─► yfinance.download()
-    │       │       └─► Schema validation
-    │       │       └─► Return DataFrame
-    │       │
-    │       ├─► CNAshareFetcher.fetch(date)
-    │       │       └─► akshare.stock_zh_a_hist()
-    │       │       └─► Column mapping
-    │       │       └─► Schema validation
-    │       │       └─► Return DataFrame
-    │       │
-    │       └─► HKSGEquityFetcher.fetch(date)
-    │               └─► yfinance.download()
-    │               └─► Schema validation
-    │               └─► Return DataFrame
-    │
-    ├─► Filter and validate data
-    │
-    ├─► WriteToPartitionedParquet()
-    │       ├─► Create date=YYYY-MM-DD/ directory
-    │       ├─► Write YYYY-MM-DD.parquet file
-    │       └─► Validate schema
-    │
-    └─► Update DuckDB views
+┌──────────────────────────────────────────────────────────────┐
+│ 1. CLI Command                                               │
+│    uv run python -m equity_lake.cli.daily --date 2024-12-01 │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 2. Orchestrator Initialization                               │
+│    - Parse date argument                                     │
+│    - Initialize fetchers for each market                     │
+│    - Setup logging                                           │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 3. Market Data Fetching (Parallel)                           │
+│    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│    │ US Fetcher   │  │ CN Fetcher   │  │ HK/SG Fetcher│      │
+│    │ (yfinance)   │  │ (akshare)    │  │ (yfinance)   │      │
+│    └──────┬───────┘  └──────┬───────┘  └──────┬───────┘      │
+│           │                 │                  │              │
+│           └─────────────────┴──────────────────┘              │
+│                              │                                │
+│                              ▼                                │
+│                    Collect all DataFrames                     │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 4. Validation & Transformation                               │
+│    - Schema validation (STANDARD_COLUMNS)                    │
+│    - Data type conversion                                    │
+│    - Duplicate detection                                     │
+│    - Quality checks (no null prices)                         │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 5. Partitioned Parquet Write                                 │
+│    For each market:                                          │
+│    - Create partition: data/lake/{market}/date=YYYY-MM-DD/   │
+│    - Write: {date}.parquet                                   │
+│    - Compress with Snappy                                    │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 6. Summary & Reporting                                       │
+│    - Log row counts per market                               │
+│    - Report any failures                                     │
+│    - Return exit code (0=success, 1=failure)                 │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+---
 
 ### Query Flow
 
 ```
-User runs: equity-query
-    │
-    ├─► Load config
-    │
-    ├─► DuckDB connection setup
-    │
-    ├─► Create unified view (equity_all)
-    │       ├─► Scan all Parquet files
-    │       ├─► Union across markets
-    │       └─► Add market column
-    │
-    └─► Execute SQL query
-            ├─► Partition pruning (by date)
-            ├─► Column projection
-            └─► Return DataFrame
+┌──────────────────────────────────────────────────────────────┐
+│ 1. CLI Command                                               │
+│    uv run python -m equity_lake.cli.query --query top_volume │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 2. DuckDB Initialization                                     │
+│    - Create in-memory connection                             │
+│    - Setup unified view (equity_all)                         │
+│    - Register Parquet datasets                               │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 3. SQL Execution                                             │
+│    SELECT                                                    │
+│      ticker, market, SUM(volume) as total_volume             │
+│    FROM equity_all                                           │
+│    WHERE date >= CURRENT_DATE - INTERVAL 7 DAYS              │
+│    GROUP BY ticker, market                                   │
+│    ORDER BY total_volume DESC                                │
+│    LIMIT 10                                                  │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 4. DuckDB Query Processing                                   │
+│    - Parse SQL query                                         │
+│    - Optimize execution plan                                 │
+│    - Apply partition pruning (date filter)                   │
+│    - Read only needed columns (column projection)            │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 5. Parquet File Access                                       │
+│    - Zero-copy read from Parquet files                       │
+│    - Deserialize only required columns                       │
+│    - Filter partitions by date                               │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 6. Result Compilation                                        │
+│    - Collect filtered rows                                   │
+│    - Apply aggregations                                      │
+│    - Sort results                                            │
+└────────────────────────┬─────────────────────────────────────┘
+                         │
+                         ▼
+┌──────────────────────────────────────────────────────────────┐
+│ 7. Return DataFrame                                          │
+│    - Convert to pandas DataFrame                             │
+│    - Display or export to CSV/JSON                           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-### Pipeline Flow
+---
 
-```
-User runs: equity-pipeline
-    │
-    ├─► Stage 1: Ingestion
-    │       └─► [Daily Ingestion Flow]
-    │
-    ├─► Stage 2: Gap Detection
-    │       └─► Detect missing dates
-    │
-    ├─► Stage 3: Feature Engineering
-    │       ├─► Compute technical indicators
-    │       └─► Write to feature store
-    │
-    ├─► Stage 4: ML Training (optional)
-    │       ├─► Load training data
-    │       ├─► Train models
-    │       └─► Save model artifacts
-    │
-    └─► Stage 5: Forecasting (optional)
-            ├─► Load models
-            ├─► Generate predictions
-            └─► Save predictions
+## Entry Points
+
+### CLI Entry Points
+
+#### 1. Daily Ingestion
+```python
+# src/equity_lake/cli/daily.py
+def main():
+    """Main entry point for daily EOD ingestion"""
+    parser = typerCli()
+    parser.command()(run_daily_ingestion)
 ```
 
-## Abstractions & Interfaces
+**Usage**:
+```bash
+equity-daily --date 2024-12-01 --markets us,cn
+```
 
-### Key Abstract Classes
+**Flow**:
+1. Parse CLI arguments
+2. Initialize orchestrator
+3. Fetch data for each market
+4. Validate and write to Parquet
+5. Report results
 
-1. **BaseMarketDataFetcher** (`ingestion/sources/base.py`)
-   - Abstract method: `fetch(date) -> DataFrame`
-   - Built-in retry logic
-   - Error handling template
+---
 
-2. **EquityDataDB** (`storage/duckdb.py`)
-   - Database connection management
-   - View creation and maintenance
-   - Query execution interface
+#### 2. S3 Sync
+```python
+# src/equity_lake/cli/sync.py
+def main():
+    """Main entry point for S3 historical data sync"""
+    parser = typerCli()
+    parser.command()(s3_sync_main)
+```
 
-### Data Transfer Objects
+**Usage**:
+```bash
+equity-sync --bucket s3://my-bucket/us_equity/ --workers 32
+```
 
-1. **IngestionResult** - Result of market ingestion
-2. **MarketData** - Standardized OHLCV data
-3. **GapInfo** - Gap detection results
-4. **HealthCheckResult** - Health check status
+**Flow**:
+1. Parse CLI arguments
+2. Initialize S3 syncer
+3. Detect sync tool (s5cmd > AWS CLI > boto3)
+4. Download historical data
+5. Verify integrity
 
-## Design Patterns Used
+---
 
-- **Strategy Pattern**: Market fetchers (US, CN, HK/SG)
-- **Facade Pattern**: Orchestrator simplifies complex operations
-- **Repository Pattern**: Storage abstractions
-- **Builder Pattern**: Feature engineering pipeline
-- **Factory Pattern**: Fetcher instantiation
-- **Observer Pattern**: Monitoring and health checks
-- **Command Pattern**: CLI entry points
-- **Adapter Pattern**: S3 sync tool abstraction
+#### 3. Query Interface
+```python
+# src/equity_lake/cli/query.py
+def main():
+    """Main entry point for DuckDB queries"""
+    parser = typerCli()
+    parser.command()(query_main)
+```
 
-## Error Handling Strategy
+**Usage**:
+```bash
+equity-query --query top_volume --days 14 --output results.csv
+```
 
-1. **Retry Logic**: All external API calls have exponential backoff
-2. **Graceful Degradation**: Continue if one market fails
-3. **Error Aggregation**: Collect all errors before reporting
-4. **Logging**: Structured logging for debugging
-5. **Validation**: Schema validation at multiple stages
+**Flow**:
+1. Parse CLI arguments
+2. Initialize DuckDB connection
+3. Setup unified view
+4. Execute SQL query
+5. Return/export results
 
-## Concurrency Model
+---
 
-- **Thread-Based**: `concurrent.futures.ThreadPoolExecutor`
-- **I/O-Bound**: Parallel fetching from multiple markets
-- **No Async**: Currently all synchronous operations
-- **Future Enhancement**: Could migrate to asyncio for I/O operations
+## Abstractions
 
-## State Management
+### Core Abstractions
 
-- **Immutable State**: DataFrames are immutable
-- **Local Storage**: All state is local files
-- **No Database**: DuckDB is query-only, no stateful writes
-- **Configuration**: Loaded at startup, not mutated
+#### 1. MarketDataFetcher (Abstract Base)
+**Purpose**: Define interface for all market fetchers
 
-## Extensibility Points
+**Interface**:
+```python
+class MarketDataFetcher(ABC):
+    @abstractmethod
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        """Fetch EOD data for specific date"""
+        pass
 
-1. **New Markets**: Add new fetcher class inheriting from `BaseMarketDataFetcher`
-2. **New Features**: Extend `FeatureEngineering` class
-3. **New ML Models**: Add to `ml/` module
-4. **New Storage Backends**: Implement storage interface
-5. **New Queries**: Add to CLI query module
+    def _retry_on_failure(self, func, max_retries=3):
+        """Common retry logic"""
+        pass
+```
 
-## Trade-offs & Design Decisions
+**Implementations**:
+- `USEquityFetcher`: US market via yfinance
+- `CNAshareFetcher`: China A-shares via akshare
+- `HKSGEquityFetcher`: HK/SG markets via yfinance
+- `CNHybridFetcher`: China with fallback (akshare → efinance)
 
-1. **Why Not Async?**: Simplicity, easier debugging, sufficient performance
-2. **Why Parquet?**: Columnar format, efficient compression, DuckDB native
-3. **Why Hive Partitioning?**: Standard, tool support, partition pruning
-4. **Why Local-First?**: Privacy, cost, performance after bootstrap
-5. **Why DuckDB?**: Zero-copy, fast analytics, SQL compatibility
+---
+
+#### 2. Data Source Abstraction
+**Purpose**: Encapsulate external API interactions
+
+**Pattern**:
+```python
+class YFinanceSource:
+    def download(self, symbols, start, end):
+        """Abstract yfinance API calls"""
+        pass
+
+class AkshareSource:
+    def get_stock_data(self, symbol, start, end):
+        """Abstract akshare API calls"""
+        pass
+```
+
+**Benefits**:
+- Easy to mock for testing
+- Centralized error handling
+- Consistent response format
+
+---
+
+#### 3. Storage Abstraction
+**Purpose**: Unified interface for data persistence
+
+**Interface**:
+```python
+class DataStorage(ABC):
+    @abstractmethod
+    def write(self, df: pd.DataFrame, partition_key: str):
+        pass
+
+    @abstractmethod
+    def read(self, partition_key: str) -> pd.DataFrame:
+        pass
+
+class ParquetStorage(DataStorage):
+    def write(self, df, partition_key):
+        df.to_parquet(f"{partition_key}.parquet")
+
+    def read(self, partition_key):
+        return pd.read_parquet(f"{partition_key}.parquet")
+```
+
+---
+
+## Component Relationships
+
+### Dependency Graph
+
+```
+CLI Layer (daily.py, sync.py, query.py)
+    │
+    ├─► Orchestrator (orchestrator.py)
+    │       │
+    │       ├─► USEquityFetcher
+    │       ├─► CNAshareFetcher
+    │       └─► HKSGEquityFetcher
+    │
+    ├─► S3Syncer (s3_sync.py)
+    │
+    └─► EquityDataDB (duckdb.py)
+            │
+            └─► ParquetStorage (parquet.py)
+```
+
+### Module Coupling
+
+**Tight Coupling** (Intentional):
+- Orchestrator → Market Fetchers (composition)
+- Fetchers → API sources (yfinance, akshare)
+- DuckDB → Parquet files (zero-copy read)
+
+**Loose Coupling**:
+- CLI → Orchestrator (dependency injection via args)
+- Fetchers → Storage (via standardized DataFrames)
+- Query → Storage (via SQL abstraction)
+
+---
+
+## Scaling Considerations
+
+### Current Capacity
+- **US Historical**: ~5-10 GB (S3 bootstrap)
+- **Daily Updates**: ~5-50 MB per market
+- **Query Performance**: Sub-second for filtered queries
+
+### Bottlenecks
+1. **API Rate Limits**: yfinance/akshare throttling
+2. **Network Latency**: S3 sync time
+3. **Memory**: Large dataset processing
+
+### Scaling Strategies
+1. **Parallel Fetching**: Concurrent API calls per market
+2. **Partition Pruning**: Efficient time-range queries
+3. **Caching**: Redis for frequently accessed data
+4. **Batch Processing**: Accumulate and write in batches
+
+---
+
+## Fault Tolerance
+
+### Failure Modes
+
+1. **API Failure**:
+   - Retry with exponential backoff
+   - Continue processing other markets
+   - Log errors for review
+
+2. **Storage Failure**:
+   - Validate Parquet integrity post-write
+   - Retry write operations
+   - Alert on persistent failures
+
+3. **Query Failure**:
+   - Validate SQL syntax
+   - Check for missing partitions
+   - Provide helpful error messages
+
+### Recovery
+- **Idempotent Operations**: Re-run without side effects
+- **Incremental Updates**: Only fetch new data
+- **Data Validation**: Schema and quality checks
+
+---
+
+**Total Files in Architecture**: 105 Python modules
+**Core Components**: 5 layers (Ingestion, Storage, Query, Features, Signals)
+**Design Patterns**: Strategy, Template Method, Factory, Repository
+**Entry Points**: 3 CLI commands (daily, sync, query)

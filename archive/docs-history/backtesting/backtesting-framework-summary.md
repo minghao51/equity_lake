@@ -35,9 +35,13 @@ examples/
 ├── backtest_demo.py           # Comprehensive test suite
 ├── quick_test.py              # Quick validation script
 ├── run_backtest_test.sh       # Shell runner
-├── BACKTEST_TEST_REPORT.md    # Detailed test report
-├── BACKTEST_USAGE_GUIDE.md    # User guide
-└── BACKTEST_FRAMEWORK_SUMMARY.md  # This file
+
+docs/user-guide/
+└── backtesting.md             # Active user guide
+
+archive/docs-history/backtesting/
+├── backtesting-test-report.md      # Archived detailed test report
+└── backtesting-framework-summary.md  # This file
 ```
 
 ## Key Components
@@ -220,20 +224,20 @@ The test suite validates:
 
 ### User Guides Created
 
-1. **`examples/BACKTEST_USAGE_GUIDE.md`**
+1. **`docs/user-guide/backtesting.md`**
    - Complete user guide
    - Code examples for all strategies
    - Custom strategy template
    - Parameter optimization examples
    - Best practices and pitfalls
 
-2. **`examples/BACKTEST_TEST_REPORT.md`**
+2. **`archive/docs-history/backtesting/backtesting-test-report.md`**
    - Detailed test documentation
    - Expected output structure
    - Troubleshooting guide
    - Production readiness checklist
 
-3. **`examples/BACKTEST_FRAMEWORK_SUMMARY.md`** (this file)
+3. **`archive/docs-history/backtesting/backtesting-framework-summary.md`** (this file)
    - Implementation overview
    - Architecture summary
    - Quick reference
@@ -524,8 +528,8 @@ The backtesting framework is **production-ready** for initial use cases:
 ## Support and Resources
 
 ### Documentation
-- Usage Guide: `examples/BACKTEST_USAGE_GUIDE.md`
-- Test Report: `examples/BACKTEST_TEST_REPORT.md`
+- Usage Guide: `docs/user-guide/backtesting.md`
+- Test Report: `archive/docs-history/backtesting/backtesting-test-report.md`
 - API Docs: Source code docstrings
 
 ### Code

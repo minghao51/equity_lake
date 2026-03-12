@@ -1,441 +1,824 @@
-# STRUCTURE.md - Directory Structure & Organization
+# Structure
 
-## Project Root Layout
+**Last Updated**: 2026-03-05
+**Project**: Equity EOD Data Pipeline
+
+## Directory Layout
 
 ```
 equity_lake/
-├── .planning/              # Planning documents (git-ignored)
-│   └── codebase/          # Codebase documentation (this file)
-├── config/                # Configuration files
-│   ├── example.env        # Environment template
-│   └── tickers.yaml       # Market ticker lists
-├── data/                  # Data storage (git-ignored)
-│   ├── lake/              # Parquet data lake
-│   │   ├── us_equity/     # US market data
-│   │   ├── cn_ashare/     # China A-shares data
-│   │   └── hk_sg_equity/  # HK/SG market data
-│   └── models/            # ML model artifacts
-├── docs/                  # Documentation
-│   ├── architecture/      # Architecture docs
-│   ├── decisions/         # Architecture decision records
-│   ├── design/            # Design documents
-│   ├── developer-guide/   # Developer guides
-│   ├── education/         # Educational content
-│   ├── getting-started/   # Getting started guides
-│   ├── guides/            # User guides
-│   ├── implementations/   # Implementation notes
-│   ├── planning/          # Planning documents
-│   ├── reports/           # Project reports
-│   └── user-guide/        # User documentation
-├── examples/              # Example scripts
-│   └── parallel_logging_demo.py
-├── logs/                  # Application logs (git-ignored)
-│   ├── backfill_data.log
-│   ├── feature_engineering.log
-│   ├── fetch_macro.log
-│   ├── ingest_daily.log
-│   ├── monitor_pipeline.log
-│   ├── price_forecaster.log
-│   └── run_pipeline.log
-├── src/                   # Source code
-│   └── equity_lake/       # Main package
-├── tests/                 # Test suite
-│   ├── fixtures/          # Test fixtures
-│   ├── integration/       # Integration tests
+├── .planning/                 # Planning and documentation
+│   └── codebase/             # Codebase analysis (this file)
+│
+├── data/                     # Data directory (git-ignored)
+│   └── lake/                # Hive-partitioned Parquet data lake
+│       ├── us_equity/       # US stocks (from S3)
+│       │   ├── date=2024-12-01/
+│       │   │   └── 2024-12-01.parquet
+│       │   └── date=2024-12-02/
+│       │       └── 2024-12-02.parquet
+│       ├── cn_ashare/       # China A-shares (local fetch)
+│       └── hk_sg_equity/    # HK/SG stocks (local fetch)
+│
+├── logs/                    # Application logs (git-ignored)
+│   ├── ingest_daily.log    # Daily ingestion logs
+│   ├── sync_from_s3.log    # S3 sync logs
+│   └── query.log           # Query operation logs
+│
+├── scripts/                 # Legacy scripts (being migrated to src/)
+│   ├── ingest_daily.py     # Daily EOD ingestion (637 lines)
+│   ├── sync_from_s3.py     # S3 historical sync (398 lines)
+│   ├── query_example.py    # DuckDB query examples (594 lines)
+│   └── generate_test_data.py # Test data generator
+│
+├── src/
+│   └── equity_lake/        # Main package
+│       ├── __init__.py     # Package initialization
+│       │
+│       ├── cli/            # CLI entry points
+│       │   ├── __init__.py
+│       │   ├── daily.py    # Daily ingestion CLI
+│       │   ├── sync.py     # S3 sync CLI
+│       │   └── query.py    # Query interface CLI
+│       │
+│       ├── core/           # Core utilities and constants
+│       │   ├── __init__.py
+│       │   ├── runtime.py  # Runtime configuration
+│       │   ├── logging.py  # Logging setup (structlog)
+│       │   └── constants.py # Standardized column names
+│       │
+│       ├── ingestion/      # Data ingestion layer
+│       │   ├── __init__.py
+│       │   ├── orchestrator.py   # Multi-market coordination (880 lines)
+│       │   └── sources/          # Market-specific fetchers
+│       │       ├── __init__.py
+│       │       ├── base.py       # Abstract base class
+│       │       ├── us_equity.py  # US market (yfinance)
+│       │       ├── cn_ashare.py  # China A-shares (akshare)
+│       │       ├── hk_sg_equity.py # HK/SG markets
+│       │       └── cn_hybrid.py  # China with fallback
+│       │
+│       ├── storage/        # Data persistence layer
+│       │   ├── __init__.py
+│       │   ├── s3_sync.py  # S3 sync orchestration
+│       │   ├── parquet.py  # Parquet read/write utilities
+│       │   └── duckdb.py   # DuckDB query interface
+│       │
+│       ├── features/       # Feature engineering (optional)
+│       │   ├── __init__.py
+│       │   ├── engineering.py # Feature calculations (712 lines)
+│       │   └── indicators.py   # Technical indicators
+│       │
+│       └── signals/        # Trading signal generation (optional)
+│           ├── __init__.py
+│           ├── scanner.py  # Signal scanner
+│           └── strategies.py # Trading strategies
+│
+├── tests/                  # Test suite
+│   ├── __init__.py
+│   ├── conftest.py         # Shared test fixtures
+│   │
 │   ├── unit/              # Unit tests
-│   ├── conftest.py        # Pytest configuration
-│   └── __init__.py
-├── .env.example           # Environment template
+│   │   ├── sources/       # Test fetchers
+│   │   │   ├── test_yfinance_source.py
+│   │   │   ├── test_akshare_source.py
+│   │   │   └── test_base_fetcher.py
+│   │   ├── storage/       # Test storage layer
+│   │   │   ├── test_parquet.py
+│   │   │   ├── test_duckdb.py
+│   │   │   └── test_s3_sync.py
+│   │   └── test_orchestrator.py
+│   │
+│   ├── integration/       # Integration tests
+│   │   ├── test_full_ingestion.py
+│   │   ├── test_s3_workflow.py
+│   │   └── test_query_workflow.py
+│   │
+│   └── signals/           # Signal tests
+│       ├── test_scanner.py
+│       └── test_strategies.py
+│
+├── docs/                   # Documentation
+│   ├── getting-started/
+│   │   └── quickstart.md  # Quick start guide
+│   ├── user-guide/
+│   │   ├── pipeline.md    # Pipeline usage
+│   │   └── query-guide.md # Query examples
+│   └── api/               # API documentation
+│
+├── .github/               # GitHub-specific files
+│   └── workflows/         # CI/CD workflows
+│       └── test.yml       # GitHub Actions test workflow
+│
+├── .env.example           # Environment variables template
 ├── .gitignore             # Git ignore rules
 ├── .python-version        # Python version (3.12)
-├── CLAUDE.md              # AI development guide
-├── Dockerfile             # Docker image
-├── docker-compose.yml     # Docker orchestration
-├── Makefile               # Development commands
-├── pyproject.toml         # Project configuration
+├── CLAUDE.md              # AI assistant guide
 ├── README.md              # Project overview
-├── requirements-dev.txt   # Development dependencies
-├── requirements.txt       # Production dependencies
-└── uv.lock               # Dependency lock file
+├── pyproject.toml         # Project configuration
+├── requirements.txt       # Dependencies (pip-compatible)
+├── Makefile               # Common commands
+├── Dockerfile             # Container image
+└── docker-compose.yml     # Container orchestration
 ```
 
-## Source Code Structure
+---
 
-### `src/equity_lake/` - Main Package
+## File Count & Size
 
-```
-src/equity_lake/
-├── __init__.py                 # Package initialization
-├── backfill_data.py            # Historical backfill script
-├── fetch_macro.py              # Macro indicator fetcher
-├── feature_jobs.py             # Feature engineering jobs
-├── ingestion_jobs.py           # Ingestion orchestration
-├── ml_jobs.py                  # ML orchestration
-├── pipeline.py                 # Pipeline orchestration
-├── price_forecaster.py         # Price forecasting
-├── run_pipeline.py             # Pipeline runner
-├── validators.py               # Data validators
-│
-├── cli/                        # CLI Entry Points
-│   ├── __init__.py
-│   ├── backfill.py             # Backfill CLI
-│   ├── daily.py                # Daily ingestion CLI
-│   ├── generate_test_data.py   # Test data generation CLI
-│   ├── macro.py                # Macro indicators CLI
-│   ├── monitor.py              # Health check CLI
-│   ├── pipeline.py             # Pipeline CLI
-│   ├── price_forecaster.py     # Price forecasting CLI
-│   ├── query.py                # Query CLI
-│   └── sync.py                 # S3 sync CLI
-│
-├── config/                     # Configuration Management
-│   ├── __init__.py
-│   ├── loader.py               # Config loading logic
-│   ├── models.py               # Pydantic config models
-│   ├── selectors.py            # Ticker selection logic
-│   └── validation.py           # Config validation
-│
-├── core/                       # Core Utilities
-│   ├── __init__.py
-│   ├── constants.py            # Application constants
-│   ├── logging.py              # Structured logging setup
-│   ├── paths.py                # Path resolution
-│   └── runtime.py              # Runtime configuration
-│
-├── devtools/                   # Development Tools
-│   ├── __init__.py
-│   └── test_data.py            # Test data generation
-│
-├── features/                   # Feature Engineering
-│   ├── __init__.py
-│   ├── engineering.py          # Feature computation
-│   └── jobs.py                 # Feature jobs
-│
-├── ingestion/                  # Data Ingestion
-│   ├── __init__.py
-│   ├── filters.py              # Data filters
-│   ├── gap_detection.py        # Gap detection
-│   ├── models.py               # Ingestion data models
-│   ├── orchestrator.py         # Ingestion orchestration
-│   ├── parallel.py             # Parallel execution
-│   ├── writers.py              # Data writers
-│   └── sources/                # Data Source Fetchers
-│       ├── __init__.py
-│       ├── base.py             # Base fetcher class
-│       ├── cn.py               # China A-shares (akshare)
-│       ├── hk_sg.py            # HK/SG markets (yfinance)
-│       ├── macro.py            # Macro indicators (FRED)
-│       └── us.py               # US market (yfinance)
-│
-├── ml/                         # Machine Learning
-│   ├── __init__.py
-│   ├── forecasting.py          # Forecasting models
-│   ├── jobs.py                 # ML orchestration
-│   └── training.py             # Model training
-│
-├── monitoring/                 # Monitoring
-│   ├── __init__.py
-│   └── health.py               # Health checks
-│
-└── storage/                    # Storage Layer
-    ├── __init__.py
-    ├── duckdb.py               # DuckDB operations
-    ├── parquet.py              # Parquet operations
-    └── s3_sync.py              # S3 synchronization
-```
+### Summary
+- **Total Python Files**: 105
+- **Total Lines of Code**: 17,731
+- **Test Files**: 23
+- **Test Lines**: 3,966
+- **Documentation Files**: 15+ MD files
 
-## Test Structure
+### Largest Files
+1. `src/equity_lake/ingestion/orchestrator.py` - 880 lines
+2. `src/equity_lake/features/engineering.py` - 712 lines
+3. `scripts/ingest_daily.py` - 637 lines (legacy)
+4. `scripts/query_example.py` - 594 lines (legacy)
+5. `scripts/sync_from_s3.py` - 398 lines (legacy)
 
-### `tests/` - Test Suite
+---
 
-```
-tests/
-├── __init__.py
-├── conftest.py                 # Pytest fixtures and configuration
-│
-├── fixtures/                   # Test Fixtures
-│   └── (test data files)
-│
-├── unit/                       # Unit Tests
-│   ├── test_ingestion_orchestrator.py
-│   ├── test_macro_sources.py
-│   └── test_ml_jobs.py
-│
-└── integration/                # Integration Tests
-    ├── test_duckdb_queries.py
-    └── test_pipeline_orchestrator.py
-```
-
-## Key File Locations
-
-### Configuration Files
-
-| File | Purpose |
-|------|---------|
-| `pyproject.toml` | Project metadata, dependencies, tool config |
-| `requirements.txt` | Production dependencies |
-| `requirements-dev.txt` | Development dependencies |
-| `.env.example` | Environment variable template |
-| `config/tickers.yaml` | Market ticker configuration |
-| `Makefile` | Development commands |
+## Key Locations & Purposes
 
 ### Entry Points
 
-| File | Purpose |
-|------|---------|
-| `src/equity_lake/cli/daily.py` | Daily ingestion |
-| `src/equity_lake/cli/sync.py` | S3 bootstrap |
-| `src/equity_lake/cli/query.py` | SQL queries |
-| `src/equity_lake/cli/pipeline.py` | Full pipeline |
+#### CLI Commands
+- **`src/equity_lake/cli/daily.py`**: Daily EOD ingestion
+  - Parses date and market arguments
+  - Invokes orchestrator
+  - Reports results
 
-### Core Logic
+- **`src/equity_lake/cli/sync.py`**: S3 historical sync
+  - Configures S3 bucket and workers
+  - Runs sync process
+  - Validates downloads
 
-| File | Purpose |
-|------|---------|
-| `src/equity_lake/ingestion/sources/base.py` | Base fetcher class |
-| `src/equity_lake/ingestion/orchestrator.py` | Ingestion coordination |
-| `src/equity_lake/storage/duckdb.py` | Database operations |
-| `src/equity_lake/storage/parquet.py` | Parquet operations |
+- **`src/equity_lake/cli/query.py`**: DuckDB query interface
+  - Executes SQL queries
+  - Returns or exports results
 
-### Data Storage
+#### Makefile Commands
+```makefile
+make setup          # Initialize dev environment
+make daily          # Run daily ingestion
+make sync           # S3 sync
+make query          # Run query examples
+make test           # Run tests with coverage
+make lint           # Run ruff linting
+make format         # Format code with ruff
+make check          # Run mypy type checking
+make clean          # Clean cache and temp files
+make docker-up      # Start Docker containers
+```
 
-| Directory | Purpose |
-|-----------|---------|
-| `data/lake/us_equity/` | US market Parquet files |
-| `data/lake/cn_ashare/` | China A-shares Parquet files |
-| `data/lake/hk_sg_equity/` | HK/SG Parquet files |
-| `equity_data.duckdb` | DuckDB database file |
+---
 
-### Logs
+### Configuration Files
 
-| File | Purpose |
-|------|---------|
-| `logs/ingest_daily.log` | Daily ingestion logs |
-| `logs/sync_from_s3.log` | S3 sync logs |
-| `logs/run_pipeline.log` | Pipeline logs |
-| `logs/fetch_macro.log` | Macro indicator logs |
+#### `pyproject.toml`
+**Purpose**: Primary project configuration
+
+**Key Sections**:
+```toml
+[project]
+name = "equity-lake"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "yfinance>=0.2.50",
+    "akshare>=1.15.0",
+    "duckdb>=1.0.0",
+    # ... etc
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+    "mypy>=1.11.0",
+]
+
+[project.scripts]
+equity-daily = "equity_lake.cli.daily:main"
+equity-sync = "equity_lake.cli.sync:main"
+equity-query = "equity_lake.cli.query:main"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+```
+
+---
+
+#### `.python-version`
+**Purpose**: Specify Python version for uv
+
+**Content**:
+```
+3.12
+```
+
+---
+
+#### `.env.example`
+**Purpose**: Environment variables template
+
+**Key Variables**:
+```bash
+# AWS S3 Configuration
+AWS_ACCESS_KEY_ID=your_key_here
+AWS_SECRET_ACCESS_KEY=your_secret_here
+AWS_DEFAULT_REGION=us-east-1
+S3_BUCKET=s3://your-bucket/us_equity/
+
+# Optional API Keys
+ALPHA_VANTAGE_API_KEY=your_key_here
+FINNHUB_API_KEY=your_key_here
+```
+
+---
+
+#### `Makefile`
+**Purpose**: Convenience commands for common operations
+
+**Key Targets**:
+```makefile
+.PHONY: setup test lint format check clean
+
+setup:
+	uv venv
+	source .venv/bin/activate
+	uv sync
+
+daily:
+	uv run python -m equity_lake.cli.daily
+
+test:
+	uv run pytest --cov=src/equity_lake --cov-report=html
+
+lint:
+	uv run ruff check src/ tests/
+
+format:
+	uv run ruff format src/ tests/
+
+check:
+	uv run mypy src/equity_lake
+```
+
+---
+
+#### `.gitignore`
+**Purpose**: Exclude artifacts from git
+
+**Key Exclusions**:
+```
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+
+# Data
+data/lake/
+*.parquet
+
+# Logs
+logs/*.log
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# uv
+.uv/
+```
+
+---
+
+### Data Directory Structure
+
+#### Hive Partitioning Layout
+
+```
+data/lake/
+├── us_equity/                      # US market data
+│   ├── date=2024-12-01/           # December 1, 2024 partition
+│   │   └── 2024-12-01.parquet     # Daily OHLCV data
+│   ├── date=2024-12-02/
+│   │   └── 2024-12-02.parquet
+│   └── ...
+│
+├── cn_ashare/                      # China A-shares
+│   ├── date=2024-12-01/
+│   │   └── 2024-12-01.parquet
+│   └── ...
+│
+└── hk_sg_equity/                   # Hong Kong & Singapore
+    ├── date=2024-12-01/
+    │   └── 2024-12-01.parquet
+    └── ...
+```
+
+**Partition Format**:
+- **Pattern**: `date=YYYY-MM-DD/` (Hive-style)
+- **Files**: `{date}.parquet` inside partition
+- **Date Column**: `date` type (not string) in Parquet
+
+**Benefits**:
+- Efficient time-range queries (partition pruning)
+- Easy to manage daily updates
+- Compatible with DuckDB, Spark, AWS Athena
+
+---
+
+### Log Directory Structure
+
+```
+logs/
+├── ingest_daily.log    # Daily ingestion logs
+├── sync_from_s3.log    # S3 sync logs
+└── query.log           # Query operation logs
+```
+
+**Log Format**:
+- **Structured JSON logs** (via structlog)
+- **Fields**: timestamp, level, message, correlation_id
+- **Rotation**: Manual (user manages log file size)
+
+---
+
+### Test Structure
+
+#### Unit Tests (`tests/unit/`)
+
+**Purpose**: Test individual components in isolation
+
+**Structure**:
+```
+tests/unit/
+├── sources/              # Test market fetchers
+│   ├── test_yfinance_source.py
+│   ├── test_akshare_source.py
+│   └── test_base_fetcher.py
+│
+├── storage/              # Test storage layer
+│   ├── test_parquet.py
+│   ├── test_duckdb.py
+│   └── test_s3_sync.py
+│
+└── test_orchestrator.py  # Test coordination logic
+```
+
+**Patterns**:
+- Mock external APIs (yfinance, akshare)
+- Use pytest fixtures for sample data
+- Fast execution (< 1 second each)
+
+---
+
+#### Integration Tests (`tests/integration/`)
+
+**Purpose**: Test end-to-end workflows
+
+**Structure**:
+```
+tests/integration/
+├── test_full_ingestion.py   # Test complete ingestion workflow
+├── test_s3_workflow.py      # Test S3 sync + query
+└── test_query_workflow.py   # Test query operations
+```
+
+**Patterns**:
+- Use temporary directories for data
+- Real Parquet file operations
+- Slower execution, marked with `@pytest.mark.integration`
+
+---
+
+#### Test Fixtures (`tests/conftest.py`)
+
+**Purpose**: Shared test data and utilities
+
+**Key Fixtures**:
+```python
+@pytest.fixture
+def sample_ohlcv_df():
+    """Return sample OHLCV DataFrame"""
+    return pd.DataFrame({
+        'ticker': ['AAPL', 'GOOGL'],
+        'date': [date(2024, 12, 1), date(2024, 12, 1)],
+        'open': [150.0, 140.0],
+        'high': [155.0, 145.0],
+        'low': [149.0, 139.0],
+        'close': [154.0, 144.0],
+        'volume': [1000000, 900000]
+    })
+
+@pytest.fixture
+def temp_data_dir(tmp_path):
+    """Return temporary data directory"""
+    data_dir = tmp_path / "data" / "lake"
+    data_dir.mkdir(parents=True)
+    return data_dir
+```
+
+---
 
 ## Naming Conventions
 
-### Directories
+### Modules & Packages
 
-- **Lowercase with underscores**: `ingestion/`, `devtools/`, `storage/`
-- **Plural for collections**: `sources/`, `features/`, `tests/`
-- **Singular for single-purpose**: `config/`, `core/`, `cli/`
+**Pattern**: `snake_case`
 
-### Files
+**Examples**:
+- `orchestrator.py` (not `Orchestrator.py`)
+- `yfinance_source.py` (not `YFinanceSource.py`)
+- `s3_sync.py` (not `s3_sync.py`)
 
-- **Lowercase with underscores**: `orchestrator.py`, `gap_detection.py`
-- **CLI modules**: `<command>.py` (e.g., `daily.py`, `sync.py`)
-- **Test files**: `test_<module>.py` (e.g., `test_ingestion.py`)
+**Rationale**: Follows PEP 8 conventions for Python modules
+
+---
 
 ### Classes
 
-- **PascalCase**: `USEquityFetcher`, `BaseMarketDataFetcher`, `IngestionOrchestrator`
-- **Suffixes**:
-  - `*Fetcher` - Data source fetchers
-  - `*Orchestrator` - Coordination logic
-  - `*Writer` - Storage writers
-  - `*Config` - Configuration models
+**Pattern**: `PascalCase`
 
-### Functions
+**Examples**:
+- `MarketDataFetcher` (base class)
+- `USEquityFetcher` (US market fetcher)
+- `CNAshareFetcher` (China A-shares fetcher)
+- `EquityDataDB` (DuckDB wrapper)
+- `S3Syncer` (S3 synchronization)
 
-- **lowercase_with_underscores**: `fetch_market_data()`, `write_to_parquet()`
-- **Private functions**: Prefix with `_`: `_retry_on_failure()`, `_validate_schema()`
+**Rationale**: Follows PEP 8 conventions for classes
+
+---
+
+### Functions & Methods
+
+**Pattern**: `snake_case`
+
+**Examples**:
+- `fetch_market_data()`
+- `write_to_partitioned_parquet()`
+- `validate_schema()`
+- `run_daily_ingestion()`
+
+**Rationale**: Follows PEP 8 conventions for functions
+
+---
 
 ### Constants
 
-- **UPPERCASE_WITH_UNDERSCORES**: `STANDARD_COLUMNS`, `LAKE_DIR`, `LOGS_DIR`
-- **Location**: `core/constants.py` or module-level constants
+**Pattern**: `UPPER_SNAKE_CASE`
 
-### CLI Entry Points
+**Examples**:
+- `STANDARD_COLUMNS` (required OHLCV columns)
+- `US_EQUITY_DIR` (US data directory path)
+- `LOGS_DIR` (logs directory path)
+- `MAX_RETRIES` (maximum retry attempts)
 
-- **Hyphenated**: `equity-daily`, `equity-sync`, `equity-query`
-- **Defined in**: `pyproject.toml [project.scripts]`
+**Locations**:
+- `src/equity_lake/core/constants.py`
+- `src/equity_lake/core/runtime.py`
 
-## Module Organization
+---
 
-### Layered Architecture
+### Private Methods
 
+**Pattern**: `_leading_underscore`
+
+**Examples**:
+- `_retry_on_failure()` (internal retry logic)
+- `_standardize_columns()` (internal column mapping)
+- `_validate_data()` (internal validation)
+- `_fetch_from_source()` (abstract method implementation)
+
+**Rationale**: Indicates internal use only (not part of public API)
+
+---
+
+### CLI Commands
+
+**Pattern**: `kebab-case` (command name), `snake_case` (entry point)
+
+**Examples**:
+- **Command**: `equity-daily`
+- **Entry Point**: `equity_lake.cli.daily:main`
+- **Command**: `equity-sync`
+- **Entry Point**: `equity_lake.cli.sync:main`
+
+**Rationale**: Follows CLI conventions for user-facing commands
+
+---
+
+## Data File Naming
+
+### Parquet Files
+
+**Pattern**: `{date}.parquet`
+
+**Examples**:
+- `2024-12-01.parquet`
+- `2024-12-02.parquet`
+
+**Location**: Inside partition directory
 ```
-CLI Layer (cli/)
-    ↓
-Orchestrator Layer (ingestion/orchestrator.py, pipeline.py)
-    ↓
-Business Logic Layer (ingestion/, features/, ml/)
-    ↓
-Data Access Layer (storage/, ingestion/sources/)
-    ↓
-Infrastructure Layer (core/, monitoring/)
+data/lake/us_equity/date=2024-12-01/2024-12-01.parquet
 ```
 
-### Package Responsibilities
+---
 
-| Package | Responsibility |
-|---------|---------------|
-| `cli/` | Command-line interface, argument parsing |
-| `config/` | Configuration loading and validation |
-| `core/` | Shared utilities (logging, paths, constants) |
-| `ingestion/` | Data fetching and writing |
-| `features/` | Feature engineering |
-| `ml/` | Machine learning models |
-| `monitoring/` | Health checks and monitoring |
-| `storage/` | Data storage abstraction |
-| `devtools/` | Development utilities |
+### Partition Directories
 
-## Import Patterns
+**Pattern**: `date={YYYY-MM-DD}/`
 
-### Relative Imports
+**Examples**:
+- `date=2024-12-01/`
+- `date=2024-12-02/`
 
+**Rationale**: Hive-style partitioning for compatibility with DuckDB, Spark, AWS Athena
+
+---
+
+## Import Organization
+
+### Standard Convention
+
+**Order**:
+1. Standard library imports
+2. Third-party imports
+3. Local application imports
+
+**Example**:
 ```python
-# Within equity_lake package
-from .base import BaseMarketDataFetcher
-from ..storage import ParquetStorage
-from ..core.logging import get_logger
-```
-
-### Absolute Imports
-
-```python
-# From external packages
-import yfinance as yf
-import akshare as ak
-import duckdb
-import pandas as pd
-```
-
-### Import Grouping
-
-```python
-# 1. Standard library imports
+# 1. Standard library
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
-# 2. Third-party imports
+# 2. Third-party
 import pandas as pd
 import yfinance as yf
+import structlog
 
-# 3. Local imports
-from equity_lake.core.logging import get_logger
-from equity_lake.ingestion.sources.base import BaseMarketDataFetcher
+# 3. Local
+from equity_lake.core.constants import STANDARD_COLUMNS
+from equity_lake.ingestion.sources.base import MarketDataFetcher
 ```
 
-## Data Partition Structure
+---
 
-### Hive-Style Partitioning
+### Import Aliases
 
+**Common Aliases**:
+```python
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import duckdb
+import structlog
+from datetime import date, timedelta
+from pathlib import Path
 ```
-data/lake/us_equity/
-├── date=2024-01-01/
-│   └── 2024-01-01.parquet
-├── date=2024-01-02/
-│   └── 2024-01-02.parquet
-└── date=2024-01-03/
-    └── 2024-01-03.parquet
-```
 
-**Pattern**: `<key>=<value>/` (Hive standard)
-**Partition Key**: `date` (YYYY-MM-DD format)
-**File Naming**: `<date>.parquet` (matches partition key)
+**Rationale**: Follows community conventions for popular libraries
+
+---
+
+## Module Organization
+
+### Core Module (`src/equity_lake/core/`)
+
+**Purpose**: Shared utilities and constants
+
+**Files**:
+- `runtime.py`: Runtime configuration, path constants
+- `logging.py`: Structured logging setup
+- `constants.py`: Standardized column names, schemas
+
+**Dependencies**: None (minimal dependencies)
+
+---
+
+### Ingestion Module (`src/equity_lake/ingestion/`)
+
+**Purpose**: Data fetching and orchestration
+
+**Files**:
+- `orchestrator.py`: Multi-market coordination
+- `sources/base.py`: Abstract base class
+- `sources/us_equity.py`: US market fetcher
+- `sources/cn_ashare.py`: China A-shares fetcher
+- `sources/hk_sg_equity.py`: HK/SG markets fetcher
+- `sources/cn_hybrid.py`: China with fallback
+
+**Dependencies**:
+- `core` (constants, logging)
+- External APIs (yfinance, akshare)
+
+---
+
+### Storage Module (`src/equity_lake/storage/`)
+
+**Purpose**: Data persistence and querying
+
+**Files**:
+- `s3_sync.py`: S3 synchronization
+- `parquet.py`: Parquet read/write utilities
+- `duckdb.py`: DuckDB query interface
+
+**Dependencies**:
+- `core` (constants, logging)
+- External tools (boto3, pyarrow, duckdb)
+
+---
+
+### Features Module (`src/equity_lake/features/`)
+
+**Purpose**: Feature engineering (optional)
+
+**Files**:
+- `engineering.py`: Feature calculations
+- `indicators.py`: Technical indicators
+
+**Dependencies**:
+- `storage` (for reading data)
+- pandas, numpy
+
+---
+
+### Signals Module (`src/equity_lake/signals/`)
+
+**Purpose**: Trading signal generation (optional)
+
+**Files**:
+- `scanner.py`: Signal scanner
+- `strategies.py`: Trading strategies
+
+**Dependencies**:
+- `features` (for using calculated features)
+- pandas, numpy
+
+---
 
 ## Documentation Structure
 
-### `docs/` Organization
+### Markdown Documentation (`docs/`)
 
+**Structure**:
 ```
 docs/
-├── QUICKSTART.md              # Quick start guide
-├── PIPELINE_USAGE.md          # Pipeline operations
-├── README.md                  # Docs overview
-│
-├── architecture/              # Architecture docs
-├── decisions/                 # Architecture Decision Records (ADRs)
-├── design/                    # Design documents
-├── developer-guide/           # Developer guides
-├── education/                 # Educational content
-│   └── research/              # Research notes
-├── getting-started/           # Getting started guides
-├── guides/                    # User guides
-├── implementations/           # Implementation notes
-├── planning/                  # Planning documents
-│   └── development-log.md     # Development log
-├── reports/                   # Project reports
-└── user-guide/                # User documentation
+├── getting-started/
+│   └── quickstart.md          # Quick start guide
+├── user-guide/
+│   ├── pipeline.md            # Pipeline usage
+│   └── query-guide.md         # Query examples
+└── api/                       # API documentation
 ```
 
-## Generated Files
+**Purpose**: User-facing documentation
 
-### Build Artifacts
+---
 
-- **uv.lock** - Dependency lock file (auto-generated)
-- **.coverage** - Coverage report
-- **htmlcov/** - HTML coverage report
-- **.pytest_cache/** - Pytest cache
-- **.ruff_cache/** - Ruff cache
-- **.mypy_cache/** - MyPy cache
+### AI Assistant Documentation (`CLAUDE.md`)
 
-### Runtime Files
+**Purpose**: Guide for AI assistants (Claude Code)
 
-- **equity_data.duckdb** - DuckDB database (created on first run)
-- **logs/*.log** - Application logs
-- **data/lake/**/*.parquet** - Data files
+**Contents**:
+- Project overview and objectives
+- Architecture context
+- AI assistant workflow guide
+- Key scripts reference
+- Troubleshooting guide
+- Data schema reference
+- Testing guidelines
+- Development workflow
+
+**Audience**: AI assistants working on the codebase
+
+---
+
+### Planning Documentation (`.planning/`)
+
+**Purpose**: Development planning and analysis
+
+**Contents**:
+- `codebase/`: Codebase analysis (this file)
+- Implementation plans
+- Architecture decision records
+
+**Audience**: Developers and AI assistants
+
+---
+
+## Legacy vs. Modern Structure
+
+### Migration Status
+
+**Legacy Scripts** (`scripts/`):
+- `ingest_daily.py` → Migrating to `src/equity_lake/cli/daily.py`
+- `sync_from_s3.py` → Migrating to `src/equity_lake/cli/sync.py`
+- `query_example.py` → Migrating to `src/equity_lake/cli/query.py`
+
+**Modern Structure** (`src/equity_lake/`):
+- Modular package structure
+- CLI entry points via `pyproject.toml`
+- Better separation of concerns
+- Easier to test and maintain
+
+**Timeline**: Legacy scripts still work, but new development should use `src/` structure
+
+---
 
 ## Docker Structure
 
-### Multi-Stage Build
+### `Dockerfile`
 
-```
-base (python:3.11-slim + uv)
-    ↓
-dependencies (install requirements.txt)
-    ↓
-production (copy application code)
-    ↓
-development (+dev tools, s5cmd)
-```
+**Purpose**: Container image for deployment
 
-### Service Profiles
+**Key Stages**:
+```dockerfile
+# Base image
+FROM python:3.11-slim
 
-- **sync** - One-time S3 sync
-- **daily** - Cron-based daily ingestion
-- **query** - Interactive query interface
-- **dev** - Development environment
-- **jupyter** - Jupyter Lab notebook server
+# Install uv
+RUN pip install uv
 
-## File Size Guidelines
+# Install dependencies
+COPY pyproject.toml requirements.txt .
+RUN uv pip install -r requirements.txt
 
-| File Type | Recommended Size | Notes |
-|-----------|----------------|-------|
-| Python module | <500 lines | Split if larger |
-| Class | <200 lines | Extract methods |
-| Function | <50 lines | Extract helper functions |
-| Test file | <300 lines | Split by feature |
+# Copy application
+COPY src/ src/equity_lake/
 
-## Configuration Hierarchy
-
-1. **pyproject.toml** - Project metadata and tool config
-2. **.env** - Environment-specific settings (git-ignored)
-3. **config/tickers.yaml** - Ticker lists
-4. **CLI arguments** - Runtime overrides
-
-## Path Management
-
-### Centralized Paths (`core/paths.py`)
-
-```python
-LAKE_DIR = Path("data/lake")
-US_EQUITY_DIR = LAKE_DIR / "us_equity"
-CN_ASHARE_DIR = LAKE_DIR / "cn_ashare"
-HK_SG_EQUITY_DIR = LAKE_DIR / "hk_sg_equity"
-LOGS_DIR = Path("logs")
+# Entry point
+CMD ["python", "-m", "equity_lake.cli.daily"]
 ```
 
-### Usage Pattern
+---
 
-```python
-from equity_lake.core.paths import US_EQUITY_DIR, LOGS_DIR
+### `docker-compose.yml`
 
-# Use path constants instead of hardcoded strings
-log_file = LOGS_DIR / "ingest_daily.log"
-data_dir = US_EQUITY_DIR / f"date={trading_date}"
+**Purpose**: Multi-container orchestration
+
+**Services**:
+- **scheduler**: Cron-like scheduler for daily ingestion
+- **api**: REST API for data access (optional)
+- **worker**: Background job processor (optional)
+
+---
+
+## CI/CD Structure
+
+### GitHub Actions (`.github/workflows/`)
+
+**Test Workflow** (`.github/workflows/test.yml`):
+```yaml
+name: Test
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Run tests
+        run: uv run pytest --cov
 ```
+
+---
+
+## Summary
+
+**Total Directories**: 20+
+**Total Files**: 150+ (including tests and docs)
+**Code Files**: 105 Python modules
+**Test Files**: 23 test files
+**Documentation**: 15+ markdown files
+**Configuration**: 10+ config files (pyproject.toml, Makefile, Dockerfile, etc.)
+
+**Key Principles**:
+- Clear separation of concerns (core, ingestion, storage, features, signals)
+- Modular design (easy to add new markets/sources)
+- Hive partitioning for efficient queries
+- Comprehensive test coverage
+- Well-documented for AI assistants and developers

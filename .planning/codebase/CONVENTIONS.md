@@ -1,604 +1,1036 @@
-# CONVENTIONS.md - Code Conventions & Standards
+# Conventions
 
-## Overview
-
-This document describes the coding conventions, patterns, and standards used in the equity_lake codebase.
+**Last Updated**: 2026-03-05
+**Project**: Equity EOD Data Pipeline
 
 ## Code Style
 
-### Formatting
+### Linting & Formatting
 
-**Tool**: [ruff](https://docs.astral.sh/ruff/) (replaces flake8, black, isort)
+**Tool**: Ruff (ultra-fast Python linter and formatter)
 
-**Configuration**: `pyproject.toml [tool.ruff]`
+**Configuration** (`pyproject.toml`):
+```toml
+[tool.ruff]
+line-length = 88
+target-version = "py311"
 
-**Key Settings**:
-- Line length: 88 characters
-- Indent: 4 spaces
-- Quotes: Double quotes (`"`)
-- Import style: isort-compatible
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+    "I",   # isort
+]
 
-**Formatting Commands**:
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+]
+```
+
+**Formatting Rules**:
+- **Line Length**: 88 characters (Black-compatible)
+- **Quotes**: Double quotes for strings (`"hello"`, not `'hello'`)
+- **Indentation**: 4 spaces (no tabs)
+- **Imports**: Sorted and grouped (isort integration)
+- **Trailing Commas**: Multi-line lists/dicts
+
+**Enforcement**:
 ```bash
+# Check linting
+make lint
+# or
+uv run ruff check src/ tests/
+
+# Auto-fix issues
+uv run ruff check --fix src/ tests/
+
 # Format code
 make format
 # or
 uv run ruff format src/ tests/
-
-# Auto-fix linting issues
-uv run ruff check --fix src/ tests/
 ```
+
+---
 
 ### Type Hints
 
-**Tool**: mypy
+**Tool**: mypy (static type checker)
 
-**Configuration**: `pyproject.toml [tool.mypy]`
+**Configuration** (`pyproject.toml`):
+```toml
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+```
 
-**Standards**:
-- **Required**: All functions must have type hints
-- **Strict mode**: Enabled (`disallow_untyped_defs = true`)
-- **Return types**: Always specified
-- **Parameter types**: Always specified
+**Type Annotation Standards**:
 
-**Example**:
+#### Functions
 ```python
+from typing import Optional, List, Dict
 from datetime import date
 import pandas as pd
 
 def fetch_market_data(
     trading_date: date,
-    tickers: list[str] | None = None,
-) -> pd.DataFrame:
-    """Fetch market data for given date.
+    markets: Optional[List[str]] = None
+) -> Dict[str, pd.DataFrame]:
+    """
+    Fetch market data for specified date.
 
     Args:
         trading_date: Date to fetch data for
-        tickers: Optional list of tickers (uses default if None)
+        markets: List of market codes ('us', 'cn', 'hk_sg')
 
     Returns:
-        DataFrame with OHLCV data
+        Dictionary mapping market codes to DataFrames
     """
-    ...
-```
+    if markets is None:
+        markets = ['us', 'cn', 'hk_sg']
 
-**Special Cases**:
-- Use `|` for unions (Python 3.10+ style): `str | None` not `Optional[str]`
-- Use `list[str]` not `List[str]` (PEP 585)
-- Use `dict[str, int]` not `Dict[str, int]`
-
-### Naming Conventions
-
-#### Variables and Functions
-
-**Pattern**: `snake_case`
-
-```python
-trading_date = date.today()
-market_tickers = ["AAPL", "GOOGL"]
-def fetch_market_data() -> pd.DataFrame:
-    ...
-```
-
-#### Classes
-
-**Pattern**: `PascalCase`
-
-```python
-class USEquityFetcher:
-    ...
-
-class BaseMarketDataFetcher:
-    ...
-```
-
-#### Constants
-
-**Pattern**: `UPPERCASE_WITH_UNDERSCORES`
-
-```python
-STANDARD_COLUMNS = ["ticker", "date", "open", "high", "low", "close", "volume"]
-LAKE_DIR = Path("data/lake")
-MAX_RETRIES = 3
-```
-
-#### Private Members
-
-**Pattern**: Prefix with `_`
-
-```python
-def _retry_on_failure(func):
-    """Private function with retry logic."""
-    ...
-
-class Fetcher:
-    def __init__(self):
-        self._cache = {}  # Private attribute
-```
-
-#### Module Names
-
-**Pattern**: `lowercase_with_underscores`
-
-```python
-# Good
-ingestion/orchestrator.py
-storage/duckdb.py
-
-# Bad
-ingestion/Orchestrator.py
-storage/DuckDB.py
-```
-
-## Docstrings
-
-### Standard
-
-**Format**: Google style docstrings (preferred)
-
-```python
-def fetch_market_data(
-    trading_date: date,
-    tickers: list[str] | None = None,
-) -> pd.DataFrame:
-    """Fetch market data for a given trading date.
-
-    This function retrieves end-of-day market data from the configured
-    data source for the specified date and tickers.
-
-    Args:
-        trading_date: The trading date to fetch data for.
-        tickers: Optional list of ticker symbols. If None, uses the
-            default ticker list from configuration.
-
-    Returns:
-        A DataFrame containing OHLCV data with columns:
-        ticker, date, open, high, low, close, volume, adj_close
-
-    Raises:
-        ConnectionError: If unable to connect to data source
-        ValueError: If no data is returned for the given date
-
-    Examples:
-        >>> fetch_market_data(date(2024, 1, 1))
-           ticker       date   open   high    low  close  volume  adj_close
-        0   AAPL 2024-01-01  150.0  155.0  148.0  152.0  1000000     152.0
-    """
-    ...
-```
-
-### Class Docstrings
-
-```python
-class USEquityFetcher(BaseMarketDataFetcher):
-    """Fetcher for US equity market data using yfinance.
-
-    This fetcher retrieves end-of-day OHLCV data for US equities
-    from Yahoo Finance via the yfinance library.
-
-    Attributes:
-        retry_attempts: Number of retry attempts for failed requests
-        retry_delay: Base delay between retries in seconds
-
-    Example:
-        >>> fetcher = USEquityFetcher()
-        >>> data = fetcher.fetch(date(2024, 1, 1))
-    """
-    ...
-```
-
-## Import Conventions
-
-### Import Order
-
-```python
-# 1. Standard library imports
-from datetime import date, timedelta
-from pathlib import Path
-import logging
-
-# 2. Third-party imports
-import pandas as pd
-import yfinance as yf
-from structlog import get_logger
-
-# 3. Local imports
-from equity_lake.core.logging import get_logger
-from equity_lake.ingestion.sources.base import BaseMarketDataFetcher
-```
-
-### Import Aliases
-
-```python
-# Standard aliases
-import pandas as pd
-import numpy as np
-import yfinance as yf
-from structlog import get_logger
-```
-
-### Relative vs Absolute Imports
-
-**Within package**: Use relative imports
-
-```python
-# In ingestion/sources/cn.py
-from .base import BaseMarketDataFetcher
-from ..storage import ParquetStorage
-```
-
-**From outside package**: Use absolute imports
-
-```python
-# In tests/
-from equity_lake.ingestion.sources.cn import CNAshareFetcher
-```
-
-## Error Handling
-
-### Exception Hierarchy
-
-```python
-# Custom exceptions (in core/exceptions.py if needed)
-class EquityLakeError(Exception):
-    """Base exception for equity_lake."""
-
-class DataFetchError(EquityLakeError):
-    """Raised when data fetching fails."""
-
-class ValidationError(EquityLakeError):
-    """Raised when data validation fails."""
-```
-
-### Error Handling Patterns
-
-#### With Retry Logic
-
-```python
-from equity_lake.core.logging import get_logger
-
-logger = get_logger(__name__)
-
-def fetch_with_retry(url: str, max_retries: int = 3) -> dict:
-    """Fetch data with exponential backoff retry."""
-    for attempt in range(max_retries):
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            if attempt == max_retries - 1:
-                logger.error("Failed after retries", url=url, error=str(e))
-                raise
-            delay = 2 ** attempt
-            logger.warning("Retry attempt", attempt=attempt, delay=delay)
-            time.sleep(delay)
-```
-
-#### Graceful Degradation
-
-```python
-def fetch_multiple_markets(date: date) -> dict[str, pd.DataFrame]:
-    """Fetch from all markets, continue on failures."""
     results = {}
-    markets = ["us", "cn", "hk_sg"]
-
     for market in markets:
-        try:
-            results[market] = fetch_market(market, date)
-        except Exception as e:
-            logger.error("Market fetch failed", market=market, error=str(e))
-            results[market] = None
-            # Continue with other markets
+        results[market] = _fetch_single_market(market, trading_date)
 
     return results
 ```
 
-#### Validation Errors
-
+#### Classes
 ```python
-def validate_dataframe(df: pd.DataFrame, market: str) -> None:
-    """Validate DataFrame schema.
+from abc import ABC, abstractmethod
 
-    Raises:
-        ValidationError: If schema is invalid
-    """
-    required_columns = ["ticker", "date", "open", "high", "low", "close", "volume"]
-    missing = [col for col in required_columns if col not in df.columns]
+class MarketDataFetcher(ABC):
+    """Abstract base class for market data fetchers."""
 
-    if missing:
-        raise ValidationError(
-            f"Missing required columns for {market}: {missing}"
-        )
+    @abstractmethod
+    def fetch(self, trading_date: date) -> pd.DataFrame:
+        """
+        Fetch EOD data for specific date.
+
+        Args:
+            trading_date: Date to fetch data for
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        pass
 ```
 
-## Logging
+#### Type Aliases
+```python
+from typing import TypedDict
+
+class OHLCVData(TypedDict):
+    """Type hint for OHLCV data structure."""
+    ticker: str
+    date: date
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+    adj_close: Optional[float]
+
+def process_data(data: List[OHLCVData]) -> pd.DataFrame:
+    """Process typed data into DataFrame."""
+    pass
+```
+
+**Best Practices**:
+- All functions must have type hints
+- Use `Optional` for nullable arguments
+- Use `List`, `Dict`, `TypedDict` for complex types
+- Return types should always be specified
+- Use `# type: ignore` sparingly with explanations
+
+---
+
+## Naming Conventions
+
+### Modules and Packages
+
+**Pattern**: `snake_case`
+
+**Examples**:
+- `orchestrator.py` ✓
+- `yfinance_source.py` ✓
+- `market_data_fetcher.py` ✓
+- `Orchestrator.py` ✗
+- `yfinanceSource.py` ✗
+
+**Rationale**: Follows PEP 8, consistent with Python stdlib
+
+---
+
+### Classes
+
+**Pattern**: `PascalCase`
+
+**Examples**:
+- `MarketDataFetcher` ✓
+- `USEquityFetcher` ✓
+- `CNAshareFetcher` ✓
+- `EquityDataDB` ✓
+- `S3Syncer` ✓
+- `market_data_fetcher` ✗
+- `marketDataFetcher` ✗
+
+**Rationale**: Follows PEP 8, distinguishes classes from functions
+
+---
+
+### Functions and Methods
+
+**Pattern**: `snake_case`
+
+**Examples**:
+- `fetch_market_data()` ✓
+- `write_to_partitioned_parquet()` ✓
+- `validate_schema()` ✓
+- `_retry_on_failure()` ✓ (private)
+- `fetchMarketData()` ✗
+- `Fetch_Market_Data()` ✗
+
+**Verb-Noun Pattern** (for functions that do something):
+- `fetch_data()` (not `data()`)
+- `validate_schema()` (not `schema()`)
+- `write_parquet()` (not `parquet()`)
+
+---
+
+### Constants
+
+**Pattern**: `UPPER_SNAKE_CASE`
+
+**Examples**:
+```python
+STANDARD_COLUMNS = ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume']
+US_EQUITY_DIR = Path('data/lake/us_equity')
+MAX_RETRIES = 3
+DEFAULT_TIMEOUT = 30
+```
+
+**Locations**:
+- Centralized in `src/equity_lake/core/constants.py`
+- Or at module level for module-specific constants
+
+---
+
+### Private Members
+
+**Pattern**: `_leading_underscore`
+
+**Examples**:
+- `_retry_on_failure()` (private method)
+- `_standardize_columns()` (internal function)
+- `_MAX_WORKERS` (module-private constant)
+
+**Rationale**: Indicates internal use, not part of public API
+
+---
+
+### Variables
+
+**Pattern**: `snake_case`
+
+**Examples**:
+```python
+trading_date = date(2024, 12, 1)
+market_data = fetcher.fetch(trading_date)
+partition_dir = f"data/lake/{market}/date={trading_date}/"
+```
+
+**Descriptive Names**:
+```python
+# Good
+trading_date = date.today()
+market_fetcher = USEquityFetcher()
+partition_path = Path(f"data/lake/{market}/date={date}/")
+
+# Bad
+d = date.today()
+f = USEquityFetcher()
+p = Path(f"data/lake/{m}/date={d}/")
+```
+
+---
+
+## Error Handling
 
 ### Structured Logging
 
-**Tool**: structlog
+**Tool**: structlog (structured JSON logging)
 
-**Configuration**: `core/logging.py`
-
-**Usage**:
-
+**Configuration** (`src/equity_lake/core/logging.py`):
 ```python
-from structlog import get_logger
+import structlog
 
-logger = get_logger(__name__)
-
-# Structured logging with context
-logger.info("Starting data fetch",
-            market="us",
-            date="2024-01-01",
-            ticker_count=10)
-
-logger.error("Fetch failed",
-             market="cn",
-             ticker="000001",
-             error=str(e),
-             retry_attempt=2)
+def setup_logging() -> structlog.stdlib.BoundLogger:
+    """Configure structured logging."""
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            structlog.stdlib.add_logger_name,
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.format_exc_info,
+            structlog.processors.JSONRenderer()
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    return structlog.get_logger()
 ```
 
-### Log Levels
-
-- **DEBUG**: Detailed diagnostic information
-- **INFO**: General informational messages (default)
-- **WARNING**: Unexpected but recoverable issues
-- **ERROR**: Errors that prevent operation but don't crash
-- **CRITICAL**: Critical errors that crash the application
-
-### Logging Patterns
-
+**Usage Pattern**:
 ```python
-# Entry/Exit logging
-def process_data(date: date) -> pd.DataFrame:
-    logger.info("Processing data", date=date.isoformat())
+from equity_lake.core.logging import setup_logging
+
+logger = setup_logging()
+
+def fetch_market_data(trading_date: date):
+    logger.info("Fetching market data", date=str(trading_date))
+
     try:
-        # ... processing ...
-        logger.info("Processing complete",
-                   date=date.isoformat(),
-                   rows_processed=len(df))
-        return df
+        data = _fetch_from_api(trading_date)
+        logger.info("Successfully fetched data", row_count=len(data))
+        return data
     except Exception as e:
-        logger.error("Processing failed",
-                    date=date.isoformat(),
-                    error=str(e))
+        logger.error("Failed to fetch data", error=str(e))
         raise
 ```
+
+**Log Levels**:
+- **DEBUG**: Detailed diagnostic information
+- **INFO**: General informational messages (default)
+- **WARNING**: Something unexpected but not critical
+- **ERROR**: Error occurred but operation can continue
+- **CRITICAL**: Critical failure, operation cannot continue
+
+---
+
+### Exception Handling Patterns
+
+#### Try-Except-Else-Finally
+```python
+def write_to_parquet(df: pd.DataFrame, path: Path):
+    """Write DataFrame to Parquet with error handling."""
+    try:
+        # Validate input
+        if df.empty:
+            raise ValueError("Cannot write empty DataFrame")
+
+        # Write to Parquet
+        df.to_parquet(path, compression='snappy')
+
+    except ValueError as e:
+        logger.error("Validation failed", error=str(e), path=str(path))
+        raise
+
+    except Exception as e:
+        logger.error("Failed to write Parquet", error=str(e), path=str(path))
+        raise
+
+    else:
+        logger.info("Successfully wrote Parquet", path=str(path), rows=len(df))
+
+    finally:
+        # Cleanup (if needed)
+        pass
+```
+
+#### Retry with Exponential Backoff
+```python
+import time
+from functools import wraps
+
+def _retry_on_failure(func, max_retries: int = 3, base_delay: float = 1.0):
+    """Retry function with exponential backoff."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        for attempt in range(max_retries):
+            try:
+                return func(*args, **kwargs)
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    logger.error("Max retries exceeded", error=str(e))
+                    raise
+
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "Attempt failed, retrying",
+                    attempt=attempt + 1,
+                    delay=delay,
+                    error=str(e)
+                )
+                time.sleep(delay)
+    return wrapper
+```
+
+#### Graceful Degradation
+```python
+def fetch_all_markets(trading_date: date):
+    """Fetch all markets, continue if one fails."""
+    results = {}
+    markets = ['us', 'cn', 'hk_sg']
+
+    for market in markets:
+        try:
+            fetcher = FetcherFactory.create_fetcher(market)
+            results[market] = fetcher.fetch(trading_date)
+            logger.info("Successfully fetched", market=market)
+        except Exception as e:
+            logger.error("Failed to fetch market", market=market, error=str(e))
+            # Continue processing other markets
+            results[market] = None
+
+    # Filter out failures
+    successful = {k: v for k, v in results.items() if v is not None}
+    return successful
+```
+
+---
+
+### Custom Exceptions
+
+**Pattern**: Create domain-specific exceptions
+
+**Example**:
+```python
+class EquityLakeError(Exception):
+    """Base exception for equity-lake package."""
+    pass
+
+class DataValidationError(EquityLakeError):
+    """Raised when data validation fails."""
+    pass
+
+class SchemaMismatchError(DataValidationError):
+    """Raised when schema doesn't match expected format."""
+    pass
+
+class FetchError(EquityLakeError):
+    """Raised when data fetching fails."""
+    pass
+
+# Usage
+def validate_schema(df: pd.DataFrame, market: str):
+    """Validate DataFrame schema."""
+    required_columns = STANDARD_COLUMNS
+    missing = set(required_columns) - set(df.columns)
+
+    if missing:
+        raise SchemaMismatchError(
+            f"Missing columns for {market}: {missing}"
+        )
+```
+
+---
+
+## Logging Patterns
+
+### Structured Logging
+
+**Key Features**:
+- JSON format for machine parsing
+- Contextual information (correlation IDs, timing)
+- Consistent field names
+
+**Example**:
+```python
+logger.info(
+    "Data ingestion completed",
+    market="us",
+    date="2024-12-01",
+    row_count=7500,
+    duration_seconds=45.2,
+    status="success"
+)
+```
+
+---
+
+### Correlation IDs
+
+**Purpose**: Track requests across multiple components
+
+**Implementation**:
+```python
+import uuid
+
+from contextvars import ContextVar
+
+correlation_id: ContextVar[str] = ContextVar('correlation_id')
+
+def setup_correlation_id():
+    """Generate or retrieve correlation ID."""
+    cid = correlation_id.get(None)
+    if cid is None:
+        cid = str(uuid.uuid4())
+        correlation_id.set(cid)
+    return cid
+
+# Usage in logger
+logger.info(
+    "Processing request",
+    correlation_id=setup_correlation_id(),
+    operation="fetch_data"
+)
+```
+
+---
+
+### Timing Context Manager
+
+**Purpose**: Measure and log operation duration
+
+**Implementation**:
+```python
+from contextlib import contextmanager
+import time
+
+@contextmanager
+def timed_operation(operation_name: str):
+    """Context manager for timing operations."""
+    start_time = time.time()
+    logger.info("Operation started", operation=operation_name)
+
+    try:
+        yield
+
+    finally:
+        duration = time.time() - start_time
+        logger.info(
+            "Operation completed",
+            operation=operation_name,
+            duration_seconds=round(duration, 2)
+        )
+
+# Usage
+with timed_operation("S3 sync"):
+    s3_syncer.sync_with_s5cmd(bucket, destination)
+# Logs: "Operation completed", duration_seconds=123.45
+```
+
+---
+
+### Decorator for Timing
+
+**Alternative**: Decorator pattern for function timing
+
+```python
+import functools
+import time
+
+def timed(func):
+    """Decorator to time function execution."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start = time.time()
+        logger.info("Function started", function=func.__name__)
+
+        try:
+            result = func(*args, **kwargs)
+            return result
+
+        finally:
+            duration = time.time() - start
+            logger.info(
+                "Function completed",
+                function=func.__name__,
+                duration_seconds=round(duration, 2)
+            )
+
+    return wrapper
+
+# Usage
+@timed
+def fetch_market_data(trading_date: date):
+    # Function execution is timed automatically
+    pass
+```
+
+---
+
+## Docstring Conventions
+
+### Google Style Docstrings
+
+**Pattern**: Google-style docstrings with type hints
+
+**Example**:
+```python
+def fetch_market_data(
+    trading_date: date,
+    markets: Optional[List[str]] = None
+) -> Dict[str, pd.DataFrame]:
+    """
+    Fetch market data for specified date.
+
+    This function orchestrates fetching EOD data from multiple markets
+    (US, China, Hong Kong, Singapore) using market-specific fetchers.
+    Each market is fetched independently with retry logic.
+
+    Args:
+        trading_date: Date to fetch data for.
+        markets: Optional list of market codes. Defaults to all markets.
+            Valid codes: 'us', 'cn', 'hk_sg'.
+
+    Returns:
+        Dictionary mapping market codes to DataFrames with OHLCV data.
+        Failed markets are not included in the result.
+
+    Raises:
+        ValueError: If invalid market code provided.
+        FetchError: If all markets fail to fetch.
+
+    Example:
+        >>> data = fetch_market_data(date(2024, 12, 1), ['us', 'cn'])
+        >>> us_data = data['us']
+        >>> print(us_data['close'].mean())
+        154.23
+    """
+    pass
+```
+
+**Sections**:
+1. **Summary**: One-line description
+2. **Detailed Description**: Multi-line explanation (optional)
+3. **Args**: Function parameters with types
+4. **Returns**: Return value description
+5. **Raises**: Exceptions that may be raised
+6. **Example**: Usage example (optional)
+
+---
+
+### Class Docstrings
+
+**Example**:
+```python
+class USEquityFetcher(MarketDataFetcher):
+    """
+    Fetch US equity market data using yfinance API.
+
+    This fetcher retrieves OHLCV data for US stocks from Yahoo Finance.
+    It supports batch downloads and implements rate limiting to avoid
+    API throttling.
+
+    Attributes:
+        ticker_list: List of US stock tickers to fetch.
+        retry_attempts: Number of retry attempts for failed requests.
+
+    Example:
+        >>> fetcher = USEquityFetcher()
+        >>> df = fetcher.fetch(date(2024, 12, 1))
+        >>> print(df.head())
+           ticker       date   open   high    low  close  volume
+        0   AAPL 2024-12-01  150.0  155.0  149.0  154.0  1000000
+    """
+
+    def __init__(self, ticker_list: Optional[List[str]] = None):
+        """Initialize US equity fetcher.
+
+        Args:
+            ticker_list: Optional list of tickers. Defaults to all S&P 500.
+        """
+        pass
+```
+
+---
+
+## Import Organization
+
+### Import Order
+
+**Standard** (enforced by ruff):
+1. Standard library imports
+2. Third-party imports
+3. Local application imports
+
+**Example**:
+```python
+# 1. Standard library
+import os
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Optional, List, Dict
+
+# 2. Third-party
+import pandas as pd
+import yfinance as yf
+import structlog
+
+# 3. Local
+from equity_lake.core.constants import STANDARD_COLUMNS
+from equity_lake.ingestion.sources.base import MarketDataFetcher
+from equity_lake.storage.parquet import write_to_partitioned_parquet
+```
+
+---
+
+### Import Aliases
+
+**Common Aliases**:
+```python
+import pandas as pd
+import numpy as np
+import yfinance as yf
+import duckdb
+import structlog
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Optional, List, Dict, Tuple
+```
+
+**Rationale**: Community conventions for popular libraries
+
+---
+
+### Relative vs. Absolute Imports
+
+**Rule**: Use absolute imports for clarity
+
+**Good**:
+```python
+from equity_lake.core.constants import STANDARD_COLUMNS
+from equity_lake.ingestion.sources.base import MarketDataFetcher
+```
+
+**Avoid**:
+```python
+from ..core.constants import STANDARD_COLUMNS
+from .base import MarketDataFetcher
+```
+
+**Exception**: Relative imports acceptable in package `__init__.py` files
+
+---
+
+## Constants and Shared Utilities
+
+### Centralized Constants
+
+**Location**: `src/equity_lake/core/constants.py`
+
+**Examples**:
+```python
+# Standard OHLCV schema
+STANDARD_COLUMNS = [
+    'ticker',
+    'date',
+    'open',
+    'high',
+    'low',
+    'close',
+    'volume',
+    'adj_close'  # Optional
+]
+
+# Directory paths
+LAKE_DIR = Path('data/lake')
+US_EQUITY_DIR = LAKE_DIR / 'us_equity'
+CN_ASHARE_DIR = LAKE_DIR / 'cn_ashare'
+HK_SG_EQUITY_DIR = LAKE_DIR / 'hk_sg_equity'
+
+# Market codes
+MARKETS = ['us', 'cn', 'hk_sg']
+
+# Retry configuration
+MAX_RETRIES = 3
+BASE_DELAY = 1.0
+```
+
+---
+
+### Path Utilities
+
+**Location**: `src/equity_lake/core/runtime.py`
+
+**Examples**:
+```python
+from pathlib import Path
+
+def get_project_root() -> Path:
+    """Get project root directory."""
+    return Path(__file__).parent.parent.parent
+
+def get_lake_dir(market: str) -> Path:
+    """Get data lake directory for market."""
+    root = get_project_root()
+    return root / 'data' / 'lake' / market
+
+def get_partition_path(market: str, trading_date: date) -> Path:
+    """Get partition path for date."""
+    lake_dir = get_lake_dir(market)
+    return lake_dir / f"date={trading_date.strftime('%Y-%m-%d')}"
+```
+
+---
+
+### Validation Utilities
+
+**Location**: `src/equity_lake/core/validation.py`
+
+**Examples**:
+```python
+import pandas as pd
+from datetime import date
+
+def validate_ohlcv_schema(df: pd.DataFrame, market: str) -> bool:
+    """Validate DataFrame has OHLCV schema."""
+    required = {'ticker', 'date', 'open', 'high', 'low', 'close', 'volume'}
+
+    if not required.issubset(df.columns):
+        missing = required - set(df.columns)
+        raise ValueError(f"Missing columns for {market}: {missing}")
+
+    # Validate data types
+    if not pd.api.types.is_datetime64_any_dtype(df['date']):
+        raise ValueError(f"Date column must be datetime type for {market}")
+
+    # Validate no null prices
+    if df[['open', 'high', 'low', 'close']].isnull().any().any():
+        raise ValueError(f"Null prices found for {market}")
+
+    return True
+
+def validate_trading_date(trading_date: date) -> bool:
+    """Validate trading date is not in the future."""
+    if trading_date > date.today():
+        raise ValueError(f"Trading date cannot be in the future: {trading_date}")
+    return True
+```
+
+---
+
+## Code Patterns
+
+### Context Managers
+
+**Pattern**: Use context managers for resource management
+
+**Example**:
+```python
+from contextlib import contextmanager
+
+@contextmanager
+def duckdb_connection(database_path: str = ':memory:'):
+    """Context manager for DuckDB connections."""
+    import duckdb
+
+    con = duckdb.connect(database_path)
+    try:
+        yield con
+    finally:
+        con.close()
+
+# Usage
+with duckdb_connection() as con:
+    df = con.execute("SELECT * FROM equity_all").df()
+```
+
+---
+
+### Factory Pattern
+
+**Pattern**: Factory functions for object creation
+
+**Example**:
+```python
+class FetcherFactory:
+    """Factory for creating market-specific fetchers."""
+
+    _fetchers = {
+        'us': USEquityFetcher,
+        'cn': CNAshareFetcher,
+        'hk_sg': HKSGEquityFetcher,
+    }
+
+    @classmethod
+    def create_fetcher(cls, market: str) -> MarketDataFetcher:
+        """Create fetcher for market."""
+        fetcher_class = cls._fetchers.get(market)
+
+        if not fetcher_class:
+            raise ValueError(f"Unknown market: {market}")
+
+        return fetcher_class()
+
+# Usage
+fetcher = FetcherFactory.create_fetcher('us')
+df = fetcher.fetch(date.today())
+```
+
+---
+
+### Decorator Pattern
+
+**Pattern**: Decorators for cross-cutting concerns
+
+**Examples**:
+```python
+# Timing decorator
+@timed
+def fetch_market_data(trading_date: date):
+    pass
+
+# Retry decorator
+@retry(max_attempts=3, base_delay=1.0)
+def fetch_from_api(url: str):
+    pass
+
+# Logging decorator
+@log_inputs_outputs
+def process_data(df: pd.DataFrame):
+    pass
+```
+
+---
 
 ## Testing Conventions
 
 ### Test Structure
 
+**Pattern**: Arrange-Act-Assert (AAA)
+
+**Example**:
 ```python
-# tests/unit/test_fetcher.py
+def test_us_fetcher_returns_valid_dataframe():
+    """Test that USEquityFetcher returns valid DataFrame."""
+    # Arrange
+    fetcher = USEquityFetcher()
+    test_date = date(2024, 12, 1)
+
+    # Act
+    df = fetcher.fetch(test_date)
+
+    # Assert
+    assert not df.empty
+    assert all(col in df.columns for col in STANDARD_COLUMNS)
+    assert df['date'].iloc[0] == test_date
+```
+
+---
+
+### Test Fixtures
+
+**Location**: `tests/conftest.py`
+
+**Examples**:
+```python
 import pytest
-from datetime import date
-from equity_lake.ingestion.sources.us import USEquityFetcher
-
-class TestUSEquityFetcher:
-    """Test suite for US equity fetcher."""
-
-    @pytest.fixture
-    def fetcher(self):
-        """Create fetcher instance."""
-        return USEquityFetcher()
-
-    def test_fetch_returns_dataframe(self, fetcher):
-        """Test that fetch returns a DataFrame."""
-        result = fetcher.fetch(date(2024, 1, 1))
-        assert isinstance(result, pd.DataFrame)
-        assert not result.empty
-
-    def test_fetch_has_required_columns(self, fetcher):
-        """Test that result has required columns."""
-        result = fetcher.fetch(date(2024, 1, 1))
-        assert "ticker" in result.columns
-        assert "close" in result.columns
-```
-
-### Test Naming
-
-- **Test files**: `test_<module>.py`
-- **Test classes**: `Test<ClassName>`
-- **Test functions**: `test_<what>_<expected>`
-
-```python
-def test_fetch_with_invalid_date_raises_error():
-    ...
-
-def test_dataframe_has_correct_schema():
-    ...
-```
-
-## Code Organization
-
-### Module Structure
-
-```python
-# 1. Module docstring
-"""Module description."""
-
-# 2. Imports
 from datetime import date
 import pandas as pd
 
-# 3. Constants
-DEFAULT_TIMEOUT = 30
-MAX_RETRIES = 3
+@pytest.fixture
+def sample_ohlcv_df():
+    """Return sample OHLCV DataFrame."""
+    return pd.DataFrame({
+        'ticker': ['AAPL', 'GOOGL'],
+        'date': [date(2024, 12, 1), date(2024, 12, 1)],
+        'open': [150.0, 140.0],
+        'high': [155.0, 145.0],
+        'low': [149.0, 139.0],
+        'close': [154.0, 144.0],
+        'volume': [1000000, 900000]
+    })
 
-# 4. Global exceptions
-class CustomError(Exception):
-    pass
-
-# 5. Classes
-class MyClass:
-    pass
-
-# 6. Functions
-def my_function():
-    pass
-
-# 7. Main guard
-if __name__ == "__main__":
-    ...
+@pytest.fixture
+def temp_lake_dir(tmp_path):
+    """Return temporary data lake directory."""
+    lake_dir = tmp_path / "data" / "lake"
+    lake_dir.mkdir(parents=True)
+    return lake_dir
 ```
 
-### Class Organization
+---
+
+### Test Markers
+
+**Markers**: Categorize tests by type
 
 ```python
-class MyClass:
-    """Class docstring."""
+import pytest
 
-    # 1. Class attributes
-    CLASS_ATTR = "value"
+@pytest.mark.unit
+def test_fetcher_initialization():
+    """Unit test: No external dependencies."""
+    pass
 
-    # 2. __init__
-    def __init__(self, param: str):
-        """Constructor docstring."""
-        self.param = param
+@pytest.mark.integration
+def test_full_ingestion_workflow():
+    """Integration test: Requires data lake."""
+    pass
 
-    # 3. Properties
-    @property
-    def computed_value(self) -> int:
-        """Property docstring."""
-        return len(self.param)
-
-    # 4. Public methods
-    def public_method(self) -> None:
-        """Method docstring."""
-        pass
-
-    # 5. Private methods
-    def _private_method(self) -> None:
-        """Private method docstring."""
-        pass
-
-    # 6. Special methods
-    def __repr__(self) -> str:
-        return f"MyClass(param={self.param!r})"
+@pytest.mark.slow
+def test_large_dataset_processing():
+    """Slow test: Takes > 1 second."""
+    pass
 ```
 
-## Design Patterns
-
-### Context Managers
-
-```python
-from contextlib import contextmanager
-
-@contextmanager
-def database_connection(db_path: str):
-    """Context manager for database connections."""
-    conn = duckdb.connect(db_path)
-    try:
-        yield conn
-    finally:
-        conn.close()
-```
-
-### Decorators
-
-```python
-def retry_on_failure(max_retries: int = 3):
-    """Decorator for retry logic."""
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise
-                    time.sleep(2 ** attempt)
-        return wrapper
-    return decorator
-```
-
-## Code Quality Standards
-
-### Before Committing
-
+**Usage**:
 ```bash
-# Format code
-make format
+# Run only unit tests
+uv run pytest -m unit
 
-# Run linting
-make lint
+# Skip slow tests
+uv run pytest -m "not slow"
 
-# Run type checking
-make check
-
-# Run tests
-make test
+# Run integration tests
+uv run pytest -m integration
 ```
 
-### CI Checks
+---
 
-All code must pass:
-1. **Ruff linting**: No unfixable issues
-2. **mypy type checking**: Strict mode
-3. **pytest tests**: All tests pass
-4. **Coverage**: Minimum 80% (target)
+## Summary
 
-## Performance Conventions
+**Code Style**:
+- Ruff for linting and formatting
+- 88-character line length
+- Double quotes for strings
 
-### DataFrame Operations
+**Type Hints**:
+- Mypy strict mode
+- All functions must have type hints
+- Use `Optional`, `List`, `Dict`, `TypedDict`
 
-```python
-# Good: Vectorized operations
-df['returns'] = df['close'].pct_change()
+**Naming**:
+- Modules: `snake_case`
+- Classes: `PascalCase`
+- Functions: `snake_case`
+- Constants: `UPPER_SNAKE_CASE`
+- Private: `_leading_underscore`
 
-# Bad: Row-by-row iteration
-for i in range(len(df)):
-    df.loc[i, 'returns'] = (df.loc[i, 'close'] / df.loc[i-1, 'close']) - 1
-```
+**Error Handling**:
+- Structured logging with structlog
+- Try-except-else-finally pattern
+- Retry with exponential backoff
+- Graceful degradation
 
-### Memory Management
+**Logging**:
+- JSON format with contextual fields
+- Correlation IDs for request tracking
+- Timing decorators and context managers
 
-```python
-# Process in chunks for large datasets
-for chunk in pd.read_parquet('large_file.parquet', chunksize=10000):
-    process(chunk)
-```
-
-## Security Conventions
-
-### Credential Management
-
-```python
-# Good: Use environment variables
-import os
-api_key = os.getenv('API_KEY')
-
-# Bad: Hardcoded credentials
-api_key = 'sk_live_abc123'
-```
-
-### Input Validation
-
-```python
-def fetch_data(ticker: str) -> pd.DataFrame:
-    # Validate input
-    if not ticker or not isinstance(ticker, str):
-        raise ValueError("Invalid ticker")
-    ...
-```
-
-## Documentation Standards
-
-### README Standards
-
-- Overview
-- Installation
-- Quick start
+**Documentation**:
+- Google-style docstrings
+- Type hints in docstrings
 - Usage examples
-- Configuration
-- Troubleshooting
-- Contributing
 
-### Docstring Coverage
+**Testing**:
+- AAA pattern (Arrange-Act-Assert)
+- Shared fixtures in `conftest.py`
+- Test markers (unit, integration, slow)
+- Mock external APIs
 
-- All public functions: Required
-- All classes: Required
-- Private functions: Optional but recommended
+**Constants**:
+- Centralized in `core/` modules
+- Use type aliases for complex types
+- Path utilities for consistent paths

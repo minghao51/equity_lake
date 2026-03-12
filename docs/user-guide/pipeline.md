@@ -38,6 +38,7 @@ cd equity-lake
 
 # 2. Install dependencies
 uv sync
+uv sync --extra ml  # Required for feature engineering and ML inference
 
 # 3. Generate test data (optional, for quick start)
 make generate-test-data
@@ -96,6 +97,7 @@ source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
 # Install dependencies
 uv sync
+uv sync --extra ml  # Required for feature engineering and ML inference
 
 # Install optional dependencies
 uv sync --extra ml           # ML and XGBoost

@@ -196,7 +196,8 @@ equity-lake/
 ## Makefile Commands
 
 ```bash
-make setup      # Create venv and install dependencies
+make setup      # Create venv and install core dependencies
+uv sync --extra ml  # Install ML dependencies required by make pipeline
 make sync       # One-time S3 sync
 make daily      # Run daily append
 make pipeline   # Run full ML pipeline (ingestion → features → ML)
@@ -310,11 +311,12 @@ uv run equity-monitor
 
 ### Comprehensive Guides
 - **[Operations Guide](docs/user-guide/operations.md)** - Day-to-day usage documentation
+- **[Backtesting Guide](docs/user-guide/backtesting.md)** - Strategy testing and examples
 - **[Architecture Docs](docs/architecture/)** - System structure and subsystem design
 - **[Developer Guide](docs/developer-guide/project-structure.md)** - Code layout and contribution orientation
-- **[Reports](docs/reports/test-results.md)** - Test results and benchmarks
+- **[Documentation Index](docs/README.md)** - Entry point for active project docs
+- **[Reports](docs/reports/README.md)** - Current analyses and operational writeups
 - **[Historical Archive](archive/docs-history/README.md)** - Superseded implementation notes
-- **[claude.md](claude.md)** - AI assistant development guide
 
 ---
 

@@ -152,7 +152,7 @@ df = fetcher.fetch(date(2024, 11, 29))
 | `docs/architecture/parallel-ingestion.md` | 500+ | Current architecture reference |
 | `IMPLEMENTATION-SUMMARY.md` | 300+ | Implementation details |
 | `parallel-cn-fetcher.md` | 600+ | CN fetcher documentation |
-| `docs/reports/test-results.md` | 250+ | Test results |
+| `../reports/parallel-fetching-and-logging-test-results.md` | 250+ | Archived test results |
 | `examples/parallel_logging_demo.py` | 200 | Interactive demo |
 
 **Total**: ~2,700 lines of production-ready code + docs
@@ -283,7 +283,7 @@ Inside CN Market:
 - **JSON logging**: Valid JSON with correlation IDs
 - **Parallel execution**: Confirmed concurrent operation
 
-See [test results](../../docs/reports/test-results.md) for details.
+See [archived test results](../reports/parallel-fetching-and-logging-test-results.md) for details.
 
 ---
 
@@ -303,7 +303,7 @@ See [test results](../../docs/reports/test-results.md) for details.
    - Performance tips
    - Error handling
 
-3. **[Test Results](../../docs/reports/test-results.md)**
+3. **[Test Results](../reports/parallel-fetching-and-logging-test-results.md)**
    - Comprehensive test report
    - Performance metrics
    - Validation results
