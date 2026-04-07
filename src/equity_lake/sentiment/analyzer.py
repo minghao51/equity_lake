@@ -3,7 +3,7 @@
 from enum import Enum
 from typing import Literal
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import structlog
 
 # Try to import VADER
@@ -62,17 +62,12 @@ class SentimentAnalyzer:
 
         if method == "vader":
             if not VADER_AVAILABLE:
-                raise ImportError(
-                    "vaderSentiment is required for VADER method. "
-                    "Install with: uv pip install vaderSentiment"
-                )
+                raise ImportError("vaderSentiment is required for VADER method. Install with: uv pip install vaderSentiment")
             self.analyzer = SentimentIntensityAnalyzer()
             logger.info("Initialized VADER sentiment analyzer")
         elif method == "finbert":
             # FinBERT support planned for Phase 5
-            raise NotImplementedError(
-                "FinBERT method not yet implemented. Use method='vader' for now."
-            )
+            raise NotImplementedError("FinBERT method not yet implemented. Use method='vader' for now.")
         else:
             raise ValueError(f"Unknown method: {method}. Use 'vader' or 'finbert'")
 

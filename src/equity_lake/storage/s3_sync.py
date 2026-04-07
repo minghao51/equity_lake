@@ -72,9 +72,7 @@ class S3Syncer:
         """Detect available sync tool."""
         # Check for s5cmd first (faster)
         try:
-            result = subprocess.run(
-                ["s5cmd", "--version"], capture_output=True, timeout=5
-            )
+            result = subprocess.run(["s5cmd", "--version"], capture_output=True, timeout=5)
             if result.returncode == 0:
                 logger.info("✅ Detected s5cmd (recommended)")
                 return "s5cmd"
@@ -83,9 +81,7 @@ class S3Syncer:
 
         # Check for AWS CLI
         try:
-            result = subprocess.run(
-                ["aws", "--version"], capture_output=True, timeout=5
-            )
+            result = subprocess.run(["aws", "--version"], capture_output=True, timeout=5)
             if result.returncode == 0:
                 logger.info("✅ Detected AWS CLI")
                 return "aws"
@@ -102,10 +98,7 @@ class S3Syncer:
         logger.info(f"Testing access to {self.bucket}")
 
         try:
-            if self.tool == "s5cmd":
-                cmd = ["s5cmd", "ls", f"{self.bucket}"]
-            else:  # aws
-                cmd = ["aws", "s3", "ls", self.bucket, "--no-sign-request"]
+            cmd = ["s5cmd", "ls", f"{self.bucket}"] if self.tool == "s5cmd" else ["aws", "s3", "ls", self.bucket, "--no-sign-request"]
 
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
@@ -152,8 +145,9 @@ class S3Syncer:
             )
 
             # Stream output
-            for line in process.stdout:
-                logger.info(line.strip())
+            if process.stdout is not None:
+                for line in process.stdout:
+                    logger.info(line.strip())
 
             process.wait()
             return process.returncode == 0
@@ -243,10 +237,7 @@ class S3Syncer:
         # Execute sync based on tool
         start_time = datetime.now()
 
-        if self.tool == "s5cmd":
-            success = self.sync_with_s5cmd()
-        else:  # aws
-            success = self.sync_with_aws_cli()
+        success = self.sync_with_s5cmd() if self.tool == "s5cmd" else self.sync_with_aws_cli()
 
         elapsed = (datetime.now() - start_time).total_seconds()
 
@@ -341,7 +332,7 @@ Examples:
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
@@ -356,9 +347,7 @@ def main():
         bucket = config.get("s3_bucket", "")
 
     if not bucket:
-        logger.error(
-            "No S3 bucket specified. Use --bucket or set S3_BUCKET environment variable"
-        )
+        logger.error("No S3 bucket specified. Use --bucket or set S3_BUCKET environment variable")
         logger.error("\nPublic buckets with US equity data:")
         logger.error("  (Add your bucket URL here)")
         sys.exit(1)

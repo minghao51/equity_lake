@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from equity_lake.ml_jobs import run_prediction_job
 
 __all__ = ["PriceForecaster", "run_prediction_job"]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Defer optional ML imports until the symbol is actually used."""
     if name == "PriceForecaster":
         from equity_lake.ml.forecasting import PriceForecaster

@@ -3,8 +3,8 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
-import akshare as ak  # type: ignore[import-untyped]
-import pandas as pd  # type: ignore[import-untyped]
+import akshare as ak
+import pandas as pd
 import structlog
 
 from equity_lake.config import TickerConfig
@@ -28,11 +28,14 @@ class CNAshareFetcher(MarketDataFetcher):
         max_workers: int = 10,
         stock_limit: int = 100,
     ):
-        super().__init__(retry_attempts, retry_delay)
-        self.ticker_config = ticker_config or TickerConfig()
+        super().__init__(
+            retry_attempts,
+            retry_delay,
+            ticker_config=ticker_config or TickerConfig(),
+            stock_limit=stock_limit,
+        )
         self.filters = filters or {}
         self.max_workers = max_workers
-        self.stock_limit = stock_limit
 
     def _fetch_single_stock(
         self,
@@ -60,43 +63,42 @@ class CNAshareFetcher(MarketDataFetcher):
 
     def fetch(self, trading_date: date) -> pd.DataFrame:
         """Fetch China A-share data for a trading date."""
+        tickers = self._get_configured_tickers("cn")
         logger.info(
             "fetch_cn_ashare_started",
             date=str(trading_date),
             max_workers=self.max_workers,
             stock_limit=self.stock_limit,
+            configured_ticker_count=len(tickers),
         )
 
         def _fetch() -> pd.DataFrame:
             date_str = trading_date.strftime("%Y%m%d")
             try:
-                logger.info("fetching_stock_list")
-                stock_list = ak.stock_info_a_code_name()
-                logger.info("stock_list_fetched", total_stocks=len(stock_list))
-
-                sample_stocks = stock_list.head(self.stock_limit)
-                logger.info(
-                    "stock_sample_selected",
-                    sample_size=len(sample_stocks),
-                    total_stocks=len(stock_list),
-                )
+                if not tickers:
+                    logger.warning(
+                        "cn_configured_tickers_unavailable",
+                        date=str(trading_date),
+                        message="Cannot fetch CN data without configured tickers",
+                    )
+                    return pd.DataFrame()
 
                 frames: list[pd.DataFrame] = []
                 success_count = 0
                 failure_count = 0
 
                 with (
-                    timer("parallel_cn_stock_fetching", stock_count=len(sample_stocks)),
+                    timer("parallel_cn_stock_fetching", stock_count=len(tickers)),
                     ThreadPoolExecutor(max_workers=self.max_workers) as executor,
                 ):
                     futures = {
                         executor.submit(
                             self._fetch_single_stock,
-                            str(row["code"]),
+                            stock_code,
                             date_str,
                             trading_date,
-                        ): str(row["code"])
-                        for _, row in sample_stocks.iterrows()
+                        ): stock_code
+                        for stock_code in tickers
                     }
                     for future in as_completed(futures):
                         stock_code = futures[future]
@@ -119,7 +121,7 @@ class CNAshareFetcher(MarketDataFetcher):
                     "stock_fetch_completed",
                     success=success_count,
                     failures=failure_count,
-                    total=len(sample_stocks),
+                    total=len(tickers),
                 )
 
                 if not frames:
@@ -142,14 +144,10 @@ class CNAshareFetcher(MarketDataFetcher):
                 )
                 if "adj_close" not in frame.columns:
                     frame["adj_close"] = frame["close"]
-                available_cols = [
-                    column for column in STANDARD_COLUMNS if column in frame.columns
-                ]
+                available_cols = [column for column in STANDARD_COLUMNS if column in frame.columns]
                 frame = frame[available_cols]
                 frame = frame.dropna(how="all")
-                unique_tickers = (
-                    int(frame["ticker"].nunique()) if "ticker" in frame else 0
-                )
+                unique_tickers = int(frame["ticker"].nunique()) if "ticker" in frame else 0
                 logger.info(
                     "fetch_cn_ashare_completed",
                     rows=len(frame),

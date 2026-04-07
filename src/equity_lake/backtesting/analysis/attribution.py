@@ -5,7 +5,6 @@ This module provides performance attribution analysis across
 different dimensions (time, sector, trade type).
 """
 
-
 import pandas as pd
 import structlog
 
@@ -59,9 +58,7 @@ class AttributionAnalyzer:
 
         # Benchmark comparison
         if benchmark is not None:
-            results["benchmark_comparison"] = self._benchmark_comparison(
-                equity_curve, benchmark
-            )
+            results["benchmark_comparison"] = self._benchmark_comparison(equity_curve, benchmark)
 
         return results
 
@@ -124,17 +121,13 @@ class AttributionAnalyzer:
                     "category": "Winners",
                     "count": len(winning_trades),
                     "total_pnl": winning_trades["pnl"].sum(),
-                    "avg_pnl": winning_trades["pnl"].mean()
-                    if len(winning_trades) > 0
-                    else 0,
+                    "avg_pnl": winning_trades["pnl"].mean() if len(winning_trades) > 0 else 0,
                 },
                 {
                     "category": "Losers",
                     "count": len(losing_trades),
                     "total_pnl": losing_trades["pnl"].sum(),
-                    "avg_pnl": losing_trades["pnl"].mean()
-                    if len(losing_trades) > 0
-                    else 0,
+                    "avg_pnl": losing_trades["pnl"].mean() if len(losing_trades) > 0 else 0,
                 },
             ]
         )

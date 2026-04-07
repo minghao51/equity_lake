@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 
+if TYPE_CHECKING:
+    from equity_lake.features.engineering import FeatureEngineer
 
-def _load_feature_engineer():
+
+def _load_feature_engineer() -> type[FeatureEngineer]:
     """Import lazily to avoid making the CLI wrapper a hard dependency."""
     try:
         from equity_lake.features.engineering import FeatureEngineer
@@ -50,10 +54,7 @@ def run_feature_job(
     if features_df.empty:
         raise ValueError("No features generated")
 
-    output_df = features_df[
-        (features_df["date"] >= pd.Timestamp(output_start_date))
-        & (features_df["date"] <= pd.Timestamp(output_end_date))
-    ].copy()
+    output_df = features_df[(features_df["date"] >= pd.Timestamp(output_start_date)) & (features_df["date"] <= pd.Timestamp(output_end_date))].copy()
 
     if output_df.empty:
         raise ValueError("No features generated for the requested output window")

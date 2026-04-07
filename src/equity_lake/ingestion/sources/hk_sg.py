@@ -2,9 +2,9 @@
 
 from datetime import date, timedelta
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import structlog
-import yfinance as yf  # type: ignore[import-untyped]
+import yfinance as yf
 
 from equity_lake.config import TickerConfig
 from equity_lake.core.runtime import STANDARD_COLUMNS
@@ -177,9 +177,7 @@ class HKSGEquityFetcher(MarketDataFetcher):
 
     def _get_fallback_tickers(self) -> tuple[list[str], list[str]]:
         """Return the legacy hardcoded fallback lists."""
-        logger.warning(
-            "Using fallback ticker lists (config-based approach recommended)"
-        )
+        logger.warning("Using fallback ticker lists (config-based approach recommended)")
         return (
             [
                 "0700.HK",
@@ -248,9 +246,7 @@ class HKSGEquityFetcher(MarketDataFetcher):
             frame.columns = [str(column).lower() for column in frame.columns]
             frame = frame.rename(columns={"adj close": "adj_close"})
             frame["date"] = pd.to_datetime(frame["date"]).dt.date
-            available_cols = [
-                column for column in STANDARD_COLUMNS if column in frame.columns
-            ]
+            available_cols = [column for column in STANDARD_COLUMNS if column in frame.columns]
             frame = frame[available_cols]
             frame = frame.dropna(how="all")
             logger.info("Fetched %s rows for HK/SG equities", len(frame))

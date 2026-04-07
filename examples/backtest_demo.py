@@ -19,16 +19,15 @@ from typing import Any
 
 import pandas as pd
 
-# Add project root to path
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root / "src"))
-
 from equity_lake.backtesting import BacktestDataLoader, BacktestEngine
 from equity_lake.backtesting.strategy import (
     BBMeanReversionStrategy,
     CrossSectionalMomentumStrategy,
     SMACrossoverStrategy,
 )
+
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root / "src"))
 
 
 class TestResults:
@@ -209,8 +208,11 @@ def test_data_loader(data_info: dict[str, Any]) -> TestResults:
         else:
             results.add_pass(
                 "Data Loading",
-                f"Loaded {data.shape[0]} rows for {len(data_info['sample_tickers'])} tickers "
-                f"in {load_duration:.2f}s",
+                (
+                    f"Loaded {data.shape[0]} rows for "
+                    f"{len(data_info['sample_tickers'])} tickers "
+                    f"in {load_duration:.2f}s"
+                ),
             )
             results.add_performance("Data Loading", load_duration)
 
@@ -218,11 +220,13 @@ def test_data_loader(data_info: dict[str, Any]) -> TestResults:
             print("\n  Data structure:")
             print(f"    Shape: {data.shape}")
             print(
-                f"    Index: {data.index.name} ({data.index.min()} to {data.index.max()})"
+                f"    Index: {data.index.name} "
+                f"({data.index.min()} to {data.index.max()})"
             )
             if isinstance(data.columns, pd.MultiIndex):
                 print(
-                    f"    Columns: MultiIndex with {len(data.columns.get_level_values(0).unique())} tickers"
+                    "    Columns: MultiIndex with "
+                    f"{len(data.columns.get_level_values(0).unique())} tickers"
                 )
                 print(
                     f"    Fields: {data.columns.get_level_values(1).unique().tolist()}"
@@ -295,7 +299,10 @@ def test_sma_crossover_strategy(data_info: dict[str, Any]) -> TestResults:
         if result.total_return != 0 or result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "SMA Crossover Results",
-                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}",
+                (
+                    f"Return: {result.total_return:.2%}, "
+                    f"Trades: {result.metrics.get('num_trades', 0)}"
+                ),
             )
         else:
             results.add_warning(
@@ -379,7 +386,10 @@ def test_momentum_strategy(data_info: dict[str, Any]) -> TestResults:
         if result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "Momentum Results",
-                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}",
+                (
+                    f"Return: {result.total_return:.2%}, "
+                    f"Trades: {result.metrics.get('num_trades', 0)}"
+                ),
             )
         else:
             results.add_warning(
@@ -451,7 +461,10 @@ def test_mean_reversion_strategy(data_info: dict[str, Any]) -> TestResults:
         if result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "Mean Reversion Results",
-                f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}",
+                (
+                    f"Return: {result.total_return:.2%}, "
+                    f"Trades: {result.metrics.get('num_trades', 0)}"
+                ),
             )
         else:
             results.add_warning(
@@ -493,7 +506,8 @@ def main():
             print("=" * 70)
             print("\nTo fix this issue:")
             print(
-                "  1. Generate test data using: uv run python -m equity_lake.devtools.test_data"
+                "  1. Generate test data using: "
+                "uv run python -m equity_lake.devtools.test_data"
             )
             print("  2. Or run daily ingestion: make daily")
             print("  3. Or sync from S3: make sync")
@@ -557,7 +571,8 @@ def main():
     if not all_results.failed_tests:
         print("✅ READY: All core functionality is working correctly")
         print(
-            "\nThe backtesting framework is ready for production use with the following notes:"
+            "\nThe backtesting framework is ready for production use "
+            "with the following notes:"
         )
         print("  • Data loading from Parquet files works correctly")
         print("  • All three tested strategies execute successfully")

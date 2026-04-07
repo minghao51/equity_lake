@@ -13,10 +13,10 @@ Usage:
 import argparse
 import os
 import sys
-from datetime import date, datetime, timedelta
 
 import structlog
 
+from equity_lake.core.dates import resolve_trading_date
 from equity_lake.core.logging import timer
 from equity_lake.core.runtime import (
     US_NEWS_DIR,
@@ -126,7 +126,7 @@ def validate_environment() -> bool:
     return True
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
@@ -139,10 +139,7 @@ def main():
         sys.exit(1)
 
     # Determine trading date
-    if args.date:
-        trading_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-    else:
-        trading_date = date.today() - timedelta(days=1)
+    trading_date = resolve_trading_date(args.date)
 
     logger.info(f"{'=' * 60}")
     logger.info(f"News Ingestion - {trading_date}")

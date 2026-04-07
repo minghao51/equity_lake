@@ -1,217 +1,128 @@
-# 🚀 Quick Start Guide
+# Quick Start
 
-Get your ML pipeline running in 5 minutes!
+This guide is the fastest path to a working local install of `equity-lake`.
+It reflects the current CLI entrypoints and package layout in this repository.
 
-The canonical command surface now uses the installed CLI entrypoints:
-`equity-pipeline`, `equity-monitor`, and `equity-query`.
+## Prerequisites
 
----
+- Python 3.12 or 3.13
+- `uv`
+- Git
 
-## ✅ Step 1: Verify Installation (30 seconds)
+Optional extras:
 
-```bash
-# Run a dry-run pipeline check
-uv run equity-pipeline --dry-run --verbose
-```
+- `uv sync --extra ml` for the full ingestion -> features -> ML pipeline
+- `uv sync --extra s3` if you plan to use S3 sync
+- `uv sync --group dev` for local development and tests
 
-Expected output:
-```
-✅ PASS: equity-pipeline executes
-✅ PASS: equity-monitor executes
-✅ PASS: equity-query executes
-✅ All checks passed!
-```
-
----
-
-## 🎯 Step 2: Test Pipeline (1 minute)
+## Setup
 
 ```bash
-# Dry run (no data written)
-uv run equity-pipeline --dry-run --verbose
-```
+git clone <your-repo-url>
+cd equity-lake
 
-This will test all 3 stages without writing any data:
-- Stage 1: Ingestion ✅
-- Stage 2: Feature Engineering ✅
-- Stage 3: ML Inference ✅
+uv venv
+source .venv/bin/activate
 
----
-
-## 🚀 Step 3: Run Full Pipeline (5-10 minutes)
-
-```bash
-# Run the full pipeline
-uv run equity-pipeline --verbose
-```
-
-**What happens:**
-1. Downloads EOD data for US, CN, HK, SG markets (2-5 min)
-2. Computes 40+ technical indicators (1-3 min)
-3. Runs ML predictions for your tickers (1-2 min)
-
-**Expected output:**
-```
-======================================================================
-PIPELINE EXECUTION SUMMARY
-======================================================================
-Date: 2024-12-01
-Markets: US, CN, HK_SG
-Tickers: 10 (AAPL, GOOGL, MSFT, NVDA, TSLA...)
-Duration: 8.45 seconds
-
-ingestion                      ✅ SUCCESS        125.32s
-feature_engineering            ✅ SUCCESS        45.21s
-ml_inference                   ✅ SUCCESS        12.08s
-======================================================================
-```
-
----
-
-## 🔍 Step 4: Check Health (30 seconds)
-
-```bash
-# Run health check
-uv run equity-monitor --verbose
-```
-
-Expected output:
-```
-======================================================================
-PIPELINE HEALTH MONITOR
-======================================================================
-
-✅ PASS       Data Freshness
-✅ PASS       Data Quality
-✅ PASS       Pipeline Logs
-✅ PASS       Feature Store
-
-✅ Pipeline is HEALTHY
-```
-
----
-
-## 📊 Step 5: View Results
-
-### Option A: Query CLI
-```bash
-# Latest data summary
-uv run equity-query --query latest_summary
-
-# Top volume stocks
-uv run equity-query --query top_volume --days 14
-```
-
-### Option B: Build Your Own Visualization
-The built-in Streamlit dashboard has been removed. Use the query CLI and load the
-resulting data into your notebook, BI tool, or a separate UI project instead.
-
----
-
-## ⏰ Step 6: Set Up Automation (Optional)
-
-### Daily Pipeline (Weekdays at 7 PM ET)
-```bash
-# Edit crontab
-crontab -e
-
-# Add this line:
-0 19 * * 1-5 cd $(pwd) && uv run equity-pipeline >> logs/cron.log 2>&1
-
-# Verify it's scheduled
-crontab -l
-```
-
-### Health Check (Every 6 hours)
-```bash
-# Add to crontab
-0 */6 * * * cd $(pwd) && uv run equity-monitor >> logs/health.log 2>&1
-```
-
----
-
-## 🎓 Common First-Time Tasks
-
-### Change Tickers
-```bash
-# Custom ticker list
-uv run equity-pipeline \
-    --tickers AAPL,GOOGL,MSFT,NVDA,TSLA,META \
-    --markets us
-```
-
-### Run for Specific Date
-```bash
-# Historical date
-uv run equity-pipeline --date 2024-11-01
-```
-
-### Run Only ML Inference (Data Already Exists)
-```bash
-# Skip ingestion and features
-uv run equity-pipeline --skip-ingestion --skip-features
-```
-
----
-
-## 🐛 Troubleshooting
-
-### "No data found"
-```bash
-# Solution: Check if data directories exist
-ls -la data/lake/
-
-# If empty, data will be downloaded on first run
-```
-
-### "ImportError: No module named 'x'"
-```bash
-# Solution: Install the optional pipeline dependencies
+uv sync
 uv sync --extra ml
 ```
 
-### Pipeline takes too long
+If you want the checked-in env template:
+
 ```bash
-# Solution 1: Reduce tickers
-uv run equity-pipeline --tickers AAPL,GOOGL,MSFT
-
-# Solution 2: Use fewer markets
-uv run equity-pipeline --markets us
-
-# Solution 3: Check what's slow
-tail -f logs/run_pipeline.log
+cp config/example.env .env
 ```
 
----
+## First Commands
 
-## 📈 What's Next?
+Verify the main CLI entrypoints:
 
-1. **Customize your ticker list** in `config/tickers.yaml`
-2. **Explore results with DuckDB** via `uv run equity-query`
-3. **Train your own models** using `uv run equity-price-forecast`
-4. **Add more features** in `src/equity_lake/features/`
-5. **Set up alerts** by modifying `src/equity_lake/monitoring/`
+```bash
+uv run equity-daily --help
+uv run equity-pipeline --help
+uv run equity-query --help
+uv run equity-monitor --help
+```
 
----
+Inspect the active ticker configuration:
 
-## 📚 Full Documentation
+```bash
+uv run equity-daily --list-stats
+uv run equity-daily --list-tickers --markets us --verbose
+```
 
-- **Pipeline Usage**: [Pipeline Usage Guide](../user-guide/pipeline.md)
-- **Project Structure**: [Developer Guide](../developer-guide/project-structure.md)
-- **Project README**: [README.md](../../README.md)
+## Run the Pipeline
 
----
+Daily ingestion only:
 
-## 💡 Tips
+```bash
+uv run equity-daily --dry-run --verbose
+```
 
-- Start with **US markets only** for faster testing
-- Use **--dry-run** flag to test without writing data
-- Check **logs/** directory for detailed execution logs
-- Run **health checks** regularly to ensure data quality
-- Use the query CLI or a notebook to inspect output data quickly
+Full pipeline:
 
----
+```bash
+uv run equity-pipeline --dry-run --verbose
+uv run equity-pipeline --verbose
+```
 
-**Ready to automate?** → Set up the cron job and let it run daily!
+Useful variants:
 
-**Questions?** → Check [Pipeline Usage Guide](../user-guide/pipeline.md) or [Project Structure](../developer-guide/project-structure.md)
+```bash
+uv run equity-pipeline --markets us
+uv run equity-pipeline --tickers AAPL,MSFT,NVDA
+uv run equity-pipeline --skip-ingestion --skip-features
+```
+
+## Query and Monitor
+
+Run a query example:
+
+```bash
+uv run equity-query --query latest_summary
+uv run equity-query --query top_volume --days 14
+```
+
+Run a health check:
+
+```bash
+uv run equity-monitor --verbose
+uv run equity-monitor --output-json logs/health_report.json
+```
+
+## Signals and Backtests
+
+Signal scan using the checked-in configs:
+
+```bash
+uv run equity-signal scan
+uv run equity-signal scan --format md --output signals.md
+```
+
+Backtest a built-in strategy:
+
+```bash
+uv run equity-backtest \
+  --strategy sma_crossover \
+  --tickers AAPL,MSFT \
+  --start-date 2024-01-01 \
+  --end-date 2024-12-31
+```
+
+## Notes
+
+- The repository no longer ships a built-in dashboard. Use `equity-query`,
+  notebooks, or your own UI against the generated Parquet and DuckDB data.
+- China ingestion uses `CNHybridFetcher`, but the current orchestrator
+  instantiates it with the `akshare` path enabled and `efinance` disabled by
+  default.
+- The canonical configuration files live under `config/`, especially
+  `config/tickers.yaml`, `config/watchlist.yaml`, and `config/signals.yaml`.
+
+## Next Reading
+
+- [Pipeline Usage](../user-guide/pipeline.md)
+- [Operations Guide](../user-guide/operations.md)
+- [Signals Guide](../user-guide/signals.md)
+- [Project Structure](../developer-guide/project-structure.md)

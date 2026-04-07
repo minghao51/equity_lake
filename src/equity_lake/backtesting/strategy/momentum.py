@@ -5,7 +5,6 @@ This module implements various momentum strategies including cross-sectional
 momentum and time-series momentum.
 """
 
-
 import pandas as pd
 import structlog
 
@@ -60,10 +59,7 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         Pre-computes historical returns for ranking.
         """
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         # Store close prices for signal generation
         self.indicators["close"] = close_df
@@ -149,8 +145,8 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
 
         # Convert to format expected by engine
         # Aggregate signals across tickers
-        entry_signals = signals.notna() & (signals == True)
-        exit_signals = signals.notna() & (signals == False)
+        entry_signals = signals.notna() & signals
+        exit_signals = signals.notna() & ~signals
 
         result = pd.DataFrame(
             {
@@ -193,10 +189,7 @@ class TimeSeriesMomentumStrategy(BaseStrategy):
     def initialize(self, data: pd.DataFrame) -> None:
         """Initialize time-series momentum strategy."""
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         self.indicators["close"] = close_df
 

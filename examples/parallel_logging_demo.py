@@ -68,7 +68,7 @@ def demo_structured_logging():
         return {"data": "sample"}
 
     print("1. Using @timed decorator:")
-    result = fetch_with_timing()
+    fetch_with_timing()
 
     # Demonstrate timer context manager
     print("\n2. Using timer context manager:")

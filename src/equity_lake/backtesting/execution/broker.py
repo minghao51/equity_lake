@@ -172,9 +172,7 @@ class Broker:
         """
         # Generate order ID if not provided
         if order.order_id is None:
-            order.order_id = (
-                f"{order.ticker}_{order.side.value}_{datetime.now().timestamp()}"
-            )
+            order.order_id = f"{order.ticker}_{order.side.value}_{datetime.now().timestamp()}"
 
         logger.debug(
             "Executing order",
@@ -209,10 +207,7 @@ class Broker:
                     max_shares = int(available_for_shares / adjusted_price)
 
                     if max_shares <= 0:
-                        raise ValueError(
-                            f"Insufficient funds: need ${required_cash:.2f}, "
-                            f"have ${self.cash:.2f}"
-                        )
+                        raise ValueError(f"Insufficient funds: need ${required_cash:.2f}, have ${self.cash:.2f}")
 
                     logger.warning(
                         "Order size reduced due to insufficient funds",
@@ -231,19 +226,14 @@ class Broker:
 
             # Update cash and positions
             self.cash -= required_cash
-            self.positions[order.ticker] = (
-                self.positions.get(order.ticker, 0) + order.quantity
-            )
+            self.positions[order.ticker] = self.positions.get(order.ticker, 0) + order.quantity
 
         else:  # SELL
             # Check sufficient shares
             current_position = self.positions.get(order.ticker, 0)
 
             if abs(order.quantity) > current_position:
-                raise ValueError(
-                    f"Insufficient shares: trying to sell {abs(order.quantity)}, "
-                    f"have {current_position}"
-                )
+                raise ValueError(f"Insufficient shares: trying to sell {abs(order.quantity)}, have {current_position}")
 
             # Update cash and positions
             proceeds = (adjusted_price * abs(order.quantity)) - commission
@@ -333,7 +323,7 @@ class Broker:
         logger.warning("Order not found for cancellation", order_id=order_id)
         return False
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset broker to initial state."""
         self.cash = self.initial_cash
         self.positions.clear()

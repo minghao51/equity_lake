@@ -1,7 +1,7 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test clean docker-up docker-down docker-logs lint format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test
+.PHONY: help setup sync daily query pipeline monitor test clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test
 
 # Default target
 help:
@@ -10,6 +10,7 @@ help:
 	@echo "  setup      - Create virtual environment and install core dependencies"
 	@echo "  test       - Run tests with coverage"
 	@echo "  lint       - Run code linting (ruff)"
+	@echo "  lint-md    - Run Markdown linting"
 	@echo "  format     - Format code (ruff)"
 	@echo "  check      - Run type checking (mypy)"
 	@echo "  clean      - Clean cache and temporary files"
@@ -138,6 +139,10 @@ lint:
 	@echo "🔍 Running code linting..."
 	uv run ruff check src/ tests/
 
+lint-md:
+	@echo "📝 Running Markdown linting..."
+	uv run pymarkdown -d md013 scan README.md docs
+
 format:
 	@echo "🎨 Formatting code..."
 	uv run ruff format src/ tests/
@@ -147,7 +152,7 @@ check:
 	@echo "🔬 Running type checking..."
 	uv run mypy src/equity_lake
 
-check-all: lint format check
+check-all: lint lint-md format check
 	@echo "✅ All code quality checks complete!"
 
 # Cleaning

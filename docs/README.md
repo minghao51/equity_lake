@@ -2,10 +2,18 @@
 
 This directory is organized by audience first, then by topic.
 
+The active guides in `getting-started/`, `user-guide/`, and `architecture/`
+are intended to describe the code that currently ships in this repository.
+Historical plans, superseded implementation notes, and older design drafts
+belong in `archive/docs-history/`.
+
 ## Start Here
 
 - New users: [Getting Started](getting-started/quickstart.md)
 - Operators: [Pipeline Usage](user-guide/pipeline.md)
+- Environment and credentials: [API Keys And Credentials](20260406-api-keys.md)
+- CLI operators: [CLI Reference](user-guide/20260406-cli-reference.md)
+- Static hosting: [Dashboard Hosting](user-guide/20260406-dashboard-hosting.md)
 - Contributors: [Project Structure](developer-guide/project-structure.md)
 - Strategy users: [Backtesting Guide](user-guide/backtesting.md)
 

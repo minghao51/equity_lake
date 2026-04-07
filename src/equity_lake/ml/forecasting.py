@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 import joblib
@@ -154,7 +154,7 @@ class PriceForecaster:
         )
         grid_search.fit(X_train, y_train)
         logger.info("model_tuned", best_params=grid_search.best_params_)
-        return grid_search.best_estimator_
+        return cast(xgb.XGBClassifier, grid_search.best_estimator_)
 
     def predict(
         self,
@@ -203,9 +203,7 @@ class PriceForecaster:
         """Run a simple walk-forward backtest using the latest saved model."""
         df = self.load_features(ticker, start_date, end_date)
         if len(df) < train_window + 10:
-            raise ValueError(
-                f"Not enough data for backtesting. Need at least {train_window + 10} days"
-            )
+            raise ValueError(f"Not enough data for backtesting. Need at least {train_window + 10} days")
 
         results: list[dict[str, Any]] = []
         feature_cols = self._get_feature_columns(df)
@@ -220,11 +218,7 @@ class PriceForecaster:
                 break
 
             X_test = df.iloc[test_idx : test_idx + 1][feature_cols].fillna(0)
-            y_true = (
-                (df.iloc[test_idx : test_idx + 1]["next_day_return"] > 0)
-                .astype(int)
-                .values[0]
-            )
+            y_true = (df.iloc[test_idx : test_idx + 1]["next_day_return"] > 0).astype(int).values[0]
             proba = float(model.predict_proba(X_test)[0][1])
             pred = int(proba > 0.5)
             results.append(

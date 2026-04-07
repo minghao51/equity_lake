@@ -5,7 +5,6 @@ This module provides comprehensive performance metrics including
 returns, risk metrics, and trading statistics.
 """
 
-
 import numpy as np
 import pandas as pd
 import structlog
@@ -157,11 +156,7 @@ class PerformanceMetrics:
         var_95 = returns.quantile(0.05)
 
         # Conditional VaR (expected shortfall at 5%)
-        cvar_95 = (
-            returns[returns <= var_95].mean()
-            if len(returns[returns <= var_95]) > 0
-            else 0
-        )
+        cvar_95 = returns[returns <= var_95].mean() if len(returns[returns <= var_95]) > 0 else 0
 
         # Skewness and kurtosis
         skewness = returns.skew()
@@ -192,18 +187,12 @@ class PerformanceMetrics:
         annual_vol = returns.std() * np.sqrt(252)
 
         # Sharpe Ratio
-        sharpe_ratio = (
-            (annual_return - self.risk_free_rate) / annual_vol if annual_vol > 0 else 0
-        )
+        sharpe_ratio = (annual_return - self.risk_free_rate) / annual_vol if annual_vol > 0 else 0
 
         # Sortino Ratio
         negative_returns = returns[returns < 0]
         downside_dev = negative_returns.std() * np.sqrt(252)
-        sortino_ratio = (
-            (annual_return - self.risk_free_rate) / downside_dev
-            if downside_dev > 0
-            else 0
-        )
+        sortino_ratio = (annual_return - self.risk_free_rate) / downside_dev if downside_dev > 0 else 0
 
         # Calmar Ratio (CAGR / abs(max_drawdown))
         # Using simplified calculation
@@ -223,39 +212,29 @@ class PerformanceMetrics:
         if trades.empty:
             return {}
 
-        metrics = {}
+        metrics: dict[str, float] = {}
 
         # Number of trades
-        metrics["num_trades"] = len(trades)
+        metrics["num_trades"] = float(len(trades))
 
         # Win rate
         if "pnl" in trades.columns:
             winning_trades = trades[trades["pnl"] > 0]
             losing_trades = trades[trades["pnl"] < 0]
 
-            metrics["win_rate"] = (
-                len(winning_trades) / len(trades) if len(trades) > 0 else 0
-            )
+            metrics["win_rate"] = len(winning_trades) / len(trades) if len(trades) > 0 else 0.0
 
             # Average win/loss
-            metrics["avg_win"] = (
-                winning_trades["pnl"].mean() if len(winning_trades) > 0 else 0
-            )
-            metrics["avg_loss"] = (
-                losing_trades["pnl"].mean() if len(losing_trades) > 0 else 0
-            )
+            metrics["avg_win"] = float(winning_trades["pnl"].mean()) if len(winning_trades) > 0 else 0.0
+            metrics["avg_loss"] = float(losing_trades["pnl"].mean()) if len(losing_trades) > 0 else 0.0
 
             # Profit factor
-            total_profit = winning_trades["pnl"].sum() if len(winning_trades) > 0 else 0
-            total_loss = (
-                abs(losing_trades["pnl"].sum()) if len(losing_trades) > 0 else 1
-            )
-            metrics["profit_factor"] = (
-                total_profit / total_loss if total_loss > 0 else 0
-            )
+            total_profit = float(winning_trades["pnl"].sum()) if len(winning_trades) > 0 else 0.0
+            total_loss = float(abs(losing_trades["pnl"].sum())) if len(losing_trades) > 0 else 1.0
+            metrics["profit_factor"] = total_profit / total_loss if total_loss > 0 else 0.0
 
             # Expectancy
-            metrics["expectancy"] = trades["pnl"].mean()
+            metrics["expectancy"] = float(trades["pnl"].mean())
 
         return metrics
 
@@ -267,9 +246,7 @@ class PerformanceMetrics:
         """Calculate benchmark-relative metrics."""
         # Align benchmark with strategy
         benchmark_returns = benchmark.pct_change().dropna()
-        aligned_returns, aligned_benchmark = returns.align(
-            benchmark_returns, join="inner"
-        )
+        aligned_returns, aligned_benchmark = returns.align(benchmark_returns, join="inner")
 
         if aligned_returns.empty or aligned_benchmark.empty:
             return {}
@@ -282,16 +259,12 @@ class PerformanceMetrics:
         # Alpha (annualized)
         strategy_return = aligned_returns.mean() * 252
         benchmark_return = aligned_benchmark.mean() * 252
-        alpha = strategy_return - (
-            self.risk_free_rate + beta * (benchmark_return - self.risk_free_rate)
-        )
+        alpha = strategy_return - (self.risk_free_rate + beta * (benchmark_return - self.risk_free_rate))
 
         # Information Ratio
         excess_returns = aligned_returns - aligned_benchmark
         tracking_error = excess_returns.std() * np.sqrt(252)
-        information_ratio = (
-            excess_returns.mean() * 252 / tracking_error if tracking_error > 0 else 0
-        )
+        information_ratio = excess_returns.mean() * 252 / tracking_error if tracking_error > 0 else 0
 
         # Correlation
         correlation = aligned_returns.corr(aligned_benchmark)

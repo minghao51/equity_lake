@@ -1,0 +1,36 @@
+project:
+  name: equity-lake
+  version: 0.1.0
+  environment: development
+
+storage:
+  data_dir: data
+  lake_dir: data/lake
+  logs_dir: logs
+  models_dir: data/models
+  db_path: equity_data.duckdb
+
+ingestion:
+  default_markets:
+    - us
+    - cn
+    - hk_sg
+  parallel: true
+  max_workers: 3
+  ticker_config_path: config/tickers.yaml
+
+schedule:
+  enabled: true
+  cron: "0 1 * * 1-5"
+  timezone: Asia/Singapore
+
+dashboard:
+  enabled: true
+  output_dir: site
+  data_file: dashboard-data.json
+  title: Equity Lake
+  subtitle: Local-first market data, published as a static status page.
+
+monitoring:
+  max_age_days: 2
+  null_threshold_pct: 5.0

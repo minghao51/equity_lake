@@ -41,16 +41,12 @@ def validate_config(config: TickerConfigRoot | None) -> dict[str, list[str]]:
     for market_name, market_config in config.markets.items():
         for ticker in market_config.tickers:
             if not validate_ticker_format(config, ticker.symbol, market_name):
-                errors.append(
-                    f"Invalid ticker format for {market_name}: {ticker.symbol}"
-                )
+                errors.append(f"Invalid ticker format for {market_name}: {ticker.symbol}")
 
             if not ticker.name:
                 warnings.append(f"Ticker {ticker.symbol} ({market_name}) missing name")
             if not ticker.sector:
-                warnings.append(
-                    f"Ticker {ticker.symbol} ({market_name}) missing sector"
-                )
+                warnings.append(f"Ticker {ticker.symbol} ({market_name}) missing sector")
             if not ticker.tags:
                 warnings.append(f"Ticker {ticker.symbol} ({market_name}) has no tags")
 
@@ -59,9 +55,7 @@ def validate_config(config: TickerConfigRoot | None) -> dict[str, list[str]]:
             continue
         for symbol in group_config.tickers:
             if get_ticker_metadata(config, symbol) is None:
-                warnings.append(
-                    f"Group '{group_name}' references unknown ticker: {symbol}"
-                )
+                warnings.append(f"Group '{group_name}' references unknown ticker: {symbol}")
 
     return {"errors": errors, "warnings": warnings}
 

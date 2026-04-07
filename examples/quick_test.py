@@ -18,7 +18,7 @@ def test_imports():
     print("Testing imports...")
 
     try:
-        from equity_lake.backtesting import (
+        from equity_lake.backtesting import (  # noqa: F401
             BacktestDataLoader,
             BacktestEngine,
             BacktestResult,
@@ -30,7 +30,7 @@ def test_imports():
         return False
 
     try:
-        from equity_lake.backtesting.strategy import (
+        from equity_lake.backtesting.strategy import (  # noqa: F401
             BaseStrategy,
             BBMeanReversionStrategy,
             CrossSectionalMomentumStrategy,
@@ -43,9 +43,9 @@ def test_imports():
         return False
 
     try:
-        import duckdb
-        import numpy as np
-        import pandas as pd
+        import duckdb  # noqa: F401
+        import numpy as np  # noqa: F401
+        import pandas as pd  # noqa: F401
 
         print("  ✅ Dependencies available (duckdb, pandas, numpy)")
     except ImportError as e:

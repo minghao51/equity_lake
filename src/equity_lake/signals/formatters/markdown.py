@@ -27,7 +27,7 @@ class MarkdownFormatter(SignalFormatter):
         lines.append(f"**Total Signals:** {len(signals)}\n\n")
 
         # Group by action
-        by_action = defaultdict(list)
+        by_action: defaultdict[str, list[Signal]] = defaultdict(list)
         for signal in signals:
             by_action[signal.action].append(signal)
 
@@ -53,10 +53,7 @@ class MarkdownFormatter(SignalFormatter):
             lines.append("|--------|--------|------------|-----------|")
 
             for signal in type_signals:
-                lines.append(
-                    f"| {signal.ticker} | {signal.action} | "
-                    f"{signal.confidence:.0f} | {signal.reasoning} |"
-                )
+                lines.append(f"| {signal.ticker} | {signal.action} | {signal.confidence:.0f} | {signal.reasoning} |")
             lines.append("\n")
 
         return "".join(lines)

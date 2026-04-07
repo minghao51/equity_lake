@@ -23,6 +23,7 @@ import logging
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -205,9 +206,7 @@ class TestDataGenerator:
         self.gap_probability = gap_probability
         np.random.seed(seed)
 
-    def generate_price_series(
-        self, start_price: float, num_days: int
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def generate_price_series(self, start_price: float, num_days: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Generate realistic price series using geometric Brownian motion.
 
@@ -246,9 +245,7 @@ class TestDataGenerator:
 
         return opens, highs, lows, closes
 
-    def generate_volume(
-        self, num_days: int, base_volume: int, volume_range: tuple[int, int]
-    ) -> np.ndarray:
+    def generate_volume(self, num_days: int, base_volume: int, volume_range: tuple[int, int]) -> np.ndarray:
         """
         Generate realistic volume series with random variation.
 
@@ -302,7 +299,7 @@ class TestDataGenerator:
         opens, highs, lows, closes = self.generate_price_series(start_price, num_days)
 
         # Generate volume
-        base_volume = np.random.uniform(*volume_range)
+        base_volume = int(np.random.uniform(*volume_range))
         volumes = self.generate_volume(num_days, base_volume, volume_range)
 
         # Create DataFrame
@@ -386,12 +383,12 @@ class TestDataGenerator:
 
         # Sample tickers if limit specified
         if num_tickers and num_tickers < len(tickers):
-            tickers = np.random.choice(tickers, num_tickers, replace=False)
+            tickers = np.random.choice(tickers, num_tickers, replace=False).tolist()
 
         logger.info(f"Generating data for {len(tickers)} tickers in {market}")
 
-        price_range = config["price_range"]
-        volume_range = config["volume_range"]
+        price_range = cast(tuple[float, float], config["price_range"])
+        volume_range = cast(tuple[int, int], config["volume_range"])
 
         # Generate data for each ticker
         df_list = []
@@ -400,9 +397,7 @@ class TestDataGenerator:
                 logger.info(f"  Generated {i + 1}/{len(tickers)} tickers...")
 
             try:
-                ticker_df = self.generate_ticker_data(
-                    ticker, dates, price_range, volume_range
-                )
+                ticker_df = self.generate_ticker_data(ticker, dates, price_range, volume_range)
                 df_list.append(ticker_df)
             except Exception as e:
                 logger.warning(f"Failed to generate data for {ticker}: {e}")
@@ -424,9 +419,7 @@ class TestDataGenerator:
 # =============================================================================
 
 
-def write_partitioned_parquet(
-    df: pd.DataFrame, output_dir: Path, date_column: str = "date"
-) -> bool:
+def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: str = "date") -> bool:
     """
     Write DataFrame to Hive-partitioned Parquet by date.
 
@@ -604,7 +597,7 @@ def generate_trading_dates(start_date: date, end_date: date) -> list[date]:
     return dates
 
 
-def main():
+def main() -> int:
     """Main entry point."""
     args = parse_arguments()
 
@@ -613,15 +606,8 @@ def main():
     logger = setup_logging(__name__, level=log_level, log_file="generate_test_data.log")
 
     # Determine date range
-    if args.end_date:
-        end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date()
-    else:
-        end_date = date.today()
-
-    if args.start_date:
-        start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date()
-    else:
-        start_date = end_date - timedelta(days=args.days)
+    end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date else date.today()
+    start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date() if args.start_date else end_date - timedelta(days=args.days)
 
     logger.info(f"{'=' * 60}")
     logger.info("Test Data Generator for Equity EOD Pipeline")
@@ -648,9 +634,7 @@ def main():
     logger.info(f"Trend: {args.trend}")
 
     # Initialize generator
-    generator = TestDataGenerator(
-        seed=args.seed, volatility=args.volatility, trend_strength=args.trend
-    )
+    generator = TestDataGenerator(seed=args.seed, volatility=args.volatility, trend_strength=args.trend)
 
     # Generate data for each market
     success_count = 0
@@ -661,19 +645,17 @@ def main():
 
         try:
             config = MARKET_CONFIGS[market]
-            tickers = config["tickers"]
+            tickers = cast(list[str], config["tickers"])
 
             # Generate data
-            df = generator.generate_market_data(
-                market, tickers, trading_dates, num_tickers=args.num_tickers
-            )
+            df = generator.generate_market_data(market, tickers, trading_dates, num_tickers=args.num_tickers)
 
             if df.empty:
                 logger.warning(f"No data generated for {market}")
                 continue
 
             # Write to Parquet
-            output_dir = config["output_dir"]
+            output_dir = cast(Path, config["output_dir"])
             success = write_partitioned_parquet(df, output_dir)
 
             if success:

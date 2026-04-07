@@ -6,10 +6,11 @@ and data completeness.
 """
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from datetime import date
+from datetime import date, timedelta
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import structlog
+import yfinance as yf
 
 from equity_lake.config import TickerConfig
 from equity_lake.core.runtime import STANDARD_COLUMNS
@@ -46,7 +47,7 @@ class CNHybridFetcher(MarketDataFetcher):
         filters: FilterConfig | None = None,
         max_workers: int = 10,
         stock_limit: int = 100,
-        enable_efinance: bool = True,
+        enable_efinance: bool = False,
         enable_akshare: bool = True,
         efinance_timeout_seconds: float = 45.0,
     ):
@@ -72,6 +73,8 @@ class CNHybridFetcher(MarketDataFetcher):
         self.enable_efinance = enable_efinance and CNEfinanceFetcher is not None
         self.enable_akshare = enable_akshare
         self.efinance_timeout_seconds = efinance_timeout_seconds
+        configured_tickers = self.ticker_config.get_tickers_for_market("cn", active_only=True)
+        self.configured_ticker_count = min(len(configured_tickers), self.stock_limit)
 
         # Initialize fetchers
         self.efinance_fetcher: CNEfinanceFetcher | None = None
@@ -118,10 +121,7 @@ class CNHybridFetcher(MarketDataFetcher):
                 self.enable_akshare = False
 
         if not self.enable_efinance and not self.enable_akshare:
-            raise RuntimeError(
-                "No China data source available. "
-                "Install efinance or ensure akshare is working."
-            )
+            raise RuntimeError("No China data source available. Install efinance or ensure akshare is working.")
 
     def _fetch_efinance_with_timeout(self, trading_date: date) -> pd.DataFrame:
         """Run efinance with a bounded wait so fallback is not delayed indefinitely."""
@@ -139,11 +139,76 @@ class CNHybridFetcher(MarketDataFetcher):
                 timeout_seconds=self.efinance_timeout_seconds,
                 message="Falling back to akshare",
             )
-            raise TimeoutError(
-                f"efinance exceeded {self.efinance_timeout_seconds}s timeout"
-            ) from exc
+            raise TimeoutError(f"efinance exceeded {self.efinance_timeout_seconds}s timeout") from exc
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
+
+    @staticmethod
+    def _cn_to_yahoo_symbol(code: str) -> str:
+        """Map CN ticker code to Yahoo Finance symbol."""
+        if code.startswith(("0", "2", "3")):
+            return f"{code}.SZ"
+        if code.startswith(("4", "8")):
+            return f"{code}.BJ"
+        return f"{code}.SS"
+
+    def _fetch_yfinance_fallback(self, trading_date: date) -> pd.DataFrame:
+        """Fetch CN data from Yahoo Finance when primary providers return empty."""
+        tickers = self._get_configured_tickers("cn")
+        if not tickers:
+            return pd.DataFrame()
+
+        yf_symbols = [self._cn_to_yahoo_symbol(ticker) for ticker in tickers]
+        symbol_to_code = dict(zip(yf_symbols, tickers, strict=False))
+        start = trading_date.isoformat()
+        end = (trading_date + timedelta(days=1)).isoformat()
+
+        data = yf.download(
+            yf_symbols,
+            start=start,
+            end=end,
+            group_by="ticker",
+            progress=False,
+            auto_adjust=False,
+            threads=True,
+        )
+        if data.empty:
+            return pd.DataFrame()
+
+        frames: list[pd.DataFrame] = []
+        if len(yf_symbols) == 1:
+            symbol = yf_symbols[0]
+            frame = data.copy()
+            frame["ticker"] = symbol_to_code[symbol]
+            frame["date"] = trading_date
+            frames.append(frame)
+        else:
+            symbols_available = set(data.columns.get_level_values(0))
+            for symbol in yf_symbols:
+                if symbol not in symbols_available:
+                    continue
+                frame = data[symbol].copy()
+                frame["ticker"] = symbol_to_code[symbol]
+                frame["date"] = trading_date
+                frames.append(frame)
+
+        if not frames:
+            return pd.DataFrame()
+
+        frame = pd.concat(frames, ignore_index=True)
+        frame = frame.rename(
+            columns={
+                "Open": "open",
+                "High": "high",
+                "Low": "low",
+                "Close": "close",
+                "Volume": "volume",
+                "Adj Close": "adj_close",
+            }
+        )
+        if "adj_close" not in frame.columns and "close" in frame.columns:
+            frame["adj_close"] = frame["close"]
+        return frame
 
     def fetch(self, trading_date: date) -> pd.DataFrame:
         """Fetch China A-share data with automatic fallback.
@@ -175,21 +240,20 @@ class CNHybridFetcher(MarketDataFetcher):
                 logger.info(
                     "efinance_result",
                     rows=row_count,
-                    unique_tickers=(
-                        efinance_result["ticker"].nunique()
-                        if "ticker" in efinance_result
-                        else 0
-                    ),
+                    unique_tickers=(efinance_result["ticker"].nunique() if "ticker" in efinance_result else 0),
                 )
 
                 results.append(("efinance", efinance_result))
 
                 # If efinance returned good data, we can skip akshare
-                # Consider "good" as >30% of stock_limit (accounting for non-trading days)
-                if row_count >= self.stock_limit * 0.3:
+                # Consider "good" as >30% of configured target tickers.
+                sufficient_threshold = max(1, int(self.configured_ticker_count * 0.3))
+                if row_count >= sufficient_threshold:
                     logger.info(
                         "efinance_sufficient",
                         rows=row_count,
+                        configured_ticker_count=self.configured_ticker_count,
+                        sufficient_threshold=sufficient_threshold,
                         message="Skipping akshare fallback",
                     )
                     return self._standardize_output(efinance_result)
@@ -211,14 +275,25 @@ class CNHybridFetcher(MarketDataFetcher):
                 logger.info(
                     "akshare_result",
                     rows=row_count,
-                    unique_tickers=(
-                        akshare_result["ticker"].nunique()
-                        if "ticker" in akshare_result
-                        else 0
-                    ),
+                    unique_tickers=(akshare_result["ticker"].nunique() if "ticker" in akshare_result else 0),
                 )
 
                 results.append(("akshare", akshare_result))
+
+                if row_count == 0:
+                    logger.warning(
+                        "akshare_empty_falling_back_to_yfinance",
+                        date=str(trading_date),
+                    )
+                    yfinance_result = self._fetch_yfinance_fallback(trading_date)
+                    yfinance_rows = len(yfinance_result)
+                    logger.info(
+                        "yfinance_fallback_result",
+                        rows=yfinance_rows,
+                        unique_tickers=(yfinance_result["ticker"].nunique() if "ticker" in yfinance_result else 0),
+                    )
+                    if yfinance_rows > 0:
+                        results.append(("yfinance", yfinance_result))
 
             except Exception as exc:
                 logger.error(

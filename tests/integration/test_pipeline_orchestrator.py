@@ -4,7 +4,7 @@ from datetime import date
 
 import pandas as pd
 
-from equity_lake.run_pipeline import PipelineOrchestrator
+from equity_lake.run_pipeline import PipelineOrchestrator, resolve_trading_date
 
 
 def test_run_ingestion_uses_direct_stage_helper(monkeypatch):
@@ -101,7 +101,34 @@ def test_run_ml_inference_uses_direct_stage_helper(monkeypatch):
     success = orchestrator.run_ml_inference()
 
     assert success is True
-    assert (
-        orchestrator.results["ml_inference"]["ticker_results"]["AAPL"]["success"]
-        is True
+    assert orchestrator.results["ml_inference"]["ticker_results"]["AAPL"]["success"] is True
+
+
+def test_resolve_trading_date_rolls_monday_to_friday() -> None:
+    """Default date on Monday should map to previous Friday."""
+    resolved = resolve_trading_date(
+        explicit_date=None,
+        days_back=1,
+        today=date(2026, 4, 6),  # Monday
     )
+    assert resolved == date(2026, 4, 3)
+
+
+def test_resolve_trading_date_rolls_sunday_to_friday() -> None:
+    """Default date on Sunday should map to previous Friday."""
+    resolved = resolve_trading_date(
+        explicit_date=None,
+        days_back=1,
+        today=date(2026, 4, 5),  # Sunday
+    )
+    assert resolved == date(2026, 4, 3)
+
+
+def test_resolve_trading_date_preserves_explicit_date() -> None:
+    """Explicit date should be used as-is."""
+    resolved = resolve_trading_date(
+        explicit_date="2026-04-05",
+        days_back=1,
+        today=date(2026, 4, 6),
+    )
+    assert resolved == date(2026, 4, 5)

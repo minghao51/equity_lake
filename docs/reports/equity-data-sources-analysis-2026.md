@@ -5,6 +5,14 @@
 **Author:** AI Research Analysis
 **Status:** Research Complete
 
+> Status note (2026-03-13): this remains an active research report, not an
+> implementation ledger. The repo now includes `cn_efinance.py` and
+> `cn_hybrid.py`, but the current ingestion orchestrator still runs the China
+> path with `akshare` active by default. Any recommendation text below that
+> reads like a completed `efinance` migration, or a finished monitoring
+> dashboard, should be interpreted as proposed direction rather than current
+> shipped behavior.
+
 ---
 
 ## Executive Summary

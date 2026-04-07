@@ -16,9 +16,7 @@ import pytest
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
-    )
+    config.addinivalue_line("markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')")
     config.addinivalue_line("markers", "integration: marks tests as integration tests")
     config.addinivalue_line("markers", "unit: marks tests as unit tests")
 
@@ -53,9 +51,7 @@ def sample_multi_day_data() -> pd.DataFrame:
     data = []
     for ticker in tickers:
         for i, dt in enumerate(dates):
-            base_price = (
-                150.0 if ticker == "AAPL" else (380.0 if ticker == "MSFT" else 140.0)
-            )
+            base_price = 150.0 if ticker == "AAPL" else (380.0 if ticker == "MSFT" else 140.0)
             price_variation = i * 2.0
 
             data.append(
@@ -128,9 +124,7 @@ def temp_data_dir(tmp_path: Path) -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def temp_partitioned_parquet(
-    temp_data_dir: Path, sample_multi_day_data: pd.DataFrame
-) -> Path:
+def temp_partitioned_parquet(temp_data_dir: Path, sample_multi_day_data: pd.DataFrame) -> Path:
     """Create temporary Hive-partitioned Parquet files."""
     us_dir = temp_data_dir / "us_equity"
 

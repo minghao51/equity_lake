@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import requests
 import structlog
 
@@ -57,10 +57,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
 
         self.api_key = api_key or os.getenv("FINNHUB_API_KEY")
         if not self.api_key:
-            raise ValueError(
-                "Finnhub API key not found. "
-                "Set FINNHUB_API_KEY environment variable or pass api_key parameter."
-            )
+            raise ValueError("Finnhub API key not found. Set FINNHUB_API_KEY environment variable or pass api_key parameter.")
 
         self.tickers = tickers or []
         self.max_workers = max_workers
@@ -92,14 +89,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
             self.max_workers,
         )
 
-        all_metrics = []
-
-        if self.max_workers > 1:
-            # Parallel fetching
-            all_metrics = self._fetch_parallel(trading_date)
-        else:
-            # Sequential fetching
-            all_metrics = self._fetch_sequential(trading_date)
+        all_metrics = self._fetch_parallel(trading_date) if self.max_workers > 1 else self._fetch_sequential(trading_date)
 
         if not all_metrics:
             logger.warning("No social sentiment metrics fetched for any ticker")
@@ -269,18 +259,14 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         # Process Reddit sentiment
         reddit_data = sentiment_data.get("reddit", {})
         if reddit_data:
-            reddit_metric = self._parse_sentiment_metric(
-                reddit_data, ticker, trading_date, "reddit"
-            )
+            reddit_metric = self._parse_sentiment_metric(reddit_data, ticker, trading_date, "reddit")
             if reddit_metric:
                 parsed_metrics.append(reddit_metric)
 
         # Process Twitter sentiment
         twitter_data = sentiment_data.get("twitter", {})
         if twitter_data:
-            twitter_metric = self._parse_sentiment_metric(
-                twitter_data, ticker, trading_date, "twitter"
-            )
+            twitter_metric = self._parse_sentiment_metric(twitter_data, ticker, trading_date, "twitter")
             if twitter_metric:
                 parsed_metrics.append(twitter_metric)
 
@@ -319,11 +305,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
             # Normalize scores to -1 to 1 range
             # Finnhub provides scores as raw counts, normalize them
             total_score = positive_score + negative_score
-            if total_score > 0:
-                # Normalize: (positive - negative) / total
-                normalized_score = (positive_score - negative_score) / total_score
-            else:
-                normalized_score = 0.0
+            normalized_score = (positive_score - negative_score) / total_score if total_score > 0 else 0.0
 
             # Use current time as datetime (API doesn't provide timestamp)
             dt = datetime.now()

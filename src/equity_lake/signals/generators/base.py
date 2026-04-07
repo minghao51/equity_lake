@@ -20,7 +20,7 @@ class SignalGenerator(ABC):
             config: Generator-specific configuration dict
         """
         self.config = config
-        self.enabled = config.get("enabled", True)
+        self.enabled = bool(config.get("enabled", True))
 
     @abstractmethod
     def generate(self, ticker: str, date: date) -> Signal | None:

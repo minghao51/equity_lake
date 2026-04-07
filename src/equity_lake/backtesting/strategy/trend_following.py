@@ -5,7 +5,6 @@ This module implements trend-following strategies including moving average
 crossovers, breakouts, and MACD-based strategies.
 """
 
-
 import pandas as pd
 import structlog
 
@@ -48,10 +47,7 @@ class SMACrossoverStrategy(BaseStrategy):
     def initialize(self, data: pd.DataFrame) -> None:
         """Initialize SMA crossover strategy."""
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         fast_period = self.get_param("fast_period")
         slow_period = self.get_param("slow_period")
@@ -145,16 +141,8 @@ class DonchianBreakoutStrategy(BaseStrategy):
         # Extract OHLC data
         if isinstance(data.columns, pd.MultiIndex):
             close_df = data.xs("close", level="field", axis=1)
-            high_df = (
-                data.xs("high", level="field", axis=1)
-                if "high" in data.columns.get_level_values(1)
-                else close_df
-            )
-            low_df = (
-                data.xs("low", level="field", axis=1)
-                if "low" in data.columns.get_level_values(1)
-                else close_df
-            )
+            high_df = data.xs("high", level="field", axis=1) if "high" in data.columns.get_level_values(1) else close_df
+            low_df = data.xs("low", level="field", axis=1) if "low" in data.columns.get_level_values(1) else close_df
         else:
             close_df = data
             high_df = data
@@ -244,10 +232,7 @@ class MACDStrategy(BaseStrategy):
     def initialize(self, data: pd.DataFrame) -> None:
         """Initialize MACD strategy."""
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         fast_period = self.get_param("fast_period")
         slow_period = self.get_param("slow_period")
@@ -370,16 +355,8 @@ class AdaptiveTrendStrategy(BaseStrategy):
         # Extract OHLC data
         if isinstance(data.columns, pd.MultiIndex):
             close_df = data.xs("close", level="field", axis=1)
-            high_df = (
-                data.xs("high", level="field", axis=1)
-                if "high" in data.columns.get_level_values(1)
-                else close_df
-            )
-            low_df = (
-                data.xs("low", level="field", axis=1)
-                if "low" in data.columns.get_level_values(1)
-                else close_df
-            )
+            high_df = data.xs("high", level="field", axis=1) if "high" in data.columns.get_level_values(1) else close_df
+            low_df = data.xs("low", level="field", axis=1) if "low" in data.columns.get_level_values(1) else close_df
         else:
             close_df = data
             high_df = data
@@ -398,9 +375,7 @@ class AdaptiveTrendStrategy(BaseStrategy):
 
         # Compute ADX (simplified version)
         adx_period = self.get_param("adx_period")
-        self.indicators["adx"] = self._compute_adx(
-            high_df, low_df, close_df, adx_period
-        )
+        self.indicators["adx"] = self._compute_adx(high_df, low_df, close_df, adx_period)
 
         logger.info(
             "AdaptiveTrendStrategy initialized",

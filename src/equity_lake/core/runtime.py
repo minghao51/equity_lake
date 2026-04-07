@@ -5,21 +5,39 @@ __author__ = "Equity Data Pipeline Team"
 
 import logging
 from pathlib import Path
+from typing import cast
+
+from equity_lake.config.settings import AppSettings, get_settings
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 BASE_DIR = PROJECT_ROOT
 CONFIG_DIR = PROJECT_ROOT / "config"
 
-# Data directories
-DATA_DIR = PROJECT_ROOT / "data"
-LAKE_DIR = DATA_DIR / "lake"
-LOGS_DIR = PROJECT_ROOT / "logs"
-MODELS_DIR = DATA_DIR / "models"
+# Cached settings with lazy loading
+# This avoids redundant module-scope configuration loading
+_SETTINGS = None
+
+
+def get_settings_cached() -> AppSettings:
+    """Get settings with caching to avoid redundant loading."""
+    global _SETTINGS
+    if _SETTINGS is None:
+        _SETTINGS = get_settings()
+    return _SETTINGS
+
+
+# Compute directories on first import using cached settings
+_SETTINGS = get_settings_cached()
+DATA_DIR = PROJECT_ROOT / _SETTINGS.storage.data_dir
+LAKE_DIR = PROJECT_ROOT / _SETTINGS.storage.lake_dir
+LOGS_DIR = PROJECT_ROOT / _SETTINGS.storage.logs_dir
+MODELS_DIR = PROJECT_ROOT / _SETTINGS.storage.models_dir
 
 # Ensure directories exist
 LAKE_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Market directories
 US_EQUITY_DIR = LAKE_DIR / "us_equity"
@@ -94,9 +112,7 @@ SOCIAL_COLUMNS = [
 ]
 
 
-def setup_logging(
-    name: str, level: str = "INFO", log_file: str | None = None
-) -> logging.Logger:
+def setup_logging(name: str, level: str = "INFO", log_file: str | None = None) -> logging.Logger:
     """
     Setup logging configuration for equity_lake.
 
@@ -119,9 +135,7 @@ def setup_logging(
         log_path = LOGS_DIR / log_file
 
     # Setup structured logging (JSON output by default)
-    setup_structured_logging(
-        level=level, log_file=log_path, json_output=True, console=True
-    )
+    setup_structured_logging(level=level, log_file=log_path, json_output=True, console=True)
 
     # Return standard library logger for backward compatibility
     stdlib_logger = logging.getLogger(name)
@@ -131,23 +145,18 @@ def setup_logging(
 
 
 def get_project_config() -> dict[str, str | int | float | bool]:
-    """Get project configuration from environment variables."""
-    import os
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
+    """Get the merged project configuration."""
+    settings = cast(AppSettings, _SETTINGS)
     config: dict[str, str | int | float | bool] = {
-        "db_path": os.getenv("DB_PATH", "equity_data.duckdb"),
-        "log_level": os.getenv("LOG_LEVEL", "INFO"),
-        "log_dir": os.getenv("LOG_DIR", "logs"),
-        "data_dir": os.getenv("DATA_DIR", str(DATA_DIR)),
-        "markets": os.getenv("MARKETS", "us,cn,hk,sg"),
-        "dev_mode": os.getenv("DEV_MODE", "false").lower() == "true",
-        "use_test_data": os.getenv("USE_TEST_DATA", "false").lower() == "true",
-        "retry_attempts": int(os.getenv("API_RETRY_ATTEMPTS", "3")),
-        "retry_delay": float(os.getenv("API_RETRY_DELAY", "1.0")),
+        "db_path": settings.storage.db_path,
+        "log_level": "INFO",
+        "log_dir": str(LOGS_DIR),
+        "data_dir": str(DATA_DIR),
+        "markets": ",".join(settings.ingestion.default_markets),
+        "dev_mode": settings.project.environment == "development",
+        "use_test_data": settings.project.environment == "testing",
+        "retry_attempts": 3,
+        "retry_delay": 1.0,
     }
 
     return config

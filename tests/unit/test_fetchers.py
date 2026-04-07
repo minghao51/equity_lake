@@ -14,6 +14,7 @@ import pandas as pd
 import pytest
 
 from equity_lake.ingestion.sources import (
+    CNAshareFetcher,
     CNEfinanceFetcher,
     CNHybridFetcher,
     USEquityFetcher,
@@ -203,63 +204,78 @@ class TestCNEfinanceFetcher:
             assert fetcher.retry_attempts == 5
             assert fetcher.retry_delay == 2.0
 
-    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
-    def test_fetch_single_stock(self, mock_efinance, sample_cn_tickers):
-        """Test fetching a single stock."""
-        # Mock efinance response
-        mock_efinance.stock.get_quote_history.return_value = pd.DataFrame(
-            {
-                "股票代码": ["000001"],
-                "日期": ["2024-01-01"],
-                "开盘": [10.5],
-                "收盘": [10.7],
-                "最高": [10.8],
-                "最低": [10.4],
-                "成交量": [1000000],
-                "成交额": [10700000],
-            }
+    def test_standardize_history_frame(self):
+        """Test standardizing a single efinance history frame."""
+        with patch("equity_lake.ingestion.sources.cn_efinance.efinance", MagicMock()):
+            fetcher = CNEfinanceFetcher(max_workers=1, stock_limit=1)
+
+        result = fetcher._standardize_history_frame(
+            pd.DataFrame(
+                {
+                    "股票代码": ["000001"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [10.5],
+                    "收盘": [10.7],
+                    "最高": [10.8],
+                    "最低": [10.4],
+                    "成交量": [1000000],
+                    "成交额": [10700000],
+                }
+            ),
+            "000001",
         )
 
-        fetcher = CNEfinanceFetcher(max_workers=1, stock_limit=1)
-        result = fetcher._fetch_single_stock("000001", date(2024, 1, 1))
-
+        assert result is not None
         assert not result.empty
         assert "ticker" in result.columns
         assert result["ticker"].iloc[0] == "000001"
 
     @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
-    def test_fetch_single_stock_handles_failure(self, mock_efinance):
-        """Test that fetch handles single stock failures gracefully."""
+    def test_fetch_history_batch_handles_failure(self, mock_efinance):
+        """Test batch fetch handles provider failures gracefully."""
         mock_efinance.stock.get_quote_history.side_effect = Exception("Network error")
 
         fetcher = CNEfinanceFetcher(max_workers=1, stock_limit=1)
-        result = fetcher._fetch_single_stock("000001", date(2024, 1, 1))
+        result = fetcher._fetch_history_batch(["000001"], date(2024, 1, 1))
 
-        assert result is None
+        assert result == []
 
     @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
     def test_fetch_standardizes_columns(self, mock_efinance):
         """Test that fetch standardizes Chinese column names."""
-        mock_efinance.stock.get_realtime_quotes.return_value = pd.DataFrame(
-            {
-                "股票代码": ["000001", "000002"],
-                "股票名称": ["平安银行", "万科A"],
-                "最新价": [10.5, 8.3],
-            }
-        )
-        mock_efinance.stock.get_quote_history.return_value = pd.DataFrame(
-            {
-                "股票代码": ["000001"],
-                "日期": ["2024-01-01"],
-                "开盘": [10.5],
-                "收盘": [10.7],
-                "最高": [10.8],
-                "最低": [10.4],
-                "成交量": [1000000],
-            }
-        )
+        mock_efinance.stock.get_quote_history.return_value = {
+            "000001": pd.DataFrame(
+                {
+                    "股票代码": ["000001"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [10.5],
+                    "收盘": [10.7],
+                    "最高": [10.8],
+                    "最低": [10.4],
+                    "成交量": [1000000],
+                }
+            ),
+            "000002": pd.DataFrame(
+                {
+                    "股票代码": ["000002"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [8.1],
+                    "收盘": [8.3],
+                    "最高": [8.4],
+                    "最低": [8.0],
+                    "成交量": [800000],
+                }
+            ),
+        }
 
-        fetcher = CNEfinanceFetcher(max_workers=2, stock_limit=2)
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001", "000002"]
+
+        fetcher = CNEfinanceFetcher(
+            max_workers=2,
+            stock_limit=2,
+            ticker_config=ticker_config,
+        )
         result = fetcher.fetch(date(2024, 1, 1))
 
         # Check for standardized column names
@@ -270,41 +286,192 @@ class TestCNEfinanceFetcher:
         assert "volume" in result.columns
         assert "ticker" in result.columns
 
-    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
-    def test_fetch_with_empty_stock_list(self, mock_efinance):
-        """Test fetch behavior when stock list is empty."""
-        mock_efinance.stock.get_realtime_quotes.return_value = pd.DataFrame()
+    def test_fetch_with_empty_configured_tickers(self):
+        """Test fetch behavior when no configured CN tickers exist."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = []
 
-        fetcher = CNEfinanceFetcher()
-        result = fetcher.fetch(date(2024, 1, 1))
+        with patch("equity_lake.ingestion.sources.cn_efinance.efinance", MagicMock()):
+            fetcher = CNEfinanceFetcher(ticker_config=ticker_config)
+            result = fetcher.fetch(date(2024, 1, 1))
 
         assert result.empty
 
     @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
-    def test_fetch_retries_realtime_quote_failures(self, mock_efinance):
-        """Test that realtime quote failures use the shared retry backoff."""
-        mock_efinance.stock.get_realtime_quotes.side_effect = [
-            Exception("temporary network failure"),
-            pd.DataFrame({"股票代码": ["000001"]}),
+    def test_fetch_uses_configured_tickers_without_live_stock_list(self, mock_efinance):
+        """Test fetch uses configured tickers and skips live universe discovery."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001", "000002"]
+
+        mock_efinance.stock.get_quote_history.return_value = {
+            "000001": pd.DataFrame(
+                {
+                    "股票代码": ["000001"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [10.5],
+                    "收盘": [10.7],
+                    "最高": [10.8],
+                    "最低": [10.4],
+                    "成交量": [1000000],
+                    "成交额": [10700000],
+                }
+            ),
+            "000002": pd.DataFrame(
+                {
+                    "股票代码": ["000002"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [8.1],
+                    "收盘": [8.3],
+                    "最高": [8.4],
+                    "最低": [8.0],
+                    "成交量": [800000],
+                    "成交额": [6640000],
+                }
+            ),
+        }
+
+        fetcher = CNEfinanceFetcher(
+            max_workers=2,
+            stock_limit=2,
+            ticker_config=ticker_config,
+        )
+        result = fetcher.fetch(date(2024, 1, 1))
+
+        mock_efinance.stock.get_realtime_quotes.assert_not_called()
+        assert not result.empty
+        mock_efinance.stock.get_quote_history.assert_called_once()
+        assert mock_efinance.stock.get_quote_history.call_args.kwargs["stock_codes"] == [
+            "000001",
+            "000002",
         ]
-        mock_efinance.stock.get_quote_history.return_value = pd.DataFrame(
+
+    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
+    def test_fetch_respects_stock_limit_on_configured_tickers(self, mock_efinance):
+        """Test configured CN tickers are trimmed by stock_limit."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = [
+            "000001",
+            "000002",
+            "600000",
+        ]
+
+        mock_efinance.stock.get_quote_history.return_value = {
+            "000001": pd.DataFrame(
+                {
+                    "股票代码": ["000001"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [10.5],
+                    "收盘": [10.7],
+                    "最高": [10.8],
+                    "最低": [10.4],
+                    "成交量": [1000000],
+                    "成交额": [10700000],
+                }
+            ),
+            "000002": pd.DataFrame(
+                {
+                    "股票代码": ["000002"],
+                    "日期": ["2024-01-01"],
+                    "开盘": [8.1],
+                    "收盘": [8.3],
+                    "最高": [8.4],
+                    "最低": [8.0],
+                    "成交量": [800000],
+                    "成交额": [6640000],
+                }
+            ),
+        }
+
+        fetcher = CNEfinanceFetcher(
+            max_workers=1,
+            stock_limit=2,
+            ticker_config=ticker_config,
+        )
+        fetcher.fetch(date(2024, 1, 1))
+
+        mock_efinance.stock.get_quote_history.assert_called_once()
+        assert mock_efinance.stock.get_quote_history.call_args.kwargs["stock_codes"] == [
+            "000001",
+            "000002",
+        ]
+
+
+class TestCNAshareFetcher:
+    """Test suite for CNAshareFetcher with configured CN universe."""
+
+    @patch("equity_lake.ingestion.sources.cn.ak.stock_zh_a_hist")
+    @patch("equity_lake.ingestion.sources.cn.ak.stock_info_a_code_name")
+    def test_fetch_uses_configured_tickers_without_live_stock_list(
+        self,
+        mock_stock_list,
+        mock_hist,
+    ):
+        """Test fetch uses configured CN tickers and skips live stock list calls."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001", "600000"]
+        mock_hist.return_value = pd.DataFrame(
             {
-                "股票代码": ["000001"],
                 "日期": ["2024-01-01"],
                 "开盘": [10.5],
-                "收盘": [10.7],
                 "最高": [10.8],
                 "最低": [10.4],
+                "收盘": [10.7],
                 "成交量": [1000000],
-                "成交额": [10700000],
             }
         )
 
-        fetcher = CNEfinanceFetcher(max_workers=1, stock_limit=1, retry_delay=0.0)
+        fetcher = CNAshareFetcher(
+            max_workers=2,
+            stock_limit=2,
+            ticker_config=ticker_config,
+        )
         result = fetcher.fetch(date(2024, 1, 1))
 
-        assert mock_efinance.stock.get_realtime_quotes.call_count == 2
+        mock_stock_list.assert_not_called()
         assert not result.empty
+        assert mock_hist.call_count == 2
+
+    @patch("equity_lake.ingestion.sources.cn.ak.stock_zh_a_hist")
+    def test_fetch_with_empty_configured_tickers(self, mock_hist):
+        """Test fetch returns empty data when no configured CN tickers exist."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = []
+
+        fetcher = CNAshareFetcher(ticker_config=ticker_config)
+        result = fetcher.fetch(date(2024, 1, 1))
+
+        mock_hist.assert_not_called()
+        assert result.empty
+
+    @patch("equity_lake.ingestion.sources.cn.ak.stock_zh_a_hist")
+    def test_fetch_respects_stock_limit_on_configured_tickers(self, mock_hist):
+        """Test configured CN tickers are trimmed by stock_limit."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = [
+            "000001",
+            "000002",
+            "600000",
+        ]
+        mock_hist.return_value = pd.DataFrame(
+            {
+                "日期": ["2024-01-01"],
+                "开盘": [10.5],
+                "最高": [10.8],
+                "最低": [10.4],
+                "收盘": [10.7],
+                "成交量": [1000000],
+            }
+        )
+
+        fetcher = CNAshareFetcher(
+            max_workers=1,
+            stock_limit=2,
+            ticker_config=ticker_config,
+        )
+        fetcher.fetch(date(2024, 1, 1))
+
+        called_codes = [call.kwargs["symbol"] for call in mock_hist.call_args_list]
+        assert called_codes == ["000001", "000002"]
 
 
 # =============================================================================
@@ -317,9 +484,7 @@ class TestCNHybridFetcher:
 
     def test_initialization_with_both_sources(self):
         """Test fetcher initialization with both sources enabled."""
-        with patch(
-            "equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher"
-        ) as mock_efinance:
+        with patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher") as mock_efinance:
             fetcher = CNHybridFetcher(
                 enable_efinance=True,
                 enable_akshare=True,
@@ -330,12 +495,11 @@ class TestCNHybridFetcher:
             assert status["akshare"] is True
             assert mock_efinance.call_args.kwargs["retry_attempts"] == 4
             assert mock_efinance.call_args.kwargs["retry_delay"] == 2.0
+            assert fetcher.configured_ticker_count > 0
 
     def test_initialization_efinance_only(self):
         """Test fetcher initialization with only efinance."""
-        with patch(
-            "equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher", MagicMock
-        ):
+        with patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher", MagicMock):
             fetcher = CNHybridFetcher(
                 enable_efinance=True,
                 enable_akshare=False,
@@ -356,6 +520,14 @@ class TestCNHybridFetcher:
         assert status["efinance"] is False
         assert status["akshare"] is True
 
+    def test_initialization_defaults_to_akshare_primary(self):
+        """Test daily default keeps efinance off the hot path."""
+        fetcher = CNHybridFetcher()
+
+        status = fetcher.get_source_status()
+        assert status["efinance"] is False
+        assert status["akshare"] is True
+
     def test_initialization_fails_when_no_sources(self):
         """Test that fetcher raises error when both sources disabled."""
         with pytest.raises(RuntimeError, match="No China data source available"):
@@ -366,9 +538,7 @@ class TestCNHybridFetcher:
 
     @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
     @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
-    def test_fetch_uses_efinance_first(
-        self, mock_akshare, mock_efinance, sample_ohlcv_data
-    ):
+    def test_fetch_uses_efinance_first(self, mock_akshare, mock_efinance, sample_ohlcv_data):
         """Test that fetch tries efinance first."""
         # Mock efinance to return data
         mock_efinance_instance = MagicMock()
@@ -388,11 +558,47 @@ class TestCNHybridFetcher:
         mock_akshare.return_value.fetch.assert_not_called()
         assert not result.empty
 
+    @patch("equity_lake.ingestion.sources.cn_hybrid.TickerConfig")
     @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
     @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
-    def test_fetch_falls_back_to_akshare(
-        self, mock_akshare, mock_efinance, sample_ohlcv_data
+    def test_fetch_uses_configured_ticker_threshold(
+        self,
+        mock_akshare,
+        mock_efinance,
+        mock_ticker_config,
     ):
+        """Test sufficiency threshold uses configured ticker count."""
+        mock_ticker_config.return_value.get_tickers_for_market.return_value = [
+            "000001",
+            "000002",
+            "600000",
+            "600036",
+        ]
+        mock_efinance_instance = MagicMock()
+        mock_efinance_instance.fetch.return_value = pd.DataFrame(
+            {
+                "ticker": ["000001"],
+                "date": [date(2024, 1, 1)],
+                "close": [10.5],
+            }
+        )
+        mock_efinance.return_value = mock_efinance_instance
+
+        fetcher = CNHybridFetcher(
+            enable_efinance=True,
+            enable_akshare=True,
+            stock_limit=10,
+            ticker_config=None,
+        )
+
+        result = fetcher.fetch(date(2024, 1, 1))
+
+        mock_akshare.return_value.fetch.assert_not_called()
+        assert not result.empty
+
+    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    def test_fetch_falls_back_to_akshare(self, mock_akshare, mock_efinance, sample_ohlcv_data):
         """Test that fetch falls back to akshare when efinance fails."""
         # Mock efinance to fail
         mock_efinance_instance = MagicMock()

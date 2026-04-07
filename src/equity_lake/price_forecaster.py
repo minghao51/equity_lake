@@ -98,9 +98,7 @@ def main() -> None:
                 )
 
             if not results.empty:
-                results_path = (
-                    forecaster.model_dir / f"{args.ticker}_backtest_results.csv"
-                )
+                results_path = forecaster.model_dir / f"{args.ticker}_backtest_results.csv"
                 results.to_csv(results_path, index=False)
                 accuracy = (results["prediction"] == results["actual"]).mean()
                 print(f"Total Predictions: {len(results)}")

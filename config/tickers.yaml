@@ -690,7 +690,7 @@ markets:
         exchange: HKEX
         sector: Finance
         tags: [blue-chip, banking, major, HSI]
-        active: true
+        active: false
         priority: 9
 
       - symbol: "0027.HK"

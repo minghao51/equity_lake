@@ -34,6 +34,10 @@ dependencies = [
     "numpy>=1.24.0", # Numerical computations
     "tqdm>=4.66.0", # Progress bars for long operations
     "pydantic>=2.5.0", # Data validation and settings management
+    "pydantic-settings>=2.6.1", # Environment overrides for YAML settings
+    "croniter>=3.0.4", # Validate cron schedules
+    "sf-hamilton>=1.69.0", # Declarative feature DAG for data engineering
+    "praw>=7.8.1", # Reddit API for alternative data loaders
     "structlog>=24.1.0", # Structured logging for better observability
     "pyyaml>=6.0.2", # YAML config loading
     # News & sentiment
@@ -51,6 +55,7 @@ dev = [
     "ruff>=0.8.0",           # Linting and formatting
     "mypy>=1.11.0",          # Type checking
     "pre-commit>=3.6.0",     # Git hooks for code quality
+    "pymarkdownlnt>=0.9.25", # Markdown linting
 
     # Development tools
     "jupyter>=1.0.0",        # Notebook support for exploration
@@ -103,6 +108,7 @@ dev = [
     "ruff>=0.8.0",           # Linting and formatting
     "mypy>=1.11.0",          # Type checking
     "pre-commit>=3.6.0",     # Git hooks for code quality
+    "pymarkdownlnt>=0.9.25", # Markdown linting
 
     # Development tools
     "jupyter>=1.0.0",        # Notebook support for exploration
@@ -133,6 +139,13 @@ equity-backtest = "equity_lake.cli.backtest:main"
 equity-news = "equity_lake.cli.news:main"
 equity-sentiment = "equity_lake.cli.sentiment:main"
 equity-signal = "equity_lake.cli.signal:main"
+equity-dashboard = "equity_lake.cli.dashboard:main"
+equity-loader = "equity_lake.cli.loader:main"
+equity-update = "equity_lake.cli.update:main"
+equity-config = "equity_lake.cli.config:main"
+
+[project.entry-points."equity_lake.loaders"]
+yfinance = "equity_lake.loaders.yfinance_loader:YFinanceLoader"
 
 [build-system]
 requires = ["hatchling"]
@@ -168,7 +181,7 @@ exclude = [
 ]
 
 # Same as Black.
-line-length = 88
+line-length = 150
 indent-width = 4
 
 # Assume Python 3.12
@@ -232,6 +245,7 @@ warn_unused_ignores = true
 warn_no_return = true
 warn_unreachable = true
 strict_equality = true
+exclude = ["scripts/"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -239,6 +253,25 @@ module = [
     "akshare.*",
     "duckdb.*",
     "efinance.*",
+    "pandas.*",
+    "numpy.*",
+    "structlog.*",
+    "pydantic.*",
+    "pydantic_settings.*",
+    "yaml.*",
+    "requests.*",
+    "tqdm.*",
+    "tabulate.*",
+    "joblib.*",
+    "hamilton.*",
+    "croniter.*",
+    "praw.*",
+    "vaderSentiment.*",
+    "fredapi.*",
+    "dotenv.*",
+    "xgboost.*",
+    "sklearn.*",
+    "pytest.*",
 ]
 ignore_missing_imports = true
 

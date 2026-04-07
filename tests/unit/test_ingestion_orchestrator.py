@@ -100,9 +100,7 @@ class TestPartitionedParquetWriter:
 
         # Mock the directory constants
         with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
-            success = write_to_partitioned_parquet(
-                sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False
-            )
+            success = write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is True
 
@@ -119,9 +117,7 @@ class TestPartitionedParquetWriter:
         market_dir.mkdir(parents=True, exist_ok=True)
 
         with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
-            success = write_to_partitioned_parquet(
-                pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False
-            )
+            success = write_to_partitioned_parquet(pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is False
 
@@ -131,9 +127,7 @@ class TestPartitionedParquetWriter:
         market_dir.mkdir(parents=True, exist_ok=True)
 
         with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
-            success = write_to_partitioned_parquet(
-                sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=True
-            )
+            success = write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=True)
 
         assert success is True
 
@@ -217,9 +211,7 @@ class TestPipelineIntegration:
             }
         )
 
-        with patch(
-            "equity_lake.ingestion.orchestrator.CNHybridFetcher"
-        ) as mock_fetcher:
+        with patch("equity_lake.ingestion.orchestrator.CNHybridFetcher") as mock_fetcher:
             mock_fetcher.return_value.fetch.return_value = sample
 
             result = fetch_market_data("cn", date(2024, 1, 1), {})
@@ -232,9 +224,7 @@ class TestPipelineIntegration:
     def test_run_daily_ingestion_dry_run(self, tmp_path, sample_ohlcv_data):
         """Test daily ingestion in dry-run mode."""
         # Mock fetchers
-        with patch(
-            "equity_lake.ingestion.orchestrator.fetch_market_data"
-        ) as mock_fetch:
+        with patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch:
             mock_fetch.return_value = sample_ohlcv_data
 
             # Mock directory constants
@@ -263,9 +253,7 @@ class TestPipelineIntegration:
         market_dir = tmp_path / "us_equity"
 
         with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
-            write_to_partitioned_parquet(
-                sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False
-            )
+            write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
 
         # Verify Hive partition format
         partition_dir = market_dir / "date=2024-01-01"

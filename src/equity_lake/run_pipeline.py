@@ -41,6 +41,7 @@ from equity_lake import (
     run_ingestion_stage,
     run_ml_inference_stage,
 )
+from equity_lake.config.settings import get_settings
 from equity_lake.core.logging import correlation_context, timer
 from equity_lake.core.runtime import (
     LOGS_DIR,
@@ -49,6 +50,7 @@ from equity_lake.core.runtime import (
 
 # Logger configuration
 logger = structlog.get_logger()
+DEFAULT_SETTINGS = get_settings()
 
 
 def configure_third_party_logging() -> None:
@@ -144,11 +146,7 @@ class PipelineOrchestrator:
                 logger.error(
                     "pipeline_stage_failed",
                     stage=stage,
-                    failed_markets=[
-                        market
-                        for market, stage_success in market_results.items()
-                        if not stage_success
-                    ],
+                    failed_markets=[market for market, stage_success in market_results.items() if not stage_success],
                 )
 
             return success
@@ -333,17 +331,13 @@ class PipelineOrchestrator:
                 logger.info(
                     "pipeline_completed_successfully",
                     duration_seconds=f"{total_duration:.2f}",
-                    stages_completed=len(
-                        [r for r in self.results.values() if r.get("success")]
-                    ),
+                    stages_completed=len([r for r in self.results.values() if r.get("success")]),
                 )
             else:
                 logger.warning(
                     "pipeline_completed_with_errors",
                     duration_seconds=f"{total_duration:.2f}",
-                    failed_stages=len(
-                        [r for r in self.results.values() if not r.get("success")]
-                    ),
+                    failed_stages=len([r for r in self.results.values() if not r.get("success")]),
                 )
 
             # Print summary
@@ -351,7 +345,7 @@ class PipelineOrchestrator:
 
             return success
 
-    def _print_summary(self):
+    def _print_summary(self) -> None:
         """Print pipeline execution summary."""
         print("\n" + "=" * 70)
         print("PIPELINE EXECUTION SUMMARY")
@@ -359,13 +353,9 @@ class PipelineOrchestrator:
 
         print(f"Date: {self.trading_date}")
         print(f"Markets: {', '.join(self.markets).upper()}")
-        print(
-            f"Tickers: {len(self.tickers)} ({', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''})"
-        )
+        print(f"Tickers: {len(self.tickers)} ({', '.join(self.tickers[:5])}{'...' if len(self.tickers) > 5 else ''})")
         print(f"Mode: {'DRY RUN' if self.dry_run else 'LIVE'}")
-        print(
-            f"Duration: {(datetime.now() - self.start_time).total_seconds():.2f} seconds"
-        )
+        print(f"Duration: {(datetime.now() - self.start_time).total_seconds():.2f} seconds")
         print()
 
         for stage, result in self.results.items():
@@ -375,7 +365,7 @@ class PipelineOrchestrator:
 
         print("=" * 70 + "\n")
 
-    def save_results(self, output_file: Path | None = None):
+    def save_results(self, output_file: Path | None = None) -> None:
         """Save pipeline results to JSON file."""
         if output_file is None:
             output_file = LOGS_DIR / f"pipeline_results_{self.trading_date}.json"
@@ -427,9 +417,7 @@ Examples:
     )
 
     # Date arguments
-    parser.add_argument(
-        "--date", type=str, help="Trading date (YYYY-MM-DD format). Default: yesterday"
-    )
+    parser.add_argument("--date", type=str, help="Trading date (YYYY-MM-DD format). Default: yesterday")
 
     parser.add_argument(
         "--days-back",
@@ -442,8 +430,8 @@ Examples:
     parser.add_argument(
         "--markets",
         type=str,
-        default="us,cn,hk_sg",
-        help="Comma-separated markets to ingest (default: us,cn,hk_sg)",
+        default=None,
+        help="Comma-separated markets to ingest from settings.yaml",
     )
 
     parser.add_argument(
@@ -456,17 +444,11 @@ Examples:
     # Pipeline control arguments
     pipeline_group = parser.add_argument_group("Pipeline Control")
 
-    pipeline_group.add_argument(
-        "--skip-ingestion", action="store_true", help="Skip Stage 1: Data ingestion"
-    )
+    pipeline_group.add_argument("--skip-ingestion", action="store_true", help="Skip Stage 1: Data ingestion")
 
-    pipeline_group.add_argument(
-        "--skip-features", action="store_true", help="Skip Stage 2: Feature engineering"
-    )
+    pipeline_group.add_argument("--skip-features", action="store_true", help="Skip Stage 2: Feature engineering")
 
-    pipeline_group.add_argument(
-        "--skip-ml", action="store_true", help="Skip Stage 3: ML inference"
-    )
+    pipeline_group.add_argument("--skip-ml", action="store_true", help="Skip Stage 3: ML inference")
 
     pipeline_group.add_argument(
         "--stop-on-error",
@@ -484,22 +466,35 @@ Examples:
     # Execution arguments
     exec_group = parser.add_argument_group("Execution Options")
 
-    exec_group.add_argument(
-        "--dry-run", action="store_true", help="Simulate pipeline without writing data"
-    )
+    exec_group.add_argument("--dry-run", action="store_true", help="Simulate pipeline without writing data")
 
-    exec_group.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    exec_group.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
-    exec_group.add_argument(
-        "--save-results", action="store_true", help="Save pipeline results to JSON file"
-    )
+    exec_group.add_argument("--save-results", action="store_true", help="Save pipeline results to JSON file")
 
     return parser.parse_args()
 
 
-def main():
+def resolve_trading_date(
+    explicit_date: str | None,
+    days_back: int,
+    today: date | None = None,
+) -> date:
+    """Resolve trading date from CLI inputs."""
+    if explicit_date:
+        return datetime.strptime(explicit_date, "%Y-%m-%d").date()
+
+    if today is None:
+        today = date.today()
+
+    trading_date = today - timedelta(days=days_back)
+    while trading_date.weekday() >= 5:  # Saturday=5, Sunday=6
+        trading_date -= timedelta(days=1)
+
+    return trading_date
+
+
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
@@ -509,12 +504,11 @@ def main():
     configure_third_party_logging()
 
     # Determine trading date
-    if args.date:
-        trading_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-    else:
-        trading_date = date.today() - timedelta(days=args.days_back)
+    trading_date = resolve_trading_date(args.date, args.days_back)
 
     # Parse markets and tickers
+    if args.markets is None:
+        args.markets = ",".join(DEFAULT_SETTINGS.ingestion.default_markets)
     markets = [m.strip() for m in args.markets.split(",")]
     tickers = [t.strip() for t in args.tickers.split(",")]
 

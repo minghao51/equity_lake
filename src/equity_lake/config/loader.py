@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from equity_lake.config.models import TickerConfigRoot, TickerMetadata
+from equity_lake.config.models import GroupConfig, MarketConfig, TickerConfigRoot, TickerMetadata
 from equity_lake.config.selectors import (
     get_all_tickers,
     get_group_info,
@@ -32,11 +32,9 @@ logger = logging.getLogger(__name__)
 class TickerConfig:
     """Centralized ticker configuration manager."""
 
-    DEFAULT_CONFIG_PATH = (
-        Path(__file__).resolve().parents[3] / "config" / "tickers.yaml"
-    )
+    DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "tickers.yaml"
 
-    def __init__(self, config_path: Path | None = None):
+    def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = config_path or self.DEFAULT_CONFIG_PATH
         self._config: TickerConfigRoot | None = None
         self._load_config()
@@ -75,15 +73,12 @@ class TickerConfig:
         """Return the total number of active tickers across markets."""
         if not self._config:
             return 0
-        return sum(
-            len([ticker for ticker in market.tickers if ticker.active])
-            for market in self._config.markets.values()
-        )
+        return sum(len([ticker for ticker in market.tickers if ticker.active]) for market in self._config.markets.values())
 
     def get_markets(self) -> list[str]:
         return get_markets(self._config)
 
-    def get_market_info(self, market: str):
+    def get_market_info(self, market: str) -> MarketConfig | None:
         return get_market_info(self._config, market)
 
     def get_market_currency(self, market: str) -> str:
@@ -172,7 +167,7 @@ class TickerConfig:
     def get_groups(self) -> list[str]:
         return get_groups(self._config)
 
-    def get_group_info(self, group_name: str):
+    def get_group_info(self, group_name: str) -> GroupConfig | None:
         return get_group_info(self._config, group_name)
 
     def get_tickers_by_group(
@@ -196,7 +191,7 @@ class TickerConfig:
         market: str | None = None,
         active_only: bool = True,
         include_metadata: bool = False,
-    ) -> list[str] | dict[str, dict[str, Any]]:
+    ) -> list[str] | dict[str, list[str]] | dict[str, dict[str, Any]]:
         return list_tickers(
             self._config,
             market=market,

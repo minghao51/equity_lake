@@ -45,18 +45,18 @@ logger = logging.getLogger(__name__)
 class EquityDataDB:
     """DuckDB connection manager for equity data queries."""
 
-    def __init__(self, db_path: str | None = ":memory:"):
+    def __init__(self, db_path: str | Path | None = ":memory:"):
         """
         Initialize DuckDB connection.
 
         Args:
             db_path: Path to DuckDB file or ':memory:' for in-memory
         """
-        self.db_path = db_path
-        self.con = duckdb.connect(db_path)
+        self.db_path = db_path if db_path is not None else ":memory:"
+        self.con = duckdb.connect(self.db_path)
         self._setup_views()
 
-    def _setup_views(self):
+    def _setup_views(self) -> None:
         """Create unified views across all markets."""
         logger.info("Setting up unified views...")
 
@@ -74,7 +74,7 @@ class EquityDataDB:
 
         logger.info("✅ Views created successfully")
 
-    def _create_market_view(self, view_name: str, data_dir: Path, market_label: str):
+    def _create_market_view(self, view_name: str, data_dir: Path, market_label: str) -> None:
         """Create view for a specific market."""
         if not data_dir.exists():
             logger.warning(f"Data directory not found: {data_dir}")
@@ -96,7 +96,7 @@ class EquityDataDB:
         except Exception as e:
             logger.error(f"Failed to create view {view_name}: {e}")
 
-    def _create_unified_view(self):
+    def _create_unified_view(self) -> None:
         """Create unified view across all markets."""
         sql = """
         CREATE OR REPLACE VIEW equity_all AS
@@ -502,7 +502,7 @@ Examples:
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
@@ -523,14 +523,8 @@ def main():
             "latest_summary": lambda: queries.query_1_latest_data_summary(),
             "top_volume": lambda: queries.query_2_top_volume_stocks(args.days),
             "gainers_losers": lambda: queries.query_3_top_gainers_losers(args.days),
-            "cross_market": lambda: queries.query_4_cross_market_comparison(args.ticker)
-            if args.ticker
-            else pd.DataFrame(),
-            "moving_avg": lambda: queries.query_5_moving_averages(
-                args.ticker, args.days
-            )
-            if args.ticker
-            else pd.DataFrame(),
+            "cross_market": lambda: queries.query_4_cross_market_comparison(args.ticker) if args.ticker else pd.DataFrame(),
+            "moving_avg": lambda: queries.query_5_moving_averages(args.ticker, args.days) if args.ticker else pd.DataFrame(),
             "volatility": lambda: queries.query_6_volatility_analysis(args.days),
             "market_stats": lambda: queries.query_7_market_summary_stats(),
             "price_range": lambda: queries.query_8_price_range_analysis(args.days),

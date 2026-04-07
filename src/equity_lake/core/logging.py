@@ -20,9 +20,7 @@ from typing import Any
 import structlog
 
 # Context variable for correlation ID (request tracking)
-_correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "correlation_id", default=""
-)
+_correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
 
 
 def get_correlation_id() -> str:
@@ -58,9 +56,7 @@ def correlation_context(
         _correlation_id.reset(token)
 
 
-def add_correlation_id(
-    logger, method_name, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def add_correlation_id(logger: Any, method_name: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
     """
     Structlog processor to add correlation ID to all log entries.
     """
@@ -68,19 +64,15 @@ def add_correlation_id(
     return event_dict
 
 
-def add_timestamp(logger, method_name, event_dict: dict[str, Any]) -> dict[str, Any]:
+def add_timestamp(logger: Any, method_name: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
     """
     Structlog processor to add ISO-format timestamp.
     """
-    event_dict["timestamp"] = (
-        datetime.now(UTC).isoformat().replace("+00:00", "Z")
-    )
+    event_dict["timestamp"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
     return event_dict
 
 
-def drop_color_message_key(
-    logger, method_name, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def drop_color_message_key(logger: Any, method_name: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
     """
     Structlog processor to remove color message keys for clean JSON output.
     """
@@ -118,7 +110,7 @@ def setup_structured_logging(
     )
 
     # Build structlog processors
-    processors = [
+    processors: list[Any] = [
         structlog.stdlib.filter_by_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.add_log_level,
@@ -136,11 +128,7 @@ def setup_structured_logging(
     else:
         # Human-readable console output
         processors.append(drop_color_message_key)
-        processors.append(
-            structlog.dev.ConsoleRenderer(
-                colors=True, exception_formatter=structlog.dev.plain_traceback
-            )
-        )
+        processors.append(structlog.dev.ConsoleRenderer(colors=True, exception_formatter=structlog.dev.plain_traceback))
 
     # Configure structlog
     structlog.configure(
@@ -166,9 +154,7 @@ def setup_structured_logging(
             file_formatter = logging.Formatter("%(message)s")
         else:
             # Human-readable for files
-            file_formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
+            file_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
         file_handler.setFormatter(file_formatter)
 
@@ -176,7 +162,7 @@ def setup_structured_logging(
         root_logger = logging.getLogger()
         root_logger.addHandler(file_handler)
 
-    return logger
+    return logger  # type: ignore[no-any-return]
 
 
 # =============================================================================
@@ -184,7 +170,7 @@ def setup_structured_logging(
 # =============================================================================
 
 
-def timed(logger: structlog.stdlib.BoundLogger | None = None, **log_kwargs):
+def timed(logger: structlog.stdlib.BoundLogger | None = None, **log_kwargs: Any):  # type: ignore[no-untyped-def]
     """
     Decorator to automatically log function execution time.
 
@@ -207,9 +193,9 @@ def timed(logger: structlog.stdlib.BoundLogger | None = None, **log_kwargs):
         >>>     return data
     """
 
-    def decorator(func):
+    def decorator(func: Any) -> Any:
         @wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             _logger = logger or structlog.get_logger()
             func_name = func.__name__
 
@@ -253,7 +239,7 @@ def timed(logger: structlog.stdlib.BoundLogger | None = None, **log_kwargs):
 def timer(
     operation_name: str,
     logger: structlog.stdlib.BoundLogger | None = None,
-    **log_kwargs,
+    **log_kwargs: Any,
 ) -> Generator[None, None, None]:
     """
     Context manager to time an operation and log duration.
@@ -292,9 +278,7 @@ def timer(
 # =============================================================================
 
 
-def setup_logging(
-    name: str, level: str = "INFO", log_file: str | None = None
-) -> logging.Logger:
+def setup_logging(name: str, level: str = "INFO", log_file: str | None = None) -> logging.Logger:
     """
     Backward-compatible wrapper for setup_logging.
 
@@ -319,9 +303,7 @@ def setup_logging(
         log_path = LOGS_DIR / log_file
 
     # Setup structured logging
-    structlog_logger = setup_structured_logging(
-        level=level, log_file=log_path, json_output=json_output, console=True
-    )
+    _structlog_logger = setup_structured_logging(level=level, log_file=log_path, json_output=json_output, console=True)
 
     # Return standard library logger for backward compatibility
     stdlib_logger = logging.getLogger(name)

@@ -33,9 +33,7 @@ class TestEquityDataDB:
         db = EquityDataDB(db_path=":memory:")
 
         # Mock the directory constants
-        with patch(
-            "equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet
-        ):
+        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
             db._create_market_view("us_equity", temp_partitioned_parquet, "us")
 
         # Should not raise exception
@@ -46,9 +44,7 @@ class TestEquityDataDB:
         db = EquityDataDB(db_path=":memory:")
 
         # Create view
-        with patch(
-            "equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet
-        ):
+        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
             db._create_market_view("us_equity", temp_partitioned_parquet, "us")
 
         # Execute simple query
@@ -266,9 +262,7 @@ class TestQueryIntegration:
         db = EquityDataDB(db_path=":memory:")
 
         # Setup views
-        with patch(
-            "equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet
-        ):
+        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
             db._create_market_view("us_equity", temp_partitioned_parquet, "us")
             db._create_unified_view()
 

@@ -5,7 +5,6 @@ This module implements mean reversion strategies including Bollinger Bands
 and RSI-based strategies.
 """
 
-
 import pandas as pd
 import structlog
 
@@ -50,10 +49,7 @@ class BBMeanReversionStrategy(BaseStrategy):
     def initialize(self, data: pd.DataFrame) -> None:
         """Initialize Bollinger Bands strategy."""
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         period = self.get_param("period")
         num_std = self.get_param("num_std")
@@ -161,10 +157,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
     def initialize(self, data: pd.DataFrame) -> None:
         """Initialize RSI strategy."""
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         period = self.get_param("period")
 
@@ -284,10 +277,7 @@ class CombinedMeanReversionStrategy(BaseStrategy):
     def initialize(self, data: pd.DataFrame) -> None:
         """Initialize combined strategy."""
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs("close", level="field", axis=1)
-        else:
-            close_df = data
+        close_df = data.xs("close", level="field", axis=1) if isinstance(data.columns, pd.MultiIndex) else data
 
         # Bollinger Bands
         bb_period = self.get_param("bb_period")

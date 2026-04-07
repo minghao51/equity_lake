@@ -4,9 +4,9 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import requests
 import structlog
 
@@ -36,6 +36,8 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         min_relevance: Minimum relevance score (0.0 to 1.0)
     """
 
+    sentiment_analyzer: SentimentAnalyzer | None = None
+
     def __init__(
         self,
         api_key: str | None = None,
@@ -43,7 +45,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         max_articles_per_ticker: int = 50,
         retry_attempts: int = 3,
         retry_delay: float = 1.0,
-        sentiment_method: str = "vader",
+        sentiment_method: Literal["vader", "finbert"] = "vader",
         min_relevance: float = 0.0,
         max_workers: int = 1,
     ):
@@ -64,10 +66,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
 
         self.api_key = api_key or os.getenv("FINNHUB_API_KEY")
         if not self.api_key:
-            raise ValueError(
-                "Finnhub API key not found. "
-                "Set FINNHUB_API_KEY environment variable or pass api_key parameter."
-            )
+            raise ValueError("Finnhub API key not found. Set FINNHUB_API_KEY environment variable or pass api_key parameter.")
 
         self.tickers = tickers or []
         self.max_articles_per_ticker = max_articles_per_ticker
@@ -114,14 +113,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             self.max_workers,
         )
 
-        all_articles = []
-
-        if self.max_workers > 1:
-            # Parallel fetching
-            all_articles = self._fetch_parallel(trading_date)
-        else:
-            # Sequential fetching
-            all_articles = self._fetch_sequential(trading_date)
+        all_articles = self._fetch_parallel(trading_date) if self.max_workers > 1 else self._fetch_sequential(trading_date)
 
         if not all_articles:
             logger.warning("No articles fetched for any ticker")
@@ -293,11 +285,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             logger.error("API request failed for %s: %s", ticker, exc)
             return []
 
-        if not isinstance(response, pd.DataFrame):
-            # Response is the actual requests.Response object
-            data = response.json() if hasattr(response, "json") else []
-        else:
-            data = []
+        data = (response.json() if hasattr(response, "json") else []) if not isinstance(response, pd.DataFrame) else []
 
         if not isinstance(data, list):
             logger.warning("Unexpected response format for %s: %s", ticker, type(data))
@@ -334,10 +322,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         # Extract datetime
         datetime_str = article.get("datetime", 0)
         try:
-            if isinstance(datetime_str, int):
-                dt = datetime.fromtimestamp(datetime_str)
-            else:
-                dt = pd.to_datetime(datetime_str)
+            dt = datetime.fromtimestamp(datetime_str) if isinstance(datetime_str, int) else pd.to_datetime(datetime_str)
         except Exception:
             dt = datetime.now()
 
@@ -376,7 +361,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         # Batch analyze
         sentiment_results = []
         for headline in headlines:
-            result = self.sentiment_analyzer.analyze(headline)
+            result = {"compound": 0.0, "label": "neutral"} if self.sentiment_analyzer is None else self.sentiment_analyzer.analyze(headline)
             sentiment_results.append(
                 {
                     "sentiment_score": result.get("compound", 0.0),

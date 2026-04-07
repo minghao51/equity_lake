@@ -5,7 +5,6 @@ This module implements walk-forward analysis to prevent overfitting
 and validate strategy robustness.
 """
 
-
 import pandas as pd
 import structlog
 
@@ -176,9 +175,7 @@ class WalkForwardResult:
         """Mean Sharpe ratio across folds."""
         if not self.folds:
             return 0.0
-        return sum(f.metrics.get("sharpe_ratio", 0) for f in self.folds) / len(
-            self.folds
-        )
+        return sum(f.metrics.get("sharpe_ratio", 0) for f in self.folds) / len(self.folds)
 
     @property
     def std_sharpe(self) -> float:
@@ -200,9 +197,7 @@ class WalkForwardResult:
         if not self.folds:
             return 0.0
 
-        positive_sharpe = sum(
-            1 for f in self.folds if f.metrics.get("sharpe_ratio", 0) > 0
-        )
+        positive_sharpe = sum(1 for f in self.folds if f.metrics.get("sharpe_ratio", 0) > 0)
 
         return positive_sharpe / len(self.folds)
 

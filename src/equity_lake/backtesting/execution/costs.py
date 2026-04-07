@@ -128,7 +128,7 @@ class MarketSpecificCommission(CommissionModel):
     """
 
     # Market-specific cost structures
-    COST_STRUCTURES = {
+    COST_STRUCTURES: dict[str, dict[str, float | str]] = {
         "us": {
             "type": "per_share",
             "commission_per_share": 0.005,
@@ -155,23 +155,21 @@ class MarketSpecificCommission(CommissionModel):
             ValueError: If market is not supported
         """
         if market not in self.COST_STRUCTURES:
-            raise ValueError(
-                f"Unsupported market: {market}. "
-                f"Supported markets: {list(self.COST_STRUCTURES.keys())}"
-            )
+            raise ValueError(f"Unsupported market: {market}. Supported markets: {list(self.COST_STRUCTURES.keys())}")
 
         self.market = market
         config = self.COST_STRUCTURES[market]
+        self.model: CommissionModel
 
         if config["type"] == "per_share":
-            self.model = FixedPerShareCommission(config["commission_per_share"])
+            self.model = FixedPerShareCommission(float(config["commission_per_share"]))
         elif config["type"] == "percentage":
-            self.model = PercentageCommission(config["commission_rate"])
+            self.model = PercentageCommission(float(config["commission_rate"]))
         else:
             raise ValueError(f"Unknown commission type: {config['type']}")
 
         # Store additional costs (e.g., stamp duty)
-        self.stamp_duty_rate = config.get("stamp_duty_rate", 0)
+        self.stamp_duty_rate: float = float(config.get("stamp_duty_rate", 0))
 
     def calculate(self, price: float, shares: float) -> float:
         """Calculate total commission including additional costs."""
@@ -189,9 +187,7 @@ class SlippageModel(ABC):
     """Abstract base class for slippage models."""
 
     @abstractmethod
-    def calculate(
-        self, price: float, shares: float, volume: float | None = None
-    ) -> float:
+    def calculate(self, price: float, shares: float, volume: float | None = None) -> float:
         """
         Calculate slippage for a trade.
 
@@ -224,9 +220,7 @@ class FixedSlippage(SlippageModel):
     def __init__(self, slippage_rate: float = 0.0001):
         self.slippage_rate = slippage_rate
 
-    def calculate(
-        self, price: float, shares: float, volume: float | None = None
-    ) -> float:
+    def calculate(self, price: float, shares: float, volume: float | None = None) -> float:
         """Calculate fixed slippage."""
         if shares >= 0:  # Buying
             return price * (1 + self.slippage_rate)
@@ -257,9 +251,7 @@ class VolumeShareSlippage(SlippageModel):
         self.base_slippage = base_slippage
         self.impact_factor = impact_factor
 
-    def calculate(
-        self, price: float, shares: float, volume: float | None = None
-    ) -> float:
+    def calculate(self, price: float, shares: float, volume: float | None = None) -> float:
         """Calculate volume-based slippage."""
         # Base slippage
         total_slippage = self.base_slippage

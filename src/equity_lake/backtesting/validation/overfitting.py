@@ -4,7 +4,6 @@ Overfitting detection for backtesting.
 This module provides tools to detect overfitting in backtest results.
 """
 
-
 import structlog
 
 from equity_lake.backtesting.engine import BacktestResult

@@ -21,6 +21,7 @@ import duckdb
 import pandas as pd
 import structlog
 
+from equity_lake.config.settings import get_settings
 from equity_lake.core.runtime import LAKE_DIR, LOGS_DIR, setup_logging
 
 logger = structlog.get_logger()
@@ -105,14 +106,10 @@ class PipelineMonitor:
                 age_days = (today - latest_date).days
 
                 status = "✅" if age_days <= self.max_age_days else "⚠️"
-                logger.info(
-                    f"{status} {market}: Latest data = {latest_date} ({age_days} days old, {date_count} dates total)"
-                )
+                logger.info(f"{status} {market}: Latest data = {latest_date} ({age_days} days old, {date_count} dates total)")
 
                 if age_days > self.max_age_days:
-                    self.alerts.append(
-                        f"⚠️  {market} data is stale: {age_days} days old (latest: {latest_date})"
-                    )
+                    self.alerts.append(f"⚠️  {market} data is stale: {age_days} days old (latest: {latest_date})")
                     stale_markets.append(market)
                 else:
                     fresh_markets.append(market)
@@ -178,23 +175,14 @@ class PipelineMonitor:
                 null_pct_volume = (row["null_volume"] / total_rows) * 100
 
                 if self.verbose:
-                    logger.info(
-                        f"  {market}: {null_pct_close:.2f}% null close, "
-                        f"{null_pct_volume:.2f}% null volume ({total_rows:,} rows)"
-                    )
+                    logger.info(f"  {market}: {null_pct_close:.2f}% null close, {null_pct_volume:.2f}% null volume ({total_rows:,} rows)")
 
                 if null_pct_close > self.null_threshold_pct:
-                    self.alerts.append(
-                        f"⚠️  {market}: {null_pct_close:.1f}% null close prices "
-                        f"(threshold: {self.null_threshold_pct}%)"
-                    )
+                    self.alerts.append(f"⚠️  {market}: {null_pct_close:.1f}% null close prices (threshold: {self.null_threshold_pct}%)")
                     quality_issues.append(market)
 
                 if null_pct_volume > self.null_threshold_pct:
-                    self.alerts.append(
-                        f"⚠️  {market}: {null_pct_volume:.1f}% null volume "
-                        f"(threshold: {self.null_threshold_pct}%)"
-                    )
+                    self.alerts.append(f"⚠️  {market}: {null_pct_volume:.1f}% null volume (threshold: {self.null_threshold_pct}%)")
                     quality_issues.append(market)
 
             self.metrics["data_quality"] = {
@@ -245,9 +233,7 @@ class PipelineMonitor:
                 total_warnings += warning_count
 
                 if self.verbose and (error_count > 0 or warning_count > 0):
-                    logger.info(
-                        f"  {log_file.name}: {error_count} errors, {warning_count} warnings"
-                    )
+                    logger.info(f"  {log_file.name}: {error_count} errors, {warning_count} warnings")
 
             except Exception as e:
                 logger.debug(f"Could not read {log_file.name}: {e}")
@@ -306,14 +292,10 @@ class PipelineMonitor:
             age_days = (date.today() - pd.to_datetime(latest_date).date()).days
 
             if age_days > self.max_age_days:
-                self.alerts.append(
-                    f"⚠️  Features are stale: {age_days} days old (latest: {latest_date})"
-                )
+                self.alerts.append(f"⚠️  Features are stale: {age_days} days old (latest: {latest_date})")
                 return False
 
-            logger.info(
-                f"✅ Features: {total_rows:,} rows, {unique_tickers} tickers, latest: {latest_date}"
-            )
+            logger.info(f"✅ Features: {total_rows:,} rows, {unique_tickers} tickers, latest: {latest_date}")
 
             self.metrics["feature_store"] = {
                 "total_rows": int(total_rows),
@@ -375,7 +357,7 @@ class PipelineMonitor:
 
         return all_healthy
 
-    def save_report(self, output_file: Path):
+    def save_report(self, output_file: Path) -> None:
         """Save health report to JSON file."""
         report = {
             "alerts": self.alerts,
@@ -394,38 +376,41 @@ class PipelineMonitor:
 # =============================================================================
 
 
-def parse_arguments():
+def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Pipeline Health Monitoring")
 
     parser.add_argument(
         "--max-age-days",
         type=int,
-        default=2,
-        help="Maximum allowed data age in days (default: 2)",
+        default=None,
+        help="Maximum allowed data age in days (default: from settings)",
     )
 
     parser.add_argument(
         "--null-threshold-pct",
         type=float,
-        default=5.0,
-        help="Max acceptable null percentage (default: 5.0)",
+        default=None,
+        help="Max acceptable null percentage (default: from settings)",
     )
 
-    parser.add_argument(
-        "--output-json", type=str, help="Save health report to JSON file"
-    )
+    parser.add_argument("--output-json", type=str, help="Save health report to JSON file")
 
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
+
+    # Resolve settings-backed defaults only when actually running
+    settings = get_settings()
+    if args.max_age_days is None:
+        args.max_age_days = settings.monitoring.max_age_days
+    if args.null_threshold_pct is None:
+        args.null_threshold_pct = settings.monitoring.null_threshold_pct
 
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"

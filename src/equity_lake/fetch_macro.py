@@ -21,12 +21,15 @@ import argparse
 import logging
 import sys
 import time
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from typing import Any, cast
 
 import pandas as pd
 import yfinance as yf
 from fredapi import Fred
 
+from equity_lake.core.dates import resolve_trading_date
 from equity_lake.core.runtime import (
     MACRO_COLUMNS,
     MACRO_INDICATOR_CONFIG,
@@ -41,7 +44,8 @@ logger = logging.getLogger(__name__)
 class MacroIndicatorFetcher:
     """Base class for macro indicator fetchers."""
 
-    def __init__(self, retry_attempts: int = 3, retry_delay: float = 1.0):
+    def __init__(self, indicator_name: str, retry_attempts: int = 3, retry_delay: float = 1.0):
+        self.indicator_name = indicator_name
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
 
@@ -49,9 +53,8 @@ class MacroIndicatorFetcher:
         """Fetch data for a specific date."""
         raise NotImplementedError("Subclasses must implement fetch()")
 
-    def _retry_on_failure(self, func, *args, **kwargs) -> pd.DataFrame | None:
+    def _retry_on_failure(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> pd.DataFrame | None:
         """Retry logic for API calls."""
-        last_error: Exception | None = None
         for attempt in range(self.retry_attempts):
             try:
                 result = func(*args, **kwargs)
@@ -61,12 +64,9 @@ class MacroIndicatorFetcher:
                     return result
                 return None
             except Exception as e:
-                last_error = e
                 if attempt < self.retry_attempts - 1:
                     wait_time = self.retry_delay * (2**attempt)
-                    logger.warning(
-                        f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time:.1f}s..."
-                    )
+                    logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time:.1f}s...")
                     time.sleep(wait_time)
                 else:
                     logger.error(f"All {self.retry_attempts} attempts failed: {e}")
@@ -77,9 +77,8 @@ class YFinanceFetcher(MacroIndicatorFetcher):
     """Fetch data from yfinance."""
 
     def __init__(self, ticker: str, indicator_name: str, retry_attempts: int = 3):
-        super().__init__(retry_attempts)
+        super().__init__(indicator_name, retry_attempts)
         self.ticker = ticker
-        self.indicator_name = indicator_name
 
     def fetch(self, trading_date: date) -> pd.DataFrame | None:
         """Fetch indicator value for given date."""
@@ -97,9 +96,7 @@ class YFinanceFetcher(MacroIndicatorFetcher):
                 )
 
                 if data is None or data.empty:
-                    logger.warning(
-                        f"No data for {self.indicator_name} on {trading_date}"
-                    )
+                    logger.warning(f"No data for {self.indicator_name} on {trading_date}")
                     return None
 
                 if "Close" in data.columns:
@@ -120,9 +117,7 @@ class YFinanceFetcher(MacroIndicatorFetcher):
                     }
                 )
 
-                logger.info(
-                    f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}"
-                )
+                logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
                 return df
 
             except Exception as e:
@@ -142,9 +137,8 @@ class FredFetcher(MacroIndicatorFetcher):
         fred_api_key: str,
         retry_attempts: int = 3,
     ):
-        super().__init__(retry_attempts)
+        super().__init__(indicator_name, retry_attempts)
         self.series_id = series_id
-        self.indicator_name = indicator_name
         self.fred_api_key = fred_api_key
         self.fred = Fred(api_key=fred_api_key)
 
@@ -160,9 +154,7 @@ class FredFetcher(MacroIndicatorFetcher):
                 )
 
                 if data.empty:
-                    logger.warning(
-                        f"No data for {self.indicator_name} ({self.series_id}) on {trading_date}"
-                    )
+                    logger.warning(f"No data for {self.indicator_name} ({self.series_id}) on {trading_date}")
                     return None
 
                 value = float(data.iloc[0])
@@ -177,9 +169,7 @@ class FredFetcher(MacroIndicatorFetcher):
                     }
                 )
 
-                logger.info(
-                    f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}"
-                )
+                logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
                 return df
 
             except Exception as e:
@@ -208,14 +198,13 @@ class MacroDataPipeline:
         api_key = os.getenv("FRED_API_KEY", "")
         if not api_key:
             logger.warning(
-                "FRED_API_KEY not set. FRED indicators will not be fetched. "
-                "Get a free key at: https://fred.stlouisfed.org/docs/api/api_key.html"
+                "FRED_API_KEY not set. FRED indicators will not be fetched. Get a free key at: https://fred.stlouisfed.org/docs/api/api_key.html"
             )
         return api_key
 
     def _initialize_fetchers(self) -> list[MacroIndicatorFetcher]:
         """Initialize fetchers based on configuration."""
-        fetchers = []
+        fetchers: list[MacroIndicatorFetcher] = []
 
         for indicator_name, indicator_config in MACRO_INDICATOR_CONFIG.items():
             source = indicator_config["source"]
@@ -226,7 +215,7 @@ class MacroDataPipeline:
                     fetcher = YFinanceFetcher(
                         ticker=ticker,
                         indicator_name=indicator_name,
-                        retry_attempts=self.config.get("retry_attempts", 3),
+                        retry_attempts=cast(int, self.config.get("retry_attempts", 3)),
                     )
                     fetchers.append(fetcher)
 
@@ -236,13 +225,13 @@ class MacroDataPipeline:
                         continue
 
                     series_id = indicator_config["series"]
-                    fetcher = FredFetcher(
+                    fred_fetcher = FredFetcher(
                         series_id=series_id,
                         indicator_name=indicator_name,
                         fred_api_key=self.fred_api_key,
-                        retry_attempts=self.config.get("retry_attempts", 3),
+                        retry_attempts=cast(int, self.config.get("retry_attempts", 3)),
                     )
-                    fetchers.append(fetcher)
+                    fetchers.append(fred_fetcher)
 
                 else:
                     logger.warning(f"Unknown source '{source}' for {indicator_name}")
@@ -282,9 +271,7 @@ class MacroDataPipeline:
         logger.info(f"Fetched {len(df)} macro indicators for {trading_date}")
         return df
 
-    def fetch_with_fallback(
-        self, trading_date: date, fallback_date: date | None = None
-    ) -> pd.DataFrame:
+    def fetch_with_fallback(self, trading_date: date, fallback_date: date | None = None) -> pd.DataFrame:
         """Fetch macro indicators, falling back to previous date if needed."""
         df = self.fetch_all(trading_date)
 
@@ -315,20 +302,13 @@ def write_macro_to_parquet(
         logger.info(f"File exists: {output_file}. Checking for duplicates...")
         try:
             existing_df = pd.read_parquet(output_file)
-            existing_combos = set(
-                existing_df.apply(lambda r: (r["indicator"],), axis=1).tolist()
-            )
-            new_combos = df.apply(lambda r: (r["indicator"],), axis=1).tolist()
+            existing_combos = set(existing_df.apply(lambda r: (r["indicator"],), axis=1).tolist())
 
-            duplicate_mask = df.apply(
-                lambda r: (r["indicator"],) in existing_combos, axis=1
-            )
+            duplicate_mask = df.apply(lambda r: (r["indicator"],) in existing_combos, axis=1)
 
             duplicate_count = duplicate_mask.sum()
             if duplicate_count > 0:
-                logger.warning(
-                    f"Found {duplicate_count} duplicate indicators, skipping..."
-                )
+                logger.warning(f"Found {duplicate_count} duplicate indicators, skipping...")
                 df = df[~duplicate_mask]
 
             if df.empty:
@@ -352,9 +332,7 @@ def write_macro_to_parquet(
         df_write.to_parquet(output_file, index=False, compression="snappy")
 
         file_size = output_file.stat().st_size / 1024
-        logger.info(
-            f"Wrote {len(df_write)} indicators to {output_file} ({file_size:.1f} KB)"
-        )
+        logger.info(f"Wrote {len(df_write)} indicators to {output_file} ({file_size:.1f} KB)")
         return True
 
     except Exception as e:
@@ -420,17 +398,14 @@ Examples:
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
     log_level = "DEBUG" if args.verbose else "INFO"
     logger = setup_logging(__name__, level=log_level, log_file="fetch_macro.log")
 
-    if args.date:
-        trading_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-    else:
-        trading_date = date.today() - timedelta(days=1)
+    trading_date = resolve_trading_date(args.date)
 
     logger.info("=" * 60)
     logger.info(f"Macro Indicators Fetcher - {trading_date}")

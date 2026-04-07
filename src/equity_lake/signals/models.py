@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 
 @dataclass
@@ -17,7 +17,7 @@ class Signal:
     reasoning: str  # Human-readable explanation
     metadata: dict[str, Any]  # Strategy-specific details
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate confidence score is in range."""
         if not 0 <= self.confidence <= 100:
             raise ValueError(f"Confidence must be 0-100, got {self.confidence}")
@@ -33,7 +33,7 @@ class Watchlist:
     groups: dict[str, list[str]] | None = None  # e.g., {"tech": ["AAPL"]}
     metadata: dict[str, Any] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Ensure all tickers in groups are in main list
         if self.groups:
             for group_tickers in self.groups.values():
@@ -54,4 +54,4 @@ class SignalConfig:
     def is_generator_enabled(self, generator_name: str) -> bool:
         """Check if a signal generator is enabled."""
         config = getattr(self, generator_name, {})
-        return config.get("enabled", False)
+        return cast(bool, config.get("enabled", False))

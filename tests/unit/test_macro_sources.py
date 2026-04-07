@@ -91,9 +91,7 @@ class TestFredFetcher:
             mock_fred_instance.get_series.return_value = mock_series
             MockFred.return_value = mock_fred_instance
 
-            fetcher = FredFetcher(
-                series_id="DFII10", indicator_name="tips_yield", fred_api_key="test_key"
-            )
+            fetcher = FredFetcher(series_id="DFII10", indicator_name="tips_yield", fred_api_key="test_key")
 
             result = fetcher.fetch(date(2024, 12, 1))
 
@@ -201,9 +199,7 @@ class TestSchemaValidation:
         """Test schema validation with empty DataFrame."""
         from equity_lake.fetch_macro import validate_macro_schema
 
-        df = pd.DataFrame(
-            columns=["date", "indicator", "value", "source", "updated_at"]
-        )
+        df = pd.DataFrame(columns=["date", "indicator", "value", "source", "updated_at"])
 
         assert validate_macro_schema(df) is True
 
@@ -256,9 +252,7 @@ class TestIntegration:
 
         if result is not None and not result.empty:
             assert "gld" in result["indicator"].values
-            assert (
-                100.0 < result["value"].values[0] < 500.0
-            )  # GLD has increased in price
+            assert 100.0 < result["value"].values[0] < 500.0  # GLD has increased in price
 
 
 if __name__ == "__main__":

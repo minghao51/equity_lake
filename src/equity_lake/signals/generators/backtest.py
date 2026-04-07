@@ -1,5 +1,6 @@
 """Backtest strategy signal generator."""
 
+from contextlib import suppress
 from datetime import date, timedelta
 
 import duckdb
@@ -26,18 +27,15 @@ class BacktestSignalGenerator(SignalGenerator):
         self.con = duckdb.connect(":memory:")
         self._setup_views()
 
-    def _setup_views(self):
+    def _setup_views(self) -> None:
         """Create DuckDB views for querying price data."""
         us_pattern = f"{US_EQUITY_DIR}/date=*/*.parquet"
         sql = f"""
         CREATE OR REPLACE VIEW price_data AS
         SELECT * FROM read_parquet('{us_pattern}', hive_partitioning=1)
         """
-        try:
+        with suppress(Exception):
             self.con.execute(sql)
-        except Exception:
-            # No data available yet
-            pass
 
     def generate(self, ticker: str, target_date: date) -> Signal | None:
         """Generate signal based on backtest strategy conditions.

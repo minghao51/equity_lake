@@ -2,6 +2,7 @@
 
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from equity_lake.ml.forecasting import PriceForecaster
 from equity_lake.signals.generators.base import SignalGenerator
@@ -16,21 +17,17 @@ class MLPredictionSignalGenerator(SignalGenerator):
     predicts a down day, subject to the configured confidence threshold.
     """
 
+    forecaster: PriceForecaster | None = None
+
     def __init__(self, config: dict):
         super().__init__(config)
         # Accept legacy `model_path` configs, but treat the setting as a model directory.
-        self.model_dir = Path(
-            config.get("model_dir", config.get("model_path", "data/models"))
-        )
+        self.model_dir = Path(config.get("model_dir", config.get("model_path", "data/models")))
         self.horizon_days = config.get("horizon_days", 5)
         self.min_confidence = config.get("min_confidence", 60)
         default_buy_threshold = self.min_confidence / 100
-        self.buy_threshold = config.get(
-            "buy_probability_threshold", default_buy_threshold
-        )
-        self.sell_threshold = config.get(
-            "sell_probability_threshold", 1 - default_buy_threshold
-        )
+        self.buy_threshold = config.get("buy_probability_threshold", default_buy_threshold)
+        self.sell_threshold = config.get("sell_probability_threshold", 1 - default_buy_threshold)
 
         try:
             self.forecaster = PriceForecaster(model_dir=str(self.model_dir))
@@ -66,7 +63,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
 
         probability = float(prediction.get("probability", 0.0))
         direction = int(prediction.get("prediction", probability >= 0.5))
-        action = "BUY" if direction == 1 else "SELL"
+        action: Literal["BUY", "SELL"] = "BUY" if direction == 1 else "SELL"
         confidence = probability * 100 if action == "BUY" else (1 - probability) * 100
 
         if action == "BUY" and probability < self.buy_threshold:
@@ -85,10 +82,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
                 signal_type="ml",
                 action=action,
                 confidence=confidence,
-                reasoning=(
-                    f"ML predicts next-day upside "
-                    f"({confidence:.0f}% confidence, p={probability:.2f})"
-                ),
+                reasoning=(f"ML predicts next-day upside ({confidence:.0f}% confidence, p={probability:.2f})"),
                 metadata={
                     "prediction": direction,
                     "probability": probability,
@@ -104,10 +98,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
             signal_type="ml",
             action=action,
             confidence=confidence,
-            reasoning=(
-                f"ML predicts next-day downside "
-                f"({confidence:.0f}% confidence, p={probability:.2f})"
-            ),
+            reasoning=(f"ML predicts next-day downside ({confidence:.0f}% confidence, p={probability:.2f})"),
             metadata={
                 "prediction": direction,
                 "probability": probability,

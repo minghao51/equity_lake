@@ -1,5 +1,6 @@
 """News sentiment signal generator."""
 
+from contextlib import suppress
 from datetime import date, timedelta
 
 import duckdb
@@ -25,22 +26,17 @@ class SentimentSignalGenerator(SignalGenerator):
         self.con = duckdb.connect(":memory:")
         self._setup_view()
 
-    def _setup_view(self):
+    def _setup_view(self) -> None:
         """Create DuckDB view for locally stored news sentiment data."""
         news_pattern = f"{US_NEWS_DIR}/date=*/*.parquet"
         sql = f"""
         CREATE OR REPLACE VIEW news_data AS
         SELECT * FROM read_parquet('{news_pattern}', hive_partitioning=1)
         """
-        try:
+        with suppress(Exception):
             self.con.execute(sql)
-        except Exception:
-            # No local news data available yet.
-            pass
 
-    def _load_sentiment_summary(
-        self, ticker: str, start_date: date, target_date: date
-    ) -> dict | None:
+    def _load_sentiment_summary(self, ticker: str, start_date: date, target_date: date) -> dict | None:
         """Load aggregated sentiment for a ticker from local news history."""
         query = f"""
         SELECT

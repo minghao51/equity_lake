@@ -16,7 +16,7 @@ Bootstrap from S3 Parquet → sync once → append daily updates locally → que
 
 ## Architecture Overview
 
-```
+```text
 AWS S3 Bucket → Local Data Lake (Parquet) → DuckDB (SQL Queries)
 (full historical)   data/lake/
                        ├── us_equity/  ← from S3
@@ -61,7 +61,13 @@ source .venv/bin/activate
 
 # Install dependencies
 uv pip install -r requirements.txt
+
+# Create local env file
+cp .env.example .env
 ```
+
+Credential setup and optional API keys are documented in
+[docs/20260406-api-keys.md](docs/20260406-api-keys.md).
 
 ### 2. Configure S3 Access
 
@@ -86,7 +92,8 @@ make sync
 ```
 
 Expected structure after sync:
-```
+
+```text
 data/lake/us_equity/date=2020-01-01/2020-01-01.parquet
 data/lake/us_equity/date=2020-01-02/2020-01-02.parquet
 ```
@@ -127,6 +134,7 @@ uv run equity-pipeline --dry-run
 **Total time**: 4-10 minutes for 10 tickers
 
 **Custom usage:**
+
 ```bash
 # Custom tickers
 uv run equity-pipeline --tickers AAPL,GOOGL,MSFT
@@ -139,6 +147,9 @@ uv run equity-pipeline --skip-ingestion --skip-features
 ```
 
 See [Pipeline Usage Guide](docs/user-guide/pipeline.md) for complete documentation.
+See [CLI Reference](docs/user-guide/20260406-cli-reference.md) for the newer
+`equity-config`, `equity-loader`, `equity-update`, and `equity-dashboard`
+commands.
 
 ### 6. Monitor Pipeline Health
 
@@ -163,11 +174,21 @@ make query
 uv run equity-query
 ```
 
+### 8. Build The Static Dashboard
+
+```bash
+uv run equity-monitor --output-json site/health-report.json
+uv run equity-dashboard build --output-dir site
+```
+
+Hosting and Pages workflow details live in
+[docs/user-guide/20260406-dashboard-hosting.md](docs/user-guide/20260406-dashboard-hosting.md).
+
 ---
 
 ## Project Structure
 
-```
+```text
 equity-lake/
 ├── src/equity_lake/    # Application package
 │   ├── cli/               # Stable CLI entrypoints
@@ -209,6 +230,7 @@ make docker-up  # Start Docker container
 ```
 
 **New Pipeline Commands:**
+
 ```bash
 uv run equity-pipeline --help
 uv run equity-monitor --help
@@ -236,7 +258,7 @@ Edit `docker-compose.yml` to configure S3 bucket path, AWS credentials, and cron
 
 Your S3 bucket must contain partitioned Parquet with this layout:
 
-```
+```text
 s3://your-bucket/
 └── us_equity/
     ├── date=2020-01-01/
@@ -268,6 +290,7 @@ s3://your-bucket/
 - **💾 Signal History** - Track past signals in Parquet storage
 
 **Quick Start:**
+
 ```bash
 # Configure watchlist in config/watchlist.yaml
 # Generate signals
@@ -288,6 +311,7 @@ See [Signal Scanner Guide](docs/user-guide/signals.md) for details.
 - **⚡ Parallel Optimization** - 3x faster multi-market fetching
 
 **Quick Start:**
+
 ```bash
 # Run full ML pipeline
 uv run equity-pipeline --verbose
@@ -305,11 +329,13 @@ uv run equity-monitor
 ## Documentation
 
 ### Quick Start Guides
+
 - **[Quick Start Guide](docs/getting-started/quickstart.md)** - Get started in 5 minutes
 - **[Pipeline Usage Guide](docs/user-guide/pipeline.md)** - Complete ML pipeline documentation
 - **[Signal Scanner Guide](docs/user-guide/signals.md)** - Signal scanning and generation
 
 ### Comprehensive Guides
+
 - **[Operations Guide](docs/user-guide/operations.md)** - Day-to-day usage documentation
 - **[Backtesting Guide](docs/user-guide/backtesting.md)** - Strategy testing and examples
 - **[Architecture Docs](docs/architecture/)** - System structure and subsystem design
@@ -341,7 +367,8 @@ MIT License - See LICENSE file for details
 Contributions welcome! Please:
 1. Fork the repository
 2. Create a feature branch
-3. Submit a pull request with tests
+3. Run `make check-all`
+4. Submit a pull request with tests
 
 ---
 

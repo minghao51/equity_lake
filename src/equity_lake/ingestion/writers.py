@@ -3,7 +3,7 @@
 from datetime import date
 from typing import Any
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import structlog
 
 from equity_lake.core.runtime import (
@@ -167,7 +167,7 @@ def validate_schema(df: pd.DataFrame, market: str) -> bool:
         return False
 
     for column in required_cols:
-        if column in df.columns and bool(df[column].isnull().all()):  # type: ignore[call-overload]
+        if column in df.columns and bool(df[column].isnull().all()):
             logger.warning("%s: Column '%s' is all null", market, column)
 
     return True
@@ -230,14 +230,11 @@ def validate_news_data_quality(df: pd.DataFrame) -> dict[str, Any]:
 
     # Sentiment distribution
     if "sentiment_label" in df.columns:
-        metrics["sentiment_distribution"] = (
-            df["sentiment_label"].value_counts().to_dict()
-        )
+        metrics["sentiment_distribution"] = df["sentiment_label"].value_counts().to_dict()
 
     # Log quality metrics
     logger.info(
-        "News data quality: %s rows, %s missing headlines, "
-        "%s missing URLs, %s duplicate URLs",
+        "News data quality: %s rows, %s missing headlines, %s missing URLs, %s duplicate URLs",
         metrics["total_rows"],
         metrics["missing_headlines"],
         metrics["missing_urls"],

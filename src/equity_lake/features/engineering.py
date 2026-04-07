@@ -16,7 +16,6 @@ from datetime import date, datetime
 
 import duckdb
 import pandas as pd
-import pandas_ta as ta
 import structlog
 from tqdm import tqdm
 
@@ -25,6 +24,8 @@ from equity_lake.core.runtime import (
     LAKE_DIR,
     setup_logging,
 )
+from equity_lake.features.indicators import atr, bollinger_bands, macd, roc, rsi
+from equity_lake.features.pipeline import FeaturePipeline
 
 # Logger configuration - use structlog for consistency
 logger = structlog.get_logger()
@@ -47,11 +48,12 @@ class FeatureEngineer:
         """
         self.db_path: str = db_path if db_path is not None else ":memory:"
         self.conn = duckdb.connect(str(self.db_path))
+        self.feature_pipeline = FeaturePipeline()
 
         # Create views if not exists (using existing query_example.py logic)
         self._setup_views()
 
-    def _setup_views(self):
+    def _setup_views(self) -> None:
         """Set up DuckDB views for accessing OHLCV data."""
         # Create unified view across all markets
         # Note: Using glob pattern that includes Hive partitioning (date=*/*.parquet)
@@ -91,32 +93,28 @@ class FeatureEngineer:
         df = df.sort_values("date")
 
         # RSI (14-period) - Relative Strength Index
-        df["rsi_14"] = ta.rsi(df["close"], length=14)
+        df["rsi_14"] = rsi(df["close"], length=14)
 
         # MACD (12, 26, 9) - Moving Average Convergence Divergence
-        macd = ta.macd(df["close"], fast=12, slow=26, signal=9)
-        df["macd"] = macd["MACD_12_26_9"]
-        df["macd_signal"] = macd["MACDs_12_26_9"]
-        df["macd_histogram"] = macd["MACDh_12_26_9"]
+        macd_frame = macd(df["close"], fast=12, slow=26, signal=9)
+        df["macd"] = macd_frame["macd"]
+        df["macd_signal"] = macd_frame["signal"]
+        df["macd_histogram"] = macd_frame["histogram"]
 
         # Bollinger Bands (20-day, 2 standard deviations)
-        bb = ta.bbands(df["close"], length=20, std=2)
-        df["bb_upper"] = bb["BBU_20_2.0_2.0"]
-        df["bb_middle"] = bb["BBM_20_2.0_2.0"]
-        df["bb_lower"] = bb["BBL_20_2.0_2.0"]
-        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df[
-            "bb_middle"
-        ]  # Bandwidth
-        df["bb_pct"] = (df["close"] - df["bb_lower"]) / (
-            df["bb_upper"] - df["bb_lower"]
-        )  # %B
+        bb = bollinger_bands(df["close"], length=20, std=2)
+        df["bb_upper"] = bb["upper"]
+        df["bb_middle"] = bb["middle"]
+        df["bb_lower"] = bb["lower"]
+        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"]  # Bandwidth
+        df["bb_pct"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])  # %B
 
         # ATR (14-period) - Average True Range
-        df["atr_14"] = ta.atr(df["high"], df["low"], df["close"], length=14)
+        df["atr_14"] = atr(df["high"], df["low"], df["close"], length=14)
 
         # Rate of Change (5, 10, 20-day)
         for period in [5, 10, 20]:
-            df[f"roc_{period}"] = ta.roc(df["close"], length=period)
+            df[f"roc_{period}"] = roc(df["close"], length=period)
 
         logger.debug(f"Computed technical indicators: {list(df.columns)}")
         return df
@@ -143,9 +141,7 @@ class FeatureEngineer:
             df[f"return_{lag}d"] = df["close"].pct_change(lag)
 
         # Overnight return: (open - prev_close) / prev_close
-        df["overnight_return"] = (df["open"] - df["close"].shift(1)) / df[
-            "close"
-        ].shift(1)
+        df["overnight_return"] = (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
 
         # Intraday return: (close - open) / open
         df["intraday_return"] = (df["close"] - df["open"]) / df["open"]
@@ -232,9 +228,7 @@ class FeatureEngineer:
         df["days_to_month_end"] = (month_end - df["date"]).dt.days
 
         # Trading day of month (approximately 1-22)
-        df["trading_day_of_month"] = (
-            df.groupby([df["date"].dt.year, df["date"].dt.month]).cumcount() + 1
-        )
+        df["trading_day_of_month"] = df.groupby([df["date"].dt.year, df["date"].dt.month]).cumcount() + 1
 
         logger.debug(f"Computed time features: {list(df.columns)}")
         return df
@@ -264,9 +258,7 @@ class FeatureEngineer:
         Returns:
             DataFrame with all features computed
         """
-        logger.info(
-            f"Generating features for {len(tickers)} tickers from {start_date} to {end_date}"
-        )
+        logger.info(f"Generating features for {len(tickers)} tickers from {start_date} to {end_date}")
 
         # Load OHLCV data from DuckDB
         query = f"""
@@ -303,25 +295,15 @@ class FeatureEngineer:
                 logger.warning(f"Skipping {ticker}: only {len(ticker_df)} days of data")
                 continue
 
-            # Compute features
-            ticker_df = self.compute_technical_indicators(ticker_df)
-            ticker_df = self.compute_return_features(ticker_df)
-            ticker_df = self.compute_volume_features(ticker_df)
-            ticker_df = self.compute_time_features(ticker_df)
-
-            # Compute target variable (next-day return)
-            if compute_target:
-                ticker_df["next_day_return"] = (
-                    ticker_df["close"].shift(-1) / ticker_df["close"] - 1
-                )
+            ticker_df = self.feature_pipeline.compute(ticker_df)
+            if not compute_target and "next_day_return" in ticker_df.columns:
+                ticker_df = ticker_df.drop(columns=["next_day_return"])
 
             result_dfs.append(ticker_df)
 
         # Combine all tickers
         if not result_dfs:
-            logger.error(
-                "No features generated - all tickers were skipped (insufficient data)"
-            )
+            logger.error("No features generated - all tickers were skipped (insufficient data)")
             return pd.DataFrame()
 
         features_df = pd.concat(result_dfs, ignore_index=True)
@@ -338,9 +320,7 @@ class FeatureEngineer:
                 end_date=end_date,
             )
 
-        logger.info(
-            f"Generated {len(features_df)} rows of features with {len(features_df.columns)} columns"
-        )
+        logger.info(f"Generated {len(features_df)} rows of features with {len(features_df.columns)} columns")
         logger.debug(f"Feature columns: {list(features_df.columns)}")
 
         return features_df
@@ -407,9 +387,7 @@ class FeatureEngineer:
             sentiment_df = self.conn.execute(sentiment_query).df()
 
             if sentiment_df.empty:
-                logger.warning(
-                    "No sentiment data found, adding neutral sentiment columns"
-                )
+                logger.warning("No sentiment data found, adding neutral sentiment columns")
                 # Add neutral sentiment columns
                 features_df["avg_daily_sentiment"] = 0.0
                 features_df["news_count"] = 0
@@ -429,19 +407,11 @@ class FeatureEngineer:
             )
 
             # Fill missing sentiment (no news that day) with neutral values
-            merged_df["avg_daily_sentiment"] = merged_df["avg_daily_sentiment"].fillna(
-                0.0
-            )
+            merged_df["avg_daily_sentiment"] = merged_df["avg_daily_sentiment"].fillna(0.0)
             merged_df["news_count"] = merged_df["news_count"].fillna(0).astype(int)
-            merged_df["positive_count"] = (
-                merged_df["positive_count"].fillna(0).astype(int)
-            )
-            merged_df["negative_count"] = (
-                merged_df["negative_count"].fillna(0).astype(int)
-            )
-            merged_df["neutral_count"] = (
-                merged_df["neutral_count"].fillna(0).astype(int)
-            )
+            merged_df["positive_count"] = merged_df["positive_count"].fillna(0).astype(int)
+            merged_df["negative_count"] = merged_df["negative_count"].fillna(0).astype(int)
+            merged_df["neutral_count"] = merged_df["neutral_count"].fillna(0).astype(int)
             merged_df["sentiment_std"] = merged_df["sentiment_std"].fillna(0.0)
 
             logger.info(
@@ -517,9 +487,7 @@ class FeatureEngineer:
             sentiment_df = self.conn.execute(sentiment_query).df()
 
             if sentiment_df.empty:
-                logger.warning(
-                    "No social sentiment data found, adding neutral social sentiment columns"
-                )
+                logger.warning("No social sentiment data found, adding neutral social sentiment columns")
                 # Add neutral social sentiment columns
                 features_df["social_mention_count"] = 0
                 features_df["social_sentiment_score"] = 0.0
@@ -541,39 +509,21 @@ class FeatureEngineer:
             )
 
             # Fill missing social sentiment (no data that day) with neutral values
-            merged_df["social_mention_count"] = (
-                merged_df["social_mention_count"].fillna(0).astype(int)
-            )
-            merged_df["social_sentiment_score"] = merged_df[
-                "social_sentiment_score"
-            ].fillna(0.0)
-            merged_df["social_positive_score"] = merged_df[
-                "social_positive_score"
-            ].fillna(0.0)
-            merged_df["social_negative_score"] = merged_df[
-                "social_negative_score"
-            ].fillna(0.0)
-            merged_df["social_reddit_mentions"] = (
-                merged_df["social_reddit_mentions"].fillna(0).astype(int)
-            )
-            merged_df["social_twitter_mentions"] = (
-                merged_df["social_twitter_mentions"].fillna(0).astype(int)
-            )
+            merged_df["social_mention_count"] = merged_df["social_mention_count"].fillna(0).astype(int)
+            merged_df["social_sentiment_score"] = merged_df["social_sentiment_score"].fillna(0.0)
+            merged_df["social_positive_score"] = merged_df["social_positive_score"].fillna(0.0)
+            merged_df["social_negative_score"] = merged_df["social_negative_score"].fillna(0.0)
+            merged_df["social_reddit_mentions"] = merged_df["social_reddit_mentions"].fillna(0).astype(int)
+            merged_df["social_twitter_mentions"] = merged_df["social_twitter_mentions"].fillna(0).astype(int)
 
             # Compute momentum metrics (5-day change)
             merged_df = merged_df.sort_values(["ticker", "date"])
-            merged_df["social_momentum"] = merged_df.groupby("ticker")[
-                "social_mention_count"
-            ].pct_change(5)
-            merged_df["social_sentiment_momentum"] = merged_df.groupby("ticker")[
-                "social_sentiment_score"
-            ].diff(5)
+            merged_df["social_momentum"] = merged_df.groupby("ticker")["social_mention_count"].pct_change(5)
+            merged_df["social_sentiment_momentum"] = merged_df.groupby("ticker")["social_sentiment_score"].diff(5)
 
             # Fill NaN momentum values for first 5 days
             merged_df["social_momentum"] = merged_df["social_momentum"].fillna(0.0)
-            merged_df["social_sentiment_momentum"] = merged_df[
-                "social_sentiment_momentum"
-            ].fillna(0.0)
+            merged_df["social_sentiment_momentum"] = merged_df["social_sentiment_momentum"].fillna(0.0)
 
             logger.info(
                 "Merged social sentiment features: %s rows with data, %s rows without data",
@@ -588,7 +538,7 @@ class FeatureEngineer:
             # Return original features without social sentiment
             return features_df
 
-    def close(self):
+    def close(self) -> None:
         """Close database connection."""
         if self.conn:
             self.conn.close()
@@ -599,7 +549,7 @@ class FeatureEngineer:
 # =============================================================================
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Generate ML features from OHLCV data")
 
@@ -643,7 +593,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_args()
 
@@ -673,10 +623,7 @@ def main():
         logger.error("Must specify --tickers")
         sys.exit(1)
 
-    logger.info(
-        f"Feature engineering for {len(tickers)} tickers "
-        f"from {output_start_date} to {output_end_date}"
-    )
+    logger.info(f"Feature engineering for {len(tickers)} tickers from {output_start_date} to {output_end_date}")
 
     from equity_lake.features import run_feature_job
 
@@ -697,15 +644,11 @@ def main():
     logger.info(f"✅ Features written successfully to {args.output_dir}")
     logger.info(f"   Total rows: {len(features_df):,}")
     logger.info(f"   Total tickers: {features_df['ticker'].nunique()}")
-    logger.info(
-        f"   Date range: {features_df['date'].min()} to {features_df['date'].max()}"
-    )
+    logger.info(f"   Date range: {features_df['date'].min()} to {features_df['date'].max()}")
     logger.info(f"   Features: {len(features_df.columns)} columns")
 
     if args.with_sentiment:
-        logger.info(
-            "   Sentiment features included: avg_daily_sentiment, news_count, positive_count, negative_count"
-        )
+        logger.info("   Sentiment features included: avg_daily_sentiment, news_count, positive_count, negative_count")
 
 
 if __name__ == "__main__":

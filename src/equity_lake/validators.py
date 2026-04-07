@@ -7,6 +7,7 @@ and market-specific rules. Used by configuration module and fetchers.
 
 import logging
 import re
+from typing import cast
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,7 @@ def validate_tags(tags: list[str]) -> tuple[bool, list[str]]:
     Returns:
         Tuple of (is_valid, list of warnings)
     """
-    warnings = []
+    warnings: list[str] = []
 
     if not tags:
         return True, warnings
@@ -214,7 +215,7 @@ def validate_tags(tags: list[str]) -> tuple[bool, list[str]]:
 
     for tag in tags:
         if not isinstance(tag, str):
-            warnings.append(f"Tag must be string, got {type(tag)}: {tag}")
+            warnings.append(f"Tag must be string, got {type(tag)}: {tag}")  # type: ignore[unreachable]
             continue
 
         tag_normalized = tag.strip().lower()
@@ -243,7 +244,7 @@ def validate_priority(priority: int) -> tuple[bool, str | None]:
         Tuple of (is_valid, error_message)
     """
     if not isinstance(priority, int):
-        return False, f"Priority must be integer, got {type(priority)}"
+        return False, f"Priority must be integer, got {type(priority)}"  # type: ignore[unreachable]
 
     if 1 <= priority <= 10:
         return True, None
@@ -279,7 +280,7 @@ def find_duplicate_symbols(tickers: list[dict], market: str) -> list[str]:
     if duplicates:
         logger.warning(f"Found duplicate symbols in {market} market: {duplicates}")
 
-    return list(duplicates)
+    return cast(list[str], list(duplicates))
 
 
 def find_cross_market_duplicates(config: dict) -> dict[str, list[str]]:
@@ -304,11 +305,7 @@ def find_cross_market_duplicates(config: dict) -> dict[str, list[str]]:
                 symbol_markets[symbol].append(market_name)
 
     # Find symbols in multiple markets
-    duplicates = {
-        symbol: markets
-        for symbol, markets in symbol_markets.items()
-        if len(markets) > 1
-    }
+    duplicates = {symbol: markets for symbol, markets in symbol_markets.items() if len(markets) > 1}
 
     if duplicates:
         logger.warning(f"Found tickers in multiple markets: {duplicates}")
@@ -379,7 +376,7 @@ def validate_ticker_entry(ticker: dict, market: str) -> tuple[bool, list[str]]:
     Returns:
         Tuple of (is_valid, list of errors)
     """
-    errors = []
+    errors: list[str] = []
 
     # Required fields
     required_fields = ["symbol", "name", "exchange", "sector", "active"]
@@ -419,16 +416,13 @@ def validate_ticker_entry(ticker: dict, market: str) -> tuple[bool, list[str]]:
             errors.append(f"Priority validation failed: {error}")
 
     # Validate active field type
-    if "active" in ticker:
-        if not isinstance(ticker["active"], bool):
-            errors.append(f"Active field must be boolean, got {type(ticker['active'])}")
+    if "active" in ticker and not isinstance(ticker["active"], bool):
+        errors.append(f"Active field must be boolean, got {type(ticker['active'])}")
 
     return len(errors) == 0, errors
 
 
-def validate_market_config(
-    market_config: dict, market_name: str
-) -> tuple[bool, list[str]]:
+def validate_market_config(market_config: dict, market_name: str) -> tuple[bool, list[str]]:
     """
     Validate entire market configuration.
 
@@ -439,7 +433,7 @@ def validate_market_config(
     Returns:
         Tuple of (is_valid, list of errors)
     """
-    errors = []
+    errors: list[str] = []
 
     # Check required fields
     if "currency" not in market_config:
@@ -460,9 +454,7 @@ def validate_market_config(
         is_valid, ticker_errors = validate_ticker_entry(ticker, market_name)
 
         if not is_valid:
-            errors.append(
-                f"Market {market_name}, ticker #{i + 1}: {', '.join(ticker_errors)}"
-            )
+            errors.append(f"Market {market_name}, ticker #{i + 1}: {', '.join(ticker_errors)}")
 
     # Check for duplicates
     duplicates = find_duplicate_symbols(tickers, market_name)
@@ -482,8 +474,8 @@ def validate_full_config(config: dict) -> tuple[bool, dict[str, list[str]]]:
     Returns:
         Tuple of (is_valid, {'errors': [...], 'warnings': [...]})
     """
-    errors = []
-    warnings = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     # Check top-level structure
     if "markets" not in config:
@@ -520,15 +512,15 @@ def validate_groups(groups: dict, markets: dict) -> dict[str, list[str]]:
     Returns:
         Dictionary with 'errors' and 'warnings' lists
     """
-    errors = []
-    warnings = []
+    errors: list[str] = []
+    warnings: list[str] = []
 
     if not groups:
         return {"errors": errors, "warnings": warnings}
 
     # Build symbol registry
     symbol_registry = set()
-    for market_name, market_config in markets.items():
+    for _market_name, market_config in markets.items():
         for ticker in market_config.get("tickers", []):
             symbol_registry.add(ticker.get("symbol"))
 
@@ -553,23 +545,16 @@ def validate_groups(groups: dict, markets: dict) -> dict[str, list[str]]:
             # Simple format
             for ticker in tickers:
                 if ticker not in symbol_registry:
-                    warnings.append(
-                        f"Group '{group_name}': Ticker '{ticker}' not found in any market"
-                    )
+                    warnings.append(f"Group '{group_name}': Ticker '{ticker}' not found in any market")
         elif isinstance(tickers, dict):
             # Market-specific format
             for market_name, market_tickers in tickers.items():
                 if market_name not in markets:
-                    warnings.append(
-                        f"Group '{group_name}': References unknown market '{market_name}'"
-                    )
+                    warnings.append(f"Group '{group_name}': References unknown market '{market_name}'")
 
                 for ticker in market_tickers:
                     if ticker not in symbol_registry:
-                        warnings.append(
-                            f"Group '{group_name}': Ticker '{ticker}' "
-                            f"not found in market '{market_name}'"
-                        )
+                        warnings.append(f"Group '{group_name}': Ticker '{ticker}' not found in market '{market_name}'")
 
     return {"errors": errors, "warnings": warnings}
 
@@ -632,9 +617,7 @@ def get_market_examples(market: str, count: int = 5) -> list[str]:
     return examples[:count]
 
 
-def print_validation_results(
-    is_valid: bool, errors: list[str], warnings: list[str]
-) -> None:
+def print_validation_results(is_valid: bool, errors: list[str], warnings: list[str]) -> None:
     """
     Print validation results in a human-readable format.
 

@@ -5,6 +5,7 @@ This module provides a central registry for all trading strategies,
 allowing dynamic strategy creation and configuration.
 """
 
+from typing import Any
 
 import structlog
 
@@ -66,16 +67,10 @@ class StrategyRegistry:
             >>> StrategyRegistry.register("my_strategy", MyStrategy)
         """
         if not overwrite and name in cls._strategies:
-            raise ValueError(
-                f"Strategy '{name}' already registered. "
-                f"Use overwrite=True to replace it."
-            )
+            raise ValueError(f"Strategy '{name}' already registered. Use overwrite=True to replace it.")
 
         if not issubclass(strategy_class, BaseStrategy):
-            raise TypeError(
-                f"Strategy class must inherit from BaseStrategy, "
-                f"got {strategy_class.__name__}"
-            )
+            raise TypeError(f"Strategy class must inherit from BaseStrategy, got {strategy_class.__name__}")
 
         cls._strategies[name] = strategy_class
 
@@ -113,9 +108,7 @@ class StrategyRegistry:
         """
         if name not in cls._strategies:
             available = ", ".join(cls.list_strategies())
-            raise ValueError(
-                f"Unknown strategy: '{name}'. Available strategies: {available}"
-            )
+            raise ValueError(f"Unknown strategy: '{name}'. Available strategies: {available}")
 
         strategy_class = cls._strategies[name]
         strategy = strategy_class(params=params or {})
@@ -163,10 +156,7 @@ class StrategyRegistry:
             'SMACrossoverStrategy'
         """
         if name not in cls._strategies:
-            raise ValueError(
-                f"Unknown strategy: '{name}'. "
-                f"Available: {', '.join(cls.list_strategies())}"
-            )
+            raise ValueError(f"Unknown strategy: '{name}'. Available: {', '.join(cls.list_strategies())}")
 
         return cls._strategies[name]
 
@@ -206,7 +196,7 @@ class StrategyRegistry:
         logger.debug("All strategies unregistered")
 
     @classmethod
-    def register_decorator(cls, name: str):
+    def register_decorator(cls, name: str) -> Any:
         """
         Decorator for registering strategies.
 
@@ -222,7 +212,7 @@ class StrategyRegistry:
             ...         pass
         """
 
-        def decorator(strategy_class: type[BaseStrategy]):
+        def decorator(strategy_class: type[BaseStrategy]) -> type[BaseStrategy]:
             cls.register(name, strategy_class)
             return strategy_class
 

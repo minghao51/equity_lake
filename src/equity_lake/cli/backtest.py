@@ -81,7 +81,7 @@ def parse_arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
@@ -105,7 +105,7 @@ def main():
         sys.exit(1)
 
     strategy_class = strategy_map[args.strategy]
-    strategy = strategy_class(params={})
+    strategy = strategy_class(params={})  # type: ignore[abstract]
 
     # Run backtest
     try:

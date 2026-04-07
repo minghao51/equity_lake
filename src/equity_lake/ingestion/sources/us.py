@@ -2,9 +2,9 @@
 
 from datetime import date, timedelta
 
-import pandas as pd  # type: ignore[import-untyped]
+import pandas as pd
 import structlog
-import yfinance as yf  # type: ignore[import-untyped]
+import yfinance as yf
 
 from equity_lake.config import TickerConfig
 from equity_lake.core.runtime import STANDARD_COLUMNS
@@ -83,24 +83,16 @@ class USEquityFetcher(MarketDataFetcher):
         if "sectors" in filters:
             sectors = filters["sectors"]
             if isinstance(sectors, list):
-                tickers = {
-                    ticker
-                    for sector in sectors
-                    for ticker in config.get_tickers_by_sector(str(sector), market="us")
-                }
-                result = list(tickers)
+                ticker_set = {ticker for sector in sectors for ticker in config.get_tickers_by_sector(str(sector), market="us")}
+                result = list(ticker_set)
                 logger.info("Filtered by sectors %s: %s tickers", sectors, len(result))
                 return result
 
         if "groups" in filters:
             groups = filters["groups"]
             if isinstance(groups, list):
-                tickers = {
-                    ticker
-                    for group in groups
-                    for ticker in config.get_tickers_by_group(str(group))
-                }
-                result = list(tickers)
+                ticker_set = {ticker for group in groups for ticker in config.get_tickers_by_group(str(group))}
+                result = list(ticker_set)
                 logger.info("Filtered by groups %s: %s tickers", groups, len(result))
                 return result
 
@@ -126,10 +118,7 @@ class USEquityFetcher(MarketDataFetcher):
         chunk_list = list(iterable)
         if not chunk_list:
             return [[]]
-        return [
-            chunk_list[i : i + chunk_size]
-            for i in range(0, len(chunk_list), chunk_size)
-        ]
+        return [chunk_list[i : i + chunk_size] for i in range(0, len(chunk_list), chunk_size)]
 
     def _get_fallback_tickers(self) -> list[str]:
         """Return the legacy hardcoded fallback list."""
@@ -232,9 +221,7 @@ class USEquityFetcher(MarketDataFetcher):
                 # drop valid data when the schema varies.
                 if not isinstance(data.columns, pd.MultiIndex):
                     base_frame = data.reset_index()
-                    tickers = (
-                        ticker_batch if len(ticker_batch) > 1 else [ticker_batch[0]]
-                    )
+                    tickers = ticker_batch if len(ticker_batch) > 1 else [ticker_batch[0]]
                     for ticker in tickers:
                         frame = base_frame.copy()
                         frame["ticker"] = ticker
@@ -267,9 +254,7 @@ class USEquityFetcher(MarketDataFetcher):
                 }
             )
             frame["date"] = pd.to_datetime(frame["date"]).dt.date
-            available_cols = [
-                column for column in STANDARD_COLUMNS if column in frame.columns
-            ]
+            available_cols = [column for column in STANDARD_COLUMNS if column in frame.columns]
             frame = frame[available_cols]
             frame = frame.dropna(how="all")
 

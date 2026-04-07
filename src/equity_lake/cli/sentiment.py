@@ -13,10 +13,10 @@ Usage:
 import argparse
 import os
 import sys
-from datetime import date, datetime, timedelta
 
 import structlog
 
+from equity_lake.core.dates import resolve_trading_date
 from equity_lake.core.logging import timer
 from equity_lake.core.runtime import (
     US_SOCIAL_SENTIMENT_DIR,
@@ -104,25 +104,20 @@ def validate_environment() -> bool:
     return True
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     args = parse_arguments()
 
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"
-    logger = setup_logging(
-        __name__, level=log_level, log_file="social_sentiment_ingestion.log"
-    )
+    logger = setup_logging(__name__, level=log_level, log_file="social_sentiment_ingestion.log")
 
     # Validate environment
     if not args.api_key and not validate_environment():
         sys.exit(1)
 
     # Determine trading date
-    if args.date:
-        trading_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-    else:
-        trading_date = date.today() - timedelta(days=1)
+    trading_date = resolve_trading_date(args.date)
 
     logger.info(f"{'=' * 60}")
     logger.info(f"Social Sentiment Ingestion - {trading_date}")

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date
+from typing import Any
 
 import pandas as pd
 import structlog
@@ -95,9 +96,7 @@ def fetch_market_with_timing(
             duration_seconds=round(duration, 3),
         )
 
-        return MarketFetchResult(
-            market=market, success=True, data=df, duration_seconds=round(duration, 3)
-        )
+        return MarketFetchResult(market=market, success=True, data=df, duration_seconds=round(duration, 3))
 
     except Exception as e:
         duration = time.time() - start_time
@@ -167,62 +166,60 @@ def fetch_markets_parallel(
 
     results = {}
 
-    with timer("parallel_market_fetching", market_count=len(markets)):
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all fetch jobs
-            future_to_market = {}
+    with timer("parallel_market_fetching", market_count=len(markets)), ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_market = {}
 
-            for market in markets:
-                if market not in fetch_func_map:
-                    logger.error(
-                        "fetch_function_not_found",
-                        market=market,
-                        available_markets=list(fetch_func_map.keys()),
-                    )
-                    results[market] = MarketFetchResult(
-                        market=market,
-                        success=False,
-                        error=f"No fetch function defined for market: {market}",
-                        duration_seconds=0.0,
-                    )
-                    continue
-
-                fetch_func, fetch_kwargs = fetch_func_map[market]
-
-                # Submit fetch job to thread pool
-                future = executor.submit(
-                    fetch_market_with_timing,
+        for market in markets:
+            if market not in fetch_func_map:
+                logger.error(
+                    "fetch_function_not_found",
                     market=market,
-                    trading_date=trading_date,
-                    fetch_func=fetch_func,
-                    fetch_func_kwargs=fetch_kwargs,
+                    available_markets=list(fetch_func_map.keys()),
                 )
+                results[market] = MarketFetchResult(
+                    market=market,
+                    success=False,
+                    error=f"No fetch function defined for market: {market}",
+                    duration_seconds=0.0,
+                )
+                continue
 
-                future_to_market[future] = market
+            fetch_func, fetch_kwargs = fetch_func_map[market]
 
-            # Collect results as they complete
-            completed_futures = as_completed(future_to_market, timeout=timeout_seconds)
+            # Submit fetch job to thread pool
+            future = executor.submit(
+                fetch_market_with_timing,
+                market=market,
+                trading_date=trading_date,
+                fetch_func=fetch_func,
+                fetch_func_kwargs=fetch_kwargs,
+            )
 
-            for future in completed_futures:
-                market = future_to_market[future]
+            future_to_market[future] = market
 
-                try:
-                    result = future.result()
-                    results[market] = result
+        # Collect results as they complete
+        completed_futures = as_completed(future_to_market, timeout=timeout_seconds)
 
-                except Exception as e:
-                    logger.error(
-                        "future_result_exception",
-                        market=market,
-                        error=str(e),
-                        exc_info=True,
-                    )
-                    results[market] = MarketFetchResult(
-                        market=market,
-                        success=False,
-                        error=f"Future execution failed: {str(e)}",
-                        duration_seconds=0.0,
-                    )
+        for future in completed_futures:
+            market = future_to_market[future]
+
+            try:
+                result = future.result()
+                results[market] = result
+
+            except Exception as e:
+                logger.error(
+                    "future_result_exception",
+                    market=market,
+                    error=str(e),
+                    exc_info=True,
+                )
+                results[market] = MarketFetchResult(
+                    market=market,
+                    success=False,
+                    error=f"Future execution failed: {str(e)}",
+                    duration_seconds=0.0,
+                )
 
     # Log summary
     successful = sum(1 for r in results.values() if r.success)
@@ -260,9 +257,7 @@ def fetch_markets_sequential(
     Note:
         This function is primarily for testing or fallback when parallel execution fails.
     """
-    logger.info(
-        "sequential_fetch_started", markets=markets, trading_date=str(trading_date)
-    )
+    logger.info("sequential_fetch_started", markets=markets, trading_date=str(trading_date))
 
     results = {}
 
@@ -290,7 +285,7 @@ def fetch_markets_sequential(
     return results
 
 
-def summarize_results(results: dict[str, MarketFetchResult]) -> dict[str, any]:
+def summarize_results(results: dict[str, MarketFetchResult]) -> dict[str, Any]:
     """
     Generate summary statistics from fetch results.
 
@@ -321,12 +316,8 @@ def summarize_results(results: dict[str, MarketFetchResult]) -> dict[str, any]:
         "success_rate": successful / len(results),
         "total_duration_seconds": round(total_duration, 3),
         "avg_duration_seconds": round(total_duration / len(results), 3),
-        "slowest_market": max(results.items(), key=lambda x: x[1].duration_seconds)[0]
-        if results
-        else None,
-        "fastest_market": min(results.items(), key=lambda x: x[1].duration_seconds)[0]
-        if results
-        else None,
+        "slowest_market": max(results.items(), key=lambda x: x[1].duration_seconds)[0] if results else None,
+        "fastest_market": min(results.items(), key=lambda x: x[1].duration_seconds)[0] if results else None,
     }
 
 

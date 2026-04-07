@@ -6,7 +6,7 @@ strategy execution, portfolio management, and performance analysis.
 """
 
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -14,6 +14,7 @@ import structlog
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
 from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.utils import extract_field_from_maybe_multiindex
 
 logger = structlog.get_logger(__name__)
 
@@ -155,7 +156,7 @@ class BacktestEngine:
             start_date=self.start_date,
             end_date=self.end_date,
             initial_cash=self.initial_cash,
-            final_cash=self.cash,
+            final_cash=cast(float, self.cash),
             equity_curve=self.equity_curve,
             trades=self.trades,
             metrics=self.metrics,
@@ -208,10 +209,7 @@ class BacktestEngine:
         equity_values = []
 
         # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_prices = data.xs("close", level="field", axis=1)
-        else:
-            close_prices = data
+        close_prices = extract_field_from_maybe_multiindex(data, "close")
 
         # Iterate through dates
         for date_idx in data.index:
@@ -242,15 +240,16 @@ class BacktestEngine:
     def _execute_entry(self, date_idx: pd.Timestamp, prices: pd.DataFrame) -> None:
         """Execute entry signals."""
         # Equal-weight position sizing
-        cash_per_stock = self.cash / len(
-            [t for t in self.tickers if t in prices.columns]
-        )
+        cash = self.cash
+        if cash is None:
+            return
+        cash_per_stock = cash / len([t for t in self.tickers if t in prices.columns])
 
         for ticker in self.tickers:
             if ticker in prices.columns:
                 price = prices.loc[date_idx, ticker]
 
-                if pd.notna(price) and self.cash >= cash_per_stock:
+                if pd.notna(price) and cash >= cash_per_stock:
                     # Buy shares
                     shares = int(cash_per_stock / price)
                     if shares > 0:
@@ -306,9 +305,7 @@ class BacktestEngine:
         # CAGR
         days = (self.equity_curve.index[-1] - self.equity_curve.index[0]).days
         years = days / 365.25
-        cagr = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) ** (
-            1 / years
-        ) - 1
+        cagr = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) ** (1 / years) - 1
 
         # Volatility (annualized)
         volatility = returns.std() * np.sqrt(252)
@@ -323,15 +320,8 @@ class BacktestEngine:
         max_drawdown = drawdown.min()
 
         # Win rate
-        if self.trades:
-            sell_trades = [t for t in self.trades if t["action"] == "SELL"]
-            if sell_trades:
-                # Simplified win calculation (needs entry price tracking)
-                win_rate = len(sell_trades) / len(self.trades) if self.trades else 0
-            else:
-                win_rate = 0
-        else:
-            win_rate = 0
+        sell_trades = [t for t in self.trades if t["action"] == "SELL"] if self.trades else []
+        win_rate = (len(sell_trades) / len(self.trades) * 100) if sell_trades else 0
 
         self.metrics = {
             "total_return": total_return,

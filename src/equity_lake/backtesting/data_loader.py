@@ -17,7 +17,10 @@ Usage:
     )
 """
 
+from __future__ import annotations
+
 from datetime import date
+from typing import Any, Self, cast
 
 import duckdb
 import pandas as pd
@@ -93,7 +96,7 @@ class BacktestDataLoader:
             cache_dir=str(CACHE_DIR) if cache_enabled else None,
         )
 
-    def _setup_views(self):
+    def _setup_views(self) -> None:
         """Create DuckDB views for each market."""
         logger.debug("Setting up market views...")
 
@@ -294,9 +297,7 @@ class BacktestDataLoader:
         # Fill missing values if requested
         if fill_method:
             # Forward fill within each ticker group
-            data = data.groupby("ticker", group_keys=False).apply(
-                lambda x: x.fillna(method=fill_method) if fill_method else x
-            )
+            data = data.groupby("ticker", group_keys=False).apply(lambda x: x.fillna(method=fill_method) if fill_method else x)
 
             # Backward fill remaining NaNs (e.g., at beginning)
             if fill_method == "ffill":
@@ -334,9 +335,7 @@ class BacktestDataLoader:
         # Create MultiIndex columns
         wide_df = pd.DataFrame(
             index=close_df.index,
-            columns=pd.MultiIndex.from_product(
-                [close_df.columns, ["close", "volume"]], names=["ticker", "field"]
-            ),
+            columns=pd.MultiIndex.from_product([close_df.columns, ["close", "volume"]], names=["ticker", "field"]),
         )
 
         # Fill in data
@@ -354,7 +353,7 @@ class BacktestDataLoader:
 
         return wide_df
 
-    @memory.cache
+    @memory.cache  # type: ignore[untyped-decorator]
     def load_cached(
         self,
         tickers: tuple[str, ...],
@@ -434,7 +433,7 @@ class BacktestDataLoader:
 
         try:
             result = self.conn.execute(sql).df()
-            return result["ticker"].tolist()
+            return cast(list[str], result["ticker"].tolist())
         except Exception as e:
             logger.error("Failed to get tickers", market=market, error=str(e))
             return []
@@ -490,21 +489,21 @@ class BacktestDataLoader:
 
         return (None, None)
 
-    def clear_cache(self):
+    def clear_cache(self) -> None:
         """Clear the joblib cache."""
         memory.clear()
         logger.info("Cache cleared")
 
-    def close(self):
+    def close(self) -> None:
         """Close the DuckDB connection."""
         self.conn.close()
         logger.debug("DuckDB connection closed")
 
-    def __enter__(self):
+    def __enter__(self) -> Self:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         """Context manager exit."""
         self.close()
 

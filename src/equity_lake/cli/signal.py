@@ -4,6 +4,7 @@ import argparse
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from equity_lake.core.runtime import setup_logging
 from equity_lake.signals.config import load_signal_config, load_watchlist
@@ -12,9 +13,9 @@ from equity_lake.signals.scanner import SignalScanner
 logger = setup_logging(__name__)
 
 
-def parse_scan_args(args: argparse.Namespace) -> dict:
+def parse_scan_args(args: argparse.Namespace) -> dict[str, Any]:
     """Parse and validate scan command arguments."""
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
 
     if args.date:
         try:
@@ -40,7 +41,7 @@ def parse_scan_args(args: argparse.Namespace) -> dict:
     return kwargs
 
 
-def cmd_scan(args: argparse.Namespace):
+def cmd_scan(args: argparse.Namespace) -> None:
     """Run signal scan command."""
     kwargs = parse_scan_args(args)
 
@@ -86,7 +87,7 @@ def cmd_scan(args: argparse.Namespace):
         scanner.save_history(signals)
 
 
-def main():
+def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Signal scanning for equity watchlists",
@@ -96,9 +97,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # scan subcommand
-    scan_parser = subparsers.add_parser(
-        "scan", help="Scan watchlist and generate signals"
-    )
+    scan_parser = subparsers.add_parser("scan", help="Scan watchlist and generate signals")
 
     scan_parser.add_argument(
         "--format",
@@ -108,9 +107,7 @@ def main():
         help="Output format (default: table)",
     )
 
-    scan_parser.add_argument(
-        "--date", "-d", help="Target date (YYYY-MM-DD, default: yesterday)"
-    )
+    scan_parser.add_argument("--date", "-d", help="Target date (YYYY-MM-DD, default: yesterday)")
 
     scan_parser.add_argument("--watchlist", "-w", help="Path to watchlist config")
 
@@ -118,13 +115,9 @@ def main():
 
     scan_parser.add_argument("--output", "-o", help="Save output to file")
 
-    scan_parser.add_argument(
-        "--dry-run", action="store_true", help="Don't save to history"
-    )
+    scan_parser.add_argument("--dry-run", action="store_true", help="Don't save to history")
 
-    scan_parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    scan_parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
 

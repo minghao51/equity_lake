@@ -83,9 +83,7 @@ class SignalScanner:
                     signals.append(signal)
             except Exception as e:
                 # Log but continue with other generators
-                print(
-                    f"Warning: {generator.__class__.__name__} failed for {ticker}: {e}"
-                )
+                print(f"Warning: {generator.__class__.__name__} failed for {ticker}: {e}")
                 continue
 
         return signals
@@ -106,7 +104,7 @@ class SignalScanner:
 
         return formatter.format(signals)
 
-    def save_history(self, signals: list[Signal]):
+    def save_history(self, signals: list[Signal]) -> None:
         """Save signals to Parquet history.
 
         Args:

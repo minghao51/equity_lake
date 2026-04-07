@@ -88,9 +88,7 @@ class TestNewsParquetWrite:
                 {
                     "ticker": ["AAPL", "GOOGL"],
                     "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(
-                        ["2024-01-01 10:00", "2024-01-01 11:00"]
-                    ),
+                    "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
                     "source": ["Reuters", "Bloomberg"],
                     "headline": ["Test headline 1", "Test headline 2"],
                     "summary": ["Test summary 1", "Test summary 2"],
@@ -160,9 +158,7 @@ class TestNewsParquetWrite:
                 {
                     "ticker": ["AAPL", "GOOGL"],
                     "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(
-                        ["2024-01-01 10:00", "2024-01-01 11:00"]
-                    ),
+                    "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
                     "source": ["Reuters", "Bloomberg"],
                     "headline": ["Test 1", "Test 2"],
                     "summary": ["Summary 1", "Summary 2"],
@@ -187,9 +183,7 @@ class TestNewsParquetWrite:
                 {
                     "ticker": ["AAPL", "GOOGL"],
                     "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(
-                        ["2024-01-01 10:00", "2024-01-01 11:00"]
-                    ),
+                    "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
                     "source": ["Reuters", "Bloomberg"],
                     "headline": ["Test 1", "Test 2"],
                     "summary": ["Summary 1", "Summary 2"],

@@ -185,9 +185,7 @@ class Portfolio:
                 # Update existing position
                 pos = self.positions[execution.ticker]
                 total_shares = pos.shares + execution.quantity
-                total_cost = (pos.shares * pos.avg_cost) + (
-                    execution.quantity * execution.price
-                )
+                total_cost = (pos.shares * pos.avg_cost) + (execution.quantity * execution.price)
                 pos.avg_cost = total_cost / total_shares if total_shares > 0 else 0
                 pos.shares = total_shares
             else:
@@ -211,9 +209,7 @@ class Portfolio:
                     del self.positions[execution.ticker]
 
             # Add cash (proceeds minus commission)
-            self.cash += (
-                abs(execution.quantity) * execution.price
-            ) - execution.commission
+            self.cash += (abs(execution.quantity) * execution.price) - execution.commission
 
         logger.debug(
             "Execution added to portfolio",
@@ -240,11 +236,7 @@ class Portfolio:
         total_value = self.cash
 
         for ticker, position in self.positions.items():
-            price = (
-                prices.get(ticker, position.current_price)
-                if prices
-                else position.current_price
-            )
+            price = prices.get(ticker, position.current_price) if prices else position.current_price
             total_value += position.shares * price
 
         return total_value
@@ -294,7 +286,7 @@ class Portfolio:
 
         return equity_curve.pct_change().dropna()
 
-    def get_summary(self) -> dict[str, object]:
+    def get_summary(self) -> dict[str, float | int]:
         """
         Get portfolio summary.
 
@@ -315,7 +307,7 @@ class Portfolio:
         # Calculate additional metrics
         returns = self.get_returns()
 
-        summary = {
+        summary: dict[str, float | int] = {
             "initial_cash": self.initial_cash,
             "current_cash": self.cash,
             "total_value": latest.total_value,
@@ -342,7 +334,7 @@ class Portfolio:
         cummax = equity_curve.cummax()
         drawdown = (equity_curve - cummax) / cummax
 
-        return drawdown.min()
+        return float(drawdown.min())
 
     def _calculate_sharpe_ratio(self, returns: pd.Series) -> float:
         """Calculate Sharpe ratio (assuming 4% risk-free rate)."""
@@ -356,7 +348,7 @@ class Portfolio:
         if annual_vol == 0:
             return 0.0
 
-        return (annual_return - risk_free_rate) / annual_vol
+        return float((annual_return - risk_free_rate) / annual_vol)
 
     def reset(self) -> None:
         """Reset portfolio to initial state."""

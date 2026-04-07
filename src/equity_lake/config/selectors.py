@@ -84,10 +84,7 @@ def get_all_tickers(
     active_only: bool = True,
 ) -> dict[str, list[str]]:
     """Return all tickers grouped by market."""
-    return {
-        market: get_tickers_for_market(config, market, active_only=active_only)
-        for market in get_markets(config)
-    }
+    return {market: get_tickers_for_market(config, market, active_only=active_only) for market in get_markets(config)}
 
 
 def get_tickers_by_tag(
@@ -240,7 +237,7 @@ def list_tickers(
     market: str | None = None,
     active_only: bool = True,
     include_metadata: bool = False,
-) -> list[str] | dict[str, dict[str, Any]]:
+) -> list[str] | dict[str, list[str]] | dict[str, dict[str, Any]]:
     """List configured tickers with optional metadata."""
     if include_metadata:
         result: dict[str, dict[str, Any]] = {}
@@ -291,9 +288,7 @@ def get_stats(config: TickerConfigRoot | None) -> dict[str, Any]:
 
     for market_name, market_config in config.markets.items():
         active_tickers = [ticker for ticker in market_config.tickers if ticker.active]
-        inactive_tickers = [
-            ticker for ticker in market_config.tickers if not ticker.active
-        ]
+        inactive_tickers = [ticker for ticker in market_config.tickers if not ticker.active]
         stats["markets"][market_name] = {
             "currency": market_config.currency,
             "total_tickers": len(market_config.tickers),

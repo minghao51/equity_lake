@@ -119,6 +119,7 @@ class BaseStrategy(ABC):
         """
         pass
 
+    @abstractmethod
     def finalize(self) -> None:
         """
         Finalize the strategy after backtesting.

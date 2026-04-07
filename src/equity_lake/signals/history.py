@@ -11,7 +11,7 @@ from equity_lake.signals.models import Signal
 SIGNALS_DIR = Path("data/signals")
 
 
-def save_signals_to_parquet(signals: list[Signal], target_date: date):
+def save_signals_to_parquet(signals: list[Signal], target_date: date) -> None:
     """Save signals to partitioned Parquet storage.
 
     Args:

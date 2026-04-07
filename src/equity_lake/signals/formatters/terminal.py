@@ -36,7 +36,7 @@ class TerminalFormatter(SignalFormatter):
         lines.append("")
 
         # Group by action for summary
-        by_action = defaultdict(list)
+        by_action: defaultdict[str, list[Signal]] = defaultdict(list)
         for signal in signals:
             by_action[signal.action].append(signal)
 
@@ -64,24 +64,14 @@ class TerminalFormatter(SignalFormatter):
                             signal.ticker,
                             signal.action,
                             f"{signal.confidence:.0f}",
-                            (
-                                signal.reasoning[:50] + "..."
-                                if len(signal.reasoning) > 50
-                                else signal.reasoning
-                            ),
+                            (signal.reasoning[:50] + "..." if len(signal.reasoning) > 50 else signal.reasoning),
                         ]
                     )
-                lines.append(
-                    tabulate(
-                        table_data, headers=["Ticker", "Action", "Conf", "Reasoning"]
-                    )
-                )
+                lines.append(tabulate(table_data, headers=["Ticker", "Action", "Conf", "Reasoning"]))
             else:
                 # Fallback: simple table
                 for signal in type_signals:
-                    lines.append(
-                        f"  {signal.ticker:10s} | {signal.action:6s} | {signal.confidence:5.0f} | {signal.reasoning}"
-                    )
+                    lines.append(f"  {signal.ticker:10s} | {signal.action:6s} | {signal.confidence:5.0f} | {signal.reasoning}")
 
             lines.append("")
 
