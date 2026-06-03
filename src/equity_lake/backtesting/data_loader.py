@@ -27,9 +27,11 @@ import pandas as pd
 import structlog
 from joblib import Memory
 
-from equity_lake.core.runtime import (
+from equity_lake.core.paths import (
     CN_ASHARE_DIR,
     HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
     LOGS_DIR,
     US_EQUITY_DIR,
 )
@@ -71,6 +73,8 @@ class BacktestDataLoader:
         "us": US_EQUITY_DIR,
         "cn": CN_ASHARE_DIR,
         "hk_sg": HK_SG_EQUITY_DIR,
+        "jpx": JPX_EQUITY_DIR,
+        "krx": KRX_EQUITY_DIR,
     }
 
     def __init__(
@@ -237,26 +241,46 @@ class BacktestDataLoader:
         # Build UNION ALL query for selected markets
         union_queries = []
         for market in markets:
-            if market in ["us", "cn", "hk_sg"]:
-                view_name = f"backtest_{market}"
-                union_queries.append(f"SELECT {', '.join(columns)} FROM {view_name}")
+            view_name = f"backtest_{market}"
+            data_dir = self.MARKET_DIRS.get(market)
+
+            # Validate directory exists for JPX/KRX markets
+            if market in ["jpx", "krx"] and (not data_dir or not data_dir.exists()):
+                logger.warning(
+                    "Market data directory not found",
+                    market=market,
+                    path=str(data_dir) if data_dir else "None",
+                    hint="Run equity ingest command first to fetch market data",
+                )
+                continue
+
+            union_queries.append(f"SELECT {', '.join(columns)} FROM {view_name}")
 
         if not union_queries:
-            logger.warning("No valid markets specified")
+            logger.error(
+                "No valid markets with data found",
+                requested_markets=markets,
+                available_markets=[m for m, d in self.MARKET_DIRS.items() if d.exists()],
+            )
             return pd.DataFrame()
 
+        self.conn.register("selected_tickers", pd.DataFrame({"ticker": tickers}))
         sql = f"""
-        {" UNION ALL ".join(union_queries)}
-        WHERE ticker IN ({", ".join([f"'{t}'" for t in tickers])})
-        AND date >= '{start_date}'
-        AND date <= '{end_date}'
+        WITH unioned AS (
+            {" UNION ALL ".join(union_queries)}
+        )
+        SELECT unioned.*
+        FROM unioned
+        JOIN selected_tickers USING (ticker)
+        WHERE date >= ?
+          AND date <= ?
         ORDER BY ticker, date
         """
 
         logger.debug("Executing query", sql_preview=sql[:200] + "...")
 
         try:
-            data = self.conn.execute(sql).df()
+            data = self.conn.execute(sql, [start_date, end_date]).df()
             logger.info(
                 "Query executed successfully",
                 rows=len(data),
@@ -296,12 +320,13 @@ class BacktestDataLoader:
 
         # Fill missing values if requested
         if fill_method:
-            # Forward fill within each ticker group
-            data = data.groupby("ticker", group_keys=False).apply(lambda x: x.fillna(method=fill_method) if fill_method else x)
-
-            # Backward fill remaining NaNs (e.g., at beginning)
+            value_columns = [column for column in data.columns if column not in {"ticker", "date"}]
             if fill_method == "ffill":
-                data = data.groupby("ticker", group_keys=False).fillna(method="bfill")
+                data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].ffill()
+            elif fill_method == "bfill":
+                data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].bfill()
+            if fill_method == "ffill":
+                data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].bfill()
 
         # Drop rows with all NaN prices
         price_cols = ["open", "high", "low", "close", "adj_close"]
@@ -328,29 +353,10 @@ class BacktestDataLoader:
         Returns:
             Wide-format DataFrame with MultiIndex columns
         """
-        # Pivot close prices and volume
-        close_df = data.pivot(index="date", columns="ticker", values="close")
-        volume_df = data.pivot(index="date", columns="ticker", values="volume")
-
-        # Create MultiIndex columns
-        wide_df = pd.DataFrame(
-            index=close_df.index,
-            columns=pd.MultiIndex.from_product([close_df.columns, ["close", "volume"]], names=["ticker", "field"]),
-        )
-
-        # Fill in data
-        for ticker in close_df.columns:
-            wide_df[(ticker, "close")] = close_df[ticker]
-            wide_df[(ticker, "volume")] = volume_df[ticker]
-
-        # Optionally include other OHLC fields
-        for field in ["open", "high", "low", "adj_close"]:
-            if field in data.columns:
-                field_df = data.pivot(index="date", columns="ticker", values=field)
-                for ticker in field_df.columns:
-                    if ticker in wide_df.columns.get_level_values(0):
-                        wide_df[(ticker, field)] = field_df[ticker]
-
+        value_columns = [column for column in ["open", "high", "low", "close", "volume", "adj_close"] if column in data.columns]
+        wide_df = data.set_index(["date", "ticker"])[value_columns].unstack("ticker")
+        wide_df = wide_df.swaplevel(0, 1, axis=1).sort_index(axis=1)
+        wide_df.columns.names = ["ticker", "field"]
         return wide_df
 
     @memory.cache  # type: ignore[untyped-decorator]

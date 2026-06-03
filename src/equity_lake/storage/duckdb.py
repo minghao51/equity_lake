@@ -26,11 +26,13 @@ from typing import Any
 import duckdb
 import pandas as pd
 
-from equity_lake.core.runtime import (
+from equity_lake.core.logging import setup_logging
+from equity_lake.core.paths import (
     CN_ASHARE_DIR,
     HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
     US_EQUITY_DIR,
-    setup_logging,
 )
 
 # Logger configuration
@@ -45,6 +47,14 @@ logger = logging.getLogger(__name__)
 class EquityDataDB:
     """DuckDB connection manager for equity data queries."""
 
+    MARKET_VIEWS = [
+        ("us_equity", US_EQUITY_DIR, "us"),
+        ("cn_ashare", CN_ASHARE_DIR, "cn"),
+        ("hk_sg_equity", HK_SG_EQUITY_DIR, "hk_sg"),
+        ("jpx_equity", JPX_EQUITY_DIR, "jpx"),
+        ("krx_equity", KRX_EQUITY_DIR, "krx"),
+    ]
+
     def __init__(self, db_path: str | Path | None = ":memory:"):
         """
         Initialize DuckDB connection.
@@ -54,20 +64,15 @@ class EquityDataDB:
         """
         self.db_path = db_path if db_path is not None else ":memory:"
         self.con = duckdb.connect(self.db_path)
+        self.available_views: list[str] = []
         self._setup_views()
 
     def _setup_views(self) -> None:
         """Create unified views across all markets."""
         logger.info("Setting up unified views...")
 
-        # Create view for US equities
-        self._create_market_view("us_equity", US_EQUITY_DIR, "us")
-
-        # Create view for China A-shares
-        self._create_market_view("cn_ashare", CN_ASHARE_DIR, "cn")
-
-        # Create view for HK/SG equities
-        self._create_market_view("hk_sg_equity", HK_SG_EQUITY_DIR, "hk_sg")
+        for view_name, data_dir, market_label in self.MARKET_VIEWS:
+            self._create_market_view(view_name, data_dir, market_label)
 
         # Create unified view across all markets
         self._create_unified_view()
@@ -93,19 +98,17 @@ class EquityDataDB:
         try:
             self.con.execute(sql)
             logger.debug(f"Created view: {view_name}")
+            self.available_views.append(view_name)
         except Exception as e:
             logger.error(f"Failed to create view {view_name}: {e}")
 
     def _create_unified_view(self) -> None:
         """Create unified view across all markets."""
-        sql = """
-        CREATE OR REPLACE VIEW equity_all AS
-        SELECT * FROM us_equity
-        UNION ALL
-        SELECT * FROM cn_ashare
-        UNION ALL
-        SELECT * FROM hk_sg_equity
-        """
+        if not self.available_views:
+            self.con.execute("CREATE OR REPLACE VIEW equity_all AS SELECT NULL::VARCHAR AS ticker WHERE FALSE")
+            return
+
+        sql = "CREATE OR REPLACE VIEW equity_all AS " + " UNION ALL ".join(f"SELECT * FROM {view_name}" for view_name in self.available_views)
 
         try:
             self.con.execute(sql)
@@ -146,16 +149,23 @@ class QueryExamples:
         logger.info("Running Query 1: Latest Data Summary")
 
         sql = """
+        WITH market_latest AS (
+            SELECT market, MAX(date) AS latest_date
+            FROM equity_all
+            GROUP BY market
+        )
         SELECT
-            market,
-            date as latest_date,
+            equity_all.market,
+            equity_all.date as latest_date,
             COUNT(DISTINCT ticker) as num_tickers,
             COUNT(*) as total_records,
             SUM(volume) as total_volume
         FROM equity_all
-        WHERE date = (SELECT MAX(date) FROM equity_all WHERE market = equity_all.market)
-        GROUP BY market, date
-        ORDER BY market
+        JOIN market_latest
+            ON equity_all.market = market_latest.market
+           AND equity_all.date = market_latest.latest_date
+        GROUP BY equity_all.market, equity_all.date
+        ORDER BY equity_all.market
         """
 
         return self.db.query(sql)
@@ -165,7 +175,10 @@ class QueryExamples:
         logger.info(f"Running Query 2: Top {days}-Day Volume Leaders")
 
         sql = f"""
-        WITH latest_volume AS (
+        WITH data_latest AS (
+            SELECT MAX(date) AS latest_date FROM equity_all
+        ),
+        latest_volume AS (
             SELECT
                 ticker,
                 market,
@@ -173,7 +186,7 @@ class QueryExamples:
                 AVG(volume) as avg_daily_volume,
                 COUNT(DISTINCT date) as trading_days
             FROM equity_all
-            WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+            WHERE date >= (SELECT latest_date FROM data_latest) - INTERVAL '{days} days'
             GROUP BY ticker, market
         )
         SELECT
@@ -194,7 +207,10 @@ class QueryExamples:
         logger.info(f"Running Query 3: Top {days}-Day Gainers & Losers")
 
         sql = f"""
-        WITH price_change AS (
+        WITH data_latest AS (
+            SELECT MAX(date) AS latest_date FROM equity_all
+        ),
+        price_change AS (
             SELECT
                 ticker,
                 market,
@@ -202,7 +218,7 @@ class QueryExamples:
                 LAST(close ORDER BY date) as end_price,
                 (LAST(close ORDER BY date) - FIRST(close ORDER BY date)) / FIRST(close ORDER BY date) * 100 as pct_change
             FROM equity_all
-            WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+            WHERE date >= (SELECT latest_date FROM data_latest) - INTERVAL '{days} days'
             GROUP BY ticker, market
             HAVING COUNT(DISTINCT date) >= {max(1, days - 2)}
         )
@@ -280,7 +296,10 @@ class QueryExamples:
         logger.info(f"Running Query 6: {days}-Day Volatility Analysis")
 
         sql = f"""
-        WITH daily_returns AS (
+        WITH data_latest AS (
+            SELECT MAX(date) AS latest_date FROM equity_all
+        ),
+        daily_returns AS (
             SELECT
                 ticker,
                 market,
@@ -289,7 +308,7 @@ class QueryExamples:
                 LAG(close) OVER (PARTITION BY ticker ORDER BY date) as prev_close,
                 (close - LAG(close) OVER (PARTITION BY ticker ORDER BY date)) / LAG(close) OVER (PARTITION BY ticker ORDER BY date) as daily_return
             FROM equity_all
-            WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+            WHERE date >= (SELECT latest_date FROM data_latest) - INTERVAL '{days} days'
         ),
         volatility_stats AS (
             SELECT
@@ -350,7 +369,10 @@ class QueryExamples:
         logger.info(f"Running Query 8: {days}-Day Price Range Analysis")
 
         sql = f"""
-        WITH price_ranges AS (
+        WITH data_latest AS (
+            SELECT MAX(date) AS latest_date FROM equity_all
+        ),
+        price_ranges AS (
             SELECT
                 ticker,
                 market,
@@ -360,7 +382,7 @@ class QueryExamples:
                 (LAST(close ORDER BY date) - MIN(close)) / MIN(close) * 100 as pct_from_low,
                 (MAX(close) - LAST(close ORDER BY date)) / MAX(close) * 100 as pct_from_high
             FROM equity_all
-            WHERE date >= CURRENT_DATE - INTERVAL '{days} days'
+            WHERE date >= (SELECT latest_date FROM data_latest) - INTERVAL '{days} days'
             GROUP BY ticker, market
             HAVING COUNT(DISTINCT date) >= {max(5, days // 2)}
         )

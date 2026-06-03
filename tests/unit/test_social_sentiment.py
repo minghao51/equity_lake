@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 import pytest
 
-from equity_lake.core.runtime import SOCIAL_COLUMNS
+from equity_lake.core.schemas import SOCIAL_COLUMNS
 from equity_lake.ingestion.sources.sentiment import FinnhubSocialSentimentFetcher
 
 

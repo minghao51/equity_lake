@@ -1,5 +1,11 @@
 # Structure
 
+> **Note (2026-04):** This file is stale. It references deleted `scripts/`
+> directories, lists only 3 CLI entrypoints (the repo now has 12+), and
+> describes a `docs/api/` directory that does not exist. For an accurate,
+> concise view of the current project layout, see
+> [Project Structure](../../developer-guide/project-structure.md).
+
 **Last Updated**: 2026-03-05
 **Project**: Equity EOD Data Pipeline
 
@@ -7,8 +13,7 @@
 
 ```
 equity_lake/
-├── .planning/                 # Planning and documentation
-│   └── codebase/             # Codebase analysis (this file)
+├── .planning/                 # (removed — see docs/developer/)
 │
 ├── data/                     # Data directory (git-ignored)
 │   └── lake/                # Hive-partitioned Parquet data lake
@@ -116,7 +121,7 @@ equity_lake/
 ├── CLAUDE.md              # AI assistant guide
 ├── README.md              # Project overview
 ├── pyproject.toml         # Project configuration
-├── requirements.txt       # Dependencies (pip-compatible)
+├── requirements.txt       # (removed — deps in pyproject.toml)
 ├── Makefile               # Common commands
 ├── Dockerfile             # Container image
 └── docker-compose.yml     # Container orchestration
@@ -716,7 +721,7 @@ docs/
 
 ---
 
-### Planning Documentation (`.planning/`)
+### Planning Documentation (`.planning/` — removed)
 
 **Purpose**: Development planning and analysis
 
@@ -763,8 +768,8 @@ FROM python:3.11-slim
 RUN pip install uv
 
 # Install dependencies
-COPY pyproject.toml requirements.txt .
-RUN uv pip install -r requirements.txt
+COPY pyproject.toml .
+RUN uv pip install .
 
 # Copy application
 COPY src/ src/equity_lake/

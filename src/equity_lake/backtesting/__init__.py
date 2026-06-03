@@ -12,6 +12,7 @@ from equity_lake.backtesting.strategy import (
     StrategyRegistry,
     get_strategy,
 )
+from equity_lake.backtesting.vector_engine import VectorBacktestEngine
 
 __all__ = [
     "BacktestDataLoader",
@@ -19,5 +20,6 @@ __all__ = [
     "BacktestResult",
     "BaseStrategy",
     "StrategyRegistry",
+    "VectorBacktestEngine",
     "get_strategy",
 ]

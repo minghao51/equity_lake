@@ -314,7 +314,7 @@ This document tracks technical debt, bugs, security issues, performance concerns
 
 **Existing**:
 - `CLAUDE.md`: Comprehensive AI assistant guide
-- Codebase docs: This directory (`.planning/codebase/`)
+- Codebase docs: `docs/developer/architecture/`
 - Function docstrings: Google-style
 
 **Gaps**:
@@ -440,7 +440,7 @@ uv sync --upgrade
 - `pandas`: Major version changes may break code
 
 **Recommendations**:
-- Pin major versions in `requirements.txt`
+- Pin major versions in `pyproject.toml`
 - Test thoroughly before updating
 - Subscribe to project release notes
 

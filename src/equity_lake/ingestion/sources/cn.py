@@ -9,7 +9,7 @@ import structlog
 
 from equity_lake.config import TickerConfig
 from equity_lake.core.logging import timer
-from equity_lake.core.runtime import STANDARD_COLUMNS
+from equity_lake.core.schemas import STANDARD_COLUMNS
 from equity_lake.ingestion.models import FilterConfig
 from equity_lake.ingestion.sources.base import MarketDataFetcher
 

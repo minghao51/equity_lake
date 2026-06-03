@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
@@ -10,6 +11,19 @@ import yaml
 from croniter import croniter
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_SETTINGS_PATH = PROJECT_ROOT / "config" / "settings.yaml"
+
+
+def _resolve_config_path(config_path: str | Path) -> Path:
+    path = Path(config_path).expanduser()
+    if path.is_absolute():
+        return path
+    candidate = PROJECT_ROOT / path
+    if candidate.exists():
+        return candidate
+    return path.resolve()
 
 
 class ProjectSettings(BaseModel):
@@ -93,7 +107,7 @@ class SettingsOverrides(BaseSettings):
         extra="ignore",
     )
 
-    config_path: str = "config/settings.yaml"
+    config_path: str = str(DEFAULT_SETTINGS_PATH)
     environment: Literal["development", "production", "testing"] | None = None
     data_dir: str | None = None
     lake_dir: str | None = None
@@ -156,7 +170,7 @@ def _build_override_payload(overrides: SettingsOverrides) -> dict[str, Any]:
 def load_settings(config_path: str | Path | None = None) -> AppSettings:
     """Load application settings from YAML with optional env overrides."""
     overrides = SettingsOverrides()
-    resolved_path = Path(config_path or overrides.config_path)
+    resolved_path = _resolve_config_path(config_path or overrides.config_path)
 
     if not resolved_path.exists():
         raise FileNotFoundError(f"Settings file not found: {resolved_path}")
@@ -177,6 +191,9 @@ def get_settings() -> AppSettings:
 def clear_settings_cache() -> None:
     """Clear cached settings for tests or explicit reload flows."""
     get_settings.cache_clear()
+    runtime_module = sys.modules.get("equity_lake.core.runtime")
+    if runtime_module is not None and hasattr(runtime_module, "refresh_runtime_state"):
+        runtime_module.refresh_runtime_state()
 
 
 __all__ = [

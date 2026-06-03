@@ -12,7 +12,8 @@ from equity_lake.ingestion.sources import (
     USEquityFetcher,
 )
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
-from equity_lake.ingestion_jobs import run_ingestion_job
+
+run_ingestion_job = run_daily_ingestion
 
 __all__ = [
     "CNAshareFetcher",

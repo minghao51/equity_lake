@@ -1,9 +1,32 @@
 # equity-lake
 
+*local first, setup once*
 Bootstrap from S3 Parquet → sync once → append daily updates locally → query with DuckDB
 
 ## Goal
 
+[ External Market APIs / S3 Ingest ]
+                       │
+                       ▼
+           ┌──────────────────────┐
+           │   Ingestion Block    │ ──(Write Parquet)──> [ DuckDB Raw / Data Lake ]
+           └──────────────────────┘
+                       │
+                       ▼
+           ┌──────────────────────┐
+           │ Feature Engineering  │ <──(SQL / Polars Engine)
+           └──────────────────────┘
+                       │
+                       ▼
+           ┌──────────────────────┐
+           │  ML / Signal Engine  │ ──(Append History)──> [ DuckDB Signals Layer ]
+           └──────────────────────┘
+                       │
+                       ▼
+           ┌──────────────────────┐
+           │ Backtest / Dashboard │ ──(Static Export)──> [ GitHub Pages Site ]
+           └──────────────────────┘
+           
 1. **Bootstrap** from a complete, partitioned Parquet dataset on AWS S3 (US equities)
 2. **Sync once** to local disk (`data/lake/`)
 3. **Append daily EOD updates** (US, China A-shares, HK, SG) using lightweight Python libraries
@@ -48,19 +71,15 @@ Daily EOD Append (cron)
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.12 or 3.13
 - [uv](https://github.com/astral-sh/uv) installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 - AWS CLI (for S3 access) or s5cmd (recommended for faster sync)
 
 ### 1. Setup Environment
 
 ```bash
-# Create virtual environment
-uv venv
-source .venv/bin/activate
-
-# Install dependencies
-uv pip install -r requirements.txt
+# Create virtual environment and install all dependencies
+uv sync --all-extras
 
 # Create local env file
 cp .env.example .env
@@ -68,6 +87,8 @@ cp .env.example .env
 
 Credential setup and optional API keys are documented in
 [docs/20260406-api-keys.md](docs/20260406-api-keys.md).
+Core app defaults live in `config/settings.yaml`, and `EQUITY_LAKE_*`
+variables in `.env` override them when set.
 
 ### 2. Configure S3 Access
 
@@ -191,22 +212,21 @@ Hosting and Pages workflow details live in
 ```text
 equity-lake/
 ├── src/equity_lake/    # Application package
-│   ├── cli/               # Stable CLI entrypoints
+│   ├── cli/               # Unified CLI entrypoints
 │   ├── core/              # Runtime, paths, logging
 │   ├── ingestion/         # Market ingestion workflows
 │   ├── storage/           # DuckDB + S3 sync
 │   ├── features/          # Feature engineering
 │   ├── ml/                # Forecasting and ML jobs
-│   └── monitoring/        # Health checks
+│   ├── backtesting/       # Strategy backtesting (loop + vectorbt)
+│   └── dashboard/         # Static + Streamlit dashboards
 ├── tests/                  # Unit and integration tests
 ├── config/                 # Config files and examples
 ├── docs/                   # Audience-based documentation
 │   ├── getting-started/
 │   ├── user-guide/
-│   ├── developer-guide/
-│   ├── architecture/
+│   ├── developer/           # Architecture, history, decisions
 │   └── reports/
-├── archive/                # Historical documentation snapshots
 ├── data/                   # Local runtime artifacts (ignored)
 ├── logs/                   # Local runtime logs (ignored)
 └── README.md               # Project overview
@@ -218,7 +238,7 @@ equity-lake/
 
 ```bash
 make setup      # Create venv and install core dependencies
-uv sync --extra ml  # Install ML dependencies required by make pipeline
+make dev-setup  # Install ALL dependencies (equivalent to uv sync --all-extras)
 make sync       # One-time S3 sync
 make daily      # Run daily append
 make pipeline   # Run full ML pipeline (ingestion → features → ML)
@@ -229,12 +249,24 @@ make clean      # Clean cache and temp files
 make docker-up  # Start Docker container
 ```
 
-**New Pipeline Commands:**
+**Unified CLI (recommended):**
 
 ```bash
-uv run equity-pipeline --help
-uv run equity-monitor --help
-uv run equity-query --help
+equity --help              # See all available commands
+equity ingest --help       # Ingest market data
+equity pipeline --help     # Run full ML pipeline
+equity bootstrap sample    # Generate sample data for testing
+equity signal scan         # Scan watchlist for signals
+equity backtest --help     # Backtest strategies
+equity dashboard serve     # Launch local Streamlit dashboard
+```
+
+**Legacy commands still work but are deprecated:**
+```bash
+equity-daily     →  equity ingest
+equity-pipeline  →  equity pipeline
+equity-signal    →  equity signal scan
+equity-backtest  →  equity backtest
 ```
 
 ---
@@ -331,18 +363,22 @@ uv run equity-monitor
 ### Quick Start Guides
 
 - **[Quick Start Guide](docs/getting-started/quickstart.md)** - Get started in 5 minutes
-- **[Pipeline Usage Guide](docs/user-guide/pipeline.md)** - Complete ML pipeline documentation
+- **[Pipeline Usage Guide](docs/user-guide/pipeline.md)** - Commands, config, scheduling, monitoring
 - **[Signal Scanner Guide](docs/user-guide/signals.md)** - Signal scanning and generation
 
 ### Comprehensive Guides
 
-- **[Operations Guide](docs/user-guide/operations.md)** - Day-to-day usage documentation
 - **[Backtesting Guide](docs/user-guide/backtesting.md)** - Strategy testing and examples
-- **[Architecture Docs](docs/architecture/)** - System structure and subsystem design
-- **[Developer Guide](docs/developer-guide/project-structure.md)** - Code layout and contribution orientation
-- **[Documentation Index](docs/README.md)** - Entry point for active project docs
+- **[CLI Reference](docs/user-guide/20260406-cli-reference.md)** - Config, dashboard, loader, and update commands
+- **[API Keys And Credentials](docs/20260406-api-keys.md)** - Optional API keys by feature
+- **[Dashboard Hosting](docs/user-guide/20260406-dashboard-hosting.md)** - Static build and GitHub Pages deployment
+- **[Architecture Docs](docs/developer/architecture/)** - System structure and subsystem design
+- **[Project Structure](docs/developer-guide/project-structure.md)** - Package layout and import policy
+- **[Technical Roadmap](docs/technical_roadmap.md)** - Phased enhancement plan
+- **[Roadmap Coverage](docs/20260406-roadmap-coverage.md)** - Current beta vs. roadmap status
+- **[Documentation Index](docs/README.md)** - Entry point for all active project docs
 - **[Reports](docs/reports/README.md)** - Current analyses and operational writeups
-- **[Historical Archive](archive/docs-history/README.md)** - Superseded implementation notes
+- **[Historical Archive](docs/developer/history/)** - Superseded implementation notes and decision records
 
 ---
 
@@ -375,7 +411,9 @@ Contributions welcome! Please:
 ## Roadmap
 
 - [ ] Real-time intraday data option
-- [ ] More Asian markets (JP, KR)
-- [ ] Data quality validation
-- [ ] Web dashboard for monitoring
-- [ ] Backtesting framework integration
+- [x] More Asian markets (JP, KR)
+- [x] Data quality validation (Streamlit dashboard)
+- [x] Web dashboard for monitoring (Streamlit + static HTML)
+- [x] Backtesting framework integration (vectorbt)
+- [x] Unified CLI
+- [x] Sample data generator

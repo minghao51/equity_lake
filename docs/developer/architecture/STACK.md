@@ -14,7 +14,7 @@
 - 10-100x faster dependency resolution than pip
 - Zero-config virtual environment management
 - Built-in dependency caching
-- Compatible with existing `pyproject.toml` and `requirements.txt`
+- Compatible with existing `pyproject.toml`
 
 ## Core Dependencies
 
@@ -76,7 +76,7 @@
 
 ### Python Configuration
 - **`.python-version`**: Specifies Python 3.12
-- **`requirements.txt`**: Legacy pip-compatible dependency list
+- **`pyproject.toml`**: Dependency management via uv
 
 ### Container Configuration
 - **`Dockerfile`**: Multi-stage Python container image

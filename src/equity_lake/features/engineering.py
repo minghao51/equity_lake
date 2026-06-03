@@ -19,11 +19,8 @@ import pandas as pd
 import structlog
 from tqdm import tqdm
 
-from equity_lake.core.logging import timer
-from equity_lake.core.runtime import (
-    LAKE_DIR,
-    setup_logging,
-)
+from equity_lake.core.logging import setup_logging, timer
+from equity_lake.core.paths import LAKE_DIR
 from equity_lake.features.indicators import atr, bollinger_bands, macd, roc, rsi
 from equity_lake.features.pipeline import FeaturePipeline
 
@@ -70,6 +67,14 @@ class FeatureEngineer:
             SELECT
                 'hk_sg' as market, ticker, date, open, high, low, close, volume
             FROM read_parquet('{LAKE_DIR}/hk_sg_equity/**/*.parquet', hive_partitioning=1)
+            UNION ALL
+            SELECT
+                'jpx' as market, ticker, date, open, high, low, close, volume
+            FROM read_parquet('{LAKE_DIR}/jpx_equity/**/*.parquet', hive_partitioning=1)
+            UNION ALL
+            SELECT
+                'krx' as market, ticker, date, open, high, low, close, volume
+            FROM read_parquet('{LAKE_DIR}/krx_equity/**/*.parquet', hive_partitioning=1)
         """)
         logger.info("DuckDB views created successfully")
 
@@ -287,8 +292,11 @@ class FeatureEngineer:
 
         # Compute all features by ticker group
         result_dfs = []
+        ticker_groups = {ticker: ticker_df.copy() for ticker, ticker_df in df.groupby("ticker", sort=False)}
         for ticker in tqdm(tickers, desc="Computing features"):
-            ticker_df = df[df["ticker"] == ticker].copy()
+            ticker_df = ticker_groups.get(ticker)
+            if ticker_df is None:
+                continue
 
             # Skip if not enough data
             if len(ticker_df) < 60:  # Minimum 60 days for rolling calculations
@@ -366,6 +374,7 @@ class FeatureEngineer:
             start_date,
             end_date,
         )
+        ticker_filter = tuple(sorted(features_df["ticker"].unique()))
 
         # Load sentiment data from news parquet files
         sentiment_query = f"""
@@ -379,7 +388,8 @@ class FeatureEngineer:
                 SUM(CASE WHEN sentiment_label = 'neutral' THEN 1 ELSE 0 END) as neutral_count,
                 STDDEV(sentiment_score) as sentiment_std
             FROM read_parquet('{LAKE_DIR}/us_news/**/*.parquet', hive_partitioning=1)
-            WHERE date BETWEEN '{start_date}' AND '{end_date}'
+            WHERE ticker IN {ticker_filter}
+            AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
         """
 
@@ -466,6 +476,7 @@ class FeatureEngineer:
             start_date,
             end_date,
         )
+        ticker_filter = tuple(sorted(features_df["ticker"].unique()))
 
         # Load social sentiment data from parquet files
         sentiment_query = f"""
@@ -479,7 +490,8 @@ class FeatureEngineer:
                 SUM(CASE WHEN source = 'reddit' THEN mention_count ELSE 0 END) as social_reddit_mentions,
                 SUM(CASE WHEN source = 'twitter' THEN mention_count ELSE 0 END) as social_twitter_mentions
             FROM read_parquet('{LAKE_DIR}/us_social_sentiment/**/*.parquet', hive_partitioning=1)
-            WHERE date BETWEEN '{start_date}' AND '{end_date}'
+            WHERE ticker IN {ticker_filter}
+            AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
         """
 

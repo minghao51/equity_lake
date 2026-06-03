@@ -8,8 +8,7 @@ from datetime import datetime
 
 import structlog
 
-from equity_lake.core.logging import timer
-from equity_lake.core.runtime import setup_logging
+from equity_lake.core.logging import setup_logging, timer
 from equity_lake.ml.forecasting import PriceForecaster
 
 logger = structlog.get_logger()

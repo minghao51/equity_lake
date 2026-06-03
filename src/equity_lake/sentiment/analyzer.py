@@ -1,6 +1,6 @@
 """Sentiment analysis for financial text using VADER and FinBERT."""
 
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 import pandas as pd
@@ -17,14 +17,14 @@ except ImportError:
 logger = structlog.get_logger()
 
 
-class SentimentMethod(str, Enum):
+class SentimentMethod(StrEnum):
     """Supported sentiment analysis methods."""
 
     VADER = "vader"
     FINBERT = "finbert"
 
 
-class SentimentLabel(str, Enum):
+class SentimentLabel(StrEnum):
     """Standardized sentiment labels."""
 
     POSITIVE = "positive"

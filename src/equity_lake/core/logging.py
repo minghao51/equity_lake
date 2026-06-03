@@ -21,6 +21,8 @@ import structlog
 
 # Context variable for correlation ID (request tracking)
 _correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
+_configured_log_files: set[Path] = set()
+_logging_initialized = False
 
 
 def get_correlation_id() -> str:
@@ -102,12 +104,18 @@ def setup_structured_logging(
         >>> logger = setup_structured_logging(level="INFO", log_file=Path("logs/app.log"))
         >>> logger.info("fetch_started", market="us", ticker_count=500)
     """
-    # Configure standard library logging
-    logging.basicConfig(
-        format="%(message)s",
-        stream=sys.stdout if console else None,
-        level=getattr(logging, level.upper()),
-    )
+    global _logging_initialized
+
+    if not _logging_initialized:
+        logging.basicConfig(
+            format="%(message)s",
+            stream=sys.stdout if console else None,
+            level=getattr(logging, level.upper()),
+            force=False,
+        )
+        _logging_initialized = True
+    else:
+        logging.getLogger().setLevel(getattr(logging, level.upper()))
 
     # Build structlog processors
     processors: list[Any] = [
@@ -145,22 +153,19 @@ def setup_structured_logging(
     # Add file handler if specified
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
+        resolved_log_file = log_file.resolve()
+        if resolved_log_file not in _configured_log_files:
+            file_handler = logging.FileHandler(resolved_log_file)
+            file_handler.setLevel(getattr(logging, level.upper()))
 
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(getattr(logging, level.upper()))
+            if json_output:
+                file_formatter = logging.Formatter("%(message)s")
+            else:
+                file_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-        if json_output:
-            # JSON output for files
-            file_formatter = logging.Formatter("%(message)s")
-        else:
-            # Human-readable for files
-            file_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-
-        file_handler.setFormatter(file_formatter)
-
-        # Add handler to root logger
-        root_logger = logging.getLogger()
-        root_logger.addHandler(file_handler)
+            file_handler.setFormatter(file_formatter)
+            logging.getLogger().addHandler(file_handler)
+            _configured_log_files.add(resolved_log_file)
 
     return logger  # type: ignore[no-any-return]
 
@@ -292,7 +297,7 @@ def setup_logging(name: str, level: str = "INFO", log_file: str | None = None) -
     Returns:
         Logger instance (standard library logger for backward compatibility)
     """
-    from equity_lake.core.runtime import LOGS_DIR
+    from equity_lake.core.paths import LOGS_DIR
 
     # Determine if we should use JSON output (check environment or default to True)
     json_output = True  # Default to JSON for production

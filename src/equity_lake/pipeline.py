@@ -8,9 +8,9 @@ from typing import Any
 
 import pandas as pd
 
-from equity_lake.core.runtime import LAKE_DIR
+from equity_lake.core.paths import LAKE_DIR
 from equity_lake.features import run_feature_job
-from equity_lake.ingestion import run_ingestion_job
+from equity_lake.ingestion.orchestrator import run_daily_ingestion
 from equity_lake.ml import run_prediction_job
 
 
@@ -20,7 +20,7 @@ def run_ingestion_stage(
     dry_run: bool = False,
 ) -> dict[str, bool]:
     """Run the ingestion stage directly in-process."""
-    return run_ingestion_job(
+    return run_daily_ingestion(
         trading_date=trading_date,
         markets=markets,
         dry_run=dry_run,

@@ -45,7 +45,7 @@ uv sync --group dev
 If you want an env file, copy the checked-in template:
 
 ```bash
-cp config/example.env .env
+cp .env.example .env
 ```
 
 ## Core Commands
@@ -117,19 +117,29 @@ Primary config files:
 - `config/tickers.yaml`: market/ticker metadata, priorities, groups, tags
 - `config/watchlist.yaml`: signal-scanner watchlist
 - `config/signals.yaml`: signal thresholds and aggregation settings
-- `config/example.env`: optional runtime env template
+- `config/settings.yaml`: default application settings
+- `.env.example`: canonical env template for local `.env`
 
-The runtime config loader currently reads these env vars:
+Configuration precedence is:
 
-- `DB_PATH`
-- `LOG_LEVEL`
-- `LOG_DIR`
-- `DATA_DIR`
-- `MARKETS`
-- `DEV_MODE`
-- `USE_TEST_DATA`
-- `API_RETRY_ATTEMPTS`
-- `API_RETRY_DELAY`
+1. `config/settings.yaml` provides the default app settings.
+2. `EQUITY_LAKE_*` variables in `.env` override matching YAML settings.
+3. Feature-specific env vars such as API keys and object-storage credentials are
+   read directly by the commands that need them.
+
+Application settings that support `EQUITY_LAKE_*` overrides include:
+
+- `EQUITY_LAKE_CONFIG_PATH`
+- `EQUITY_LAKE_ENVIRONMENT`
+- `EQUITY_LAKE_DATA_DIR`
+- `EQUITY_LAKE_LAKE_DIR`
+- `EQUITY_LAKE_LOGS_DIR`
+- `EQUITY_LAKE_MODELS_DIR`
+- `EQUITY_LAKE_DB_PATH`
+- `EQUITY_LAKE_DASHBOARD_OUTPUT_DIR`
+- `EQUITY_LAKE_DASHBOARD_TITLE`
+- `EQUITY_LAKE_SCHEDULE_CRON`
+- `EQUITY_LAKE_SCHEDULE_TIMEZONE`
 
 Additional features such as macro, news, and social sentiment may read their own
 API-specific env vars when invoked.
@@ -224,8 +234,60 @@ tail -f logs/run_pipeline.log
 tail -f logs/monitor_pipeline.log
 ```
 
+## Scheduling
+
+Example weekday cron jobs:
+
+```bash
+0 19 * * 1-5 cd /path/to/equity-lake && uv run equity-daily >> logs/cron-daily.log 2>&1
+0 20 * * 1-5 cd /path/to/equity-lake && uv run equity-monitor >> logs/cron-monitor.log 2>&1
+```
+
+Full three-stage pipeline instead of ingestion only:
+
+```bash
+0 19 * * 1-5 cd /path/to/equity-lake && uv run equity-pipeline >> logs/cron-pipeline.log 2>&1
+```
+
+## Data Source Reality Check
+
+Current shipped behavior:
+
+- US, HK, SG pricing: `yfinance`
+- China pricing: `CNHybridFetcher` with `akshare` enabled, `efinance` disabled by default
+- Macro, news, and social sentiment are separate optional workflows
+
+Older docs describing China as fully migrated to `efinance`, or a built-in
+dashboard for monitoring, are not current.
+
+## Common Fixes
+
+Missing dependencies:
+
+```bash
+uv sync
+uv sync --extra ml
+```
+
+Check available CLI options:
+
+```bash
+uv run equity-daily --help
+uv run equity-pipeline --help
+uv run equity-query --help
+uv run equity-monitor --help
+uv run equity-signal --help
+```
+
+Validate ticker config before a run:
+
+```bash
+uv run equity-daily --list-stats
+uv run equity-daily --list-tickers --verbose
+```
+
 ## What Is Not Included
 
-- No built-in Streamlit or web dashboard ships with the current repo
+- A built-in Streamlit and static dashboard ship with the current repo
 - No `requirements.txt`-based install is the source of truth; use `uv sync`
-- No `.env.example` file exists at the repository root; use `config/example.env`
+- `config/example.env` has been removed; use `.env.example`

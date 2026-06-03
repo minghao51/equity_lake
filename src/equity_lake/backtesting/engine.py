@@ -3,6 +3,10 @@ Core backtesting engine.
 
 This module provides the main backtesting engine that orchestrates
 strategy execution, portfolio management, and performance analysis.
+
+DEPRECATED: This loop-based engine is maintained for validation and
+comparison. For production use, prefer VectorBacktestEngine (vector_engine.py)
+which provides 10-100x speedup via vectorbt.
 """
 
 from datetime import date
@@ -66,6 +70,7 @@ class BacktestEngine:
         initial_cash: float = 100_000.0,
         markets: list[str] | None = None,
         config: dict[str, Any] | None = None,
+        preloaded_data: pd.DataFrame | None = None,
     ):
         """
         Initialize the backtesting engine.
@@ -86,6 +91,7 @@ class BacktestEngine:
         self.initial_cash = initial_cash
         self.markets = markets or ["us", "cn", "hk_sg"]
         self.config = config or {}
+        self.preloaded_data = preloaded_data
 
         # Initialize data loader
         self.data_loader = BacktestDataLoader()
@@ -93,6 +99,7 @@ class BacktestEngine:
         # Portfolio state (will be set during run())
         self.cash: float | None = None
         self.positions: dict[str, float] = {}
+        self.cost_basis: dict[str, float] = {}
         self.equity_curve: pd.Series | None = None
         self.trades: list[dict[str, Any]] = []
 
@@ -183,6 +190,9 @@ class BacktestEngine:
             markets=self.markets,
         )
 
+        if self.preloaded_data is not None:
+            return self.preloaded_data.copy()
+
         data = self.data_loader.load(
             tickers=self.tickers,
             start_date=self.start_date,
@@ -206,13 +216,19 @@ class BacktestEngine:
         # Initialize portfolio
         self.cash = self.initial_cash
         self.positions = {ticker: 0.0 for ticker in self.tickers}
+        self.cost_basis = {ticker: 0.0 for ticker in self.tickers}
         equity_values = []
+        equity_index: list[pd.Timestamp] = []
 
         # Extract close prices
         close_prices = extract_field_from_maybe_multiindex(data, "close")
+        entries, exits = self._extract_signal_matrices(signals, close_prices.columns.tolist())
 
         # Iterate through dates
         for date_idx in data.index:
+            if date_idx < pd.Timestamp(self.start_date) or date_idx > pd.Timestamp(self.end_date):
+                continue
+
             # Update portfolio value
             portfolio_value = self.cash
             for ticker in self.tickers:
@@ -222,30 +238,63 @@ class BacktestEngine:
                         portfolio_value += self.positions[ticker] * price
 
             equity_values.append(portfolio_value)
+            equity_index.append(date_idx)
 
             # Process signals
-            if date_idx in signals.index:
-                row = signals.loc[date_idx]
+            if date_idx in entries.index:
+                active_entries = [ticker for ticker, active in entries.loc[date_idx].items() if active]
+                if active_entries:
+                    self._execute_entry(date_idx, close_prices, active_entries)
 
-                # Process entry signals
-                if row.get("entry", False):
-                    self._execute_entry(date_idx, close_prices)
+            if date_idx in exits.index:
+                active_exits = [ticker for ticker, active in exits.loc[date_idx].items() if active]
+                if active_exits:
+                    self._execute_exit(date_idx, close_prices, active_exits)
 
-                # Process exit signals
-                if row.get("exit", False):
-                    self._execute_exit(date_idx, close_prices)
+        self.equity_curve = pd.Series(equity_values, index=equity_index)
 
-        self.equity_curve = pd.Series(equity_values, index=data.index)
+    def _extract_signal_matrices(self, signals: pd.DataFrame, tickers: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Extract per-ticker entry and exit matrices from strategy output."""
+        entries = pd.DataFrame(False, index=signals.index, columns=tickers)
+        exits = pd.DataFrame(False, index=signals.index, columns=tickers)
 
-    def _execute_entry(self, date_idx: pd.Timestamp, prices: pd.DataFrame) -> None:
+        if isinstance(signals.columns, pd.MultiIndex) and "signal" in signals.columns.names:
+            if "entry" in signals.columns.get_level_values("signal"):
+                entry_frame = signals.xs("entry", level="signal", axis=1).reindex(columns=tickers, fill_value=False)
+                entries.loc[entry_frame.index, entry_frame.columns] = entry_frame.fillna(False).astype(bool)
+            if "exit" in signals.columns.get_level_values("signal"):
+                exit_frame = signals.xs("exit", level="signal", axis=1).reindex(columns=tickers, fill_value=False)
+                exits.loc[exit_frame.index, exit_frame.columns] = exit_frame.fillna(False).astype(bool)
+            return entries, exits
+
+        if "entry" in signals.columns:
+            broadcast_entries = pd.DataFrame(
+                {ticker: signals["entry"].fillna(False).astype(bool) for ticker in tickers},
+                index=signals.index,
+            )
+            entries.loc[:, :] = broadcast_entries
+        if "exit" in signals.columns:
+            broadcast_exits = pd.DataFrame(
+                {ticker: signals["exit"].fillna(False).astype(bool) for ticker in tickers},
+                index=signals.index,
+            )
+            exits.loc[:, :] = broadcast_exits
+        return entries, exits
+
+    def _execute_entry(self, date_idx: pd.Timestamp, prices: pd.DataFrame, active_tickers: list[str]) -> None:
         """Execute entry signals."""
         # Equal-weight position sizing
         cash = self.cash
         if cash is None:
             return
-        cash_per_stock = cash / len([t for t in self.tickers if t in prices.columns])
+        tradable_tickers = [ticker for ticker in active_tickers if ticker in prices.columns]
+        if not tradable_tickers:
+            return
+        cash_per_stock = cash / len(tradable_tickers)
 
-        for ticker in self.tickers:
+        for ticker in tradable_tickers:
+            if self.positions.get(ticker, 0) > 0:
+                continue
             if ticker in prices.columns:
                 price = prices.loc[date_idx, ticker]
 
@@ -256,6 +305,7 @@ class BacktestEngine:
                         cost = shares * price
                         self.cash -= cost
                         self.positions[ticker] = self.positions.get(ticker, 0) + shares
+                        self.cost_basis[ticker] = float(price)
 
                         self.trades.append(
                             {
@@ -268,9 +318,9 @@ class BacktestEngine:
                             }
                         )
 
-    def _execute_exit(self, date_idx: pd.Timestamp, prices: pd.DataFrame) -> None:
+    def _execute_exit(self, date_idx: pd.Timestamp, prices: pd.DataFrame, active_tickers: list[str]) -> None:
         """Execute exit signals."""
-        for ticker in self.tickers:
+        for ticker in active_tickers:
             if ticker in prices.columns:
                 price = prices.loc[date_idx, ticker]
                 position = self.positions.get(ticker, 0)
@@ -278,8 +328,10 @@ class BacktestEngine:
                 if position > 0 and pd.notna(price):
                     # Sell all shares
                     proceeds = position * price
+                    pnl = proceeds - (position * self.cost_basis.get(ticker, 0.0))
                     self.cash += proceeds
                     self.positions[ticker] = 0
+                    self.cost_basis[ticker] = 0.0
 
                     self.trades.append(
                         {
@@ -289,6 +341,7 @@ class BacktestEngine:
                             "shares": position,
                             "price": price,
                             "value": proceeds,
+                            "pnl": pnl,
                         }
                     )
 
@@ -299,13 +352,15 @@ class BacktestEngine:
 
         returns = self.equity_curve.pct_change().dropna()
 
-        # Total return
         total_return = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) - 1
 
-        # CAGR
         days = (self.equity_curve.index[-1] - self.equity_curve.index[0]).days
         years = days / 365.25
-        cagr = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) ** (1 / years) - 1
+        if years == 0:
+            cagr = 0.0
+        else:
+            ann_factor = (self.equity_curve.iloc[-1] / self.equity_curve.iloc[0]) ** (1 / years)
+            cagr = ann_factor - 1
 
         # Volatility (annualized)
         volatility = returns.std() * np.sqrt(252)
@@ -319,9 +374,9 @@ class BacktestEngine:
         drawdown = (self.equity_curve - cummax) / cummax
         max_drawdown = drawdown.min()
 
-        # Win rate
         sell_trades = [t for t in self.trades if t["action"] == "SELL"] if self.trades else []
-        win_rate = (len(sell_trades) / len(self.trades) * 100) if sell_trades else 0
+        winning_trades = [trade for trade in sell_trades if trade.get("pnl", 0.0) > 0]
+        win_rate = (len(winning_trades) / len(sell_trades)) if sell_trades else 0.0
 
         self.metrics = {
             "total_return": total_return,

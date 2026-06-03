@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 import structlog
 
-from equity_lake.core.runtime import NEWS_COLUMNS
+from equity_lake.core.schemas import NEWS_COLUMNS
 from equity_lake.ingestion.sources.base import MarketDataFetcher
 from equity_lake.sentiment import SentimentAnalyzer
 

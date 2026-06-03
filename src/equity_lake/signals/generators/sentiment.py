@@ -5,7 +5,7 @@ from datetime import date, timedelta
 
 import duckdb
 
-from equity_lake.core.runtime import US_NEWS_DIR
+from equity_lake.core.paths import US_NEWS_DIR
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
 

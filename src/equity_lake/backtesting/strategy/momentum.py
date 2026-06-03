@@ -143,19 +143,9 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         # Forward fill signals (hold positions between rebalances)
         signals = signals.ffill()
 
-        # Convert to format expected by engine
-        # Aggregate signals across tickers
         entry_signals = signals.notna() & signals
         exit_signals = signals.notna() & ~signals
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals.any(axis=1),
-                "exit": exit_signals.any(axis=1),
-            }
-        )
-
-        return result
+        return self.build_signal_frame(entry_signals, exit_signals)
 
 
 class TimeSeriesMomentumStrategy(BaseStrategy):
@@ -217,14 +207,7 @@ class TimeSeriesMomentumStrategy(BaseStrategy):
         # Generate exit signals (momentum turns negative)
         exit_signals = (past_returns < 0).astype(int).diff() == 1
 
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals.any(axis=1),
-                "exit": exit_signals.any(axis=1),
-            }
-        )
-
-        return result
+        return self.build_signal_frame(entry_signals, exit_signals)
 
 
 __all__ = [

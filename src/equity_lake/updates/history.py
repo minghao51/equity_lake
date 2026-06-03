@@ -8,7 +8,7 @@ from typing import cast
 
 import pandas as pd
 
-from equity_lake.core.runtime import DATA_DIR
+from equity_lake.core.paths import DATA_DIR
 
 
 class UpdateHistory:

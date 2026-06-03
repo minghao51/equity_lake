@@ -88,16 +88,15 @@ class WalkForwardValidator:
         for i, (train_data, test_data) in enumerate(folds):
             logger.info(f"Running fold {i + 1}/{len(folds)}")
 
-            # Initialize strategy on training data
-            strategy.initialize(train_data)
+            combined_data = pd.concat([train_data, test_data]).sort_index()
 
-            # Run backtest on test data
             engine = BacktestEngine(
                 strategy=strategy,
                 tickers=tickers,
                 start_date=test_data.index.min(),
                 end_date=test_data.index.max(),
                 initial_cash=initial_cash,
+                preloaded_data=combined_data,
             )
 
             try:

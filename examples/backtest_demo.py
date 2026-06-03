@@ -176,9 +176,7 @@ def test_data_loader(data_info: dict[str, Any]) -> TestResults:
     results = TestResults()
 
     if not data_info["sample_tickers"]:
-        results.add_fail(
-            "DataLoader Initialization", "No sample tickers available for testing"
-        )
+        results.add_fail("DataLoader Initialization", "No sample tickers available for testing")
         return results
 
     try:
@@ -208,29 +206,17 @@ def test_data_loader(data_info: dict[str, Any]) -> TestResults:
         else:
             results.add_pass(
                 "Data Loading",
-                (
-                    f"Loaded {data.shape[0]} rows for "
-                    f"{len(data_info['sample_tickers'])} tickers "
-                    f"in {load_duration:.2f}s"
-                ),
+                (f"Loaded {data.shape[0]} rows for {len(data_info['sample_tickers'])} tickers in {load_duration:.2f}s"),
             )
             results.add_performance("Data Loading", load_duration)
 
             # Inspect data structure
             print("\n  Data structure:")
             print(f"    Shape: {data.shape}")
-            print(
-                f"    Index: {data.index.name} "
-                f"({data.index.min()} to {data.index.max()})"
-            )
+            print(f"    Index: {data.index.name} ({data.index.min()} to {data.index.max()})")
             if isinstance(data.columns, pd.MultiIndex):
-                print(
-                    "    Columns: MultiIndex with "
-                    f"{len(data.columns.get_level_values(0).unique())} tickers"
-                )
-                print(
-                    f"    Fields: {data.columns.get_level_values(1).unique().tolist()}"
-                )
+                print(f"    Columns: MultiIndex with {len(data.columns.get_level_values(0).unique())} tickers")
+                print(f"    Fields: {data.columns.get_level_values(1).unique().tolist()}")
             else:
                 print(f"    Columns: {data.columns.tolist()}")
 
@@ -299,22 +285,14 @@ def test_sma_crossover_strategy(data_info: dict[str, Any]) -> TestResults:
         if result.total_return != 0 or result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "SMA Crossover Results",
-                (
-                    f"Return: {result.total_return:.2%}, "
-                    f"Trades: {result.metrics.get('num_trades', 0)}"
-                ),
+                (f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}"),
             )
         else:
-            results.add_warning(
-                "SMA Crossover produced zero returns and no trades - "
-                "this might be expected for the test period"
-            )
+            results.add_warning("SMA Crossover produced zero returns and no trades - this might be expected for the test period")
 
         # Check equity curve
         if result.equity_curve is not None and not result.equity_curve.empty:
-            results.add_pass(
-                "Equity Curve Generation", f"{len(result.equity_curve)} data points"
-            )
+            results.add_pass("Equity Curve Generation", f"{len(result.equity_curve)} data points")
         else:
             results.add_fail("Equity Curve Generation", "Equity curve is empty")
 
@@ -386,16 +364,10 @@ def test_momentum_strategy(data_info: dict[str, Any]) -> TestResults:
         if result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "Momentum Results",
-                (
-                    f"Return: {result.total_return:.2%}, "
-                    f"Trades: {result.metrics.get('num_trades', 0)}"
-                ),
+                (f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}"),
             )
         else:
-            results.add_warning(
-                "Momentum produced no trades - this is expected with only 2 tickers "
-                "and a short lookback period"
-            )
+            results.add_warning("Momentum produced no trades - this is expected with only 2 tickers and a short lookback period")
 
     except Exception as e:
         results.add_fail("Momentum Strategy", str(e))
@@ -461,16 +433,10 @@ def test_mean_reversion_strategy(data_info: dict[str, Any]) -> TestResults:
         if result.metrics.get("num_trades", 0) > 0:
             results.add_pass(
                 "Mean Reversion Results",
-                (
-                    f"Return: {result.total_return:.2%}, "
-                    f"Trades: {result.metrics.get('num_trades', 0)}"
-                ),
+                (f"Return: {result.total_return:.2%}, Trades: {result.metrics.get('num_trades', 0)}"),
             )
         else:
-            results.add_warning(
-                "Mean Reversion produced no trades - this might be expected "
-                "if no BB signals occurred in the test period"
-            )
+            results.add_warning("Mean Reversion produced no trades - this might be expected if no BB signals occurred in the test period")
 
     except Exception as e:
         results.add_fail("Mean Reversion Strategy", str(e))
@@ -505,10 +471,7 @@ def main():
             print("❌ CANNOT PROCEED: No test data available")
             print("=" * 70)
             print("\nTo fix this issue:")
-            print(
-                "  1. Generate test data using: "
-                "uv run python -m equity_lake.devtools.test_data"
-            )
+            print("  1. Generate test data using: uv run python -m equity_lake.devtools.test_data")
             print("  2. Or run daily ingestion: make daily")
             print("  3. Or sync from S3: make sync")
             return
@@ -562,18 +525,11 @@ def main():
     print("PRODUCTION READINESS ASSESSMENT")
     print("=" * 70)
 
-    critical_failures = [
-        name
-        for name, _ in all_results.failed_tests
-        if "Initialization" in name or "Data Loading" in name
-    ]
+    critical_failures = [name for name, _ in all_results.failed_tests if "Initialization" in name or "Data Loading" in name]
 
     if not all_results.failed_tests:
         print("✅ READY: All core functionality is working correctly")
-        print(
-            "\nThe backtesting framework is ready for production use "
-            "with the following notes:"
-        )
+        print("\nThe backtesting framework is ready for production use with the following notes:")
         print("  • Data loading from Parquet files works correctly")
         print("  • All three tested strategies execute successfully")
         print("  • Performance metrics are calculated properly")

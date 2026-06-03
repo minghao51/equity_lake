@@ -2,13 +2,10 @@
 
 from datetime import date, timedelta
 
-import pytest
-
 from equity_lake.signals.config import load_signal_config, load_watchlist
 from equity_lake.signals.scanner import SignalScanner
 
 
-@pytest.mark.integration
 def test_full_scan_workflow():
     """Test complete scan workflow with real configs."""
     # Load actual configs
@@ -35,7 +32,6 @@ def test_full_scan_workflow():
     assert isinstance(table_output, str)
 
 
-@pytest.mark.integration
 def test_signal_history_roundtrip():
     """Test saving and loading signal history."""
     watchlist = load_watchlist()

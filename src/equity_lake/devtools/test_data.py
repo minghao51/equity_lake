@@ -28,12 +28,8 @@ from typing import cast
 import numpy as np
 import pandas as pd
 
-from equity_lake.core.runtime import (
-    CN_ASHARE_DIR,
-    HK_SG_EQUITY_DIR,
-    US_EQUITY_DIR,
-    setup_logging,
-)
+from equity_lake.core.logging import setup_logging
+from equity_lake.core.paths import CN_ASHARE_DIR, HK_SG_EQUITY_DIR, US_EQUITY_DIR
 
 # Logger configuration
 logger = logging.getLogger(__name__)

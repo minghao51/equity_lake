@@ -1,22 +1,65 @@
 """Parquet writer helpers for ingestion."""
 
+import os
+import tempfile
 from datetime import date
 from typing import Any
 
 import pandas as pd
 import structlog
+from filelock import FileLock
 
-from equity_lake.core.runtime import (
+from equity_lake.core.paths import (
     CN_ASHARE_DIR,
     HK_SG_EQUITY_DIR,
-    NEWS_COLUMNS,
-    SOCIAL_COLUMNS,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
     US_EQUITY_DIR,
     US_NEWS_DIR,
     US_SOCIAL_SENTIMENT_DIR,
 )
+from equity_lake.core.schemas import NEWS_COLUMNS, SOCIAL_COLUMNS
 
 logger = structlog.get_logger()
+
+
+def _dedupe_key_columns(market: str) -> list[str]:
+    if market == "us_news":
+        return ["url"]
+    if market == "us_social_sentiment":
+        return ["ticker", "datetime", "source"]
+    return ["ticker", "date"]
+
+
+def _merge_partition_frames(existing_df: pd.DataFrame, incoming_df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """Merge an incoming partition update onto existing rows."""
+    if existing_df.empty:
+        return incoming_df.copy()
+    if incoming_df.empty:
+        return existing_df.copy()
+
+    key_columns = _dedupe_key_columns(market)
+    combined = pd.concat([existing_df, incoming_df], ignore_index=True)
+    merged = combined.drop_duplicates(subset=key_columns, keep="last")
+    sort_columns = [column for column in ["date", "datetime", "ticker"] if column in merged.columns]
+    if sort_columns:
+        merged = merged.sort_values(sort_columns).reset_index(drop=True)
+    return merged
+
+
+def _atomic_write_parquet(df: pd.DataFrame, output_file: os.PathLike[str] | str) -> None:
+    """Write parquet to a temp file and atomically replace the target."""
+    output_path = os.fspath(output_file)
+    output_dir = os.path.dirname(output_path)
+    fd, temp_path = tempfile.mkstemp(prefix=".tmp-", suffix=".parquet", dir=output_dir)
+    os.close(fd)
+    try:
+        df.to_parquet(temp_path, index=False, compression="snappy")
+        os.replace(temp_path, output_path)
+    except Exception:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
 
 
 def write_to_partitioned_parquet(
@@ -24,6 +67,7 @@ def write_to_partitioned_parquet(
     market: str,
     trading_date: date,
     dry_run: bool = False,
+    validate_quality: bool = False,
 ) -> bool:
     """Write a DataFrame to the date-partitioned parquet layout."""
     if df.empty:
@@ -34,11 +78,27 @@ def write_to_partitioned_parquet(
         )
         return False
 
+    # Optional quality validation via Pandera
+    if validate_quality:
+        from equity_lake.validation.pipeline import ValidationPipeline
+
+        data_type = "news" if market in ("us_news", "us_social_sentiment") else "price"
+        vp = ValidationPipeline()
+        result = vp.validate(df, data_type=data_type, name=f"{market}_{trading_date}")
+        if not result.success:
+            logger.error("Quality validation failed", market=market, errors=result.errors)
+            return False
+        if result.warnings:
+            for w in result.warnings:
+                logger.warning("Quality warning", market=market, warning=w)
+
     # Map market to directory
     market_dirs = {
         "us_equity": US_EQUITY_DIR,
         "cn_ashare": CN_ASHARE_DIR,
         "hk_sg_equity": HK_SG_EQUITY_DIR,
+        "jpx_equity": JPX_EQUITY_DIR,
+        "krx_equity": KRX_EQUITY_DIR,
         "us_news": US_NEWS_DIR,
         "us_social_sentiment": US_SOCIAL_SENTIMENT_DIR,
     }
@@ -51,97 +111,40 @@ def write_to_partitioned_parquet(
     partition_dir = output_dir / f"date={trading_date}"
     output_file = partition_dir / f"{trading_date}.parquet"
 
-    # Check for duplicates using appropriate key columns
-    if output_file.exists():
-        logger.info("File exists: %s. Checking for duplicates...", output_file)
-        try:
-            existing_df = pd.read_parquet(output_file)
-
-            # Use different keys for news vs OHLCV data
-            if market == "us_news":
-                # Deduplicate by URL for news
-                existing_keys = set(existing_df["url"].tolist())
-                duplicate_mask = df["url"].isin(existing_keys)
-            elif market == "us_social_sentiment":
-                # Deduplicate by ticker + datetime + source
-                existing_keys = set(
-                    existing_df.apply(
-                        lambda row: (
-                            row["ticker"],
-                            row["datetime"],
-                            row["source"],
-                        ),
-                        axis=1,
-                    ).tolist()
-                )
-                duplicate_mask = df.apply(
-                    lambda row: (
-                        row["ticker"],
-                        row["datetime"],
-                        row["source"],
-                    )
-                    in existing_keys,
-                    axis=1,
-                )
-            else:
-                # OHLCV data: deduplicate by ticker + date
-                existing_keys = set(
-                    existing_df.apply(
-                        lambda row: (row["ticker"], row["date"]),
-                        axis=1,
-                    ).tolist()
-                )
-                duplicate_mask = df.apply(
-                    lambda row: (row["ticker"], row["date"]) in existing_keys,
-                    axis=1,
-                )
-
-            duplicate_count = int(duplicate_mask.sum())
-            total_count = len(df)
-
-            if duplicate_count > 0:
-                logger.warning(
-                    "Found %s duplicate records (%s/%s = %.1f%%)",
-                    duplicate_count,
-                    duplicate_count,
-                    total_count,
-                    duplicate_count / total_count * 100,
-                )
-                filtered_df = df[~duplicate_mask]
-                if not isinstance(filtered_df, pd.DataFrame):
-                    filtered_df = pd.DataFrame()
-                df = filtered_df
-                if df.empty:
-                    logger.warning("All records are duplicates. Skipping write.")
-                    return True
-                logger.info(
-                    "Writing %s new records (skipped %s duplicates)",
-                    len(df),
-                    duplicate_count,
-                )
-        except Exception as exc:
-            logger.error(
-                "Failed to check for duplicates: %s. Continuing with write...",
-                exc,
-            )
-
     if dry_run:
         logger.info("[DRY RUN] Would write %s rows to %s", len(df), output_file)
         return True
 
     try:
         partition_dir.mkdir(parents=True, exist_ok=True)
-        df_write = df.copy()
-        if "date" in df_write.columns:
-            df_write["date"] = pd.to_datetime(df_write["date"])
-        if "datetime" in df_write.columns:
-            df_write["datetime"] = pd.to_datetime(df_write["datetime"])
-        df_write.to_parquet(output_file, index=False, compression="snappy")
+        lock_path = partition_dir / ".write.lock"
+        with FileLock(str(lock_path)):
+            df_write = df.copy()
+            if "date" in df_write.columns:
+                df_write["date"] = pd.to_datetime(df_write["date"])
+            if "datetime" in df_write.columns:
+                df_write["datetime"] = pd.to_datetime(df_write["datetime"])
+
+            existing_df = pd.read_parquet(output_file) if output_file.exists() else pd.DataFrame()
+            merged_df = _merge_partition_frames(existing_df, df_write, market)
+            records_added = max(len(merged_df) - len(existing_df), 0)
+            duplicate_count = len(existing_df) + len(df_write) - len(merged_df)
+
+            if duplicate_count > 0:
+                logger.warning(
+                    "Skipped %s duplicate records while merging %s",
+                    duplicate_count,
+                    output_file,
+                )
+
+            _atomic_write_parquet(merged_df, output_file)
+
         file_size_kb = output_file.stat().st_size / 1024
         logger.info(
-            "Wrote %s rows to %s (%.1f KB)",
-            len(df_write),
+            "Wrote %s total rows to %s (added %s new rows, %.1f KB)",
+            len(merged_df),
             output_file,
+            records_added,
             file_size_kb,
         )
         return True

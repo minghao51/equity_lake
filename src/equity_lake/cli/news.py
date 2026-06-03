@@ -17,11 +17,8 @@ import sys
 import structlog
 
 from equity_lake.core.dates import resolve_trading_date
-from equity_lake.core.logging import timer
-from equity_lake.core.runtime import (
-    US_NEWS_DIR,
-    setup_logging,
-)
+from equity_lake.core.logging import setup_logging, timer
+from equity_lake.core.paths import US_NEWS_DIR
 from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
 

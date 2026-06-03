@@ -52,9 +52,7 @@ def write_sync() -> None:
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Keep the GitHub Pages workflow cron in sync with settings.yaml"
-    )
+    parser = argparse.ArgumentParser(description="Keep the GitHub Pages workflow cron in sync with settings.yaml")
     parser.add_argument(
         "--check",
         action="store_true",

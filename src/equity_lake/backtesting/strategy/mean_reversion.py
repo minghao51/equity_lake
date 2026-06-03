@@ -107,18 +107,7 @@ class BBMeanReversionStrategy(BaseStrategy):
             # Only take long signals when price above 200 MA
             touches_lower = touches_lower & (close_df > trend_filter)
 
-        # Aggregate across all tickers
-        entry_signals = touches_lower.any(axis=1)
-        exit_signals = (touches_upper | returns_to_middle).any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(touches_lower, touches_upper | returns_to_middle)
 
 
 class RSIMeanReversionStrategy(BaseStrategy):
@@ -229,18 +218,7 @@ class RSIMeanReversionStrategy(BaseStrategy):
         # Exit: RSI crosses above overbought
         overbought_signal = (rsi_df > overbought).astype(int).diff() == 1
 
-        # Aggregate across all tickers
-        entry_signals = oversold_signal.any(axis=1)
-        exit_signals = overbought_signal.any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(oversold_signal, overbought_signal)
 
 
 class CombinedMeanReversionStrategy(BaseStrategy):
@@ -336,18 +314,7 @@ class CombinedMeanReversionStrategy(BaseStrategy):
         rsi_entry = (rsi_df < rsi_oversold).astype(int).diff() == 1
         rsi_exit = (rsi_df > rsi_overbought).astype(int).diff() == 1
 
-        # Combined signals (both must agree)
-        entry_signals = (bb_entry & rsi_entry).any(axis=1)
-        exit_signals = (bb_exit & rsi_exit).any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(bb_entry & rsi_entry, bb_exit & rsi_exit)
 
 
 __all__ = [

@@ -1,7 +1,6 @@
 # Quick Start
 
-This guide is the fastest path to a working local install of `equity-lake`.
-It reflects the current CLI entrypoints and package layout in this repository.
+Fastest path to a working local install.
 
 ## Prerequisites
 
@@ -9,34 +8,18 @@ It reflects the current CLI entrypoints and package layout in this repository.
 - `uv`
 - Git
 
-Optional extras:
-
-- `uv sync --extra ml` for the full ingestion -> features -> ML pipeline
-- `uv sync --extra s3` if you plan to use S3 sync
-- `uv sync --group dev` for local development and tests
-
-## Setup
+## Install
 
 ```bash
 git clone <your-repo-url>
 cd equity-lake
-
-uv venv
-source .venv/bin/activate
-
+uv venv && source .venv/bin/activate
 uv sync
-uv sync --extra ml
+uv sync --extra ml        # full pipeline (features + ML)
+cp .env.example .env      # optional env overrides
 ```
 
-If you want the checked-in env template:
-
-```bash
-cp config/example.env .env
-```
-
-## First Commands
-
-Verify the main CLI entrypoints:
+## Verify
 
 ```bash
 uv run equity-daily --help
@@ -45,84 +28,28 @@ uv run equity-query --help
 uv run equity-monitor --help
 ```
 
-Inspect the active ticker configuration:
+## First Run
 
 ```bash
-uv run equity-daily --list-stats
-uv run equity-daily --list-tickers --markets us --verbose
-```
-
-## Run the Pipeline
-
-Daily ingestion only:
-
-```bash
-uv run equity-daily --dry-run --verbose
-```
-
-Full pipeline:
-
-```bash
+# Dry run first
 uv run equity-pipeline --dry-run --verbose
+
+# Real run
 uv run equity-pipeline --verbose
-```
-
-Useful variants:
-
-```bash
-uv run equity-pipeline --markets us
-uv run equity-pipeline --tickers AAPL,MSFT,NVDA
-uv run equity-pipeline --skip-ingestion --skip-features
-```
-
-## Query and Monitor
-
-Run a query example:
-
-```bash
-uv run equity-query --query latest_summary
-uv run equity-query --query top_volume --days 14
-```
-
-Run a health check:
-
-```bash
-uv run equity-monitor --verbose
-uv run equity-monitor --output-json logs/health_report.json
-```
-
-## Signals and Backtests
-
-Signal scan using the checked-in configs:
-
-```bash
-uv run equity-signal scan
-uv run equity-signal scan --format md --output signals.md
-```
-
-Backtest a built-in strategy:
-
-```bash
-uv run equity-backtest \
-  --strategy sma_crossover \
-  --tickers AAPL,MSFT \
-  --start-date 2024-01-01 \
-  --end-date 2024-12-31
 ```
 
 ## Notes
 
-- The repository no longer ships a built-in dashboard. Use `equity-query`,
-  notebooks, or your own UI against the generated Parquet and DuckDB data.
-- China ingestion uses `CNHybridFetcher`, but the current orchestrator
-  instantiates it with the `akshare` path enabled and `efinance` disabled by
-  default.
-- The canonical configuration files live under `config/`, especially
-  `config/tickers.yaml`, `config/watchlist.yaml`, and `config/signals.yaml`.
+- A built-in dashboard ships with the repo. Use `equity dashboard build` for
+  the static site or `equity dashboard serve` for the local Streamlit view.
+- China ingestion defaults to `akshare`; `efinance` exists in code but is not
+  active by default.
+- `config/settings.yaml` is the default app config. `EQUITY_LAKE_*` values in
+  `.env` override it.
 
 ## Next Reading
 
-- [Pipeline Usage](../user-guide/pipeline.md)
-- [Operations Guide](../user-guide/operations.md)
-- [Signals Guide](../user-guide/signals.md)
-- [Project Structure](../developer-guide/project-structure.md)
+- [Pipeline Usage](../user-guide/pipeline.md) — full command reference, config, scheduling
+- [Signals Guide](../user-guide/signals.md) — signal scanning and generation
+- [Backtesting Guide](../user-guide/backtesting.md) — strategy testing
+- [Project Structure](../developer-guide/project-structure.md) — package layout and import policy

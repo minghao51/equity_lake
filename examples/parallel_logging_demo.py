@@ -106,9 +106,7 @@ def demo_sequential_fetching():
 
     start_time = time.time()
 
-    results = fetch_markets_sequential(
-        markets=markets, trading_date=trading_date, fetch_func_map=fetch_func_map
-    )
+    results = fetch_markets_sequential(markets=markets, trading_date=trading_date, fetch_func_map=fetch_func_map)
 
     elapsed = time.time() - start_time
 

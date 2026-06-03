@@ -23,15 +23,15 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Final
 
-from equity_lake.core.runtime import (
-    US_EQUITY_DIR,
-    get_project_config,
-    setup_logging,
-)
+from equity_lake.core.logging import setup_logging
+from equity_lake.core.paths import US_EQUITY_DIR
+from equity_lake.core.runtime import get_project_config
 
 # Logger configuration
 logger = logging.getLogger(__name__)
+UNSIGNED_FLAG: Final[str] = "--no-sign-request"
 
 
 # =============================================================================
@@ -65,6 +65,7 @@ class S3Syncer:
         self.workers = workers
         self.dry_run = dry_run
         self.tool = self._detect_tool(tool) if tool == "auto" else tool
+        self._use_unsigned_requests = False
 
         logger.info(f"Initialized S3 syncer with tool: {self.tool}")
 
@@ -98,16 +99,28 @@ class S3Syncer:
         logger.info(f"Testing access to {self.bucket}")
 
         try:
-            cmd = ["s5cmd", "ls", f"{self.bucket}"] if self.tool == "s5cmd" else ["aws", "s3", "ls", self.bucket, "--no-sign-request"]
-
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-
-            if result.returncode == 0:
-                logger.info("✅ S3 bucket accessible")
-                return True
-            else:
+            if self.tool == "s5cmd":
+                cmd = ["s5cmd", "ls", f"{self.bucket}"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    logger.info("✅ S3 bucket accessible")
+                    return True
                 logger.error(f"❌ S3 access failed: {result.stderr}")
                 return False
+
+            for unsigned in (False, True):
+                cmd = ["aws", "s3", "ls", self.bucket]
+                if unsigned:
+                    cmd.append(UNSIGNED_FLAG)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode == 0:
+                    self._use_unsigned_requests = unsigned
+                    mode = "unsigned" if unsigned else "credentialed"
+                    logger.info("✅ S3 bucket accessible (%s mode)", mode)
+                    return True
+
+            logger.error(f"❌ S3 access failed: {result.stderr}")
+            return False
 
         except subprocess.TimeoutExpired:
             logger.error("❌ S3 access test timed out")
@@ -166,8 +179,10 @@ class S3Syncer:
             "sync",
             self.bucket,
             str(self.target_dir),
-            "--no-sign-request",  # For public buckets
         ]
+
+        if self._use_unsigned_requests:
+            cmd.append(UNSIGNED_FLAG)
 
         # Add progress indicator
         cmd.extend(["--no-progress", "--quiet"])
@@ -201,17 +216,35 @@ class S3Syncer:
             logger.error("❌ No Parquet files found")
             return False
 
-        total_size = sum(f.stat().st_size for f in parquet_files)
+        total_size = 0
+        valid_files = 0
+        try:
+            import pyarrow.parquet as pq
+        except ImportError:
+            pq = None
+
+        for parquet_file in parquet_files:
+            total_size += parquet_file.stat().st_size
+            if pq is None:
+                valid_files += 1
+                continue
+            try:
+                _ = pq.ParquetFile(parquet_file).metadata
+                valid_files += 1
+            except Exception as exc:
+                logger.error("❌ Invalid parquet footer for %s: %s", parquet_file, exc)
+
         total_size_mb = total_size / (1024 * 1024)
 
         logger.info(f"✅ Found {len(parquet_files):,} Parquet files")
         logger.info(f"✅ Total size: {total_size_mb:.2f} MB")
+        logger.info("✅ Verified %s/%s parquet footers", valid_files, len(parquet_files))
 
         # Check for expected Hive partition structure
         date_partitions = list(self.target_dir.glob("date=*"))
         logger.info(f"✅ Found {len(date_partitions)} date partitions")
 
-        return len(parquet_files) > 0
+        return len(parquet_files) > 0 and valid_files == len(parquet_files)
 
     def sync(self) -> bool:
         """Execute S3 sync process."""

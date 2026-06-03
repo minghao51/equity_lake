@@ -2,15 +2,15 @@
 
 This directory is organized by audience first, then by topic.
 
-The active guides in `getting-started/`, `user-guide/`, and `architecture/`
-are intended to describe the code that currently ships in this repository.
-Historical plans, superseded implementation notes, and older design drafts
-belong in `archive/docs-history/`.
+The active guides in `getting-started/`, `user-guide/`, and
+`developer/architecture/` describe the code that currently ships in this
+repository. Historical plans, superseded implementation notes, and older design
+drafts belong in `developer/history/`.
 
 ## Start Here
 
 - New users: [Getting Started](getting-started/quickstart.md)
-- Operators: [Pipeline Usage](user-guide/pipeline.md)
+- Operators: [Pipeline Usage](user-guide/pipeline.md) — commands, config, scheduling
 - Environment and credentials: [API Keys And Credentials](20260406-api-keys.md)
 - CLI operators: [CLI Reference](user-guide/20260406-cli-reference.md)
 - Static hosting: [Dashboard Hosting](user-guide/20260406-dashboard-hosting.md)
@@ -20,16 +20,15 @@ belong in `archive/docs-history/`.
 ## Sections
 
 - [getting-started/](getting-started/) for installation and first-run setup
-- [user-guide/](user-guide/) for day-to-day usage, operations, signals, and backtesting
-- [developer-guide/](developer-guide/) for package layout, tests, and contribution workflow
-- [architecture/](architecture/) for system design and major subsystem docs
+- [user-guide/](user-guide/) for day-to-day usage, signals, and backtesting
+- [developer-guide/](developer-guide/) for package layout and contribution workflow
+- [developer/architecture/](developer/architecture/) for system design and subsystem docs
+- [developer/history/](developer/history/) for superseded implementation notes and decision records
 - [reports/](reports/) for current analysis and operational writeups
-- [../archive/docs-history/](../archive/docs-history/README.md) for historical and superseded docs
+- [technical_roadmap.md](technical_roadmap.md) for phased enhancement plan
 
-## Migration Notes
+## Notes
 
-- Historical implementation notes, planning docs, one-off test reports, and
-  duplicate legacy copies live in `archive/docs-history/`.
 - `examples/` is reserved for runnable sample code only.
 - New documentation should be added only to the active audience-based folders
   above.

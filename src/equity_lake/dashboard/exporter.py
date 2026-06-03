@@ -12,12 +12,14 @@ import duckdb
 import pandas as pd
 
 from equity_lake.config.settings import get_settings
-from equity_lake.core.runtime import DATA_DIR, LAKE_DIR, LOGS_DIR
+from equity_lake.core.paths import DATA_DIR, JPX_EQUITY_DIR, KRX_EQUITY_DIR, LAKE_DIR, LOGS_DIR
 
 MARKET_DATASETS = {
     "us_equity": LAKE_DIR / "us_equity",
     "cn_ashare": LAKE_DIR / "cn_ashare",
     "hk_sg_equity": LAKE_DIR / "hk_sg_equity",
+    "jpx_equity": JPX_EQUITY_DIR,
+    "krx_equity": KRX_EQUITY_DIR,
     "features": LAKE_DIR / "features",
 }
 

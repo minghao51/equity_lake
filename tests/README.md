@@ -7,25 +7,18 @@ layout is organized by scope first and feature second.
 
 ```text
 tests/
-├── conftest.py                 # Shared fixtures and test helpers
-├── integration/               # Cross-module integration coverage
-├── unit/                      # Focused unit coverage for core subsystems
-├── test_*                     # Feature-level tests kept at top level
-└── __init__.py
+├── conftest.py                 # Shared fixtures, auto-mark hook
+├── integration/               # Cross-module integration coverage (auto-marked)
+├── unit/                      # Focused unit coverage (auto-marked)
+└── fixtures/                  # Static test fixtures
 ```
+
+Tests are auto-marked by directory: `unit/` → `@pytest.mark.unit`, `integration/` → `@pytest.mark.integration` + `@pytest.mark.slow`. No need for manual markers unless overriding.
 
 ## Current Coverage Areas
 
-- `tests/unit/test_fetchers.py`: market-source fetchers and fallback behavior
-- `tests/unit/test_ingestion_orchestrator.py`: daily ingestion orchestration
-- `tests/unit/test_macro_sources.py`: macro indicator fetchers and parquet writes
-- `tests/unit/test_ml_jobs.py`: ML helper orchestration
-- `tests/unit/test_news_fetcher.py`: news ingestion
-- `tests/unit/test_social_sentiment.py`: sentiment ingestion
-- `tests/integration/test_duckdb_queries.py`: DuckDB query paths
-- `tests/integration/test_news_ingestion.py`: end-to-end news ingestion
-- `tests/integration/test_pipeline_orchestrator.py`: pipeline stage orchestration
-- top-level `tests/test_*`: signal scanning, generators, history, and formatters
+- `tests/unit/`: fetchers, ingestion orchestrator, macro sources, ML jobs, news, sentiment, signals, formatters, settings, validation, update engine, feature pipeline
+- `tests/integration/`: DuckDB queries, news ingestion, pipeline orchestration, dashboard exporter, signal integration
 
 ## Common Commands
 
@@ -33,7 +26,9 @@ tests/
 uv run pytest -v
 uv run pytest tests/unit -v
 uv run pytest tests/integration -v
-uv run pytest tests/test_signal_scanner.py -v
+uv run pytest -m unit -v
+uv run pytest -m integration -v
+uv run pytest -m "not slow" -v
 uv run pytest --cov=src/equity_lake --cov-report=term
 ```
 
@@ -45,12 +40,10 @@ the standard project wrappers.
 - Add shared fixtures to `tests/conftest.py`.
 - Keep fast, isolated tests in `tests/unit/`.
 - Put multi-module workflows and filesystem-heavy checks in `tests/integration/`.
-- Place feature-level regression tests at the top level only when they span
-  multiple packages and do not fit one subsystem cleanly.
-        'adj_close': [152.0, 382.0, 142.0, 182.0, 252.0]
-    }
-    return pd.DataFrame(data)
-```
+- Auto-marking handles `unit` / `integration` / `slow` based on directory.
+- Use `@pytest.mark.integration` or `@pytest.mark.slow` inside `unit/` only to override.
+- Use `@pytest.mark.network` for tests requiring real API keys or internet.
+- Use `pytestmark = pytest.mark.slow` for whole-module marking.
 
 ---
 
@@ -59,18 +52,23 @@ the standard project wrappers.
 ### GitHub Actions Workflow
 
 ```yaml
-name: Tests
+name: Quality
 
 on: [push, pull_request]
 
 jobs:
-  test:
+  quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: astral-sh/setup-uv@v1
-      - run: uv sync
-      - run: uv run pytest tests/unit/test_fetchers.py -v
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --group dev
+      - run: uv run ruff check .
+      - run: uv run mypy src
+      - run: uv run pytest -q
 ```
 
 ---
@@ -179,6 +177,6 @@ When adding new tests:
 
 ---
 
-**Last Updated**: 2026-02-28
-**Total Tests**: 26
-**Coverage**: New fetchers: 100%
+**Last Updated**: 2026-06-03
+**Total Tests**: See `uv run pytest -q`
+**Coverage**: spans unit and integration suites under `tests/unit` and `tests/integration`

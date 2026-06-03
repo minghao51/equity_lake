@@ -24,6 +24,7 @@ dependencies = [
     "akshare>=1.15.0", # China A-shares data (comprehensive)
     "efinance>=0.5.5.2,<0.5.6", # China real-time market data (faster, more stable)
     "fredapi>=0.5.2", # FRED API for macro indicators
+    "finance-datareader>=0.9.96,<1.0", # Korea KRX market data
     # Storage and query engine
     "duckdb>=1.0.0", # SQL query engine with Parquet support
     "pandas>=2.2.0", # Data manipulation and analysis
@@ -42,6 +43,13 @@ dependencies = [
     "pyyaml>=6.0.2", # YAML config loading
     # News & sentiment
     "vaderSentiment>=3.3.2", # Sentiment analysis (VADER)
+    # Data quality
+    "pandera>=0.20.0", # DataFrame schema validation
+    "whylogs>=1.6.0,<2.0", # Statistical profiling and drift detection
+    # CLI framework
+    "typer>=0.12.0", # Unified CLI framework
+    "rich>=13.7.0", # Rich text and formatting for CLI output
+    "streamlit>=1.28.0", # Local dashboard runtime
 ]
 
 [project.optional-dependencies]
@@ -85,13 +93,13 @@ ml = [
 visualization = [
     # Lightweight visualization (optional)
     "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
     "plotly>=6.5.0",
 ]
 
 backtesting = [
     # Backtesting and strategy analysis (optional)
     "vectorbt>=0.26.0",     # Fast vectorized backtesting engine
-    "empyrical>=0.5.5",     # Performance metrics library
     "joblib>=1.4.0",        # Caching for data and results
     "jinja2>=3.1.0",        # HTML report generation
     "pandas-ta>=0.4.71b0",  # Technical analysis indicators
@@ -126,6 +134,8 @@ backtesting = [
 ]
 
 [project.scripts]
+equity = "equity_lake.cli.__main__:app"
+# Legacy commands (deprecated - use `equity <subcommand>` instead)
 equity-daily = "equity_lake.cli.daily:main"
 equity-sync = "equity_lake.cli.sync:main"
 equity-query = "equity_lake.cli.query:main"
@@ -272,22 +282,30 @@ module = [
     "xgboost.*",
     "sklearn.*",
     "pytest.*",
+    "FinDataReader.*",
+    "FinanceDataReader.*",
+    "vectorbt.*",
+    "typer.*",
+    "pandera.*",
+    "whylogs.*",
+    "streamlit.*",
+    "pyarrow.*",
 ]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = "-ra -q --strict-markers --strict-config"
-testpaths = [
-    "tests",
-]
-pythonpath = [
-    "src",
-]
+addopts = ["--strict-markers", "--strict-config", "-ra", "-q", "--durations=10", "--import-mode=importlib"]
+testpaths = ["tests"]
+pythonpath = ["src", "."]
 markers = [
-    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "integration: marks tests as integration tests",
-    "unit: marks tests as unit tests",
+    "slow: >1s tests",
+    "unit: fast isolated tests",
+    "integration: external services / cross-module",
+    "e2e: full workflow",
+    "serial: cannot run in parallel",
+    "network: needs internet or API key",
+    "smoke: critical path",
 ]
 
 [tool.coverage.run]

@@ -41,23 +41,15 @@ help:
 # Environment and Setup
 setup:
 	@echo "🚀 Setting up Equity EOD Data Pipeline..."
-	@if [ ! -d ".venv" ]; then \
-		echo "Creating uv virtual environment..."; \
-		uv venv; \
-	fi
 	@echo "Installing core dependencies..."
 	uv sync
 	@echo "✅ Setup complete!"
-	@echo "Activate with: source .venv/bin/activate"
 	@echo "For the full ML pipeline: uv sync --extra ml"
 	@echo "Run tests with: make test"
 
 dev-setup: setup
-	@echo "🛠️  Installing development dependencies..."
-	uv sync --group dev
-	uv sync --extra s3
-	uv sync --extra ml
-	uv sync --extra visualization
+	@echo "🛠️  Installing all development and optional dependencies..."
+	uv sync --all-extras
 	@echo "✅ Development setup complete!"
 
 # Validation
@@ -73,27 +65,27 @@ validate:
 # Data Pipeline Commands
 sync:
 	@echo "🔄 Starting S3 sync..."
-	@uv run equity-sync
+	@uv run equity sync
 
 daily:
 	@echo "📊 Running daily EOD data ingestion..."
-	uv run equity-daily
+	uv run equity ingest
 
 query:
 	@echo "🦆 Running DuckDB query examples..."
-	uv run equity-query
+	uv run equity query
 
 pipeline:
 	@echo "🚀 Running the full ingestion → features → ML pipeline..."
-	uv run equity-pipeline
+	uv run equity pipeline
 
 monitor:
 	@echo "🩺 Running pipeline health checks..."
-	uv run equity-monitor
+	uv run equity monitor
 
 fetch-macro:
 	@echo "📈 Fetching macro indicators for gold ETF analysis..."
-	uv run equity-macro
+	uv run equity macro
 
 generate-test-data:
 	@echo "🎲 Generating realistic test data..."
@@ -102,20 +94,20 @@ generate-test-data:
 # News & Sentiment
 news:
 	@echo "📰 Fetching news with sentiment analysis..."
-	uv run equity-news
+	uv run equity news
 
 news-dry:
 	@echo "🔍 Testing news fetching (dry run)..."
-	uv run equity-news --dry-run --verbose
+	uv run equity news --dry-run --verbose
 
 # Social Sentiment
 sentiment:
 	@echo "📱 Fetching social sentiment (Reddit/Twitter)..."
-	uv run equity-sentiment
+	uv run equity sentiment
 
 sentiment-dry:
 	@echo "🔍 Testing social sentiment fetching (dry run)..."
-	uv run equity-sentiment --dry-run --verbose
+	uv run equity sentiment --dry-run --verbose
 
 # Testing
 test:
@@ -218,3 +210,7 @@ quick-start:
 	@echo "  3. Run 'make daily' to fetch test data"
 	@echo "  4. Run 'make query' to explore data"
 	@echo "  5. Run 'make quick-test' to validate backtesting framework"
+	@echo ""
+	@echo "Or try the unified CLI:"
+	@echo "  equity bootstrap sample    # Generate sample data in seconds"
+	@echo "  equity --help              # See all commands"

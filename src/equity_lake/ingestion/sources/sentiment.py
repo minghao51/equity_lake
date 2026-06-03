@@ -10,7 +10,7 @@ import pandas as pd
 import requests
 import structlog
 
-from equity_lake.core.runtime import SOCIAL_COLUMNS
+from equity_lake.core.schemas import SOCIAL_COLUMNS
 from equity_lake.ingestion.sources.base import MarketDataFetcher
 
 logger = structlog.get_logger()

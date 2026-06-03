@@ -763,7 +763,7 @@ CLI Layer (daily.py, sync.py, query.py)
 
 ---
 
-**Total Files in Architecture**: 105 Python modules
+**Total Files in Architecture**: see `git ls-files src/ | wc -l` for current count
 **Core Components**: 5 layers (Ingestion, Storage, Query, Features, Signals)
 **Design Patterns**: Strategy, Template Method, Factory, Repository
-**Entry Points**: 3 CLI commands (daily, sync, query)
+**Entry Points**: 12+ CLI commands (daily, sync, query, pipeline, monitor, signal, backtest, config, dashboard, loader, update, etc.)

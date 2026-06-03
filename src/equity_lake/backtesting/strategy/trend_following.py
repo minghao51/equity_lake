@@ -92,18 +92,7 @@ class SMACrossoverStrategy(BaseStrategy):
         # Death cross: fast crosses below slow
         death_cross = (fast_ma < slow_ma).astype(int).diff() == 1
 
-        # Aggregate across all tickers
-        entry_signals = golden_cross.any(axis=1)
-        exit_signals = death_cross.any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(golden_cross, death_cross)
 
 
 class DonchianBreakoutStrategy(BaseStrategy):
@@ -184,18 +173,7 @@ class DonchianBreakoutStrategy(BaseStrategy):
         # Exit: Close breaks below lower channel
         breakout_down = (close_df < lower_channel).astype(int).diff() == 1
 
-        # Aggregate across all tickers
-        entry_signals = breakout_up.any(axis=1)
-        exit_signals = breakout_down.any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(breakout_up, breakout_down)
 
 
 class MACDStrategy(BaseStrategy):
@@ -301,18 +279,7 @@ class MACDStrategy(BaseStrategy):
             bullish_cross = bullish_cross & (histogram.abs() > histogram_threshold)
             bearish_cross = bearish_cross & (histogram.abs() > histogram_threshold)
 
-        # Aggregate across all tickers
-        entry_signals = bullish_cross.any(axis=1)
-        exit_signals = bearish_cross.any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(bullish_cross, bearish_cross)
 
 
 class AdaptiveTrendStrategy(BaseStrategy):
@@ -450,18 +417,7 @@ class AdaptiveTrendStrategy(BaseStrategy):
         strong_trend = adx > adx_threshold
         entry_with_filter = golden_cross & strong_trend
 
-        # Aggregate across all tickers
-        entry_signals = entry_with_filter.any(axis=1)
-        exit_signals = death_cross.any(axis=1)
-
-        result = pd.DataFrame(
-            {
-                "entry": entry_signals,
-                "exit": exit_signals,
-            }
-        )
-
-        return result
+        return self.build_signal_frame(entry_with_filter, death_cross)
 
 
 __all__ = [

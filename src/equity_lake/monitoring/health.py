@@ -22,7 +22,8 @@ import pandas as pd
 import structlog
 
 from equity_lake.config.settings import get_settings
-from equity_lake.core.runtime import LAKE_DIR, LOGS_DIR, setup_logging
+from equity_lake.core.logging import setup_logging
+from equity_lake.core.paths import LAKE_DIR, LOGS_DIR
 
 logger = structlog.get_logger()
 

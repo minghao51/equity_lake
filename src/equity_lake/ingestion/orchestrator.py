@@ -29,12 +29,9 @@ import structlog
 from equity_lake.config import TickerConfig
 from equity_lake.config.settings import get_settings
 from equity_lake.core.dates import resolve_trading_date
-from equity_lake.core.logging import correlation_context, timer
-from equity_lake.core.runtime import (
-    LAKE_DIR,
-    get_project_config,
-    setup_logging,
-)
+from equity_lake.core.logging import correlation_context, setup_logging, timer
+from equity_lake.core.paths import LAKE_DIR
+from equity_lake.core.runtime import get_project_config
 from equity_lake.fetch_macro import (
     MacroDataPipeline,
     write_macro_to_parquet,
@@ -55,6 +52,8 @@ from equity_lake.ingestion.sources import (
     USEquityFetcher,
 )
 from equity_lake.ingestion.sources.base import MarketDataFetcher
+from equity_lake.ingestion.sources.jpx import JPXEquityFetcher
+from equity_lake.ingestion.sources.krx import KRXEquityFetcher
 from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
 
@@ -342,7 +341,7 @@ def main() -> None:
             logger.info(f"  - {key}: {value}")
 
     # Parse markets
-    markets = [m.strip() for m in args.markets.split(",")]
+    markets = [m.strip() for m in args.markets.split(",") if m.strip()] if args.markets else list(settings.ingestion.default_markets)
     invalid = set(markets) - VALID_MARKETS
 
     if invalid:
@@ -365,9 +364,7 @@ def main() -> None:
 
     # Run ingestion
     try:
-        from equity_lake.ingestion import run_ingestion_job
-
-        results = run_ingestion_job(
+        results = run_daily_ingestion(
             trading_date=trading_date,
             markets=markets,
             dry_run=args.dry_run,
@@ -505,10 +502,12 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
             "hk": "hk_sg_equity",
             "sg": "hk_sg_equity",
             "hk_sg": "hk_sg_equity",
+            "jpx": "jpx_equity",
+            "krx": "krx_equity",
         }
         markets = [market_map.get(m, m) for m in markets]
     else:
-        markets = ["us_equity", "cn_ashare", "hk_sg_equity"]
+        markets = ["us_equity", "cn_ashare", "hk_sg_equity", "jpx_equity", "krx_equity"]
 
     # Calculate date range
     end_date = date.today()
@@ -570,7 +569,7 @@ def run_daily_ingestion(
     dry_run: bool = False,
     ticker_config: TickerConfig | None = None,
     filters: dict | None = None,
-    explicit_tickers: str | None = None,
+    explicit_tickers: str | list[str] | None = None,
     parallel: bool = False,
     max_workers: int | None = None,
 ) -> dict[str, bool]:
@@ -593,8 +592,8 @@ def run_daily_ingestion(
     results = {}
 
     # Parse explicit tickers if provided
-    explicit_ticker_list = None
-    if explicit_tickers:
+    explicit_ticker_list = explicit_tickers if isinstance(explicit_tickers, list) else None
+    if explicit_tickers and isinstance(explicit_tickers, str):
         explicit_ticker_list = [t.strip() for t in explicit_tickers.split(",")]
 
     if parallel:
@@ -756,6 +755,20 @@ def fetch_market_data_with_config(
         )
     elif market == "hk_sg":
         fetcher = HKSGEquityFetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            ticker_config=ticker_config,
+            filters=filters,
+        )
+    elif market == "jpx":
+        fetcher = JPXEquityFetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            ticker_config=ticker_config,
+            filters=filters,
+        )
+    elif market == "krx":
+        fetcher = KRXEquityFetcher(
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
             ticker_config=ticker_config,

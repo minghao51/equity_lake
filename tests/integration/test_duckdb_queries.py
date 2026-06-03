@@ -194,7 +194,6 @@ class TestQueryEdgeCases:
 class TestQueryPerformance:
     """Performance tests for queries."""
 
-    @pytest.mark.slow
     def test_query_performance_benchmark(self, db_with_data):
         """Test query performance benchmarking."""
         from equity_lake.storage.duckdb import benchmark_queries

@@ -6,7 +6,7 @@ from datetime import date, timedelta
 import duckdb
 import pandas as pd
 
-from equity_lake.core.runtime import US_EQUITY_DIR
+from equity_lake.core.paths import US_EQUITY_DIR
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
 

@@ -850,6 +850,180 @@ markets:
         active: true
         priority: 10
 
+  # ============================================================================
+  # Japan Equities (JPX - Tokyo Stock Exchange)
+  # ============================================================================
+  jpx:
+    currency: JPY
+    description: "Japan equity (JPX/TSE) tickers"
+    tickers:
+      - symbol: "7203.T"
+        name: Toyota Motor Corporation
+        exchange: TSE
+        sector: Consumer Discretionary
+        tags: [blue-chip, automobile, nikkei225]
+        active: true
+        priority: 10
+
+      - symbol: "6758.T"
+        name: Sony Group Corporation
+        exchange: TSE
+        sector: Technology
+        tags: [blue-chip, technology, nikkei225]
+        active: true
+        priority: 10
+
+      - symbol: "9984.T"
+        name: SoftBank Group Corp.
+        exchange: TSE
+        sector: Communication Services
+        tags: [blue-chip, telecom, nikkei225]
+        active: true
+        priority: 9
+
+      - symbol: "6861.T"
+        name: Keyence Corporation
+        exchange: TSE
+        sector: Technology
+        tags: [blue-chip, automation, nikkei225]
+        active: true
+        priority: 10
+
+      - symbol: "8306.T"
+        name: Mitsubishi UFJ Financial Group
+        exchange: TSE
+        sector: Finance
+        tags: [blue-chip, banking, nikkei225]
+        active: true
+        priority: 9
+
+      - symbol: "7974.T"
+        name: Nintendo Co., Ltd.
+        exchange: TSE
+        sector: Communication Services
+        tags: [blue-chip, gaming, nikkei225]
+        active: true
+        priority: 9
+
+      - symbol: "9432.T"
+        name: Nippon Telegraph and Telephone
+        exchange: TSE
+        sector: Communication Services
+        tags: [blue-chip, telecom, nikkei225]
+        active: true
+        priority: 8
+
+      - symbol: "8035.T"
+        name: Tokyo Electron Limited
+        exchange: TSE
+        sector: Technology
+        tags: [blue-chip, semiconductor, nikkei225]
+        active: true
+        priority: 9
+
+      - symbol: "4063.T"
+        name: Shin-Etsu Chemical Co., Ltd.
+        exchange: TSE
+        sector: Materials
+        tags: [blue-chip, chemical, nikkei225]
+        active: true
+        priority: 8
+
+      - symbol: "6098.T"
+        name: Recruit Holdings Co., Ltd.
+        exchange: TSE
+        sector: Industrials
+        tags: [blue-chip, services, nikkei225]
+        active: true
+        priority: 8
+
+  # ============================================================================
+  # South Korea Equities (KRX - Korea Exchange)
+  # ============================================================================
+  krx:
+    currency: KRW
+    description: "South Korea equity (KRX) tickers"
+    tickers:
+      - symbol: "005930"
+        name: Samsung Electronics Co., Ltd.
+        exchange: KRX
+        sector: Technology
+        tags: [blue-chip, semiconductor, kospi]
+        active: true
+        priority: 10
+
+      - symbol: "000660"
+        name: SK Hynix Inc.
+        exchange: KRX
+        sector: Technology
+        tags: [blue-chip, semiconductor, kospi]
+        active: true
+        priority: 10
+
+      - symbol: "035420"
+        name: Naver Corporation
+        exchange: KRX
+        sector: Communication Services
+        tags: [blue-chip, internet, kospi]
+        active: true
+        priority: 9
+
+      - symbol: "005380"
+        name: Hyundai Motor Company
+        exchange: KRX
+        sector: Consumer Discretionary
+        tags: [blue-chip, automobile, kospi]
+        active: true
+        priority: 9
+
+      - symbol: "051910"
+        name: LG Health & Household
+        exchange: KRX
+        sector: Consumer Staples
+        tags: [blue-chip, consumer, kospi]
+        active: true
+        priority: 8
+
+      - symbol: "035720"
+        name: Kakao Corp.
+        exchange: KRX
+        sector: Communication Services
+        tags: [blue-chip, internet, kospi]
+        active: true
+        priority: 8
+
+      - symbol: "068270"
+        name: Celltrion, Inc.
+        exchange: KRX
+        sector: Healthcare
+        tags: [blue-chip, biotech, kospi]
+        active: true
+        priority: 8
+
+      - symbol: "207940"
+        name: Samsung Biologics Co., Ltd.
+        exchange: KRX
+        sector: Healthcare
+        tags: [blue-chip, biotech, kospi]
+        active: true
+        priority: 9
+
+      - symbol: "006400"
+        name: Samsung SDI Co., Ltd.
+        exchange: KRX
+        sector: Technology
+        tags: [blue-chip, battery, kospi]
+        active: true
+        priority: 8
+
+      - symbol: "028260"
+        name: Samsung C&T Corporation
+        exchange: KRX
+        sector: Industrials
+        tags: [blue-chip, construction, kospi]
+        active: true
+        priority: 7
+
 # ============================================================================
 # Predefined ticker groups for convenient filtering
 # ============================================================================
@@ -917,6 +1091,8 @@ validation:
     cn: "^\\d{6}$"  # 6-digit code
     hk: "^\\d{4}\\.HK$"  # e.g., 0700.HK
     sg: "^[A-Z]\\d{2}\\.SI$"  # e.g., D05.SI
+    jpx: "^\\d{4}\\.T$"  # e.g., 7203.T
+    krx: "^\\d{6}$"  # 6-digit code
 
   # Required fields for each ticker entry
   required_fields: [symbol, name, exchange, sector, active]
@@ -927,6 +1103,8 @@ validation:
     cn: [SSE, SZSE]
     hk: [HKEX]
     sg: [SGX]
+    jpx: [TSE]
+    krx: [KRX]
 
   # Valid sectors
   valid_sectors:

@@ -176,6 +176,24 @@ class BaseStrategy(ABC):
         self.params[key] = value
         logger.debug("Parameter updated", key=key, value=value, strategy=self.name)
 
+    def build_signal_frame(
+        self,
+        entries: pd.DataFrame | pd.Series,
+        exits: pd.DataFrame | pd.Series,
+    ) -> pd.DataFrame:
+        """Normalize entry/exit signals into a per-ticker frame."""
+        if isinstance(entries, pd.Series):
+            entries = entries.to_frame(name=self.name)
+        if isinstance(exits, pd.Series):
+            exits = exits.to_frame(name=self.name)
+
+        entry_frame = entries.fillna(False).astype(bool)
+        exit_frame = exits.fillna(False).astype(bool)
+        combined = pd.concat({"entry": entry_frame, "exit": exit_frame}, axis=1)
+        combined = combined.swaplevel(0, 1, axis=1).sort_index(axis=1)
+        combined.columns.names = ["ticker", "signal"]
+        return combined
+
     def __repr__(self) -> str:
         """String representation of strategy."""
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())

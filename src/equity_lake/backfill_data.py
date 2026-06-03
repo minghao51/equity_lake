@@ -29,10 +29,8 @@ import yfinance as yf
 
 from equity_lake.config import TickerConfig
 from equity_lake.config.settings import get_settings
-from equity_lake.core.runtime import (
-    STANDARD_COLUMNS,
-    setup_logging,
-)
+from equity_lake.core.logging import setup_logging
+from equity_lake.core.schemas import STANDARD_COLUMNS
 from equity_lake.ingestion.writers import write_to_partitioned_parquet
 
 logger = structlog.get_logger()

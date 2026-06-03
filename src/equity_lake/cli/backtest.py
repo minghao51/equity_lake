@@ -3,20 +3,21 @@
 CLI interface for backtesting strategies.
 
 Usage:
-    equity-backtest --strategy sma_crossover --tickers AAPL,MSFT
+    equity backtest --strategy sma_crossover --tickers AAPL,MSFT
+    equity backtest --strategy sma_crossover --tickers AAPL,MSFT --engine vector
 """
 
 import argparse
 import sys
 from datetime import date
 
-from equity_lake.backtesting import BacktestEngine
+from equity_lake.backtesting import BacktestEngine, VectorBacktestEngine
 from equity_lake.backtesting.strategy import (
     BBMeanReversionStrategy,
     CrossSectionalMomentumStrategy,
     SMACrossoverStrategy,
 )
-from equity_lake.core.runtime import setup_logging
+from equity_lake.core.logging import setup_logging
 
 logger = setup_logging(__name__, level="INFO")
 
@@ -66,6 +67,15 @@ def parse_arguments() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--engine",
+        "-e",
+        type=str,
+        choices=["loop", "vector"],
+        default="vector",
+        help="Backtest engine: 'loop' (original) or 'vector' (vectorbt, 10-100x faster, default)",
+    )
+
+    parser.add_argument(
         "--walk-forward",
         action="store_true",
         help="Use walk-forward validation",
@@ -109,7 +119,14 @@ def main() -> None:
 
     # Run backtest
     try:
-        engine = BacktestEngine(
+        engine_class = VectorBacktestEngine if args.engine == "vector" else BacktestEngine
+
+        if args.engine == "vector":
+            logger.info("Using vectorized backtest engine (vectorbt)")
+        else:
+            logger.info("Using loop-based backtest engine")
+
+        engine = engine_class(
             strategy=strategy,
             tickers=tickers,
             start_date=start_date,
@@ -124,7 +141,6 @@ def main() -> None:
 
         # Save to file if requested
         if args.output:
-            result.to_dict()
             import json
 
             with open(args.output, "w") as f:

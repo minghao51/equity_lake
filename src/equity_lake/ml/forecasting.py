@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -40,6 +41,7 @@ class PriceForecaster:
         self.model_dir = Path(model_dir) if model_dir else DEFAULT_MODEL_DIR
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self.conn = duckdb.connect(":memory:")
+        self._loaded_models: collections.OrderedDict[Path, xgb.XGBClassifier] = collections.OrderedDict()
         self._setup_feature_view()
 
     def _setup_feature_view(self) -> None:
@@ -174,11 +176,10 @@ class PriceForecaster:
 
         model_path: Path | None = None
         if model is None:
-            model_files = sorted(self.model_dir.glob(f"{ticker}_xgboost_*.pkl"))
-            if not model_files:
+            model_path = self._resolve_model_path(ticker, date)
+            if model_path is None:
                 raise ValueError(f"No trained model found for {ticker}")
-            model_path = model_files[-1]
-            model = joblib.load(model_path)
+            model = self._load_model(model_path)
 
         feature_cols = self._get_feature_columns(df)
         X = latest[feature_cols].fillna(0)
@@ -207,11 +208,11 @@ class PriceForecaster:
 
         results: list[dict[str, Any]] = []
         feature_cols = self._get_feature_columns(df)
-        model_files = sorted(self.model_dir.glob(f"{ticker}_xgboost_*.pkl"))
-        if not model_files:
+        model_path = self._resolve_model_path(ticker, end_date)
+        if model_path is None:
             raise ValueError(f"No trained model found for {ticker}")
 
-        model = joblib.load(model_files[-1])
+        model = self._load_model(model_path)
         for i in tqdm(range(len(df) - train_window), desc="Backtesting"):
             test_idx = i + train_window
             if test_idx >= len(df):
@@ -236,6 +237,36 @@ class PriceForecaster:
     def _get_feature_columns(self, df: pd.DataFrame) -> list[str]:
         """Return columns that should be fed into the model."""
         return [col for col in df.columns if col not in NON_FEATURE_COLUMNS]
+
+    def _resolve_model_path(self, ticker: str, as_of_date: date) -> Path | None:
+        """Return the latest model path available on or before the target date."""
+        candidates: list[tuple[date, Path]] = []
+        for model_path in self.model_dir.glob(f"{ticker}_xgboost_*.pkl"):
+            suffix = model_path.stem.removeprefix(f"{ticker}_xgboost_")
+            try:
+                trained_on = date.fromisoformat(suffix)
+            except ValueError:
+                continue
+            if trained_on <= as_of_date:
+                candidates.append((trained_on, model_path))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0])
+        return candidates[-1][1]
+
+    _MAX_CACHED_MODELS = 20
+
+    def _load_model(self, model_path: Path) -> xgb.XGBClassifier:
+        """Load and cache a trained model artifact (LRU bounded to 20 entries)."""
+        if model_path in self._loaded_models:
+            self._loaded_models.move_to_end(model_path)
+            return self._loaded_models[model_path]
+        if len(self._loaded_models) >= self._MAX_CACHED_MODELS:
+            evicted_path, _ = self._loaded_models.popitem(last=False)
+            logger.debug("model_cache_evict", path=str(evicted_path))
+        self._loaded_models[model_path] = cast(xgb.XGBClassifier, joblib.load(model_path))
+        return self._loaded_models[model_path]
 
     def close(self) -> None:
         """Close the DuckDB connection."""

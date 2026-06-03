@@ -30,13 +30,10 @@ import yfinance as yf
 from fredapi import Fred
 
 from equity_lake.core.dates import resolve_trading_date
-from equity_lake.core.runtime import (
-    MACRO_COLUMNS,
-    MACRO_INDICATOR_CONFIG,
-    MACRO_INDICATORS_DIR,
-    get_project_config,
-    setup_logging,
-)
+from equity_lake.core.logging import setup_logging
+from equity_lake.core.paths import MACRO_INDICATORS_DIR
+from equity_lake.core.runtime import get_project_config
+from equity_lake.core.schemas import MACRO_COLUMNS, MACRO_INDICATOR_CONFIG
 
 logger = logging.getLogger(__name__)
 

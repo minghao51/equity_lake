@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from equity_lake.config.settings import load_settings
 
@@ -40,7 +41,13 @@ def main() -> None:
         return
 
     if args.command == "export":
-        print(json.dumps(payload, indent=2))
+        output_path = Path(args.path) if args.path else None
+        rendered = json.dumps(payload, indent=2)
+        if output_path is None:
+            print(rendered)
+            return
+        output_path.write_text(rendered, encoding="utf-8")
+        print(f"exported:{output_path}")
         return
 
     if args.command == "get":

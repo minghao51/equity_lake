@@ -189,13 +189,11 @@ class TestSchemaValidation:
 class TestPipelineIntegration:
     """Integration tests for the ingestion pipeline."""
 
-    @pytest.mark.unit
     def test_fetch_market_data_invalid_market(self):
         """Test fetching with invalid market identifier."""
         result = fetch_market_data("invalid_market", date(2024, 1, 1), {})
         assert result is None
 
-    @pytest.mark.unit
     def test_fetch_market_data_cn_uses_hybrid_fetcher(self):
         """CN ingestion should use the hybrid fetcher with built-in fallback."""
         sample = pd.DataFrame(
@@ -220,7 +218,6 @@ class TestPipelineIntegration:
         assert result is not None
         assert not result.empty
 
-    @pytest.mark.unit
     def test_run_daily_ingestion_dry_run(self, tmp_path, sample_ohlcv_data):
         """Test daily ingestion in dry-run mode."""
         # Mock fetchers

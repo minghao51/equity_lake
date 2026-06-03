@@ -499,7 +499,7 @@ uv run python examples/backtest_demo.py
 1. **Check examples**: `examples/` directory
 2. **Review source code**: `src/equity_lake/backtesting/`
 3. **Check logs**: `logs/backtest_cache/` for data loader issues
-4. **Open the archive**: `archive/docs-history/backtesting/` for historical design and test notes
+4. **Open the archive**: `docs/developer/history/backtesting/` for historical design and test notes
 
 ## Next Steps
 

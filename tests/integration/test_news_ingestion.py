@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from equity_lake.core.runtime import NEWS_COLUMNS
+from equity_lake.core.schemas import NEWS_COLUMNS
 from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
 
@@ -217,7 +217,6 @@ class TestNewsParquetWrite:
 # =============================================================================
 
 
-@pytest.mark.integration
 class TestNewsIngestionE2E:
     """End-to-end tests for news ingestion with mocked API."""
 
@@ -298,7 +297,6 @@ class TestNewsIngestionE2E:
 
 
 @pytest.mark.skipif(not os.getenv("FINNHUB_API_KEY"), reason="FINNHUB_API_KEY not set")
-@pytest.mark.integration
 class TestRealFinnhubAPI:
     """Tests with real Finnhub API (requires API key)."""
 
@@ -330,7 +328,6 @@ class TestRealFinnhubAPI:
 
 
 @pytest.mark.skipif(not os.getenv("FINNHUB_API_KEY"), reason="FINNHUB_API_KEY not set")
-@pytest.mark.integration
 class TestSentimentAccuracy:
     """Test sentiment accuracy on real headlines."""
 
