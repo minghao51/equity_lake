@@ -27,6 +27,7 @@ class CNAshareFetcher(MarketDataFetcher):
         filters: FilterConfig | None = None,
         max_workers: int = 10,
         stock_limit: int = 100,
+        adaptive_threshold: float = 0.2,
     ):
         super().__init__(
             retry_attempts,
@@ -36,6 +37,7 @@ class CNAshareFetcher(MarketDataFetcher):
         )
         self.filters = filters or {}
         self.max_workers = max_workers
+        self.adaptive_threshold = adaptive_threshold
 
     def _fetch_single_stock(
         self,
@@ -86,6 +88,8 @@ class CNAshareFetcher(MarketDataFetcher):
                 frames: list[pd.DataFrame] = []
                 success_count = 0
                 failure_count = 0
+                batch_size = len(tickers)
+                check_interval = max(1, batch_size // 4)
 
                 with (
                     timer("parallel_cn_stock_fetching", stock_count=len(tickers)),
@@ -100,7 +104,7 @@ class CNAshareFetcher(MarketDataFetcher):
                         ): stock_code
                         for stock_code in tickers
                     }
-                    for future in as_completed(futures):
+                    for i, future in enumerate(as_completed(futures)):
                         stock_code = futures[future]
                         try:
                             result = future.result(timeout=30)
@@ -116,6 +120,18 @@ class CNAshareFetcher(MarketDataFetcher):
                                 error=str(exc),
                             )
                             failure_count += 1
+
+                        if (i + 1) % check_interval == 0 and (success_count + failure_count) > 0:
+                            failure_rate = failure_count / (success_count + failure_count)
+                            if failure_rate > self.adaptive_threshold:
+                                new_workers = max(1, executor._max_workers - 2)
+                                if new_workers < executor._max_workers:
+                                    executor._max_workers = new_workers
+                                    logger.warning(
+                                        "adaptive_throttle",
+                                        failure_rate=f"{failure_rate:.0%}",
+                                        reduced_workers=new_workers,
+                                    )
 
                 logger.info(
                     "stock_fetch_completed",

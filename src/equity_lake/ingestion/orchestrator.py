@@ -263,6 +263,12 @@ Examples:
         help="Include weekends in gap detection (default: business days only)",
     )
 
+    gap_group.add_argument(
+        "--no-gap-check",
+        action="store_true",
+        help="Skip gap-aware ingestion (always re-fetch all data)",
+    )
+
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -362,7 +368,7 @@ def main() -> None:
     if args.parallel:
         logger.info("🚀 PARALLEL MODE - Fetching markets concurrently")
 
-    # Run ingestion
+    # Run ingestion (gap-aware by default)
     try:
         results = run_daily_ingestion(
             trading_date=trading_date,
@@ -373,6 +379,7 @@ def main() -> None:
             explicit_tickers=args.tickers,
             parallel=args.parallel,
             max_workers=args.max_workers,
+            skip_existing=not args.no_gap_check,
         )
 
         # Summary
@@ -563,6 +570,22 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
     print(f"\n{'=' * 70}\n")
 
 
+def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[str]:
+    """Return only markets that lack data for the given trading date."""
+    markets_needing_fetch: list[str] = []
+    for market in markets:
+        if market in ("macro", "us_news", "us_social_sentiment"):
+            markets_needing_fetch.append(market)
+            continue
+        market_dir = MARKET_DIR_MAP.get(market, market)
+        partition_file = LAKE_DIR / market_dir / f"date={trading_date}" / f"{trading_date}.parquet"
+        if partition_file.exists():
+            logger.debug("market_data_exists", market=market, path=str(partition_file))
+        else:
+            markets_needing_fetch.append(market)
+    return markets_needing_fetch
+
+
 def run_daily_ingestion(
     trading_date: date,
     markets: list[str],
@@ -572,6 +595,7 @@ def run_daily_ingestion(
     explicit_tickers: str | list[str] | None = None,
     parallel: bool = False,
     max_workers: int | None = None,
+    skip_existing: bool = True,
 ) -> dict[str, bool]:
     """
     Run daily ingestion for specified markets.
@@ -585,6 +609,7 @@ def run_daily_ingestion(
         explicit_tickers: Comma-separated explicit ticker list (overrides config)
         parallel: If True, fetch markets concurrently
         max_workers: Maximum number of parallel workers
+        skip_existing: If True, skip markets that already have data for trading_date
 
     Returns:
         Dictionary mapping market to success status
@@ -595,6 +620,18 @@ def run_daily_ingestion(
     explicit_ticker_list = explicit_tickers if isinstance(explicit_tickers, list) else None
     if explicit_tickers and isinstance(explicit_tickers, str):
         explicit_ticker_list = [t.strip() for t in explicit_tickers.split(",")]
+
+    # Gap-aware ingestion: skip markets that already have data for this date
+    if skip_existing:
+        markets_to_fetch = _filter_markets_with_gaps(markets, trading_date)
+        skipped = set(markets) - set(markets_to_fetch)
+        if skipped:
+            logger.info("skip_existing_data", trading_date=str(trading_date), skipped=sorted(skipped))
+        markets = markets_to_fetch
+
+    if not markets:
+        logger.info("all_markets_up_to_date", trading_date=str(trading_date))
+        return results
 
     if parallel:
         # Parallel fetching mode

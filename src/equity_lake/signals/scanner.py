@@ -1,5 +1,6 @@
 """Signal scanner orchestrator."""
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
 from equity_lake.signals.formatters.json import JSONFormatter
@@ -16,15 +17,17 @@ from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 class SignalScanner:
     """Main orchestrator for scanning watchlist and generating signals."""
 
-    def __init__(self, config: SignalConfig, watchlist: Watchlist):
+    def __init__(self, config: SignalConfig, watchlist: Watchlist, max_workers: int = 4):
         """Initialize scanner with config and watchlist.
 
         Args:
             config: Signal configuration
             watchlist: Tickers to scan
+            max_workers: Thread pool size for parallel scanning
         """
         self.config = config
         self.watchlist = watchlist
+        self.max_workers = max_workers
 
         # Initialize generators
         self.generators: list[SignalGenerator] = []
@@ -56,11 +59,26 @@ class SignalScanner:
 
         all_signals = []
 
-        # Scan each ticker
-        for ticker in self.watchlist.tickers:
-            ticker_signals = self._scan_ticker(ticker, target_date)
-            if ticker_signals:
-                all_signals.extend(ticker_signals)
+        if len(self.watchlist.tickers) <= 1:
+            for ticker in self.watchlist.tickers:
+                ticker_signals = self._scan_ticker(ticker, target_date)
+                if ticker_signals:
+                    all_signals.extend(ticker_signals)
+            return all_signals
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = {
+                executor.submit(self._scan_ticker, ticker, target_date): ticker
+                for ticker in self.watchlist.tickers
+            }
+            for future in as_completed(futures):
+                try:
+                    ticker_signals = future.result()
+                    if ticker_signals:
+                        all_signals.extend(ticker_signals)
+                except Exception as exc:
+                    ticker = futures[future]
+                    print(f"Warning: scan failed for {ticker}: {exc}")
 
         return all_signals
 

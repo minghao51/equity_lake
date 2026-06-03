@@ -51,6 +51,7 @@ class IngestionSettings(BaseModel):
     parallel: bool = True
     max_workers: int = 3
     ticker_config_path: str = "config/tickers.yaml"
+    cn_fallback_threshold: float = 0.3
 
 
 class ScheduleSettings(BaseModel):

@@ -6,6 +6,8 @@ from typing import Any
 
 import pandas as pd
 
+FEATURE_SCHEMA_VERSION = 1
+
 
 class FeaturePipeline:
     """Declarative feature pipeline powered by Hamilton."""
@@ -82,6 +84,7 @@ class FeaturePipeline:
         frame = pd.DataFrame(result)
         if "open_price" in frame.columns:
             frame = frame.rename(columns={"open_price": "open"})
+        frame["feature_schema_version"] = FEATURE_SCHEMA_VERSION
         return frame
 
 

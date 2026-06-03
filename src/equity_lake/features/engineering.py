@@ -21,7 +21,6 @@ from tqdm import tqdm
 
 from equity_lake.core.logging import setup_logging, timer
 from equity_lake.core.paths import LAKE_DIR
-from equity_lake.features.indicators import atr, bollinger_bands, macd, roc, rsi
 from equity_lake.features.pipeline import FeaturePipeline
 
 # Logger configuration - use structlog for consistency
@@ -47,8 +46,13 @@ class FeatureEngineer:
         self.conn = duckdb.connect(str(self.db_path))
         self.feature_pipeline = FeaturePipeline()
 
-        # Create views if not exists (using existing query_example.py logic)
         self._setup_views()
+
+    def __enter__(self) -> "FeatureEngineer":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
     def _setup_views(self) -> None:
         """Set up DuckDB views for accessing OHLCV data."""
@@ -77,166 +81,6 @@ class FeatureEngineer:
             FROM read_parquet('{LAKE_DIR}/krx_equity/**/*.parquet', hive_partitioning=1)
         """)
         logger.info("DuckDB views created successfully")
-
-    # -------------------------------------------------------------------------
-    # Technical Indicators
-    # -------------------------------------------------------------------------
-
-    def compute_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Compute technical indicators (RSI, MACD, Bollinger Bands, ATR).
-
-        Args:
-            df: DataFrame with OHLCV data (must have open, high, low, close, volume columns)
-
-        Returns:
-            DataFrame with additional technical indicator columns
-        """
-        df = df.copy()
-
-        # Sort by date to ensure correct calculations
-        df = df.sort_values("date")
-
-        # RSI (14-period) - Relative Strength Index
-        df["rsi_14"] = rsi(df["close"], length=14)
-
-        # MACD (12, 26, 9) - Moving Average Convergence Divergence
-        macd_frame = macd(df["close"], fast=12, slow=26, signal=9)
-        df["macd"] = macd_frame["macd"]
-        df["macd_signal"] = macd_frame["signal"]
-        df["macd_histogram"] = macd_frame["histogram"]
-
-        # Bollinger Bands (20-day, 2 standard deviations)
-        bb = bollinger_bands(df["close"], length=20, std=2)
-        df["bb_upper"] = bb["upper"]
-        df["bb_middle"] = bb["middle"]
-        df["bb_lower"] = bb["lower"]
-        df["bb_width"] = (df["bb_upper"] - df["bb_lower"]) / df["bb_middle"]  # Bandwidth
-        df["bb_pct"] = (df["close"] - df["bb_lower"]) / (df["bb_upper"] - df["bb_lower"])  # %B
-
-        # ATR (14-period) - Average True Range
-        df["atr_14"] = atr(df["high"], df["low"], df["close"], length=14)
-
-        # Rate of Change (5, 10, 20-day)
-        for period in [5, 10, 20]:
-            df[f"roc_{period}"] = roc(df["close"], length=period)
-
-        logger.debug(f"Computed technical indicators: {list(df.columns)}")
-        return df
-
-    # -------------------------------------------------------------------------
-    # Return Features
-    # -------------------------------------------------------------------------
-
-    def compute_return_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Compute lagged returns and momentum features.
-
-        Args:
-            df: DataFrame with OHLCV data
-
-        Returns:
-            DataFrame with additional return feature columns
-        """
-        df = df.copy()
-        df = df.sort_values("date")
-
-        # Lagged returns (1, 5, 10, 20-day)
-        for lag in [1, 5, 10, 20]:
-            df[f"return_{lag}d"] = df["close"].pct_change(lag)
-
-        # Overnight return: (open - prev_close) / prev_close
-        df["overnight_return"] = (df["open"] - df["close"].shift(1)) / df["close"].shift(1)
-
-        # Intraday return: (close - open) / open
-        df["intraday_return"] = (df["close"] - df["open"]) / df["open"]
-
-        # High-Low range relative to close
-        df["hl_range"] = (df["high"] - df["low"]) / df["close"]
-
-        logger.debug(f"Computed return features: {list(df.columns)}")
-        return df
-
-    # -------------------------------------------------------------------------
-    # Volume Features
-    # -------------------------------------------------------------------------
-
-    def compute_volume_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Compute volume-based indicators.
-
-        Args:
-            df: DataFrame with OHLCV data
-
-        Returns:
-            DataFrame with additional volume feature columns
-        """
-        df = df.copy()
-        df = df.sort_values("date")
-
-        # Volume moving average (20-day)
-        df["volume_ma_20"] = df["volume"].rolling(window=20).mean()
-
-        # Volume rate of change (5-day)
-        df["volume_roc_5"] = df["volume"].pct_change(5)
-
-        # On-Balance Volume (OBV)
-        obv = [0]
-        for i in range(1, len(df)):
-            if df["close"].iloc[i] > df["close"].iloc[i - 1]:
-                obv.append(obv[-1] + df["volume"].iloc[i])
-            elif df["close"].iloc[i] < df["close"].iloc[i - 1]:
-                obv.append(obv[-1] - df["volume"].iloc[i])
-            else:
-                obv.append(obv[-1])
-        df["obv"] = obv
-
-        # Volume relative to average (volume / volume_ma_20)
-        df["volume_ratio"] = df["volume"] / df["volume_ma_20"]
-
-        logger.debug(f"Computed volume features: {list(df.columns)}")
-        return df
-
-    # -------------------------------------------------------------------------
-    # Time Features
-    # -------------------------------------------------------------------------
-
-    def compute_time_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Compute time-based features (seasonality).
-
-        Args:
-            df: DataFrame with date column
-
-        Returns:
-            DataFrame with additional time feature columns
-        """
-        df = df.copy()
-
-        # Ensure date is datetime
-        df["date"] = pd.to_datetime(df["date"])
-
-        # Day of week (0=Monday, 6=Sunday)
-        df["day_of_week"] = df["date"].dt.dayofweek
-
-        # Day of month (1-31)
-        df["day_of_month"] = df["date"].dt.day
-
-        # Month (1-12)
-        df["month"] = df["date"].dt.month
-
-        # Quarter (1-4)
-        df["quarter"] = df["date"].dt.quarter
-
-        # Days to month-end
-        month_end = df["date"] + pd.offsets.MonthEnd(0)
-        df["days_to_month_end"] = (month_end - df["date"]).dt.days
-
-        # Trading day of month (approximately 1-22)
-        df["trading_day_of_month"] = df.groupby([df["date"].dt.year, df["date"].dt.month]).cumcount() + 1
-
-        logger.debug(f"Computed time features: {list(df.columns)}")
-        return df
 
     # -------------------------------------------------------------------------
     # Main Feature Generation

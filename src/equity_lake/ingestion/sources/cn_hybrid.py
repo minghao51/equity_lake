@@ -50,6 +50,7 @@ class CNHybridFetcher(MarketDataFetcher):
         enable_efinance: bool = False,
         enable_akshare: bool = True,
         efinance_timeout_seconds: float = 45.0,
+        fallback_threshold: float = 0.3,
     ):
         """Initialize hybrid fetcher with configurable sources.
 
@@ -64,6 +65,8 @@ class CNHybridFetcher(MarketDataFetcher):
             enable_akshare: Use akshare as fallback source
             efinance_timeout_seconds: Maximum time to wait for efinance before
                 falling back to akshare
+            fallback_threshold: Fraction of configured tickers that efinance
+                must return to skip akshare fallback (0.0-1.0)
         """
         super().__init__(retry_attempts, retry_delay)
         self.ticker_config = ticker_config or TickerConfig()
@@ -73,6 +76,7 @@ class CNHybridFetcher(MarketDataFetcher):
         self.enable_efinance = enable_efinance and CNEfinanceFetcher is not None
         self.enable_akshare = enable_akshare
         self.efinance_timeout_seconds = efinance_timeout_seconds
+        self.fallback_threshold = fallback_threshold
         configured_tickers = self.ticker_config.get_tickers_for_market("cn", active_only=True)
         self.configured_ticker_count = min(len(configured_tickers), self.stock_limit)
 
@@ -246,8 +250,7 @@ class CNHybridFetcher(MarketDataFetcher):
                 results.append(("efinance", efinance_result))
 
                 # If efinance returned good data, we can skip akshare
-                # Consider "good" as >30% of configured target tickers.
-                sufficient_threshold = max(1, int(self.configured_ticker_count * 0.3))
+                sufficient_threshold = max(1, int(self.configured_ticker_count * self.fallback_threshold))
                 if row_count >= sufficient_threshold:
                     logger.info(
                         "efinance_sufficient",

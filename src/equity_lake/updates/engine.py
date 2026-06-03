@@ -14,7 +14,6 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from equity_lake.core.paths import LAKE_DIR
-from equity_lake.ingestion.sources.base import MarketDataFetcher
 from equity_lake.ingestion.sources.cn_hybrid import CNHybridFetcher
 from equity_lake.ingestion.sources.jpx import JPXEquityFetcher
 from equity_lake.ingestion.sources.krx import KRXEquityFetcher
@@ -22,28 +21,22 @@ from equity_lake.ingestion.writers import write_to_partitioned_parquet
 from equity_lake.loaders import registry
 from equity_lake.updates.history import UpdateHistory
 
-MARKET_DIR_MAP = {
-    "us_equity": "us_equity",
-    "hk_sg_equity": "hk_sg_equity",
-    "cn_ashare": "cn_ashare",
-    "jpx_equity": "jpx_equity",
-    "krx_equity": "krx_equity",
-}
 
-SOURCE_DEFAULT_SYMBOLS = {
-    "us_equity": ["AAPL", "MSFT", "NVDA"],
-    "hk_sg_equity": ["0700.HK", "D05.SI"],
-}
+class SourceConfig(BaseModel):
+    """Consolidated configuration for a data source."""
 
-SOURCE_LOADER_MAP = {
-    "us_equity": "yfinance",
-    "hk_sg_equity": "yfinance",
-}
+    dir_name: str
+    default_symbols: list[str] = []
+    loader_name: str | None = None
+    fetcher_class: type | None = None
 
-SOURCE_FETCHER_MAP = {
-    "cn_ashare": CNHybridFetcher,
-    "jpx_equity": JPXEquityFetcher,
-    "krx_equity": KRXEquityFetcher,
+
+SOURCES: dict[str, SourceConfig] = {
+    "us_equity": SourceConfig(dir_name="us_equity", default_symbols=["AAPL", "MSFT", "NVDA"], loader_name="yfinance"),
+    "hk_sg_equity": SourceConfig(dir_name="hk_sg_equity", default_symbols=["0700.HK", "D05.SI"], loader_name="yfinance"),
+    "cn_ashare": SourceConfig(dir_name="cn_ashare", fetcher_class=CNHybridFetcher),
+    "jpx_equity": SourceConfig(dir_name="jpx_equity", fetcher_class=JPXEquityFetcher),
+    "krx_equity": SourceConfig(dir_name="krx_equity", fetcher_class=KRXEquityFetcher),
 }
 
 
@@ -82,21 +75,20 @@ class UpdateEngine:
         strategy: UpdateStrategy = UpdateStrategy.SMART,
         force: bool = False,
     ) -> UpdateResult:
-        symbols = symbols or SOURCE_DEFAULT_SYMBOLS.get(source, [])
-        if source in SOURCE_LOADER_MAP and not symbols:
+        src = SOURCES.get(source)
+        if src is None:
+            return UpdateResult(
+                success=False,
+                source=source,
+                errors=[f"Unsupported source '{source}'. Supported sources: {', '.join(sorted(SOURCES))}"],
+            )
+
+        symbols = symbols or src.default_symbols
+        if src.loader_name and not symbols:
             return UpdateResult(
                 success=False,
                 source=source,
                 errors=[f"No symbols configured for source '{source}'"],
-            )
-
-        loader_name = SOURCE_LOADER_MAP.get(source)
-        fetcher_class = SOURCE_FETCHER_MAP.get(source)
-        if loader_name is None and fetcher_class is None:
-            return UpdateResult(
-                success=False,
-                source=source,
-                errors=[f"Unsupported source '{source}'. Supported sources: {', '.join(sorted(MARKET_DIR_MAP))}"],
             )
 
         total_records = 0
@@ -110,8 +102,8 @@ class UpdateEngine:
                 continue
 
             start_date, end_date = self._determine_date_range(source, symbol, strategy)
-            if loader_name is not None:
-                loader = registry.create(loader_name, {})
+            if src.loader_name is not None:
+                loader = registry.create(src.loader_name, {})
                 result = loader.load([symbol], start_date, end_date + timedelta(days=1))
                 if not result.success or result.data is None or result.data.empty:
                     errors.extend(result.errors or [f"{symbol}: no data returned"])
@@ -120,7 +112,7 @@ class UpdateEngine:
                 self.history.record(source, symbol, records=len(result.data))
                 continue
 
-            if fetcher_class is None:
+            if src.fetcher_class is None:
                 continue
             if symbols and source == "cn_ashare":
                 errors.append("Explicit symbols are not yet supported for cn_ashare updates; use configured tickers.")
@@ -128,6 +120,7 @@ class UpdateEngine:
 
             fetched_rows = self._run_fetcher_updates(
                 source=source,
+                fetcher_class=src.fetcher_class,
                 start_date=start_date,
                 end_date=end_date,
                 explicit_symbols=symbols,
@@ -136,7 +129,7 @@ class UpdateEngine:
             self.history.record(source, source if symbol == "__market__" else symbol, records=fetched_rows)
 
         return UpdateResult(
-            success=not errors,
+            success=len(errors) == 0,
             source=source,
             records_added=total_records,
             records_skipped=skipped,
@@ -147,22 +140,13 @@ class UpdateEngine:
     def _run_fetcher_updates(
         self,
         source: str,
+        fetcher_class: type,
         start_date: date,
         end_date: date,
         explicit_symbols: list[str] | None,
     ) -> int:
         """Fetch and write a date range using a market fetcher."""
-        fetcher: MarketDataFetcher
-        if source == "jpx_equity" and explicit_symbols:
-            fetcher = JPXEquityFetcher(tickers=explicit_symbols)
-        elif source == "krx_equity" and explicit_symbols:
-            fetcher = KRXEquityFetcher(tickers=explicit_symbols)
-        elif source == "cn_ashare":
-            fetcher = CNHybridFetcher()
-        elif source == "jpx_equity":
-            fetcher = JPXEquityFetcher()
-        else:
-            fetcher = KRXEquityFetcher()
+        fetcher = fetcher_class(tickers=explicit_symbols) if explicit_symbols and source in ("jpx_equity", "krx_equity") else fetcher_class()
 
         total_records = 0
         current_date = start_date
@@ -175,13 +159,14 @@ class UpdateEngine:
 
     def _write_result_frame(self, source: str, result_df: pd.DataFrame) -> int:
         """Write fetched rows grouped by trading date."""
+        src = SOURCES[source]
         trading_dates = sorted({d.date() for d in result_df["date"]})
         written_records = 0
         for trading_date in trading_dates:
             slice_df = result_df[result_df["date"].dt.date == trading_date]
             if write_to_partitioned_parquet(
                 slice_df,
-                MARKET_DIR_MAP[source],
+                src.dir_name,
                 trading_date,
                 validate_quality=self.validate_quality,
             ):
@@ -215,7 +200,8 @@ class UpdateEngine:
         return today - timedelta(days=7), today
 
     def get_last_date(self, source: str, symbol: str) -> date | None:
-        dataset_dir = LAKE_DIR / MARKET_DIR_MAP[source]
+        src = SOURCES[source]
+        dataset_dir = LAKE_DIR / src.dir_name
         if not dataset_dir.exists():
             return None
 

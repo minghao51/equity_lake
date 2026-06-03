@@ -255,31 +255,9 @@ class BacktestEngine:
 
     def _extract_signal_matrices(self, signals: pd.DataFrame, tickers: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Extract per-ticker entry and exit matrices from strategy output."""
-        entries = pd.DataFrame(False, index=signals.index, columns=tickers)
-        exits = pd.DataFrame(False, index=signals.index, columns=tickers)
+        from equity_lake.backtesting.vector_engine import extract_signal_matrices
 
-        if isinstance(signals.columns, pd.MultiIndex) and "signal" in signals.columns.names:
-            if "entry" in signals.columns.get_level_values("signal"):
-                entry_frame = signals.xs("entry", level="signal", axis=1).reindex(columns=tickers, fill_value=False)
-                entries.loc[entry_frame.index, entry_frame.columns] = entry_frame.fillna(False).astype(bool)
-            if "exit" in signals.columns.get_level_values("signal"):
-                exit_frame = signals.xs("exit", level="signal", axis=1).reindex(columns=tickers, fill_value=False)
-                exits.loc[exit_frame.index, exit_frame.columns] = exit_frame.fillna(False).astype(bool)
-            return entries, exits
-
-        if "entry" in signals.columns:
-            broadcast_entries = pd.DataFrame(
-                {ticker: signals["entry"].fillna(False).astype(bool) for ticker in tickers},
-                index=signals.index,
-            )
-            entries.loc[:, :] = broadcast_entries
-        if "exit" in signals.columns:
-            broadcast_exits = pd.DataFrame(
-                {ticker: signals["exit"].fillna(False).astype(bool) for ticker in tickers},
-                index=signals.index,
-            )
-            exits.loc[:, :] = broadcast_exits
-        return entries, exits
+        return extract_signal_matrices(signals, tickers)
 
     def _execute_entry(self, date_idx: pd.Timestamp, prices: pd.DataFrame, active_tickers: list[str]) -> None:
         """Execute entry signals."""

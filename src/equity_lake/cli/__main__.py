@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sys
 
+import pandas as pd
 import typer
 
 PASSTHROUGH_CONTEXT = {
@@ -350,6 +351,24 @@ def bootstrap_sample(
 # ---------------------------------------------------------------------------
 
 
+def _load_parquet(path: str) -> pd.DataFrame:
+    """Load a parquet file or concatenate all parquet files in a directory."""
+    from pathlib import Path as P
+
+    import pandas as pd
+
+    target = P(path)
+    if target.is_dir():
+        files = list(target.rglob("*.parquet"))
+        if not files:
+            from rich.console import Console
+
+            Console().print(f"[red]No parquet files found in {path}[/red]")
+            raise typer.Exit(1)
+        return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+    return pd.read_parquet(target)
+
+
 @validate_app.command("check")
 def validate_check(
     path: str = typer.Argument(help="Path to parquet file or directory"),
@@ -357,26 +376,13 @@ def validate_check(
     strict: bool = typer.Option(False, "--strict", help="Fail on warnings"),
 ) -> None:
     """Validate data against schema and produce quality metrics."""
-    from pathlib import Path as P
-
-    import pandas as pd
     from rich.console import Console
     from rich.table import Table
 
     from equity_lake.validation.pipeline import ValidationPipeline
 
     console = Console()
-    target = P(path)
-
-    if target.is_dir():
-        files = list(target.rglob("*.parquet"))
-        if not files:
-            console.print(f"[red]No parquet files found in {path}[/red]")
-            raise typer.Exit(1)
-        dfs = [pd.read_parquet(f) for f in files]
-        df = pd.concat(dfs, ignore_index=True)
-    else:
-        df = pd.read_parquet(target)
+    df = _load_parquet(path)
 
     vp = ValidationPipeline(strict=strict)
     result = vp.validate(df, data_type=data_type, name="check")
@@ -409,23 +415,13 @@ def validate_profile(
     save: bool = typer.Option(False, "--save", help="Save profile to disk"),
 ) -> None:
     """Profile a dataset and display quality metrics."""
-    from pathlib import Path as P
-
-    import pandas as pd
     from rich.console import Console
     from rich.table import Table
 
     from equity_lake.validation.profiling import DataProfiler
 
     console = Console()
-    target = P(path)
-
-    if target.is_dir():
-        files = list(target.rglob("*.parquet"))
-        dfs = [pd.read_parquet(f) for f in files]
-        df = pd.concat(dfs, ignore_index=True)
-    else:
-        df = pd.read_parquet(target)
+    df = _load_parquet(path)
 
     profiler = DataProfiler()
     profile = profiler.profile(df, name)
@@ -459,9 +455,6 @@ def validate_drift(
     threshold: float = typer.Option(0.1, "--threshold", "-t", help="Drift threshold (fraction)"),
 ) -> None:
     """Compare two datasets for drift detection."""
-    from pathlib import Path as P
-
-    import pandas as pd
     from rich.console import Console
 
     from equity_lake.validation.profiling import DataProfiler
@@ -469,8 +462,8 @@ def validate_drift(
     console = Console()
     profiler = DataProfiler()
 
-    df_current = pd.read_parquet(P(current))
-    df_baseline = pd.read_parquet(P(baseline))
+    df_current = _load_parquet(current)
+    df_baseline = _load_parquet(baseline)
 
     profile_current = profiler.profile(df_current, "current")
     profile_baseline = profiler.profile(df_baseline, "baseline")

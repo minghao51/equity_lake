@@ -158,7 +158,7 @@ class TestKRXEquityFetcher:
     def test_get_fallback_tickers(self):
         """Test that fallback ticker list contains major KRX stocks."""
         fetcher = KRXEquityFetcher(tickers=[])
-        fallback = fetcher._get_fallback_tickers()
+        fallback = fetcher._get_fallback_list()
 
         assert "005930" in fallback
         assert "000660" in fallback

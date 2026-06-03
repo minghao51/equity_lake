@@ -120,7 +120,7 @@ class _SyntheticGenerator:
 
     def __init__(self, seed: int = 42):
         self.seed = seed
-        np.random.seed(seed)
+        self.rng = np.random.default_rng(seed)
 
     def generate_ticker(
         self,
@@ -130,24 +130,21 @@ class _SyntheticGenerator:
         volume_range: tuple[int, int] = (1_000_000, 50_000_000),
     ) -> pd.DataFrame:
         num_days = len(dates)
-        start_price = np.random.uniform(*price_range)
+        start_price = self.rng.uniform(*price_range)
 
-        # Geometric Brownian Motion for prices
-        returns = np.random.normal(0.0001, 0.02, num_days)
+        returns = self.rng.normal(0.0001, 0.02, num_days)
         prices = start_price * np.exp(np.cumsum(returns))
 
-        # OHLC from close prices
         closes = np.maximum(prices, 0.01)
         opens = np.roll(closes, 1)
         opens[0] = start_price
-        daily_range = np.abs(np.random.normal(0, 0.01, num_days))
+        daily_range = np.abs(self.rng.normal(0, 0.01, num_days))
         highs = np.maximum.reduce([opens, closes]) * (1 + daily_range)
         lows = np.minimum.reduce([opens, closes]) * (1 - daily_range)
         lows = np.maximum(lows, 0.01)
 
-        # Volume
-        base_vol = np.random.uniform(*volume_range)
-        volumes = np.random.lognormal(np.log(base_vol), 0.5, num_days).astype(np.int64)
+        base_vol = self.rng.uniform(*volume_range)
+        volumes = self.rng.lognormal(np.log(base_vol), 0.5, num_days).astype(np.int64)
         volumes = np.clip(volumes, *volume_range)
 
         df = pd.DataFrame(

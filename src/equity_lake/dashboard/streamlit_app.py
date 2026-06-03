@@ -234,52 +234,6 @@ def render_update_history(updates: list[dict[str, Any]]) -> None:
     )
 
 
-def run_streamlit(port: int = 8501) -> None:
-    """Run the Streamlit dashboard with proper signal handling.
-
-    This is called from the CLI `equity dashboard serve` command.
-    It launches Streamlit programmatically with cleanup on shutdown.
-    """
-    import signal
-    import subprocess
-    import sys
-
-    app_path = Path(__file__).parent / "streamlit_app.py"
-
-    st.info(f"Launching Streamlit on port {port}...\nIf it doesn't open automatically, visit: http://localhost:{port}")
-
-    cmd = [
-        sys.executable,
-        "-m",
-        "streamlit",
-        "run",
-        str(app_path),
-        "--server.port",
-        str(port),
-        "--server.headless",
-        "true",
-        "--browser.gatherUsageStats",
-        "false",
-    ]
-
-    process = subprocess.Popen(cmd)
-
-    def signal_handler(signum: int, frame: Any) -> None:
-        """Handle shutdown signals by terminating the Streamlit process."""
-        st.info("Shutting down Streamlit dashboard...")
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    process.wait()
-
-
 def main() -> None:
     st.set_page_config(
         page_title="Equity Lake",

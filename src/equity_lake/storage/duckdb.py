@@ -56,8 +56,7 @@ class EquityDataDB:
     ]
 
     def __init__(self, db_path: str | Path | None = ":memory:"):
-        """
-        Initialize DuckDB connection.
+        """Initialize DuckDB connection.
 
         Args:
             db_path: Path to DuckDB file or ':memory:' for in-memory
@@ -65,19 +64,33 @@ class EquityDataDB:
         self.db_path = db_path if db_path is not None else ":memory:"
         self.con = duckdb.connect(self.db_path)
         self.available_views: list[str] = []
-        self._setup_views()
+        self._views_initialized = False
 
-    def _setup_views(self) -> None:
-        """Create unified views across all markets."""
+    def _ensure_views(self) -> None:
+        """Create unified views lazily on first access."""
+        if self._views_initialized:
+            return
+        self._views_initialized = True
         logger.info("Setting up unified views...")
 
         for view_name, data_dir, market_label in self.MARKET_VIEWS:
             self._create_market_view(view_name, data_dir, market_label)
 
-        # Create unified view across all markets
         self._create_unified_view()
 
-        logger.info("✅ Views created successfully")
+        logger.info("Views created successfully")
+
+    def close(self) -> None:
+        """Close the DuckDB connection."""
+        if hasattr(self, "con") and self.con is not None:
+            self.con.close()
+
+    def __enter__(self) -> "EquityDataDB":
+        self._ensure_views()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
 
     def _create_market_view(self, view_name: str, data_dir: Path, market_label: str) -> None:
         """Create view for a specific market."""
@@ -118,6 +131,7 @@ class EquityDataDB:
 
     def query(self, sql: str) -> pd.DataFrame:
         """Execute SQL query and return result as DataFrame."""
+        self._ensure_views()
         try:
             return self.con.execute(sql).df()
         except Exception as e:
@@ -126,6 +140,7 @@ class EquityDataDB:
 
     def execute(self, sql: str) -> Any:
         """Execute SQL query and return result."""
+        self._ensure_views()
         try:
             return self.con.execute(sql)
         except Exception as e:

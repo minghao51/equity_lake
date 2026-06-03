@@ -22,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import itertools
 from datetime import date
 from typing import Any
 
@@ -30,13 +31,12 @@ import pandas as pd
 import structlog
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
-from equity_lake.backtesting.engine import BacktestEngine, BacktestResult
+from equity_lake.backtesting.engine import BacktestResult
 from equity_lake.backtesting.strategy.base import BaseStrategy
 from equity_lake.backtesting.utils import extract_field_from_maybe_multiindex
 
 logger = structlog.get_logger(__name__)
 
-# Check for vectorbt availability at module level
 try:
     import vectorbt as vbt
 
@@ -44,10 +44,41 @@ try:
 except ImportError:
     VECTORBT_AVAILABLE = False
 
-# Default configuration constants
 DEFAULT_FIXED_FEES = 0.0
 DEFAULT_SLIPPAGE = 0.001
 DEFAULT_FREQ = "1D"
+
+
+def extract_signal_matrices(signals: pd.DataFrame, tickers: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Extract per-ticker entry and exit boolean matrices from strategy output.
+
+    Shared utility used by both the loop-based and vectorized engines.
+    """
+    entries = pd.DataFrame(False, index=signals.index, columns=tickers)
+    exits = pd.DataFrame(False, index=signals.index, columns=tickers)
+
+    if isinstance(signals.columns, pd.MultiIndex) and "signal" in signals.columns.names:
+        if "entry" in signals.columns.get_level_values("signal"):
+            entry_frame = signals.xs("entry", level="signal", axis=1).reindex(columns=tickers, fill_value=False)
+            entries.loc[entry_frame.index, entry_frame.columns] = entry_frame.fillna(False).astype(bool)
+        if "exit" in signals.columns.get_level_values("signal"):
+            exit_frame = signals.xs("exit", level="signal", axis=1).reindex(columns=tickers, fill_value=False)
+            exits.loc[exit_frame.index, exit_frame.columns] = exit_frame.fillna(False).astype(bool)
+        return entries, exits
+
+    if "entry" in signals.columns:
+        broadcast_entries = pd.DataFrame(
+            {ticker: signals["entry"].fillna(False).astype(bool) for ticker in tickers},
+            index=signals.index,
+        )
+        entries.loc[:, :] = broadcast_entries
+    if "exit" in signals.columns:
+        broadcast_exits = pd.DataFrame(
+            {ticker: signals["exit"].fillna(False).astype(bool) for ticker in tickers},
+            index=signals.index,
+        )
+        exits.loc[:, :] = broadcast_exits
+    return entries, exits
 
 
 class VectorBacktestEngine:
@@ -97,21 +128,6 @@ class VectorBacktestEngine:
         markets: list[str] | None = None,
         config: dict[str, Any] | None = None,
     ):
-        """
-        Initialize the vectorized backtesting engine.
-
-        Args:
-            strategy: Trading strategy instance
-            tickers: List of ticker symbols to backtest
-            start_date: Backtest start date
-            end_date: Backtest end date
-            initial_cash: Starting capital (default: 100,000)
-            markets: Markets to query (default: all available)
-            config: Additional configuration options:
-                - fixed_fees: Fixed transaction cost per trade (default: 0)
-                - slippage: Slippage as fraction (default: 0.001)
-                - freq: Data frequency for vectorbt (default: '1D')
-        """
         self.strategy = strategy
         self.tickers = tickers
         self.start_date = start_date
@@ -120,18 +136,17 @@ class VectorBacktestEngine:
         self.markets = markets or ["us", "cn", "hk_sg"]
         self.config = config or {}
 
-        # Transaction cost defaults
         self.fixed_fees = self.config.get("fixed_fees", DEFAULT_FIXED_FEES)
         self.slippage = self.config.get("slippage", DEFAULT_SLIPPAGE)
         self.freq = self.config.get("freq", DEFAULT_FREQ)
 
         self.data_loader = BacktestDataLoader()
 
-        # Results (populated after run())
         self._portfolio: Any = None
         self._signals: pd.DataFrame | None = None
         self.metrics: dict[str, float] = {}
         self._portfolio_value: pd.Series | None = None
+        self._trades_cache: list[dict[str, Any]] | None = None
 
         logger.info(
             "VectorBacktestEngine initialized",
@@ -143,38 +158,25 @@ class VectorBacktestEngine:
         )
 
     def run(self) -> BacktestResult:
-        """
-        Run the vectorized backtest.
-
-        Returns:
-            BacktestResult object with performance metrics and trade details
-
-        Raises:
-            ValueError: If data loading fails or strategy is invalid
-            ImportError: If vectorbt is not installed
-        """
+        """Run the vectorized backtest."""
         if not VECTORBT_AVAILABLE:
             raise ImportError("vectorbt is required for VectorBacktestEngine. Install it with: uv sync --extra backtesting")
 
         logger.info("Starting vectorized backtest", strategy=self.strategy.name)
 
-        # Load data
         data = self._load_data()
         if data.empty:
             raise ValueError("No data available for backtest")
 
-        # Initialize strategy and generate signals
         self.strategy.initialize(data)
         signals = self.strategy.generate_signals(data)
         self._signals = signals
 
-        # Extract close prices for vectorbt
         close_prices = self._extract_prices(data, "close")
+        ticker_cols = list(close_prices.columns)
 
-        # Build entry/exit signals for vectorbt
-        entries, exits = self._build_signals(signals, data)
+        entries, exits = extract_signal_matrices(signals, ticker_cols)
 
-        # Run vectorbt portfolio simulation
         per_ticker_cash = self.initial_cash / max(len(close_prices.columns), 1)
         self._portfolio = vbt.Portfolio.from_signals(
             close=close_prices,
@@ -189,12 +191,10 @@ class VectorBacktestEngine:
         if isinstance(self._portfolio_value, pd.DataFrame):
             self._portfolio_value = self._portfolio_value.sum(axis=1)
 
-        # Compute metrics and build result
-        self._compute_metrics()
+        trades = self._extract_trades()
+        self._compute_metrics(trades)
 
         self.strategy.finalize()
-
-        trades = self._extract_trades()
 
         result = BacktestResult(
             strategy_name=self.strategy.name,
@@ -232,76 +232,33 @@ class VectorBacktestEngine:
     def _extract_prices(self, data: pd.DataFrame, field: str = "close") -> pd.DataFrame:
         """Extract price matrix from wide-format data."""
         prices = extract_field_from_maybe_multiindex(data, field)
-        # Ensure we have a DataFrame with tickers as columns
         if isinstance(prices, pd.Series):
             prices = prices.to_frame()
         return prices
 
-    def _build_signals(
-        self,
-        signals: pd.DataFrame,
-        data: pd.DataFrame,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """
-        Build entry/exit signal matrices for vectorbt.
-
-        Converts strategy signals into boolean matrices matching the
-        price matrix shape expected by vectorbt.
-
-        Args:
-            signals: Strategy signal DataFrame
-            data: Original price data
-
-        Returns:
-            Tuple of (entries, exits) boolean DataFrames
-        """
-        # Get the list of tickers from the price data
-        close_prices = self._extract_prices(data, "close")
-        ticker_cols = list(close_prices.columns)
-
-        # Initialize boolean matrices
-        entries = pd.DataFrame(False, index=close_prices.index, columns=ticker_cols)
-        exits = pd.DataFrame(False, index=close_prices.index, columns=ticker_cols)
-
-        engine = BacktestEngine(
-            strategy=self.strategy,
-            tickers=self.tickers,
-            start_date=self.start_date,
-            end_date=self.end_date,
-            initial_cash=self.initial_cash,
-            markets=self.markets,
-            preloaded_data=data,
-        )
-        entries, exits = engine._extract_signal_matrices(signals, ticker_cols)
-
-        return entries.fillna(False), exits.fillna(False)
-
-    def _compute_metrics(self) -> None:
+    def _compute_metrics(self, closed_trades: list[dict[str, Any]]) -> None:
         """Compute performance metrics from the vectorbt portfolio."""
-        if self._portfolio is None:
+        if self._portfolio is None or self._portfolio_value is None or self._portfolio_value.empty:
             return
 
         portfolio = self._portfolio
+        pv = self._portfolio_value
 
-        # VectorBT provides these metrics directly
-        if self._portfolio_value is None or self._portfolio_value.empty:
-            return
-
-        returns = self._portfolio_value.pct_change().dropna()
-        total_return = (self._portfolio_value.iloc[-1] / self._portfolio_value.iloc[0]) - 1
-        days = max((self._portfolio_value.index[-1] - self._portfolio_value.index[0]).days, 1)
+        returns = pv.pct_change().dropna()
+        end_start_ratio = pv.iloc[-1] / pv.iloc[0]
+        total_return = end_start_ratio - 1
+        days = max((pv.index[-1] - pv.index[0]).days, 1)
         years = days / 365.25
-        ann_return = ((self._portfolio_value.iloc[-1] / self._portfolio_value.iloc[0]) ** (1 / years) - 1) if years > 0 else 0.0
+        ann_return = (end_start_ratio ** (1 / years) - 1) if years > 0 else 0.0
         volatility = float(returns.std() * np.sqrt(252)) if not returns.empty else 0.0
         sharpe_ratio = (ann_return / volatility) if volatility > 0 else 0.0
-        drawdown = (self._portfolio_value / self._portfolio_value.cummax()) - 1
+        drawdown = (pv / pv.cummax()) - 1
         max_drawdown = float(drawdown.min()) if not drawdown.empty else 0.0
 
         trade_count = portfolio.trades.count()
         num_trades = int(trade_count.sum()) if isinstance(trade_count, pd.Series) else int(trade_count)
 
-        closed_trades = self._extract_trades()
-        win_rate = len([trade for trade in closed_trades if trade.get("pnl", 0.0) > 0]) / len(closed_trades) if closed_trades else 0.0
+        win_rate = sum(1 for t in closed_trades if t.get("pnl", 0.0) > 0) / len(closed_trades) if closed_trades else 0.0
 
         self.metrics = {
             "total_return": float(total_return) if not np.isnan(total_return) else 0.0,
@@ -318,20 +275,27 @@ class VectorBacktestEngine:
         if self._portfolio is None:
             return []
 
-        trades = []
+        if self._trades_cache is not None:
+            return self._trades_cache
+
+        trades: list[dict[str, Any]] = []
         try:
             records = self._portfolio.trades.records
 
             if records is not None and not records.empty:
-                for _, record in records.iterrows():
+                col_map = {}
+                if hasattr(self._portfolio, "wrapper") and hasattr(self._portfolio.wrapper, "columns"):
+                    for idx, col in enumerate(self._portfolio.wrapper.columns):
+                        col_map[idx] = col
+
+                for record in records.to_dict("records"):
+                    col_val = record.get("column", "")
+                    ticker = col_map.get(int(col_val), str(col_val)) if isinstance(col_val, (int, np.integer)) else str(col_val)
+
                     trades.append(
                         {
                             "date": record.get("exit_idx", record.get("entry_idx", "")),
-                            "ticker": (
-                                self._portfolio.wrapper.columns[int(record.get("column"))]
-                                if isinstance(record.get("column"), (int, np.integer))
-                                else record.get("column", "")
-                            ),
+                            "ticker": ticker,
                             "action": "SELL",
                             "shares": record.get("size", 0),
                             "price": record.get("exit_price", 0),
@@ -342,6 +306,7 @@ class VectorBacktestEngine:
         except Exception as e:
             logger.warning("Could not extract trades records: %s", e)
 
+        self._trades_cache = trades
         return trades
 
     def optimize(
@@ -349,22 +314,7 @@ class VectorBacktestEngine:
         param_grid: dict[str, list[Any]],
         target: str = "sharpe_ratio",
     ) -> dict[str, Any]:
-        """
-        Run parameter optimization using vectorbt's Portfolios API.
-
-        Args:
-            param_grid: Dictionary of parameter names to value lists
-            target: Metric to optimize (default: 'sharpe_ratio')
-
-        Returns:
-            Dictionary with best parameters and metrics
-
-        Example:
-            >>> result = engine.optimize({
-            ...     "fast_period": [5, 10, 15],
-            ...     "slow_period": [20, 30, 50],
-            ... })
-        """
+        """Run parameter optimization using vectorbt's Portfolios API."""
         if not VECTORBT_AVAILABLE:
             raise ImportError("vectorbt is required for optimization. Install it with: uv sync --extra backtesting")
 
@@ -379,33 +329,22 @@ class VectorBacktestEngine:
             raise ValueError("No data available for optimization")
 
         close_prices = self._extract_prices(data, "close")
-
-        # Build parameter grids using vectorbt
         param_names = list(param_grid.keys())
         param_values = [param_grid[name] for name in param_names]
 
-        # Create parameter mesh
-        param_mesh = {}
-        for name, values in zip(param_names, param_values, strict=True):
-            param_mesh[name] = vbt.Parameters.from_product(values, names=[name], short_name=name)
-
-        # For simplicity, we iterate over param combinations manually
-        # A full vectorbt optimization would use vbt.Portfolio.from_signal_func
         best_sharpe = -np.inf
         best_params: dict[str, Any] = {}
-
-        import itertools
 
         for combo in itertools.product(*param_values):
             params = dict(zip(param_names, combo, strict=True))
 
-            # Create strategy with these params
             strategy_class = type(self.strategy)
             strategy = strategy_class(params=params)
             strategy.initialize(data)
             signals = strategy.generate_signals(data)
 
-            entries, exits = self._build_signals(signals, data)
+            ticker_cols = list(close_prices.columns)
+            entries, exits = extract_signal_matrices(signals, ticker_cols)
 
             try:
                 portfolio = vbt.Portfolio.from_signals(
@@ -433,11 +372,7 @@ class VectorBacktestEngine:
             "total_combinations": np.prod([len(v) for v in param_values]),
         }
 
-        logger.info(
-            "Optimization complete",
-            best_params=best_params,
-            best_sharpe=best_sharpe,
-        )
+        logger.info("Optimization complete", best_params=best_params, best_sharpe=best_sharpe)
 
         return result
 

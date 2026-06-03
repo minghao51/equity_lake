@@ -7,20 +7,20 @@ partitioned Parquet files using DuckDB for high-performance queries.
 
 from __future__ import annotations
 
-import logging
 from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
+import numpy as np
+import structlog
 
 from equity_lake.core.paths import LAKE_DIR
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class GapDetector:
-    """
-    Detect gaps in time series data using DuckDB.
+    """Detect gaps in time series data using DuckDB.
 
     Uses DuckDB's generate_series to create an "ideal" date range and
     LEFT JOIN with existing Parquet data to find missing dates.
@@ -58,7 +58,7 @@ class GapDetector:
         if start_date is None:
             start_date = end_date - timedelta(days=90)
 
-        logger.info(f"Scanning for gaps in {market} from {start_date} to {end_date}")
+        logger.info("Scanning for gaps in %s from %s to %s", market, start_date, end_date)
 
         try:
             if ticker:
@@ -70,11 +70,15 @@ class GapDetector:
             for ticker_symbol, missing_date in rows:
                 missing_dates.setdefault(ticker_symbol, []).append(missing_date)
 
-            logger.info(f"Found {sum(len(d) for d in missing_dates.values())} missing data points across {len(missing_dates)} tickers")
+            logger.info(
+                "Found %d missing data points across %d tickers",
+                sum(len(d) for d in missing_dates.values()),
+                len(missing_dates),
+            )
             return missing_dates
 
         except Exception as e:
-            logger.error(f"Gap detection failed: {e}")
+            logger.error("Gap detection failed: %s", e)
             return {}
 
     def _query_missing_single(
@@ -84,7 +88,7 @@ class GapDetector:
         start_date: date,
         end_date: date,
         business_days_only: bool,
-    ) -> list[tuple]:
+    ) -> list[tuple[str, date]]:
         glob = self._parquet_glob(market)
         business_day_filter = "WHERE EXTRACT(ISODOW FROM generate_series) BETWEEN 1 AND 5" if business_days_only else ""
 
@@ -114,7 +118,7 @@ class GapDetector:
         start_date: date,
         end_date: date,
         business_days_only: bool,
-    ) -> list[tuple]:
+    ) -> list[tuple[str, date]]:
         glob = self._parquet_glob(market)
         business_day_filter = "WHERE EXTRACT(ISODOW FROM generate_series) BETWEEN 1 AND 5" if business_days_only else ""
 
@@ -124,18 +128,13 @@ class GapDetector:
             FROM generate_series($1::DATE, $2::DATE, INTERVAL '1 day')
             {business_day_filter}
         ),
-        all_tickers AS (
-            SELECT DISTINCT ticker
-            FROM read_parquet('{glob}')
-        ),
         existing_data AS (
             SELECT DISTINCT ticker, date
             FROM read_parquet('{glob}')
-            WHERE date BETWEEN $1 AND $2
         ),
         date_ticker_combos AS (
             SELECT t.ticker, d.date
-            FROM all_tickers t
+            FROM (SELECT DISTINCT ticker FROM existing_data) t
             CROSS JOIN date_range d
         )
         SELECT dt.ticker, dt.date
@@ -157,7 +156,7 @@ class GapDetector:
             result = self.con.execute(query, [ticker]).fetchone()
             return result[0] if result and result[0] else None
         except Exception as e:
-            logger.warning(f"Failed to get latest date for {ticker}: {e}")
+            logger.warning("Failed to get latest date for %s: %s", ticker, e)
             return None
 
     def get_coverage_stats(
@@ -166,7 +165,7 @@ class GapDetector:
         start_date: date | None = None,
         end_date: date | None = None,
         business_days_only: bool = True,
-    ) -> dict[str, dict]:
+    ) -> dict[str, dict[str, int | float]]:
         if end_date is None:
             end_date = date.today()
         if start_date is None:
@@ -187,7 +186,7 @@ class GapDetector:
 
         try:
             results = self.con.execute(query, [start_date, end_date]).fetchall()
-            stats = {}
+            stats: dict[str, dict[str, int | float]] = {}
             for ticker, actual_days in results:
                 missing_days = max(0, expected_days - actual_days)
                 coverage_pct = (actual_days / expected_days * 100) if expected_days > 0 else 0
@@ -199,17 +198,11 @@ class GapDetector:
                 }
             return stats
         except Exception as e:
-            logger.error(f"Failed to get coverage stats: {e}")
+            logger.error("Failed to get coverage stats: %s", e)
             return {}
 
     def _count_business_days(self, start_date: date, end_date: date) -> int:
-        business_days = 0
-        current = start_date
-        while current <= end_date:
-            if current.weekday() < 5:
-                business_days += 1
-            current += timedelta(days=1)
-        return business_days
+        return int(np.busday_count(start_date, end_date + timedelta(days=1)))
 
     def get_missing_date_ranges(
         self,

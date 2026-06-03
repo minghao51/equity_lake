@@ -31,6 +31,7 @@ NON_FEATURE_COLUMNS = {
     "close",
     "volume",
     "next_day_return",
+    "feature_schema_version",
 }
 
 
@@ -85,8 +86,32 @@ class PriceForecaster:
         end_date: date,
         params: dict[str, Any] | None = None,
         tune_hyperparams: bool = False,
+        validate: bool = False,
+        max_model_age_days: int = 7,
     ) -> xgb.XGBClassifier:
-        """Train and persist an XGBoost classifier."""
+        """Train and persist an XGBoost classifier.
+
+        Skips retraining if a model file already exists and is newer than
+        max_model_age_days. Set max_model_age_days=0 to always retrain.
+        """
+        if max_model_age_days > 0:
+            existing_path = self._resolve_model_path(ticker, end_date)
+            if existing_path is not None:
+                suffix = existing_path.stem.removeprefix(f"{ticker}_xgboost_")
+                try:
+                    trained_on = date.fromisoformat(suffix)
+                    age_days = (end_date - trained_on).days
+                    if age_days <= max_model_age_days:
+                        logger.info(
+                            "model_skipped_fresh",
+                            ticker=ticker,
+                            trained_on=str(trained_on),
+                            age_days=age_days,
+                        )
+                        return self._load_model(existing_path)
+                except ValueError:
+                    pass
+
         df = self.load_features(ticker, start_date, end_date)
         if df.empty:
             raise ValueError(f"No features available for {ticker}")
@@ -99,6 +124,10 @@ class PriceForecaster:
         split_idx = int(len(X) * 0.8)
         X_train, X_val = X[:split_idx], X[split_idx:]
         y_train, y_val = y_binary[:split_idx], y_binary[split_idx:]
+
+        if validate and split_idx > 60:
+            wf_metrics = self._walk_forward_validate(X[:split_idx], y_binary[:split_idx], feature_cols)
+            logger.info("walk_forward_validation", ticker=ticker, **wf_metrics)
 
         default_params: dict[str, Any] = {
             "max_depth": 5,
@@ -267,6 +296,60 @@ class PriceForecaster:
             logger.debug("model_cache_evict", path=str(evicted_path))
         self._loaded_models[model_path] = cast(xgb.XGBClassifier, joblib.load(model_path))
         return self._loaded_models[model_path]
+
+    def _walk_forward_validate(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        feature_cols: list[str],
+        train_window: int = 252,
+        test_window: int = 21,
+    ) -> dict[str, float]:
+        """Run walk-forward validation on training data.
+
+        Returns dict with mean_accuracy, mean_sharpe, and stability metrics.
+        """
+        n_folds = 0
+        correct = 0
+        total = 0
+        fold_accuracies: list[float] = []
+
+        step = test_window
+        start = 0
+        while start + train_window + test_window <= len(X):
+            X_tr = X.iloc[start : start + train_window]
+            y_tr = y.iloc[start : start + train_window]
+            X_te = X.iloc[start + train_window : start + train_window + test_window]
+            y_te = y.iloc[start + train_window : start + train_window + test_window]
+
+            model = xgb.XGBClassifier(
+                max_depth=5,
+                learning_rate=0.05,
+                n_estimators=200,
+                objective="binary:logistic",
+                eval_metric="logloss",
+                random_state=42,
+                n_jobs=-1,
+            )
+            model.fit(X_tr, y_tr, verbose=False)
+            preds = (model.predict_proba(X_te)[:, 1] > 0.5).astype(int)
+            acc = float((preds == y_te.values).mean())
+            fold_accuracies.append(acc)
+            correct += int((preds == y_te.values).sum())
+            total += len(y_te)
+            n_folds += 1
+            start += step
+
+        if n_folds == 0:
+            return {"folds": 0, "mean_accuracy": 0.0}
+
+        import statistics
+
+        return {
+            "folds": n_folds,
+            "mean_accuracy": correct / total if total > 0 else 0.0,
+            "std_accuracy": statistics.stdev(fold_accuracies) if len(fold_accuracies) > 1 else 0.0,
+        }
 
     def close(self) -> None:
         """Close the DuckDB connection."""
