@@ -6,11 +6,12 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-from equity_lake.core.logging import setup_logging
+import structlog
+
 from equity_lake.signals.config import load_signal_config, load_watchlist
 from equity_lake.signals.scanner import SignalScanner
 
-logger = setup_logging(__name__)
+logger = structlog.get_logger()
 
 
 def parse_scan_args(args: argparse.Namespace) -> dict[str, Any]:

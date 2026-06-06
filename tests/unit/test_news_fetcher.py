@@ -15,8 +15,8 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
 from equity_lake.sentiment import SentimentAnalyzer
+from equity_lake.sources.news import FinnhubNewsFetcher
 
 # =============================================================================
 # SentimentAnalyzer Tests

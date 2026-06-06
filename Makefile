@@ -69,7 +69,7 @@ sync:
 
 daily:
 	@echo "📊 Running daily EOD data ingestion..."
-	uv run equity ingest
+	dotenvx run -- uv run equity ingest
 
 query:
 	@echo "🦆 Running DuckDB query examples..."
@@ -77,7 +77,7 @@ query:
 
 pipeline:
 	@echo "🚀 Running the full ingestion → features → ML pipeline..."
-	uv run equity pipeline
+	dotenvx run -- uv run equity pipeline
 
 monitor:
 	@echo "🩺 Running pipeline health checks..."
@@ -112,7 +112,7 @@ sentiment-dry:
 # Testing
 test:
 	@echo "🧪 Running tests..."
-	uv run pytest -v --cov=src/equity_lake --cov-report=html --cov-report=term
+	dotenvx run -- uv run pytest -v --cov=src/equity_lake --cov-report=html --cov-report=term
 
 test-unit:
 	@echo "🔬 Running unit tests..."

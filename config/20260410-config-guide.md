@@ -47,10 +47,10 @@ Examples of changes that belong in `tickers.yaml`:
 Typical commands that depend on this file:
 
 ```bash
-uv run equity-daily --list-tickers
-uv run equity-daily --groups faang
-uv run equity-daily --tags blue-chip --min-priority 8
-uv run equity-pipeline --markets us
+uv run equity ingest --list-tickers
+uv run equity ingest --groups faang
+uv run equity ingest --tags blue-chip --min-priority 8
+uv run equity pipeline --markets us
 ```
 
 ### `watchlist.yaml`
@@ -75,9 +75,9 @@ Examples of changes that belong in `watchlist.yaml`:
 Typical commands that depend on this file:
 
 ```bash
-uv run equity-signal scan
-uv run equity-signal scan --watchlist config/watchlist.yaml
-uv run equity-signal scan --format md --output signals.md
+uv run equity signal scan
+uv run equity signal scan --watchlist config/watchlist.yaml
+uv run equity signal scan --format md --output signals.md
 ```
 
 ## Practical Example
@@ -117,7 +117,7 @@ Edit it when you want to change things like:
 Example:
 
 ```bash
-uv run equity-signal scan --config config/signals.yaml
+uv run equity signal scan --config config/signals.yaml
 ```
 
 ## `settings.yaml`
@@ -130,7 +130,7 @@ Examples:
 - the default GitHub Actions schedule
 - the dashboard output directory
 
-Environment variables with the `EQUITY_LAKE_*` prefix can override matching
+Environment variables with the `EQUITY_*` prefix and `__` nested delimiter can override matching
 settings from `settings.yaml` at runtime.
 
 ## Editing Rules Of Thumb

@@ -21,7 +21,7 @@ import duckdb
 import pandas as pd
 import structlog
 
-from equity_lake.config.settings import get_settings
+from equity_lake.core.config import get_settings
 from equity_lake.core.logging import setup_logging
 from equity_lake.core.paths import LAKE_DIR, LOGS_DIR
 

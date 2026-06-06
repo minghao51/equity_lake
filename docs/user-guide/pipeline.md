@@ -178,11 +178,27 @@ describe the current shipped behavior as:
 Signals:
 
 ```bash
-uv run equity-signal scan
-uv run equity-signal scan --watchlist config/watchlist.yaml
-uv run equity-signal scan --config config/signals.yaml
-uv run equity-signal scan --format json --output signals.json
+uv run equity signal scan
+uv run equity signal scan --watchlist config/watchlist.yaml
+uv run equity signal scan --config config/signals.yaml
+uv run equity signal scan --format json --output signals.json
 ```
+
+Forecast training:
+
+```bash
+uv run equity forecast --mode train --ticker AAPL --start 2024-01-01 --end 2024-12-31
+uv run equity forecast --mode train --ticker AAPL --model-mode v2_meta_label --start 2024-01-01 --end 2024-12-31
+```
+
+Training writes model artifacts under `data/models/`. Each training run now produces:
+
+- the model file, for example `AAPL_xgboost_v1_direction_2024-12-31.pkl`
+- full metadata JSON: `*.training_metadata.json`
+- concise training summary JSON: `*.training_summary.json`
+- for `v2_meta_label`, an auditable candidate/label artifact: `*.training_audit.parquet`
+
+The train command also prints a concise summary in the terminal with the model mode, row counts, fold count, and core validation metrics. `v2_meta_label` summaries include the barrier settings used for that run.
 
 Backtesting:
 
@@ -211,11 +227,10 @@ uv sync --extra ml
 Check available CLI options:
 
 ```bash
-uv run equity-daily --help
-uv run equity-pipeline --help
-uv run equity-query --help
-uv run equity-monitor --help
-uv run equity-signal --help
+uv run equity ingest --help
+uv run equity pipeline --help
+uv run equity forecast --help
+uv run equity signal --help
 ```
 
 Validate ticker config before a run:

@@ -11,15 +11,16 @@ import argparse
 import sys
 from datetime import date
 
+import structlog
+
 from equity_lake.backtesting import BacktestEngine, VectorBacktestEngine
 from equity_lake.backtesting.strategy import (
     BBMeanReversionStrategy,
     CrossSectionalMomentumStrategy,
     SMACrossoverStrategy,
 )
-from equity_lake.core.logging import setup_logging
 
-logger = setup_logging(__name__, level="INFO")
+logger = structlog.get_logger()
 
 
 def parse_arguments() -> argparse.Namespace:

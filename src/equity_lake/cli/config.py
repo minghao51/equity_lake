@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from equity_lake.config.settings import load_settings
+from equity_lake.core.config import load_settings
 
 
 def _resolve_path(data: object, dotted_path: str) -> object:

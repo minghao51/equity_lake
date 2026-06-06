@@ -2,6 +2,7 @@
 
 from datetime import date
 
+from equity_lake.signals.generators.meta_label import MetaLabelSignalGenerator
 from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 from equity_lake.signals.scanner import SignalScanner
 
@@ -67,3 +68,18 @@ def test_scanner_format_signals():
     # Test table format
     table_output = scanner.format_signals(signals, "table")
     assert "SIGNAL REPORT" in table_output
+
+
+def test_scanner_uses_meta_label_generator_when_v2_mode_enabled():
+    """Test scanner swaps in the v2 ML generator when configured."""
+    config = SignalConfig(
+        backtest={"enabled": False},
+        sentiment={"enabled": False},
+        ml={"enabled": True, "mode": "v2_meta_label", "model_dir": "models"},
+    )
+    watchlist = Watchlist(name="Test", tickers=["AAPL"])
+
+    scanner = SignalScanner(config, watchlist)
+
+    assert len(scanner.generators) == 1
+    assert isinstance(scanner.generators[0], MetaLabelSignalGenerator)

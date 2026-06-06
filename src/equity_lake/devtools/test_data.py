@@ -19,7 +19,6 @@ Usage:
 """
 
 import argparse
-import logging
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -27,12 +26,12 @@ from typing import cast
 
 import numpy as np
 import pandas as pd
+import structlog
 
-from equity_lake.core.logging import setup_logging
+from equity_lake.core.logging import setup_structured_logging
 from equity_lake.core.paths import CN_ASHARE_DIR, HK_SG_EQUITY_DIR, US_EQUITY_DIR
 
-# Logger configuration
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger()
 
 
 # =============================================================================
@@ -599,7 +598,7 @@ def main() -> int:
 
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"
-    logger = setup_logging(__name__, level=log_level, log_file="generate_test_data.log")
+    setup_structured_logging(level=log_level)
 
     # Determine date range
     end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date else date.today()

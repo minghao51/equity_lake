@@ -278,46 +278,11 @@ def timer(
         )
 
 
-# =============================================================================
-# Backward Compatibility Wrapper
-# =============================================================================
-
-
-def setup_logging(name: str, level: str = "INFO", log_file: str | None = None) -> logging.Logger:
-    """
-    Backward-compatible wrapper for setup_logging.
-
-    This maintains the original API while using structlog internally.
-
-    Args:
-        name: Logger name
-        level: Log level (DEBUG, INFO, WARNING, ERROR)
-        log_file: Optional log file name (will be placed in LOGS_DIR)
-
-    Returns:
-        Logger instance (standard library logger for backward compatibility)
-    """
-    from equity_lake.core.paths import LOGS_DIR
-
-    # Determine if we should use JSON output (check environment or default to True)
-    json_output = True  # Default to JSON for production
-
-    # Convert log_file string to Path if provided
-    log_path = None
-    if log_file:
-        log_path = LOGS_DIR / log_file
-
-    # Setup structured logging
-    _structlog_logger = setup_structured_logging(level=level, log_file=log_path, json_output=json_output, console=True)
-
-    # Return standard library logger for backward compatibility
-    stdlib_logger = logging.getLogger(name)
-    return stdlib_logger
-
+setup_logging = setup_structured_logging
 
 __all__ = [
-    "setup_structured_logging",
     "setup_logging",
+    "setup_structured_logging",
     "timed",
     "timer",
     "correlation_context",

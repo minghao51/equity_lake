@@ -102,7 +102,10 @@ class BacktestDataLoader:
 
     def _setup_views(self) -> None:
         """Create DuckDB views for each market."""
+        from deltalake import DeltaTable
+
         logger.debug("Setting up market views...")
+        self.conn.execute("INSTALL delta; LOAD delta;")
 
         for market_label, data_dir in self.MARKET_DIRS.items():
             if not data_dir.exists():
@@ -113,8 +116,12 @@ class BacktestDataLoader:
                 )
                 continue
 
-            parquet_pattern = str(data_dir / "date=*/*.parquet")
             view_name = f"backtest_{market_label}"
+
+            if DeltaTable.is_deltatable(str(data_dir)):
+                scan_from = f"delta_scan('{data_dir}')"
+            else:
+                scan_from = f"read_parquet('{data_dir / 'date=*/*.parquet'}', hive_partitioning=1)"
 
             sql = f"""
             CREATE OR REPLACE VIEW {view_name} AS
@@ -126,9 +133,8 @@ class BacktestDataLoader:
                 low,
                 close,
                 volume,
-                adj_close,
                 '{market_label}' as market
-            FROM read_parquet('{parquet_pattern}', hive_partitioning=1)
+            FROM {scan_from}
             """
 
             try:
@@ -190,7 +196,6 @@ class BacktestDataLoader:
                 "low",
                 "close",
                 "volume",
-                "adj_close",
             ]
 
         logger.info(
@@ -265,27 +270,22 @@ class BacktestDataLoader:
             return pd.DataFrame()
 
         self.conn.register("selected_tickers", pd.DataFrame({"ticker": tickers}))
-        sql = f"""
+        sql = """
         WITH unioned AS (
-            {" UNION ALL ".join(union_queries)}
+            {union_all}
         )
         SELECT unioned.*
         FROM unioned
         JOIN selected_tickers USING (ticker)
-        WHERE date >= ?
-          AND date <= ?
+        WHERE date >= $1
+          AND date <= $2
         ORDER BY ticker, date
-        """
+        """.format(union_all=" UNION ALL ".join(union_queries))
 
         logger.debug("Executing query", sql_preview=sql[:200] + "...")
 
         try:
             data = self.conn.execute(sql, [start_date, end_date]).df()
-            logger.info(
-                "Query executed successfully",
-                rows=len(data),
-                tickers_found=data["ticker"].nunique(),
-            )
             return data
         except Exception as e:
             logger.error("Query failed", error=str(e))
@@ -329,7 +329,7 @@ class BacktestDataLoader:
                 data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].bfill()
 
         # Drop rows with all NaN prices
-        price_cols = ["open", "high", "low", "close", "adj_close"]
+        price_cols = [c for c in ["open", "high", "low", "close"] if c in data.columns]
         data = data.dropna(subset=price_cols, how="all")
 
         return data
@@ -353,7 +353,7 @@ class BacktestDataLoader:
         Returns:
             Wide-format DataFrame with MultiIndex columns
         """
-        value_columns = [column for column in ["open", "high", "low", "close", "volume", "adj_close"] if column in data.columns]
+        value_columns = [column for column in ["open", "high", "low", "close", "volume"] if column in data.columns]
         wide_df = data.set_index(["date", "ticker"])[value_columns].unstack("ticker")
         wide_df = wide_df.swaplevel(0, 1, axis=1).sort_index(axis=1)
         wide_df.columns.names = ["ticker", "field"]
@@ -427,18 +427,20 @@ class BacktestDataLoader:
             sql = f"""
             SELECT DISTINCT ticker
             FROM {view_name}
-            WHERE date = '{as_of_date}'
+            WHERE date = $1
             ORDER BY ticker
             """
+            params = [as_of_date]
         else:
             sql = f"""
             SELECT DISTINCT ticker
             FROM {view_name}
             ORDER BY ticker
             """
+            params = []
 
         try:
-            result = self.conn.execute(sql).df()
+            result = self.conn.execute(sql, params).df()
             return cast(list[str], result["ticker"].tolist())
         except Exception as e:
             logger.error("Failed to get tickers", market=market, error=str(e))
@@ -471,8 +473,9 @@ class BacktestDataLoader:
                 MIN(date) as min_date,
                 MAX(date) as max_date
             FROM {view_name}
-            WHERE ticker = '{ticker}'
+            WHERE ticker = $1
             """
+            params = [ticker]
         else:
             sql = f"""
             SELECT
@@ -480,9 +483,10 @@ class BacktestDataLoader:
                 MAX(date) as max_date
             FROM {view_name}
             """
+            params = []
 
         try:
-            result = self.conn.execute(sql).df()
+            result = self.conn.execute(sql, params).df()
             if not result.empty:
                 min_date = result["min_date"].iloc[0]
                 max_date = result["max_date"].iloc[0]

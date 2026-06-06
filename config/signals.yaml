@@ -22,10 +22,16 @@ sentiment:
 ml:
   enabled: true
   model_dir: "data/models"
+  mode: "v1_direction"
   horizon_days: 5
   buy_probability_threshold: 0.60
   sell_probability_threshold: 0.40
   min_confidence: 60
+  vertical_barrier_days: 5
+  pt_mult: 1.5
+  sl_mult: 1.0
+  embargo_days: 1
+  meta_label_threshold: 0.55
 
 aggregation:
   agreement_boost: 10

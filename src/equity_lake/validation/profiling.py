@@ -1,7 +1,8 @@
-"""Statistical profiling and drift detection using whylogs."""
+"""Statistical profiling and drift detection with an optional whylogs backend."""
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,31 @@ import structlog
 from pydantic import BaseModel, Field
 
 logger = structlog.get_logger()
+
+
+class _SimpleColumnProfile:
+    def __init__(self, summary: dict[str, Any]) -> None:
+        self._summary = summary
+
+    def to_summary_dict(self) -> dict[str, Any]:
+        return self._summary
+
+
+class _SimpleProfileView:
+    def __init__(self, summaries: dict[str, dict[str, Any]]) -> None:
+        self._columns = {col_name: _SimpleColumnProfile(summary) for col_name, summary in summaries.items()}
+
+    def get_columns(self) -> dict[str, _SimpleColumnProfile]:
+        return self._columns
+
+    def write(self, path: str) -> None:
+        payload = {col_name: col_profile.to_summary_dict() for col_name, col_profile in self._columns.items()}
+        Path(path).write_text(json.dumps(payload), encoding="utf-8")
+
+    @classmethod
+    def read(cls, path: str) -> _SimpleProfileView:
+        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        return cls(payload)
 
 
 class DriftReport(BaseModel):
@@ -24,7 +50,7 @@ class DriftReport(BaseModel):
 
 
 class DataProfiler:
-    """Statistical profiling for data quality monitoring using whylogs."""
+    """Statistical profiling for data quality monitoring."""
 
     def __init__(self, storage_path: str = "data/profiles") -> None:
         self.storage_path = Path(storage_path)
@@ -32,10 +58,15 @@ class DataProfiler:
 
     def profile(self, df: pd.DataFrame, name: str, tags: dict[str, str] | None = None) -> Any:
         """Create a statistical profile of the data."""
-        import whylogs as why
+        try:
+            import whylogs as why
+        except ImportError:
+            view = self._build_simple_profile(df)
+        else:
+            del tags  # whylogs integration currently ignores tags.
+            result = why.log(df)
+            view = result.view()
 
-        result = why.log(df)
-        view = result.view()
         self._profiles[name] = view
 
         self.storage_path.mkdir(parents=True, exist_ok=True)
@@ -45,12 +76,42 @@ class DataProfiler:
 
     def load_profile(self, name: str) -> Any | None:
         """Load a saved profile from disk."""
-        from whylogs.core import DatasetProfileView  # noqa: F811
-
         path = self.storage_path / f"{name}.bin"
-        if path.exists():
+        if not path.exists():
+            return None
+
+        try:
+            from whylogs.core import DatasetProfileView
+        except ImportError:
+            return _SimpleProfileView.read(str(path))
+        else:
             return DatasetProfileView.read(str(path))
-        return None
+
+    def _build_simple_profile(self, df: pd.DataFrame) -> _SimpleProfileView:
+        summaries: dict[str, dict[str, Any]] = {}
+
+        for col_name in df.columns:
+            series = df[col_name]
+            total = int(len(series))
+            null_count = int(series.isna().sum())
+            summary: dict[str, Any] = {
+                "counts/n": total,
+                "counts/null": null_count,
+                "cardinality/est": int(series.nunique(dropna=True)),
+            }
+
+            numeric = pd.to_numeric(series, errors="coerce")
+            numeric_non_null = numeric.dropna()
+            if not numeric_non_null.empty:
+                summary["distribution/mean"] = float(numeric_non_null.mean())
+                std = numeric_non_null.std()
+                summary["distribution/stddev"] = float(std) if pd.notna(std) else 0.0
+                summary["distribution/min"] = float(numeric_non_null.min())
+                summary["distribution/max"] = float(numeric_non_null.max())
+
+            summaries[col_name] = summary
+
+        return _SimpleProfileView(summaries)
 
     def get_quality_metrics(self, profile: Any) -> dict[str, dict[str, Any]]:
         """Extract data quality metrics from a profile."""

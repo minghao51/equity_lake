@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-FEATURE_SCHEMA_VERSION = 1
+FEATURE_SCHEMA_VERSION = 2
 
 
 class FeaturePipeline:
@@ -86,6 +87,25 @@ class FeaturePipeline:
             frame = frame.rename(columns={"open_price": "open"})
         frame["feature_schema_version"] = FEATURE_SCHEMA_VERSION
         return frame
+
+    def export_lineage(self, output_path: str | Path | None = None) -> str | None:
+        """Export the DAG lineage as a PNG image.
+
+        Requires ``graphviz`` to be installed on the system.
+        Returns the output path, or None if export failed.
+        """
+        if output_path is None:
+            output_path = "docs/architecture/pipeline_lineage.png"
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self._driver.display_all_functions(str(output_path))
+            return str(output_path)
+        except Exception as exc:
+            import structlog
+
+            structlog.get_logger().warning("lineage_export_failed", error=str(exc))
+            return None
 
 
 def compute_features(

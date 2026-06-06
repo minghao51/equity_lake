@@ -14,11 +14,11 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from equity_lake.core.paths import LAKE_DIR
-from equity_lake.ingestion.sources.cn_hybrid import CNHybridFetcher
-from equity_lake.ingestion.sources.jpx import JPXEquityFetcher
-from equity_lake.ingestion.sources.krx import KRXEquityFetcher
 from equity_lake.ingestion.writers import write_to_partitioned_parquet
 from equity_lake.loaders import registry
+from equity_lake.sources.cn_hybrid import CNHybridFetcher
+from equity_lake.sources.jpx import JPXEquityFetcher
+from equity_lake.sources.krx import KRXEquityFetcher
 from equity_lake.updates.history import UpdateHistory
 
 

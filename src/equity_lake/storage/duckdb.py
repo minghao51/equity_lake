@@ -45,7 +45,11 @@ logger = logging.getLogger(__name__)
 
 
 class EquityDataDB:
-    """DuckDB connection manager for equity data queries."""
+    """DuckDB connection manager for equity data queries.
+
+    Supports both Hive-partitioned Parquet and Delta Lake tables.
+    Automatically detects which format is present per market directory.
+    """
 
     MARKET_VIEWS = [
         ("us_equity", US_EQUITY_DIR, "us"),
@@ -56,32 +60,25 @@ class EquityDataDB:
     ]
 
     def __init__(self, db_path: str | Path | None = ":memory:"):
-        """Initialize DuckDB connection.
-
-        Args:
-            db_path: Path to DuckDB file or ':memory:' for in-memory
-        """
         self.db_path = db_path if db_path is not None else ":memory:"
         self.con = duckdb.connect(self.db_path)
         self.available_views: list[str] = []
         self._views_initialized = False
 
     def _ensure_views(self) -> None:
-        """Create unified views lazily on first access."""
         if self._views_initialized:
             return
         self._views_initialized = True
         logger.info("Setting up unified views...")
+        self.con.execute("INSTALL delta; LOAD delta;")
 
         for view_name, data_dir, market_label in self.MARKET_VIEWS:
             self._create_market_view(view_name, data_dir, market_label)
 
         self._create_unified_view()
-
         logger.info("Views created successfully")
 
     def close(self) -> None:
-        """Close the DuckDB connection."""
         if hasattr(self, "con") and self.con is not None:
             self.con.close()
 
@@ -92,21 +89,24 @@ class EquityDataDB:
     def __exit__(self, *args: object) -> None:
         self.close()
 
+    @staticmethod
+    def _is_delta_table(data_dir: Path) -> bool:
+        from deltalake import DeltaTable
+
+        return DeltaTable.is_deltatable(str(data_dir))
+
     def _create_market_view(self, view_name: str, data_dir: Path, market_label: str) -> None:
-        """Create view for a specific market."""
         if not data_dir.exists():
             logger.warning(f"Data directory not found: {data_dir}")
             return
 
-        parquet_pattern = str(data_dir / "date=*/*.parquet")
+        if self._is_delta_table(data_dir):
+            scan = f"SELECT *, '{market_label}' as market FROM delta_scan('{data_dir}')"
+        else:
+            parquet_pattern = str(data_dir / "date=*/*.parquet")
+            scan = f"SELECT *, '{market_label}' as market FROM read_parquet('{parquet_pattern}', hive_partitioning=1)"
 
-        sql = f"""
-        CREATE OR REPLACE VIEW {view_name} AS
-        SELECT
-            *,
-            '{market_label}' as market
-        FROM read_parquet('{parquet_pattern}', hive_partitioning=1)
-        """
+        sql = f"CREATE OR REPLACE VIEW {view_name} AS {scan}"
 
         try:
             self.con.execute(sql)

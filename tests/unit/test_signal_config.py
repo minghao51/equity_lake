@@ -22,6 +22,7 @@ def test_load_signal_config():
     assert config.backtest["enabled"] is True
     assert config.sentiment["enabled"] is True
     assert config.ml["enabled"] is True
+    assert config.ml["mode"] == "v1_direction"
     assert config.backtest["min_win_rate"] == 0.55
 
 

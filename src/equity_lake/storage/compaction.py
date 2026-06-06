@@ -2,6 +2,8 @@
 
 Merges small date-partitioned Parquet files into fewer, larger files
 to improve read performance and reduce storage overhead.
+
+For Delta Lake tables, delegates to ``DeltaTable.optimize.compact()``.
 """
 
 from __future__ import annotations
@@ -24,21 +26,32 @@ def compact_market(
 ) -> int:
     """Compact a single market directory by merging small partition files.
 
-    For each consecutive run of date partitions up to max_days_per_file,
-    reads all files, concatenates, and writes a single merged file per group.
-
-    Args:
-        market_dir: Path to market directory (e.g., data/lake/us_equity)
-        max_days_per_file: Maximum days to merge into one file
-        dry_run: If True, report what would be done without writing
-
-    Returns:
-        Number of partition directories compacted
+    For Delta Lake tables, uses native ``optimize.compact()``.
+    For legacy Hive-partitioned Parquet, merges consecutive date partitions.
     """
     if not market_dir.exists():
         logger.warning("market_dir_not_found", path=str(market_dir))
         return 0
 
+    try:
+        from deltalake import DeltaTable
+
+        if DeltaTable.is_deltatable(str(market_dir)):
+            if dry_run:
+                logger.info("delta_compact_dry_run", market=str(market_dir.name))
+                return 0
+            dt = DeltaTable(str(market_dir))
+            metrics = dt.optimize.compact()
+            removed = metrics.get("numFilesRemoved", 0)
+            logger.info("delta_compact_done", market=str(market_dir.name), metrics=metrics)
+            return removed
+    except ImportError:
+        pass
+
+    return _compact_parquet(market_dir, max_days_per_file, dry_run)
+
+
+def _compact_parquet(market_dir: Path, max_days_per_file: int, dry_run: bool) -> int:
     partition_dirs = sorted(market_dir.glob("date=*"))
     if not partition_dirs:
         return 0
@@ -75,12 +88,15 @@ def compact_market(
             merged = merged.drop_duplicates(subset=key_cols, keep="last")
             merged = merged.sort_values(key_cols).reset_index(drop=True)
 
-        # Write into the last partition in the group
         target_dir = group[-1]
         target_file = target_dir / f"{target_dir.name.split('=', 1)[1]}.parquet"
+
+        for pq_file in target_dir.glob("*.parquet"):
+            if pq_file != target_file:
+                pq_file.unlink()
+
         merged.to_parquet(target_file, index=False, compression="snappy")
 
-        # Remove older partitions that were merged
         for old_dir in group[:-1]:
             for pq_file in old_dir.glob("*.parquet"):
                 pq_file.unlink()
@@ -129,9 +145,14 @@ def _group_consecutive_dates(
 
 
 def _extract_date(partition_name: str) -> date | None:
-    """Extract date from 'date=YYYY-MM-DD' partition name."""
+    """Extract date from 'date=YYYY-MM-DD...' partition name.
+
+    Handles both plain ``date=2024-01-01`` and timestamp-format
+    ``date=2024-01-01%2000%3A00%3A00.000000`` names produced by Delta Lake.
+    """
     try:
-        return date.fromisoformat(partition_name.split("=", 1)[1])
+        raw = partition_name.split("=", 1)[1]
+        return date.fromisoformat(raw[:10])
     except (ValueError, IndexError):
         return None
 

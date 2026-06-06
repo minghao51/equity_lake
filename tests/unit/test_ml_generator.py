@@ -38,6 +38,7 @@ def test_ml_generator_buy_signal(mock_forecaster_class):
     assert signal.action == "BUY"
     assert signal.signal_type == "ml"
     assert signal.metadata["probability"] == 0.75
+    assert signal.metadata["model_mode"] == "v1_direction"
 
 
 @patch("equity_lake.signals.generators.ml.PriceForecaster", autospec=True)

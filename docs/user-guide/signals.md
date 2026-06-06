@@ -41,16 +41,16 @@ ml:
 
 ```bash
 # Terminal output
-equity-signal scan
+uv run equity signal scan
 
 # Markdown report
-equity-signal scan --format md --output signals.md
+uv run equity signal scan --format md --output signals.md
 
 # JSON for automation
-equity-signal scan --format json --output signals.json
+uv run equity signal scan --format json --output signals.json
 
 # Specific date
-equity-signal scan --date 2024-12-01
+uv run equity signal scan --date 2024-12-01
 ```
 
 ## Signal Types
@@ -66,15 +66,44 @@ Based on news sentiment analysis:
 - **SELL**: Negative sentiment score
 
 ### ML Prediction Signals
-Based on XGBoost next-day direction forecasts:
+The ML generator supports two shipped modes through `config/signals.yaml`:
+
+- `v1_direction`: XGBoost predicts next-day direction directly.
+- `v2_meta_label`: the scanner first builds candidate entries from the configured backtest strategy, then the ML model decides whether to execute that candidate.
+
+For `v1_direction`:
 - **BUY**: Up-day prediction with probability above the buy threshold
 - **SELL**: Down-day prediction with probability below the sell threshold
+
+For `v2_meta_label`:
+- signals are only produced on dates where a candidate entry exists
+- `meta_label_threshold` controls whether the candidate is executed
+- `vertical_barrier_days`, `pt_mult`, and `sl_mult` define the barrier settings used during training and reported at inference time
+
+The scanner chooses the ML path from `ml.mode` in `config/signals.yaml`. `v1_direction` uses `MLPredictionSignalGenerator`; `v2_meta_label` uses `MetaLabelSignalGenerator`.
+
+## ML Config Knobs
+
+Current `ml` settings in `config/signals.yaml`:
+
+- `enabled`: turns the ML generator on or off
+- `model_dir`: where trained model artifacts are stored
+- `mode`: `v1_direction` or `v2_meta_label`
+- `horizon_days`: inference horizon shown in signal metadata
+- `buy_probability_threshold`: minimum probability for `BUY` in `v1_direction`
+- `sell_probability_threshold`: maximum probability for `SELL` in `v1_direction`
+- `min_confidence`: confidence floor for ML signals
+- `vertical_barrier_days`: v2 barrier horizon
+- `pt_mult`: v2 profit-taking barrier multiplier
+- `sl_mult`: v2 stop-loss barrier multiplier
+- `embargo_days`: v2 validation embargo input
+- `meta_label_threshold`: v2 execution threshold
 
 ## Cron Setup
 
 ```bash
 # Daily signal scan at 9:00 AM
-0 9 * * * cd /path/to/equity-lake && equity-signal scan --format json > data/signals/latest.json
+0 9 * * * cd /path/to/equity-lake && uv run equity signal scan --format json > data/signals/latest.json
 ```
 
 ## Output Formats

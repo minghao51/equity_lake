@@ -1,11 +1,14 @@
 """Data models for signal scanning."""
 
-import logging
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any, Literal, cast
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass

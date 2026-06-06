@@ -17,10 +17,10 @@ import sys
 import structlog
 
 from equity_lake.core.dates import resolve_trading_date
-from equity_lake.core.logging import setup_logging, timer
+from equity_lake.core.logging import setup_structured_logging, timer
 from equity_lake.core.paths import US_SOCIAL_SENTIMENT_DIR
-from equity_lake.ingestion.sources.sentiment import FinnhubSocialSentimentFetcher
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
 logger = structlog.get_logger()
 
@@ -107,7 +107,7 @@ def main() -> None:
 
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"
-    logger = setup_logging(__name__, level=log_level, log_file="social_sentiment_ingestion.log")
+    setup_structured_logging(level=log_level)
 
     # Validate environment
     if not args.api_key and not validate_environment():

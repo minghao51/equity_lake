@@ -27,14 +27,20 @@ import pandas as pd
 import structlog
 import yfinance as yf
 
-from equity_lake.config import TickerConfig
-from equity_lake.config.settings import get_settings
+from equity_lake.core.config import TickerConfig, get_settings
 from equity_lake.core.logging import setup_logging
+from equity_lake.core.paths import LAKE_DIR
 from equity_lake.core.schemas import STANDARD_COLUMNS
 from equity_lake.ingestion.writers import write_to_partitioned_parquet
 
 logger = structlog.get_logger()
 SETTINGS = get_settings()
+
+
+def _use_delta_market(market_dir_name: str) -> bool:
+    from deltalake import DeltaTable
+
+    return DeltaTable.is_deltatable(str(LAKE_DIR / market_dir_name))
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,11 +125,12 @@ def backfill_yfinance(
 
     # Write per-date partitions
     written = 0
+    use_delta = _use_delta_market(market_dir_name)
     for trading_date, group in df.groupby("date"):
         td = trading_date if isinstance(trading_date, date) else pd.Timestamp(trading_date).date()
         day_df = group.copy()
         day_df["date"] = pd.Timestamp(td)
-        ok = write_to_partitioned_parquet(day_df, market_dir_name, td, dry_run=False)
+        ok = write_to_partitioned_parquet(day_df, market_dir_name, td, dry_run=False, use_delta=use_delta)
         if ok:
             written += len(day_df)
 
@@ -223,11 +230,12 @@ def backfill_cn(
         return total_rows
 
     written = 0
+    use_delta = _use_delta_market("cn_ashare")
     for trading_date, group in df.groupby("date"):
         td = trading_date if isinstance(trading_date, date) else trading_date.date()
         day_df = group.copy()
         day_df["date"] = pd.Timestamp(td)
-        ok = write_to_partitioned_parquet(day_df, "cn_ashare", td, dry_run=False)
+        ok = write_to_partitioned_parquet(day_df, "cn_ashare", td, dry_run=False, use_delta=use_delta)
         if ok:
             written += len(day_df)
 

@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from equity_lake.core.schemas import SOCIAL_COLUMNS
-from equity_lake.ingestion.sources.sentiment import FinnhubSocialSentimentFetcher
+from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
 
 @pytest.fixture
@@ -114,7 +114,7 @@ class TestFinnhubSocialSentimentFetcher:
         assert result.empty
         assert isinstance(result, pd.DataFrame)
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_fetch_sequential_success(
         self,
         mock_get,
@@ -141,7 +141,7 @@ class TestFinnhubSocialSentimentFetcher:
         assert result["ticker"].iloc[0] == "AAPL"
         assert result["date"].iloc[0] == date(2024, 12, 1)
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_fetch_parallel_success(
         self,
         mock_get,
@@ -167,7 +167,7 @@ class TestFinnhubSocialSentimentFetcher:
         assert len(result) == 6
         assert result["ticker"].nunique() == 3
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_fetch_handles_no_data(
         self,
         mock_get,
@@ -189,7 +189,7 @@ class TestFinnhubSocialSentimentFetcher:
 
         assert result.empty
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_parse_sentiment_metric_reddit(
         self,
         mock_get,
@@ -219,7 +219,7 @@ class TestFinnhubSocialSentimentFetcher:
         assert result["negative_score"] == 150.0
         assert -1.0 <= result["score"] <= 1.0  # Normalized
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_parse_sentiment_metric_twitter(
         self,
         mock_get,
@@ -247,7 +247,7 @@ class TestFinnhubSocialSentimentFetcher:
         assert result["positive_score"] == 2100.0
         assert result["negative_score"] == 400.0
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_score_normalization(self, mock_get, mock_api_key):
         """Test that sentiment scores are properly normalized to -1 to 1 range."""
         # Create a response with equal positive and negative mentions
@@ -281,7 +281,7 @@ class TestFinnhubSocialSentimentFetcher:
         # Score should be 0.0 when positive == negative
         assert result["score"] == 0.0
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_score_all_positive(self, mock_get, mock_api_key):
         """Test score normalization when all mentions are positive."""
         mock_response_data = {
@@ -314,7 +314,7 @@ class TestFinnhubSocialSentimentFetcher:
         # Score should be 1.0 when all positive
         assert result["score"] == 1.0
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_schema_compliance(self, mock_get, mock_api_key, mock_response_reddit):
         """Test that returned DataFrame complies with SOCIAL_COLUMNS schema."""
         mock_response = Mock()
@@ -334,7 +334,7 @@ class TestFinnhubSocialSentimentFetcher:
         # Check no extra columns
         assert set(result.columns) == set(SOCIAL_COLUMNS)
 
-    @patch("equity_lake.ingestion.sources.sentiment.requests.get")
+    @patch("equity_lake.sources.sentiment.requests.get")
     def test_handles_api_failure_gracefully(self, mock_get, mock_api_key):
         """Test that fetcher handles API failure gracefully and returns empty DataFrame."""
         # Mock API failure

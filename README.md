@@ -26,7 +26,7 @@ Bootstrap from S3 Parquet → sync once → append daily updates locally → que
            ┌──────────────────────┐
            │ Backtest / Dashboard │ ──(Static Export)──> [ GitHub Pages Site ]
            └──────────────────────┘
-           
+
 1. **Bootstrap** from a complete, partitioned Parquet dataset on AWS S3 (US equities)
 2. **Sync once** to local disk (`data/lake/`)
 3. **Append daily EOD updates** (US, China A-shares, HK, SG) using lightweight Python libraries
@@ -87,7 +87,7 @@ cp .env.example .env
 
 Credential setup and optional API keys are documented in
 [docs/20260406-api-keys.md](docs/20260406-api-keys.md).
-Core app defaults live in `config/settings.yaml`, and `EQUITY_LAKE_*`
+Core app defaults live in `config/settings.yaml`, and `EQUITY_*`
 variables in `.env` override them when set.
 
 ### 2. Configure S3 Access
@@ -109,7 +109,7 @@ sudo mv s5cmd /usr/local/bin/
 
 ```bash
 make sync
-# Or: uv run equity-sync
+# Or: dotenvx run -- uv run equity sync
 ```
 
 Expected structure after sync:
@@ -122,14 +122,8 @@ data/lake/us_equity/date=2020-01-02/2020-01-02.parquet
 ### 4. Run Daily Append
 
 ```bash
-# Sequential mode
-make daily
-
-# Parallel mode (3x faster)
-uv run equity-daily --parallel
-
-# Parallel with custom worker count
-uv run equity-daily --parallel --max-workers 2
+dotenvx run -- uv run equity ingest
+dotenvx run -- uv run equity ingest --markets us,cn --verbose
 ```
 
 ### 5. 🚀 Run Full ML Pipeline (New!)
@@ -138,13 +132,13 @@ Automated pipeline: **Ingestion → Feature Engineering → ML/AI**
 
 ```bash
 # Default entrypoint
-uv run equity-pipeline --verbose
+dotenvx run -- uv run equity pipeline --verbose
 
 # For a specific date
-uv run equity-pipeline --date 2024-12-01
+dotenvx run -- uv run equity pipeline --date 2024-12-01
 
 # Dry run (test without writing)
-uv run equity-pipeline --dry-run
+dotenvx run -- uv run equity pipeline --dry-run
 ```
 
 **What it does:**
@@ -158,13 +152,13 @@ uv run equity-pipeline --dry-run
 
 ```bash
 # Custom tickers
-uv run equity-pipeline --tickers AAPL,GOOGL,MSFT
+dotenvx run -- uv run equity pipeline --tickers AAPL,GOOGL,MSFT
 
 # US markets only
-uv run equity-pipeline --markets us
+dotenvx run -- uv run equity pipeline --markets us
 
 # Skip to ML only (if data exists)
-uv run equity-pipeline --skip-ingestion --skip-features
+dotenvx run -- uv run equity pipeline --skip-ingestion --skip-features
 ```
 
 See [Pipeline Usage Guide](docs/user-guide/pipeline.md) for complete documentation.
@@ -176,7 +170,7 @@ commands.
 
 ```bash
 # Quick health check
-uv run equity-monitor
+dotenvx run -- uv run equity monitor
 
 # Verbose mode with detailed metrics
 uv run equity-monitor --verbose
@@ -261,13 +255,8 @@ equity backtest --help     # Backtest strategies
 equity dashboard serve     # Launch local Streamlit dashboard
 ```
 
-**Legacy commands still work but are deprecated:**
-```bash
-equity-daily     →  equity ingest
-equity-pipeline  →  equity pipeline
-equity-signal    →  equity signal scan
-equity-backtest  →  equity backtest
-```
+Legacy standalone command wrappers are no longer part of the supported CLI
+surface. Use `equity ...` commands directly.
 
 ---
 

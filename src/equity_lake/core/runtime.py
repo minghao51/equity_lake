@@ -41,7 +41,7 @@ from equity_lake.core.schemas import (  # noqa: F401
 
 def get_project_config() -> dict[str, str | int | float | bool]:
     """Get the merged project configuration."""
-    from equity_lake.config.settings import get_settings
+    from equity_lake.core.config import get_settings
 
     settings = get_settings()
     return {

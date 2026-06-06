@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from hamilton.function_modifiers import check_output
 
 from equity_lake.features.indicators import (
     atr,
@@ -24,7 +25,7 @@ def ticker(price_data: pd.DataFrame) -> pd.Series:
 
 
 def date(price_data: pd.DataFrame) -> pd.Series:
-    return pd.to_datetime(price_data["date"])
+    return pd.to_datetime(price_data["date"], format="mixed")
 
 
 def open_price(price_data: pd.DataFrame) -> pd.Series:
@@ -39,18 +40,22 @@ def low(price_data: pd.DataFrame) -> pd.Series:
     return price_data["low"]
 
 
+@check_output(data_type=np.float64, importance="warn")
 def close(price_data: pd.DataFrame) -> pd.Series:
     return price_data["close"]
 
 
+@check_output(data_type=np.float64, range=(0, None), importance="warn")
 def volume(price_data: pd.DataFrame) -> pd.Series:
-    return price_data["volume"]
+    return price_data["volume"].astype(np.float64)
 
 
+@check_output(data_type=np.float64, importance="warn")
 def returns(close: pd.Series) -> pd.Series:
     return close.pct_change()
 
 
+@check_output(data_type=np.float64, range=(0, 100), importance="warn")
 def rsi_14(close: pd.Series) -> pd.Series:
     return rsi(close, length=14)
 
@@ -187,3 +192,10 @@ def volatility_20(returns: pd.Series) -> pd.Series:
 
 def next_day_return(close: pd.Series) -> pd.Series:
     return close.shift(-1) / close - 1
+
+
+next_day_return.__doc__ = (
+    "Target variable. Uses future data (shift -1). "
+    "Must be excluded from inference feature lists — "
+    "FeatureEngineer.generate_features(compute_target=False) handles this."
+)

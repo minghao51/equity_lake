@@ -211,9 +211,10 @@ class S3Syncer:
         logger.info("Verifying download...")
 
         parquet_files = list(self.target_dir.rglob("*.parquet"))
+        delta_log = self.target_dir / "_delta_log"
 
-        if not parquet_files:
-            logger.error("❌ No Parquet files found")
+        if not parquet_files and not delta_log.exists():
+            logger.error("❌ No Parquet files or Delta log found")
             return False
 
         total_size = 0

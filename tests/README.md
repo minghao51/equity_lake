@@ -146,7 +146,7 @@ AttributeError: <MagicMock> does not have attribute 'stock'
 **Solution**: Ensure you're mocking at the right location:
 ```python
 # ✅ Correct
-@patch('equity_lake.ingestion.sources.cn_efinance.efinance')
+@patch('equity_lake.sources.cn_efinance.efinance')
 
 # ❌ Wrong
 @patch('efinance')

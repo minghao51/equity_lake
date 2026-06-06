@@ -1,4 +1,8 @@
-"""Parquet writer helpers for ingestion."""
+"""Parquet writer helpers for ingestion.
+
+Supports both legacy Hive-partitioned Parquet and Delta Lake writes.
+Set ``use_delta=True`` to route through the Delta storage layer.
+"""
 
 import os
 import tempfile
@@ -32,7 +36,6 @@ def _dedupe_key_columns(market: str) -> list[str]:
 
 
 def _merge_partition_frames(existing_df: pd.DataFrame, incoming_df: pd.DataFrame, market: str) -> pd.DataFrame:
-    """Merge an incoming partition update onto existing rows."""
     if existing_df.empty:
         return incoming_df.copy()
     if incoming_df.empty:
@@ -48,7 +51,6 @@ def _merge_partition_frames(existing_df: pd.DataFrame, incoming_df: pd.DataFrame
 
 
 def _atomic_write_parquet(df: pd.DataFrame, output_file: os.PathLike[str] | str) -> None:
-    """Write parquet to a temp file and atomically replace the target."""
     output_path = os.fspath(output_file)
     output_dir = os.path.dirname(output_path)
     fd, temp_path = tempfile.mkstemp(prefix=".tmp-", suffix=".parquet", dir=output_dir)
@@ -62,14 +64,30 @@ def _atomic_write_parquet(df: pd.DataFrame, output_file: os.PathLike[str] | str)
         raise
 
 
+def _write_via_delta(df: pd.DataFrame, market: str, trading_date: date, dry_run: bool) -> bool:
+    from equity_lake.storage.delta import merge_delta
+
+    if dry_run:
+        logger.info("[DRY RUN] Would write %s rows to Delta table %s", len(df), market)
+        return True
+
+    key_columns = _dedupe_key_columns(market)
+    return merge_delta(df, market, key_columns=key_columns)
+
+
 def write_to_partitioned_parquet(
     df: pd.DataFrame,
     market: str,
     trading_date: date,
     dry_run: bool = False,
     validate_quality: bool = False,
+    use_delta: bool = False,
 ) -> bool:
-    """Write a DataFrame to the date-partitioned parquet layout."""
+    """Write a DataFrame to the date-partitioned parquet layout.
+
+    When ``use_delta=True``, writes go through the Delta Lake layer
+    (ACID transactions, merge/upsert, time-travel).
+    """
     if df.empty:
         logger.warning(
             "Empty DataFrame for %s on %s, skipping write",
@@ -78,7 +96,6 @@ def write_to_partitioned_parquet(
         )
         return False
 
-    # Optional quality validation via Pandera
     if validate_quality:
         from equity_lake.validation.pipeline import ValidationPipeline
 
@@ -92,7 +109,9 @@ def write_to_partitioned_parquet(
             for w in result.warnings:
                 logger.warning("Quality warning", market=market, warning=w)
 
-    # Map market to directory
+    if use_delta:
+        return _write_via_delta(df, market, trading_date, dry_run)
+
     market_dirs = {
         "us_equity": US_EQUITY_DIR,
         "cn_ashare": CN_ASHARE_DIR,

@@ -6,15 +6,9 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 
-from equity_lake.ingestion import (
-    CNAshareFetcher,
-    HKSGEquityFetcher,
-    USEquityFetcher,
-    fetch_market_data,
-    run_daily_ingestion,
-    validate_schema,
-    write_to_partitioned_parquet,
-)
+from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion
+from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher
 
 # =============================================================================
 # Test Market Data Fetchers

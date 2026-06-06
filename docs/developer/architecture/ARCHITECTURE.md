@@ -1,11 +1,11 @@
 # Architecture
 
-**Last Updated**: 2026-03-05
+**Last Updated**: 2026-06-05
 **Project**: Equity EOD Data Pipeline
 
-## Overall Architecture Pattern
+## Current Canonical Architecture
 
-### Hybrid ETL Pipeline with Local-First Design
+### Local-First ETL With Explicit Module Ownership
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
@@ -52,6 +52,22 @@
 3. **Graceful Degradation**: Continue processing if one market/source fails
 4. **Partitioned Storage**: Hive-style date partitioning for efficient queries
 5. **Zero-Copy Queries**: DuckDB reads Parquet files directly without loading
+6. **Single Canonical Path**: no supported duplicate source tree or package-root shims
+
+## Canonical Module Boundaries
+
+- `src/equity_lake/sources/`: all market and external-data source adapters
+- `src/equity_lake/ingestion/orchestrator.py`: authoritative ingestion runtime
+- `src/equity_lake/pipeline.py` and `src/equity_lake/run_pipeline.py`: stage helpers and pipeline orchestrator
+- `src/equity_lake/core/config.py`: canonical settings and ticker-config module
+- `src/equity_lake/core/dag.py`: unified EOD pipeline executor
+- `src/equity_lake/ml/forecasting.py`: public forecasting orchestrator with helper modules in `src/equity_lake/ml/candidates.py`, `src/equity_lake/ml/labeling.py`, and `src/equity_lake/ml/validation.py`
+
+Unsupported after the June 2026 refactor:
+
+- `equity_lake.ingestion.sources.*`
+- package-root helper imports from `equity_lake`
+- compatibility config wrappers under `equity_lake.config`
 
 ---
 
@@ -61,11 +77,15 @@
 
 **Purpose**: Fetch market data from external APIs and write to local storage
 
-**Location**: `src/equity_lake/ingestion/`
+**Locations**:
+
+- runtime orchestration: `src/equity_lake/ingestion/`
+- source adapters: `src/equity_lake/sources/`
+- CLI entrypoint: `src/equity_lake/cli/commands/data.py`
 
 **Key Components**:
 
-#### Base Fetcher (`sources/base.py`)
+#### Base Fetcher (`src/equity_lake/sources/base.py`)
 ```python
 class MarketDataFetcher(ABC):
     @abstractmethod
@@ -79,35 +99,37 @@ class MarketDataFetcher(ABC):
 ```
 
 #### Market-Specific Fetchers
-- **USEquityFetcher** (`sources/us_equity.py`):
+- **USEquityFetcher** (`src/equity_lake/sources/us.py`):
   - Fetches US market data via yfinance
   - Batch downloads for efficiency
   - Rate limiting: 0.5s delay between requests
 
-- **CNAshareFetcher** (`sources/cn_ashare.py`):
+- **CNAshareFetcher** (`src/equity_lake/sources/cn.py`):
   - Fetches China A-shares via akshare
   - Column mapping: Chinese → English
   - Rate limiting: 0.1s delay between stocks
 
-- **HKSGEquityFetcher** (`sources/hk_sg_equity.py`):
+- **HKSGEquityFetcher** (`src/equity_lake/sources/hk_sg.py`):
   - Fetches HK/SG markets via yfinance
   - Separate ticker formats (.HK, .SI)
 
-- **CNHybridFetcher** (`sources/cn_hybrid.py`):
+- **CNHybridFetcher** (`src/equity_lake/sources/cn_hybrid.py`):
   - Combines akshare + efinance
   - Fallback logic for reliability
 
-#### Orchestrator (`orchestrator.py`)
+#### Orchestrator (`src/equity_lake/ingestion/orchestrator.py`)
 - **Purpose**: Coordinate multi-market ingestion
 - **Key Functions**:
   - `run_daily_ingestion()`: Main entry point
   - `fetch_market_data()`: Router for market-specific fetchers
   - `validate_schema()`: Ensure OHLCV compliance
   - `write_to_partitioned_parquet()`: Write to data lake
+  - Delta-aware skip-existing checks and writes
+  - parallel market fetch execution with structured results
 
 **Data Flow**:
 ```
-CLI Request → Orchestrator → Market Fetchers → Validation → Partitioned Parquet
+CLI Request → Orchestrator → `equity_lake.sources.*` → Validation → Parquet/Delta
 ```
 
 ---
@@ -230,6 +252,11 @@ FROM 'data/lake/hk_sg_equity/date=*/*.parquet'
 - Volatility metrics (Bollinger Bands, ATR)
 - Volume indicators (OBV, VWAP)
 - Price returns (daily, weekly, monthly)
+- Cross-modal sentiment features (news plus social sentiment divergence and volume-scaled sentiment)
+
+**Current Notes**:
+- Implemented with a Hamilton-backed pandas pipeline.
+- Feature outputs carry a schema version and can optionally merge both news and social sentiment.
 
 **Pattern**:
 ```python
@@ -255,6 +282,12 @@ def calculate_rsi(df, window=14):
 - Mean reversion (RSI overbought/oversold)
 - Breakout (price channel breaks)
 - Momentum (relative strength)
+- ML-based signals:
+  - `v1_direction`: next-day direction classifier
+  - `v2_meta_label`: triple-barrier meta-label filter over backtest-rule candidates
+
+**Current Notes**:
+- ML validation uses purged and embargoed walk-forward splits rather than plain random folds.
 
 **Pattern**:
 ```python

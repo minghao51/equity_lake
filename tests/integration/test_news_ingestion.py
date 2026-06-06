@@ -13,8 +13,8 @@ import pandas as pd
 import pytest
 
 from equity_lake.core.schemas import NEWS_COLUMNS
-from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.sources.news import FinnhubNewsFetcher
 
 # =============================================================================
 # Schema Validation Tests

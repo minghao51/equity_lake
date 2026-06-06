@@ -7,6 +7,7 @@ partitioned Parquet files using DuckDB for high-performance queries.
 
 from __future__ import annotations
 
+import contextlib
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -29,6 +30,8 @@ class GapDetector:
     def __init__(self, lake_path: Path | None = None):
         self.lake_path = lake_path or LAKE_DIR
         self.con = duckdb.connect(":memory:")
+        with contextlib.suppress(Exception):
+            self.con.execute("INSTALL delta; LOAD delta;")
 
     def close(self) -> None:
         """Close the underlying DuckDB connection."""
@@ -44,6 +47,14 @@ class GapDetector:
 
     def _parquet_glob(self, market: str) -> str:
         return str(self.lake_path / market / "**" / "*.parquet")
+
+    def _scan_source(self, market: str) -> str:
+        from deltalake import DeltaTable
+
+        market_path = self.lake_path / market
+        if DeltaTable.is_deltatable(str(market_path)):
+            return f"delta_scan('{market_path}')"
+        return f"read_parquet('{self._parquet_glob(market)}')"
 
     def find_missing_dates(
         self,
@@ -89,7 +100,7 @@ class GapDetector:
         end_date: date,
         business_days_only: bool,
     ) -> list[tuple[str, date]]:
-        glob = self._parquet_glob(market)
+        scan = self._scan_source(market)
         business_day_filter = "WHERE EXTRACT(ISODOW FROM generate_series) BETWEEN 1 AND 5" if business_days_only else ""
 
         query = f"""
@@ -100,7 +111,7 @@ class GapDetector:
         ),
         existing_dates AS (
             SELECT DISTINCT date
-            FROM read_parquet('{glob}')
+            FROM {scan}
             WHERE ticker = $3
               AND date BETWEEN $1 AND $2
         )
@@ -119,7 +130,7 @@ class GapDetector:
         end_date: date,
         business_days_only: bool,
     ) -> list[tuple[str, date]]:
-        glob = self._parquet_glob(market)
+        scan = self._scan_source(market)
         business_day_filter = "WHERE EXTRACT(ISODOW FROM generate_series) BETWEEN 1 AND 5" if business_days_only else ""
 
         query = f"""
@@ -130,7 +141,7 @@ class GapDetector:
         ),
         existing_data AS (
             SELECT DISTINCT ticker, date
-            FROM read_parquet('{glob}')
+            FROM {scan}
         ),
         date_ticker_combos AS (
             SELECT t.ticker, d.date
@@ -146,10 +157,10 @@ class GapDetector:
         return self.con.execute(query, [start_date, end_date]).fetchall()
 
     def get_latest_date(self, market: str, ticker: str) -> date | None:
-        glob = self._parquet_glob(market)
+        scan = self._scan_source(market)
         query = f"""
         SELECT MAX(date) AS latest_date
-        FROM read_parquet('{glob}')
+        FROM {scan}
         WHERE ticker = $1
         """
         try:
@@ -173,12 +184,12 @@ class GapDetector:
 
         expected_days = self._count_business_days(start_date, end_date) if business_days_only else (end_date - start_date).days + 1
 
-        glob = self._parquet_glob(market)
+        scan = self._scan_source(market)
         query = f"""
         SELECT
             ticker,
             COUNT(DISTINCT date) AS actual_days
-        FROM read_parquet('{glob}')
+        FROM {scan}
         WHERE date BETWEEN $1 AND $2
         GROUP BY ticker
         ORDER BY ticker

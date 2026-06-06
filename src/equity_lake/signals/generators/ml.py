@@ -23,6 +23,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
         super().__init__(config)
         # Accept legacy `model_path` configs, but treat the setting as a model directory.
         self.model_dir = Path(config.get("model_dir", config.get("model_path", "data/models")))
+        self.model_mode = config.get("mode", "v1_direction")
         self.horizon_days = config.get("horizon_days", 5)
         self.min_confidence = config.get("min_confidence", 60)
         default_buy_threshold = self.min_confidence / 100
@@ -30,7 +31,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
         self.sell_threshold = config.get("sell_probability_threshold", 1 - default_buy_threshold)
 
         try:
-            self.forecaster = PriceForecaster(model_dir=str(self.model_dir))
+            self.forecaster = PriceForecaster(model_dir=str(self.model_dir), model_mode=self.model_mode, ml_config=config)
         except Exception:
             self.forecaster = None
 
@@ -88,6 +89,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
                     "probability": probability,
                     "horizon_days": self.horizon_days,
                     "confidence": confidence,
+                    "model_mode": prediction.get("model_mode", self.model_mode),
                     "model_version": prediction.get("model_version"),
                 },
             )
@@ -104,6 +106,7 @@ class MLPredictionSignalGenerator(SignalGenerator):
                 "probability": probability,
                 "horizon_days": self.horizon_days,
                 "confidence": confidence,
+                "model_mode": prediction.get("model_mode", self.model_mode),
                 "model_version": prediction.get("model_version"),
             },
         )

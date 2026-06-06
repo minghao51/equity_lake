@@ -13,8 +13,10 @@ Usage:
 import argparse
 import sys
 from datetime import date, datetime
+from pathlib import Path
 
 import duckdb
+import numpy as np
 import pandas as pd
 import structlog
 from tqdm import tqdm
@@ -25,6 +27,14 @@ from equity_lake.features.pipeline import FeaturePipeline
 
 # Logger configuration - use structlog for consistency
 logger = structlog.get_logger()
+
+
+def _scan_for(market_path: Path) -> str:
+    from deltalake import DeltaTable
+
+    if DeltaTable.is_deltatable(str(market_path)):
+        return f"delta_scan('{market_path}')"
+    return f"read_parquet('{market_path}/**/*.parquet', hive_partitioning=1)"
 
 
 # =============================================================================
@@ -56,30 +66,29 @@ class FeatureEngineer:
 
     def _setup_views(self) -> None:
         """Set up DuckDB views for accessing OHLCV data."""
-        # Create unified view across all markets
-        # Note: Using glob pattern that includes Hive partitioning (date=*/*.parquet)
-        self.conn.execute(f"""
-            CREATE OR REPLACE VIEW equity_all AS
-            SELECT
-                'us' as market, ticker, date, open, high, low, close, volume
-            FROM read_parquet('{LAKE_DIR}/us_equity/**/*.parquet', hive_partitioning=1)
-            UNION ALL
-            SELECT
-                'cn' as market, ticker, date, open, high, low, close, volume
-            FROM read_parquet('{LAKE_DIR}/cn_ashare/**/*.parquet', hive_partitioning=1)
-            UNION ALL
-            SELECT
-                'hk_sg' as market, ticker, date, open, high, low, close, volume
-            FROM read_parquet('{LAKE_DIR}/hk_sg_equity/**/*.parquet', hive_partitioning=1)
-            UNION ALL
-            SELECT
-                'jpx' as market, ticker, date, open, high, low, close, volume
-            FROM read_parquet('{LAKE_DIR}/jpx_equity/**/*.parquet', hive_partitioning=1)
-            UNION ALL
-            SELECT
-                'krx' as market, ticker, date, open, high, low, close, volume
-            FROM read_parquet('{LAKE_DIR}/krx_equity/**/*.parquet', hive_partitioning=1)
-        """)
+        from deltalake import DeltaTable
+
+        self.conn.execute("INSTALL delta; LOAD delta;")
+
+        markets = [
+            ("us", "us_equity"),
+            ("cn", "cn_ashare"),
+            ("hk_sg", "hk_sg_equity"),
+            ("jpx", "jpx_equity"),
+            ("krx", "krx_equity"),
+        ]
+
+        union_parts: list[str] = []
+        for label, market_dir in markets:
+            path = LAKE_DIR / market_dir
+            if not path.exists():
+                continue
+            scan = f"delta_scan('{path}')" if DeltaTable.is_deltatable(str(path)) else f"read_parquet('{path}/**/*.parquet', hive_partitioning=1)"
+            union_parts.append(f"SELECT '{label}' as market, ticker, date, open, high, low, close, volume FROM {scan}")
+
+        if union_parts:
+            sql = "CREATE OR REPLACE VIEW equity_all AS " + " UNION ALL ".join(union_parts)
+            self.conn.execute(sql)
         logger.info("DuckDB views created successfully")
 
     # -------------------------------------------------------------------------
@@ -93,6 +102,7 @@ class FeatureEngineer:
         end_date: date,
         compute_target: bool = True,
         include_sentiment: bool = False,
+        include_social_sentiment: bool = False,
     ) -> pd.DataFrame:
         """
         Generate all features for specified tickers and date range.
@@ -103,6 +113,7 @@ class FeatureEngineer:
             end_date: End date for feature computation
             compute_target: Whether to compute target variable (next-day return)
             include_sentiment: Whether to include sentiment features from news
+            include_social_sentiment: Whether to include social sentiment features
 
         Returns:
             DataFrame with all features computed
@@ -110,7 +121,7 @@ class FeatureEngineer:
         logger.info(f"Generating features for {len(tickers)} tickers from {start_date} to {end_date}")
 
         # Load OHLCV data from DuckDB
-        query = f"""
+        query = """
             SELECT
                 ticker,
                 date,
@@ -120,13 +131,13 @@ class FeatureEngineer:
                 close,
                 volume
             FROM equity_all
-            WHERE ticker IN {tuple(tickers)}
-            AND date BETWEEN '{start_date}' AND '{end_date}'
+            WHERE ticker IN (SELECT unnest($1::VARCHAR[]))
+            AND date BETWEEN $2 AND $3
             ORDER BY ticker, date
         """
 
-        logger.debug(f"Executing query: {query}")
-        df = self.conn.execute(query).df()
+        logger.debug("Executing parameterized query for %d tickers", len(tickers))
+        df = self.conn.execute(query, [tickers, start_date, end_date]).df()
 
         if df.empty:
             logger.warning(f"No data found for tickers: {tickers}")
@@ -171,6 +182,14 @@ class FeatureEngineer:
                 start_date=start_date,
                 end_date=end_date,
             )
+        if include_social_sentiment:
+            features_df = self.merge_social_sentiment_features(
+                features_df,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        features_df = self.add_cross_modal_sentiment_features(features_df)
 
         logger.info(f"Generated {len(features_df)} rows of features with {len(features_df.columns)} columns")
         logger.debug(f"Feature columns: {list(features_df.columns)}")
@@ -231,7 +250,7 @@ class FeatureEngineer:
                 SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count,
                 SUM(CASE WHEN sentiment_label = 'neutral' THEN 1 ELSE 0 END) as neutral_count,
                 STDDEV(sentiment_score) as sentiment_std
-            FROM read_parquet('{LAKE_DIR}/us_news/**/*.parquet', hive_partitioning=1)
+            FROM {_scan_for(LAKE_DIR / "us_news")}
             WHERE ticker IN {ticker_filter}
             AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
@@ -242,7 +261,6 @@ class FeatureEngineer:
 
             if sentiment_df.empty:
                 logger.warning("No sentiment data found, adding neutral sentiment columns")
-                # Add neutral sentiment columns
                 features_df["avg_daily_sentiment"] = 0.0
                 features_df["news_count"] = 0
                 features_df["positive_count"] = 0
@@ -333,7 +351,7 @@ class FeatureEngineer:
                 SUM(negative_score) as social_negative_score,
                 SUM(CASE WHEN source = 'reddit' THEN mention_count ELSE 0 END) as social_reddit_mentions,
                 SUM(CASE WHEN source = 'twitter' THEN mention_count ELSE 0 END) as social_twitter_mentions
-            FROM read_parquet('{LAKE_DIR}/us_social_sentiment/**/*.parquet', hive_partitioning=1)
+            FROM {_scan_for(LAKE_DIR / "us_social_sentiment")}
             WHERE ticker IN {ticker_filter}
             AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
@@ -394,6 +412,30 @@ class FeatureEngineer:
             # Return original features without social sentiment
             return features_df
 
+    def add_cross_modal_sentiment_features(self, features_df: pd.DataFrame) -> pd.DataFrame:
+        """Add minimal cross-modal sentiment features on top of merged sentiment columns."""
+        if features_df.empty:
+            return features_df
+
+        enriched = features_df.sort_values(["ticker", "date"]).copy()
+        log_volume = np.log1p(enriched["volume"].clip(lower=0))
+
+        if "avg_daily_sentiment" in enriched.columns:
+            enriched["sentiment_x_log_volume"] = enriched["avg_daily_sentiment"].fillna(0.0) * log_volume
+            enriched["news_sentiment_momentum_5d"] = enriched.groupby("ticker")["avg_daily_sentiment"].diff(5).fillna(0.0)
+
+        if "social_sentiment_score" in enriched.columns:
+            enriched["social_sentiment_x_log_volume"] = enriched["social_sentiment_score"].fillna(0.0) * log_volume
+            enriched["social_sentiment_momentum_5d"] = enriched.groupby("ticker")["social_sentiment_score"].diff(5).fillna(0.0)
+
+        if {"avg_daily_sentiment", "social_sentiment_score"}.issubset(enriched.columns):
+            enriched["news_social_sentiment_gap"] = enriched["avg_daily_sentiment"].fillna(0.0) - enriched["social_sentiment_score"].fillna(0.0)
+
+        if {"news_count", "social_mention_count"}.issubset(enriched.columns):
+            enriched["news_social_mentions_gap"] = enriched["news_count"].fillna(0) - enriched["social_mention_count"].fillna(0)
+
+        return enriched
+
     def close(self) -> None:
         """Close database connection."""
         if self.conn:
@@ -444,6 +486,12 @@ def parse_args() -> argparse.Namespace:
         help="Include sentiment features from news data",
     )
 
+    parser.add_argument(
+        "--with-social-sentiment",
+        action="store_true",
+        help="Include social sentiment features from Finnhub social data",
+    )
+
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
 
     return parser.parse_args()
@@ -456,9 +504,8 @@ def main() -> None:
     # Setup logging
     log_level_str = "DEBUG" if args.verbose else "INFO"
     setup_logging(
-        name="feature_engineering",
         level=log_level_str,
-        log_file="feature_engineering.log",
+        log_file=Path("feature_engineering.log"),
     )
 
     # Determine output date range
@@ -492,6 +539,7 @@ def main() -> None:
                 output_dir=args.output_dir,
                 compute_target=not args.no_target,
                 include_sentiment=args.with_sentiment,
+                include_social_sentiment=args.with_social_sentiment,
             )
         except Exception as e:
             logger.error(f"Feature generation failed: {e}")
@@ -505,6 +553,8 @@ def main() -> None:
 
     if args.with_sentiment:
         logger.info("   Sentiment features included: avg_daily_sentiment, news_count, positive_count, negative_count")
+    if args.with_social_sentiment:
+        logger.info("   Social sentiment features included: social_sentiment_score, social_mention_count, cross-modal features")
 
 
 if __name__ == "__main__":

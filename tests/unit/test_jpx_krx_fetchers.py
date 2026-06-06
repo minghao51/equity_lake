@@ -1,11 +1,12 @@
 """Unit tests for JPX and KRX market fetchers."""
 
 from datetime import date
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from equity_lake.ingestion.sources import JPXEquityFetcher, KRXEquityFetcher
+from equity_lake.sources import JPXEquityFetcher, KRXEquityFetcher
 
 
 class TestJPXEquityFetcher:
@@ -58,7 +59,7 @@ class TestJPXEquityFetcher:
         assert "6758.T" in fallback
         assert len(fallback) == 10
 
-    @patch("equity_lake.ingestion.sources.jpx.yf.download")
+    @patch("equity_lake.sources.jpx.yf.download")
     def test_fetch_with_batching(self, mock_download):
         """Test that fetch processes data in batches."""
         mock_data = pd.DataFrame(
@@ -82,7 +83,7 @@ class TestJPXEquityFetcher:
         assert not result.empty
         assert "ticker" in result.columns
 
-    @patch("equity_lake.ingestion.sources.jpx.yf.download")
+    @patch("equity_lake.sources.jpx.yf.download")
     def test_fetch_handles_no_data(self, mock_download):
         """Test that fetch handles empty response."""
         mock_download.return_value = pd.DataFrame()
@@ -92,7 +93,7 @@ class TestJPXEquityFetcher:
 
         assert result.empty
 
-    @patch("equity_lake.ingestion.sources.jpx.yf.download")
+    @patch("equity_lake.sources.jpx.yf.download")
     def test_fetch_standardizes_columns(self, mock_download):
         """Test that fetch standardizes column names."""
         mock_download.return_value = pd.DataFrame(
@@ -119,7 +120,7 @@ class TestJPXEquityFetcher:
         assert "ticker" in result.columns
         assert "date" in result.columns
 
-    @patch("equity_lake.ingestion.sources.jpx.yf.download")
+    @patch("equity_lake.sources.jpx.yf.download")
     def test_fetch_with_single_ticker(self, mock_download):
         """Test that fetch handles single ticker correctly."""
         mock_download.return_value = pd.DataFrame(
@@ -194,3 +195,26 @@ class TestKRXEquityFetcher:
             filters={"tags": ["tech"]},
         )
         ticker_config.get_tickers_by_tags.assert_called_once()
+
+    def test_fetch_uses_finance_data_reader_data_reader_api(self):
+        """Test KRX fetch uses the installed FinanceDataReader API surface."""
+        mock_df = pd.DataFrame(
+            {
+                "Open": [100.0],
+                "High": [110.0],
+                "Low": [95.0],
+                "Close": [105.0],
+                "Volume": [1000],
+            },
+            index=pd.DatetimeIndex(["2024-01-01"], name="Date"),
+        )
+        mock_module = SimpleNamespace(DataReader=MagicMock(return_value=mock_df))
+
+        with patch.dict("sys.modules", {"FinanceDataReader": mock_module}):
+            fetcher = KRXEquityFetcher(tickers=["005930"])
+            result = fetcher.fetch(date(2024, 1, 1))
+
+        mock_module.DataReader.assert_called_once_with("005930", "2024-01-01", "2024-01-02")
+        assert not result.empty
+        assert not result.empty
+        assert result["ticker"].iloc[0] == "005930"

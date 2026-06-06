@@ -31,12 +31,13 @@ def run_feature_job(
     output_dir: str | Path | None = None,
     compute_target: bool = True,
     include_sentiment: bool = False,
+    include_social_sentiment: bool = False,
 ) -> pd.DataFrame:
     """Generate features over a warm-up window, then persist the requested range."""
     feature_engineer_cls = _load_feature_engineer()
 
     output_path = Path(output_dir) if output_dir else Path("data/lake/features")
-    query_start_date = output_start_date - pd.Timedelta(days=60)
+    query_start_date = output_start_date - pd.Timedelta(days=120)
     query_end_date = output_end_date
 
     engineer = feature_engineer_cls()
@@ -47,6 +48,7 @@ def run_feature_job(
             end_date=query_end_date,
             compute_target=compute_target,
             include_sentiment=include_sentiment,
+            include_social_sentiment=include_social_sentiment,
         )
     finally:
         engineer.close()

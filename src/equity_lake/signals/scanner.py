@@ -8,6 +8,7 @@ from equity_lake.signals.formatters.markdown import MarkdownFormatter
 from equity_lake.signals.formatters.terminal import TerminalFormatter
 from equity_lake.signals.generators.backtest import BacktestSignalGenerator
 from equity_lake.signals.generators.base import SignalGenerator
+from equity_lake.signals.generators.meta_label import MetaLabelSignalGenerator
 from equity_lake.signals.generators.ml import MLPredictionSignalGenerator
 from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
 from equity_lake.signals.history import save_signals_to_parquet
@@ -36,7 +37,10 @@ class SignalScanner:
         if config.is_generator_enabled("sentiment"):
             self.generators.append(SentimentSignalGenerator(config.sentiment))
         if config.is_generator_enabled("ml"):
-            self.generators.append(MLPredictionSignalGenerator(config.ml))
+            if config.ml.get("mode") == "v2_meta_label":
+                self.generators.append(MetaLabelSignalGenerator(config.ml))
+            else:
+                self.generators.append(MLPredictionSignalGenerator(config.ml))
 
         # Initialize formatters
         self.formatters = {
@@ -44,6 +48,10 @@ class SignalScanner:
             "md": MarkdownFormatter(),
             "table": TerminalFormatter(),
         }
+
+    def _should_scan_sequentially(self) -> bool:
+        """Avoid concurrent ML scans because the forecaster stack is not thread-safe."""
+        return any(isinstance(generator, (MLPredictionSignalGenerator, MetaLabelSignalGenerator)) for generator in self.generators)
 
     def scan(self, target_date: date | None = None) -> list[Signal]:
         """Scan all tickers and return aggregated signals.
@@ -59,7 +67,7 @@ class SignalScanner:
 
         all_signals = []
 
-        if len(self.watchlist.tickers) <= 1:
+        if len(self.watchlist.tickers) <= 1 or self._should_scan_sequentially():
             for ticker in self.watchlist.tickers:
                 ticker_signals = self._scan_ticker(ticker, target_date)
                 if ticker_signals:
@@ -67,10 +75,7 @@ class SignalScanner:
             return all_signals
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            futures = {
-                executor.submit(self._scan_ticker, ticker, target_date): ticker
-                for ticker in self.watchlist.tickers
-            }
+            futures = {executor.submit(self._scan_ticker, ticker, target_date): ticker for ticker in self.watchlist.tickers}
             for future in as_completed(futures):
                 try:
                     ticker_signals = future.result()

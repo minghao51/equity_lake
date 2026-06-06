@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.config.settings import clear_settings_cache, load_settings
+from equity_lake.core.config import clear_settings_cache, load_settings
 
 
 @pytest.fixture(autouse=True)

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from equity_lake.ingestion.sources import (
+from equity_lake.sources import (
     CNAshareFetcher,
     CNEfinanceFetcher,
     CNHybridFetcher,
@@ -65,7 +65,7 @@ class TestUSEquityFetcherBatching:
         assert len(chunks) == 1
         assert len(chunks[0]) == 0
 
-    @patch("equity_lake.ingestion.sources.us.yf.download")
+    @patch("equity_lake.sources.us.yf.download")
     def test_fetch_with_batching(self, mock_download, sample_us_tickers):
         """Test that fetch processes data in batches."""
         # Mock yfinance to return data for each batch
@@ -91,7 +91,7 @@ class TestUSEquityFetcherBatching:
         assert not result.empty
         assert "ticker" in result.columns
 
-    @patch("equity_lake.ingestion.sources.us.yf.download")
+    @patch("equity_lake.sources.us.yf.download")
     def test_fetch_handles_partial_failures(self, mock_download, sample_us_tickers):
         """Test that fetch continues even if one batch fails."""
         call_count = [0]
@@ -123,7 +123,7 @@ class TestUSEquityFetcherBatching:
         assert mock_download.call_count == 4
         assert not result.empty
 
-    @patch("equity_lake.ingestion.sources.us.yf.download")
+    @patch("equity_lake.sources.us.yf.download")
     def test_fetch_standardizes_columns(self, mock_download, sample_us_tickers):
         """Test that fetch standardizes column names."""
         mock_download.return_value = pd.DataFrame(
@@ -151,7 +151,7 @@ class TestUSEquityFetcherBatching:
         assert "ticker" in result.columns
         assert "date" in result.columns
 
-    @patch("equity_lake.ingestion.sources.us.yf.download")
+    @patch("equity_lake.sources.us.yf.download")
     def test_fetch_with_single_ticker(self, mock_download):
         """Test that fetch handles single ticker correctly."""
         mock_download.return_value = pd.DataFrame(
@@ -184,14 +184,14 @@ class TestCNEfinanceFetcher:
     def test_initialization_requires_efinance(self):
         """Test that fetcher raises ImportError if efinance not available."""
         with (
-            patch("equity_lake.ingestion.sources.cn_efinance.efinance", None),
+            patch("equity_lake.sources.cn_efinance.efinance", None),
             pytest.raises(ImportError, match="efinance is not installed"),
         ):
             CNEfinanceFetcher()
 
     def test_initialization_with_params(self):
         """Test fetcher initialization with parameters."""
-        with patch("equity_lake.ingestion.sources.cn_efinance.efinance", MagicMock()):
+        with patch("equity_lake.sources.cn_efinance.efinance", MagicMock()):
             fetcher = CNEfinanceFetcher(
                 max_workers=20,
                 stock_limit=200,
@@ -206,7 +206,7 @@ class TestCNEfinanceFetcher:
 
     def test_standardize_history_frame(self):
         """Test standardizing a single efinance history frame."""
-        with patch("equity_lake.ingestion.sources.cn_efinance.efinance", MagicMock()):
+        with patch("equity_lake.sources.cn_efinance.efinance", MagicMock()):
             fetcher = CNEfinanceFetcher(max_workers=1, stock_limit=1)
 
         result = fetcher._standardize_history_frame(
@@ -230,7 +230,7 @@ class TestCNEfinanceFetcher:
         assert "ticker" in result.columns
         assert result["ticker"].iloc[0] == "000001"
 
-    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
+    @patch("equity_lake.sources.cn_efinance.efinance")
     def test_fetch_history_batch_handles_failure(self, mock_efinance):
         """Test batch fetch handles provider failures gracefully."""
         mock_efinance.stock.get_quote_history.side_effect = Exception("Network error")
@@ -240,7 +240,7 @@ class TestCNEfinanceFetcher:
 
         assert result == []
 
-    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
+    @patch("equity_lake.sources.cn_efinance.efinance")
     def test_fetch_standardizes_columns(self, mock_efinance):
         """Test that fetch standardizes Chinese column names."""
         mock_efinance.stock.get_quote_history.return_value = {
@@ -291,13 +291,13 @@ class TestCNEfinanceFetcher:
         ticker_config = MagicMock()
         ticker_config.get_tickers_for_market.return_value = []
 
-        with patch("equity_lake.ingestion.sources.cn_efinance.efinance", MagicMock()):
+        with patch("equity_lake.sources.cn_efinance.efinance", MagicMock()):
             fetcher = CNEfinanceFetcher(ticker_config=ticker_config)
             result = fetcher.fetch(date(2024, 1, 1))
 
         assert result.empty
 
-    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
+    @patch("equity_lake.sources.cn_efinance.efinance")
     def test_fetch_uses_configured_tickers_without_live_stock_list(self, mock_efinance):
         """Test fetch uses configured tickers and skips live universe discovery."""
         ticker_config = MagicMock()
@@ -345,7 +345,7 @@ class TestCNEfinanceFetcher:
             "000002",
         ]
 
-    @patch("equity_lake.ingestion.sources.cn_efinance.efinance")
+    @patch("equity_lake.sources.cn_efinance.efinance")
     def test_fetch_respects_stock_limit_on_configured_tickers(self, mock_efinance):
         """Test configured CN tickers are trimmed by stock_limit."""
         ticker_config = MagicMock()
@@ -399,8 +399,8 @@ class TestCNEfinanceFetcher:
 class TestCNAshareFetcher:
     """Test suite for CNAshareFetcher with configured CN universe."""
 
-    @patch("equity_lake.ingestion.sources.cn.ak.stock_zh_a_hist")
-    @patch("equity_lake.ingestion.sources.cn.ak.stock_info_a_code_name")
+    @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
+    @patch("equity_lake.sources.cn.ak.stock_info_a_code_name")
     def test_fetch_uses_configured_tickers_without_live_stock_list(
         self,
         mock_stock_list,
@@ -431,7 +431,7 @@ class TestCNAshareFetcher:
         assert not result.empty
         assert mock_hist.call_count == 2
 
-    @patch("equity_lake.ingestion.sources.cn.ak.stock_zh_a_hist")
+    @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
     def test_fetch_with_empty_configured_tickers(self, mock_hist):
         """Test fetch returns empty data when no configured CN tickers exist."""
         ticker_config = MagicMock()
@@ -443,7 +443,7 @@ class TestCNAshareFetcher:
         mock_hist.assert_not_called()
         assert result.empty
 
-    @patch("equity_lake.ingestion.sources.cn.ak.stock_zh_a_hist")
+    @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
     def test_fetch_respects_stock_limit_on_configured_tickers(self, mock_hist):
         """Test configured CN tickers are trimmed by stock_limit."""
         ticker_config = MagicMock()
@@ -484,7 +484,7 @@ class TestCNHybridFetcher:
 
     def test_initialization_with_both_sources(self):
         """Test fetcher initialization with both sources enabled."""
-        with patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher") as mock_efinance:
+        with patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher") as mock_efinance:
             fetcher = CNHybridFetcher(
                 enable_efinance=True,
                 enable_akshare=True,
@@ -499,7 +499,7 @@ class TestCNHybridFetcher:
 
     def test_initialization_efinance_only(self):
         """Test fetcher initialization with only efinance."""
-        with patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher", MagicMock):
+        with patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher", MagicMock):
             fetcher = CNHybridFetcher(
                 enable_efinance=True,
                 enable_akshare=False,
@@ -536,8 +536,8 @@ class TestCNHybridFetcher:
                 enable_akshare=False,
             )
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_uses_efinance_first(self, mock_akshare, mock_efinance, sample_ohlcv_data):
         """Test that fetch tries efinance first."""
         # Mock efinance to return data
@@ -558,9 +558,9 @@ class TestCNHybridFetcher:
         mock_akshare.return_value.fetch.assert_not_called()
         assert not result.empty
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.TickerConfig")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.TickerConfig")
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_uses_configured_ticker_threshold(
         self,
         mock_akshare,
@@ -596,8 +596,8 @@ class TestCNHybridFetcher:
         mock_akshare.return_value.fetch.assert_not_called()
         assert not result.empty
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_falls_back_to_akshare(self, mock_akshare, mock_efinance, sample_ohlcv_data):
         """Test that fetch falls back to akshare when efinance fails."""
         # Mock efinance to fail
@@ -623,8 +623,8 @@ class TestCNHybridFetcher:
         mock_akshare_instance.fetch.assert_called_once()
         assert not result.empty
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_falls_back_to_akshare_on_timeout(
         self,
         mock_akshare,
@@ -656,8 +656,8 @@ class TestCNHybridFetcher:
         mock_akshare_instance.fetch.assert_called_once()
         assert not result.empty
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_returns_best_result(self, mock_akshare, mock_efinance):
         """Test that fetch returns the result with most data."""
         # Mock efinance to return fewer rows
@@ -694,7 +694,7 @@ class TestCNHybridFetcher:
         assert len(result) == 3
         assert result["ticker"].nunique() == 3
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_akshare_only(self, mock_akshare, sample_ohlcv_data):
         """Test fetch when only akshare is enabled."""
         mock_akshare_instance = MagicMock()
@@ -751,7 +751,7 @@ class TestCNHybridFetcher:
 class TestFetcherIntegration:
     """Integration tests for fetcher interactions."""
 
-    @patch("equity_lake.ingestion.sources.us.yf.download")
+    @patch("equity_lake.sources.us.yf.download")
     def test_us_fetcher_with_large_dataset(self, mock_download):
         """Test USEquityFetcher with large ticker list."""
         # Create mock data
@@ -779,8 +779,8 @@ class TestFetcherIntegration:
         assert mock_download.call_count == 3
         assert not result.empty
 
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNEfinanceFetcher")
-    @patch("equity_lake.ingestion.sources.cn_hybrid.CNAshareFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_hybrid_fetcher_reliability(self, mock_akshare, mock_efinance):
         """Test that hybrid fetcher improves reliability."""
         # Simulate efinance failing 30% of time

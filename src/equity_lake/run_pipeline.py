@@ -36,14 +36,14 @@ from pathlib import Path
 
 import structlog
 
-from equity_lake import (
+from equity_lake.core.config import get_settings
+from equity_lake.core.logging import correlation_context, setup_logging, timer
+from equity_lake.core.paths import LOGS_DIR
+from equity_lake.pipeline import (
     run_feature_stage,
     run_ingestion_stage,
     run_ml_inference_stage,
 )
-from equity_lake.config.settings import get_settings
-from equity_lake.core.logging import correlation_context, setup_logging, timer
-from equity_lake.core.paths import LOGS_DIR
 
 # Logger configuration
 logger = structlog.get_logger()

@@ -23,11 +23,11 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pandas as pd
 import structlog
 
-from equity_lake.config import TickerConfig
-from equity_lake.config.settings import get_settings
+from equity_lake.core.config import TickerConfig, get_settings
 from equity_lake.core.dates import resolve_trading_date
 from equity_lake.core.logging import correlation_context, setup_logging, timer
 from equity_lake.core.paths import LAKE_DIR
@@ -46,16 +46,16 @@ from equity_lake.ingestion.parallel import (
     fetch_markets_parallel,
     summarize_results,
 )
-from equity_lake.ingestion.sources import (
+from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS
+from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.sources import (
     CNHybridFetcher,
     HKSGEquityFetcher,
     USEquityFetcher,
 )
-from equity_lake.ingestion.sources.base import MarketDataFetcher
-from equity_lake.ingestion.sources.jpx import JPXEquityFetcher
-from equity_lake.ingestion.sources.krx import KRXEquityFetcher
-from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS
-from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.sources.base import MarketDataFetcher
+from equity_lake.sources.jpx import JPXEquityFetcher
+from equity_lake.sources.krx import KRXEquityFetcher
 
 # Logger configuration - use structlog for structured logging
 logger = structlog.get_logger()
@@ -570,6 +570,33 @@ def handle_gap_detection(args: argparse.Namespace) -> None:
     print(f"\n{'=' * 70}\n")
 
 
+def _market_has_date(market_dir: str, trading_date: date) -> bool:
+    """Check whether a market already has data for *trading_date*.
+
+    Works with both legacy Hive-partitioned Parquet and Delta Lake tables.
+    """
+    market_path = LAKE_DIR / market_dir
+    if not market_path.exists():
+        return False
+
+    try:
+        from deltalake import DeltaTable
+
+        if DeltaTable.is_deltatable(str(market_path)):
+            con = duckdb.connect(":memory:")
+            try:
+                con.execute("INSTALL delta; LOAD delta;")
+                row = con.execute(f"SELECT COUNT(*) FROM delta_scan('{market_path}') WHERE date = '{trading_date}'").fetchone()
+                return row is not None and row[0] > 0
+            finally:
+                con.close()
+    except ImportError:
+        pass
+
+    partition_file = market_path / f"date={trading_date}" / f"{trading_date}.parquet"
+    return partition_file.exists()
+
+
 def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[str]:
     """Return only markets that lack data for the given trading date."""
     markets_needing_fetch: list[str] = []
@@ -578,12 +605,25 @@ def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[st
             markets_needing_fetch.append(market)
             continue
         market_dir = MARKET_DIR_MAP.get(market, market)
-        partition_file = LAKE_DIR / market_dir / f"date={trading_date}" / f"{trading_date}.parquet"
-        if partition_file.exists():
-            logger.debug("market_data_exists", market=market, path=str(partition_file))
+        if _market_has_date(market_dir, trading_date):
+            logger.debug("market_data_exists", market=market, date=str(trading_date))
         else:
             markets_needing_fetch.append(market)
     return markets_needing_fetch
+
+
+def _is_delta_market(market: str) -> bool:
+    """Return True if the market directory is already a Delta table."""
+    market_dir = MARKET_DIR_MAP.get(market, market)
+    market_path = LAKE_DIR / market_dir
+    if not market_path.exists():
+        return False
+    try:
+        from deltalake import DeltaTable
+
+        return DeltaTable.is_deltatable(str(market_path))
+    except ImportError:
+        return False
 
 
 def run_daily_ingestion(
@@ -596,6 +636,7 @@ def run_daily_ingestion(
     parallel: bool = False,
     max_workers: int | None = None,
     skip_existing: bool = True,
+    use_delta: bool | None = None,
 ) -> dict[str, bool]:
     """
     Run daily ingestion for specified markets.
@@ -610,6 +651,8 @@ def run_daily_ingestion(
         parallel: If True, fetch markets concurrently
         max_workers: Maximum number of parallel workers
         skip_existing: If True, skip markets that already have data for trading_date
+        use_delta: If True, write through Delta Lake.  None (default) auto-detects
+            per market — uses Delta if the target directory is already a Delta table.
 
     Returns:
         Dictionary mapping market to success status
@@ -699,7 +742,8 @@ def run_daily_ingestion(
                     if market == "macro":
                         success = write_macro_to_parquet(df, trading_date, dry_run=dry_run)
                     else:
-                        success = write_to_partitioned_parquet(df, market_dir, trading_date, dry_run=dry_run)
+                        delta_flag = use_delta if use_delta is not None else _is_delta_market(market)
+                        success = write_to_partitioned_parquet(df, market_dir, trading_date, dry_run=dry_run, use_delta=delta_flag)
 
                 results[market] = success
 
@@ -738,7 +782,8 @@ def run_daily_ingestion(
                     if market == "macro":
                         success = write_macro_to_parquet(df, trading_date, dry_run=dry_run)
                     else:
-                        success = write_to_partitioned_parquet(df, market_dir, trading_date, dry_run=dry_run)
+                        delta_flag = use_delta if use_delta is not None else _is_delta_market(market)
+                        success = write_to_partitioned_parquet(df, market_dir, trading_date, dry_run=dry_run, use_delta=delta_flag)
 
                 results[market] = success
 
@@ -819,7 +864,7 @@ def fetch_market_data_with_config(
             logger.error("FINNHUB_API_KEY not set, cannot fetch news")
             return None
 
-        from equity_lake.ingestion.sources.news import FinnhubNewsFetcher
+        from equity_lake.sources.news import FinnhubNewsFetcher
 
         # Get top 100 tickers by priority if not explicitly specified
         if not explicit_tickers and ticker_config:
@@ -840,7 +885,7 @@ def fetch_market_data_with_config(
             logger.error("FINNHUB_API_KEY not set, cannot fetch social sentiment")
             return None
 
-        from equity_lake.ingestion.sources.sentiment import (
+        from equity_lake.sources.sentiment import (
             FinnhubSocialSentimentFetcher,
         )
 

@@ -11,11 +11,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import structlog
 
-from equity_lake.core.logging import setup_logging
 from equity_lake.core.paths import CN_ASHARE_DIR, HK_SG_EQUITY_DIR, US_EQUITY_DIR
 
-logger = setup_logging(__name__)
+logger = structlog.get_logger()
 
 # US ticker format regex (from validators.py)
 US_TICKER_PATTERN = re.compile(r"^[A-Z]{1,5}(-[A-Z]{1,2})?$")
@@ -202,10 +202,11 @@ def cmd_sample(
         seed: Random seed for synthetic generation
         verbose: Enable debug logging
     """
+    from equity_lake.core.logging import setup_structured_logging
     from equity_lake.core.paths import DATA_DIR
 
     log_level = "DEBUG" if verbose else "INFO"
-    setup_logging(__name__, level=log_level)
+    setup_structured_logging(level=log_level)
 
     # Parse custom tickers if provided
     ticker_override: dict[str, list[str]] | None = None

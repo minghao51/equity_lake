@@ -11,7 +11,7 @@ from typing import Any, cast
 import duckdb
 import pandas as pd
 
-from equity_lake.config.settings import get_settings
+from equity_lake.core.config import get_settings
 from equity_lake.core.paths import DATA_DIR, JPX_EQUITY_DIR, KRX_EQUITY_DIR, LAKE_DIR, LOGS_DIR
 
 MARKET_DATASETS = {
