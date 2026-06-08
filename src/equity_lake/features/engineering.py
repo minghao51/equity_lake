@@ -10,9 +10,7 @@ Usage:
     python -m equity_lake.features.engineering --tickers AAPL,GOOGL --start 2024-01-01 --end 2024-12-31
 """
 
-import argparse
-import sys
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 import duckdb
@@ -21,7 +19,6 @@ import pandas as pd
 import structlog
 from tqdm import tqdm
 
-from equity_lake.core.logging import setup_logging, timer
 from equity_lake.core.paths import LAKE_DIR
 from equity_lake.features.pipeline import FeaturePipeline
 
@@ -440,122 +437,3 @@ class FeatureEngineer:
         """Close database connection."""
         if self.conn:
             self.conn.close()
-
-
-# =============================================================================
-# CLI
-# =============================================================================
-
-
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Generate ML features from OHLCV data")
-
-    parser.add_argument(
-        "--tickers",
-        type=str,
-        help='Comma-separated list of tickers (e.g., "AAPL,GOOGL,MSFT")',
-    )
-
-    parser.add_argument("--start", type=str, help="Start date (YYYY-MM-DD format)")
-
-    parser.add_argument("--end", type=str, help="End date (YYYY-MM-DD format)")
-
-    parser.add_argument(
-        "--date",
-        type=str,
-        help="Single date to generate features for (YYYY-MM-DD format)",
-    )
-
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default=str(LAKE_DIR / "features"),
-        help=f"Output directory for feature Parquet files (default: {LAKE_DIR}/features)",
-    )
-
-    parser.add_argument(
-        "--no-target",
-        action="store_true",
-        help="Do not compute target variable (next-day return)",
-    )
-
-    parser.add_argument(
-        "--with-sentiment",
-        action="store_true",
-        help="Include sentiment features from news data",
-    )
-
-    parser.add_argument(
-        "--with-social-sentiment",
-        action="store_true",
-        help="Include social sentiment features from Finnhub social data",
-    )
-
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Main entry point."""
-    args = parse_args()
-
-    # Setup logging
-    log_level_str = "DEBUG" if args.verbose else "INFO"
-    setup_logging(
-        level=log_level_str,
-        log_file=Path("feature_engineering.log"),
-    )
-
-    # Determine output date range
-    if args.date:
-        output_start_date = datetime.strptime(args.date, "%Y-%m-%d").date()
-        output_end_date = output_start_date
-    elif args.start and args.end:
-        output_start_date = datetime.strptime(args.start, "%Y-%m-%d").date()
-        output_end_date = datetime.strptime(args.end, "%Y-%m-%d").date()
-    else:
-        logger.error("Must specify --date OR both --start and --end")
-        sys.exit(1)
-
-    # Determine tickers
-    if args.tickers:
-        tickers = [t.strip() for t in args.tickers.split(",")]
-    else:
-        logger.error("Must specify --tickers")
-        sys.exit(1)
-
-    logger.info(f"Feature engineering for {len(tickers)} tickers from {output_start_date} to {output_end_date}")
-
-    from equity_lake.features import run_feature_job
-
-    with timer("feature_generation", ticker_count=len(tickers)):
-        try:
-            features_df = run_feature_job(
-                tickers=tickers,
-                output_start_date=output_start_date,
-                output_end_date=output_end_date,
-                output_dir=args.output_dir,
-                compute_target=not args.no_target,
-                include_sentiment=args.with_sentiment,
-                include_social_sentiment=args.with_social_sentiment,
-            )
-        except Exception as e:
-            logger.error(f"Feature generation failed: {e}")
-            raise
-
-    logger.info(f"✅ Features written successfully to {args.output_dir}")
-    logger.info(f"   Total rows: {len(features_df):,}")
-    logger.info(f"   Total tickers: {features_df['ticker'].nunique()}")
-    logger.info(f"   Date range: {features_df['date'].min()} to {features_df['date'].max()}")
-    logger.info(f"   Features: {len(features_df.columns)} columns")
-
-    if args.with_sentiment:
-        logger.info("   Sentiment features included: avg_daily_sentiment, news_count, positive_count, negative_count")
-    if args.with_social_sentiment:
-        logger.info("   Social sentiment features included: social_sentiment_score, social_mention_count, cross-modal features")
-
-
-if __name__ == "__main__":
-    main()

@@ -12,9 +12,9 @@ using DuckDB's Python API. It includes examples of:
 - Data visualization preparation
 
 Usage:
-    uv run equity-query
-    uv run equity-query --query top_gainers
-    uv run equity-query --date 2024-12-01
+    uv run equity query
+    uv run equity query --query top_gainers
+    uv run equity query --date 2024-12-01
 """
 
 import argparse
@@ -137,6 +137,17 @@ class EquityDataDB:
         except Exception as e:
             logger.error(f"Query failed: {e}")
             return pd.DataFrame()
+
+    def query_arrow(self, sql: str) -> Any:
+        """Execute SQL query and return result as PyArrow Table (zero-copy)."""
+        import pyarrow as pa
+
+        self._ensure_views()
+        try:
+            return self.con.execute(sql).fetch_arrow_table()
+        except Exception as e:
+            logger.error(f"Arrow query failed: {e}")
+            return pa.table({})
 
     def execute(self, sql: str) -> Any:
         """Execute SQL query and return result."""
@@ -476,19 +487,19 @@ Available Queries:
 
 Examples:
   # Run all queries
-  uv run equity-query
+  uv run equity query
 
   # Run specific query
-  uv run equity-query --query top_volume
+  uv run equity query --query top_volume
 
   # Query with parameters
-  uv run equity-query --query gainers_losers --days 14
+  uv run equity query --query gainers_losers --days 14
 
   # Export results to CSV
-  uv run equity-query --query top_volume --output results.csv
+  uv run equity query --query top_volume --output results.csv
 
   # Benchmark performance
-  uv run equity-query --query benchmark
+  uv run equity query --query benchmark
         """,
     )
 

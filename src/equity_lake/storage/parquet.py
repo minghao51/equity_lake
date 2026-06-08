@@ -1,4 +1,4 @@
-"""Parquet storage compatibility exports."""
+"""Parquet storage exports."""
 
 from equity_lake.devtools.test_data import (
     write_partitioned_parquet as write_test_partitioned_parquet,

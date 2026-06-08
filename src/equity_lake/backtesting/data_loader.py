@@ -20,7 +20,7 @@ Usage:
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Self, cast
+from typing import Any, Self
 
 import duckdb
 import pandas as pd
@@ -285,8 +285,8 @@ class BacktestDataLoader:
         logger.debug("Executing query", sql_preview=sql[:200] + "...")
 
         try:
-            data = self.conn.execute(sql, [start_date, end_date]).df()
-            return data
+            data = self.conn.execute(sql, [start_date, end_date]).fetch_arrow_table()
+            return data.to_pandas()
         except Exception as e:
             logger.error("Query failed", error=str(e))
             return pd.DataFrame()
@@ -440,8 +440,8 @@ class BacktestDataLoader:
             params = []
 
         try:
-            result = self.conn.execute(sql, params).df()
-            return cast(list[str], result["ticker"].tolist())
+            rows = self.conn.execute(sql, params).fetchall()
+            return [row[0] for row in rows]
         except Exception as e:
             logger.error("Failed to get tickers", market=market, error=str(e))
             return []
@@ -486,13 +486,11 @@ class BacktestDataLoader:
             params = []
 
         try:
-            result = self.conn.execute(sql, params).df()
-            if not result.empty:
-                min_date = result["min_date"].iloc[0]
-                max_date = result["max_date"].iloc[0]
+            row = self.conn.execute(sql, params).fetchone()
+            if row and row[0] is not None:
                 return (
-                    date.fromisoformat(str(min_date)) if pd.notna(min_date) else None,
-                    date.fromisoformat(str(max_date)) if pd.notna(max_date) else None,
+                    date.fromisoformat(str(row[0])),
+                    date.fromisoformat(str(row[1])),
                 )
         except Exception as e:
             logger.error("Failed to get date range", market=market, error=str(e))

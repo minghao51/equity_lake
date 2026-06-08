@@ -209,9 +209,9 @@ class PipelineMonitor:
         logger.info("Checking pipeline logs...")
 
         log_files = [
-            LOGS_DIR / "run_pipeline.log",
+            LOGS_DIR / "monitor_pipeline.log",
             LOGS_DIR / "ingest_daily.log",
-            LOGS_DIR / "feature_engineering.log",
+            LOGS_DIR / "sync_from_s3.log",
         ]
 
         total_errors = 0

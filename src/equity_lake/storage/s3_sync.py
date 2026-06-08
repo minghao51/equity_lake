@@ -12,9 +12,9 @@ Features:
 - Support for both public and private S3 buckets
 
 Usage:
-    uv run equity-sync
-    uv run equity-sync --bucket s3://my-bucket/us_equity/
-    uv run equity-sync --workers 32 --dry-run
+    uv run equity sync
+    uv run equity sync --bucket s3://my-bucket/us_equity/
+    uv run equity sync --workers 32 --dry-run
 """
 
 import argparse
@@ -304,19 +304,19 @@ def parse_arguments() -> argparse.Namespace:
         epilog="""
 Examples:
   # Sync from default bucket
-  uv run equity-sync
+  uv run equity sync
 
   # Sync from custom bucket
-  uv run equity-sync --bucket s3://my-bucket/us_equity/
+  uv run equity sync --bucket s3://my-bucket/us_equity/
 
   # Use s5cmd with 32 workers
-  uv run equity-sync --tool s5cmd --workers 32
+  uv run equity sync --tool s5cmd --workers 32
 
   # Dry run (test without downloading)
-  uv run equity-sync --dry-run
+  uv run equity sync --dry-run
 
   # Sync to custom directory
-  uv run equity-sync --target /path/to/data
+  uv run equity sync --target /path/to/data
         """,
     )
 

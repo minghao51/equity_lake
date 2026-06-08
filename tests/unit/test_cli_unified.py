@@ -110,9 +110,20 @@ class TestNativeCommands:
             assert result.exit_code == 0
 
     def test_config_validate_outputs_valid(self):
-        result = runner.invoke(app, ["config", "validate"])
+        with patch("equity_lake.config.validators.validate_tickers", return_value=[]):
+            result = runner.invoke(app, ["config", "validate"])
         assert result.exit_code == 0
-        assert "valid" in result.stdout.lower()
+        assert "passed" in result.stdout.lower()
+
+    def test_config_validate_all_validates_signals(self):
+        with (
+            patch("equity_lake.config.validators.validate_tickers", return_value=[]),
+            patch("equity_lake.config.validators.validate_watchlist", return_value=[]),
+            patch("equity_lake.config.validators.validate_signals", return_value=["boom"]),
+        ):
+            result = runner.invoke(app, ["config", "validate", "--all"])
+        assert result.exit_code == 1
+        assert "boom" in result.stdout
 
     def test_pipeline_command_exits_nonzero_on_stage_failure(self):
         with patch("equity_lake.core.dag.execute_eod_pipeline", return_value={"features": {"success": False, "error": "boom"}}):

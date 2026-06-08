@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 
 import typer
 
@@ -28,9 +28,9 @@ def _init_logging(verbose: bool = False) -> None:
 
 
 def _resolve_date(date_str: str | None, days_back: int = 1) -> date:
-    if date_str:
-        return date.fromisoformat(date_str)
-    return date.today() - timedelta(days=days_back)
+    from equity_lake.core.dates import resolve_trading_date
+
+    return resolve_trading_date(date_str, days_back=days_back)
 
 
 def _parse_comma_list(value: str | None) -> list[str] | None:

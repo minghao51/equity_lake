@@ -31,7 +31,7 @@ import pandas as pd
 import structlog
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
-from equity_lake.backtesting.engine import BacktestResult
+from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy.base import BaseStrategy
 from equity_lake.backtesting.utils import extract_field_from_maybe_multiindex
 
@@ -127,6 +127,7 @@ class VectorBacktestEngine:
         initial_cash: float = 100_000.0,
         markets: list[str] | None = None,
         config: dict[str, Any] | None = None,
+        preloaded_data: pd.DataFrame | None = None,
     ):
         self.strategy = strategy
         self.tickers = tickers
@@ -135,6 +136,7 @@ class VectorBacktestEngine:
         self.initial_cash = initial_cash
         self.markets = markets or ["us", "cn", "hk_sg"]
         self.config = config or {}
+        self.preloaded_data = preloaded_data
 
         self.fixed_fees = self.config.get("fixed_fees", DEFAULT_FIXED_FEES)
         self.slippage = self.config.get("slippage", DEFAULT_SLIPPAGE)
@@ -221,6 +223,8 @@ class VectorBacktestEngine:
 
     def _load_data(self) -> pd.DataFrame:
         """Load data for backtesting."""
+        if self.preloaded_data is not None:
+            return self.preloaded_data.copy()
         return self.data_loader.load(
             tickers=self.tickers,
             start_date=self.start_date,
@@ -289,8 +293,9 @@ class VectorBacktestEngine:
                         col_map[idx] = col
 
                 for record in records.to_dict("records"):
-                    col_val = record.get("column", "")
-                    ticker = col_map.get(int(col_val), str(col_val)) if isinstance(col_val, (int, np.integer)) else str(col_val)
+                    col_val = record.get("col", record.get("column", ""))
+                    ticker_value = col_map.get(int(col_val), col_val) if isinstance(col_val, int | np.integer) else col_val
+                    ticker = str(ticker_value[0]) if isinstance(ticker_value, tuple) else str(ticker_value)
 
                     trades.append(
                         {

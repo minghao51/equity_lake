@@ -3,6 +3,16 @@
 from datetime import date, datetime, timedelta
 
 
+def _subtract_trading_days(base: date, days_back: int) -> date:
+    current = base
+    remaining = max(days_back, 0)
+    while remaining > 0:
+        current -= timedelta(days=1)
+        if current.weekday() < 5:
+            remaining -= 1
+    return current
+
+
 def resolve_trading_date(
     explicit_date: str | None,
     days_back: int = 1,
@@ -28,7 +38,7 @@ def resolve_trading_date(
     if explicit_date:
         return datetime.strptime(explicit_date, "%Y-%m-%d").date()
     base = today or date.today()
-    return base - timedelta(days=days_back)
+    return _subtract_trading_days(base, days_back)
 
 
 __all__ = ["resolve_trading_date"]

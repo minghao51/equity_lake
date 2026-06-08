@@ -6,7 +6,7 @@ This module provides tools to detect overfitting in backtest results.
 
 import structlog
 
-from equity_lake.backtesting.engine import BacktestResult
+from equity_lake.backtesting.result import BacktestResult
 
 logger = structlog.get_logger(__name__)
 

@@ -1,17 +1,33 @@
 """Base ingestion source adapters."""
 
-import time
 from collections.abc import Callable
 from datetime import date
 from typing import Any
 
 import pandas as pd
 import structlog
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from equity_lake.core.config import TickerConfig
 from equity_lake.fetch_macro import MacroIndicatorFetcher
 
 logger = structlog.get_logger()
+
+
+def _coerce_to_dataframe(result: Any) -> pd.DataFrame:
+    if result is None:
+        return pd.DataFrame()
+    if isinstance(result, pd.DataFrame):
+        return result
+    if isinstance(result, pd.Series):
+        return result.to_frame().T
+    return pd.DataFrame()
 
 
 class MarketDataFetcher:
@@ -30,6 +46,13 @@ class MarketDataFetcher:
         self.retry_delay = retry_delay
         self.ticker_config = ticker_config
         self.stock_limit = stock_limit
+        self._retry_decorator = retry(
+            retry=retry_if_exception_type(Exception),
+            stop=stop_after_attempt(retry_attempts),
+            wait=wait_exponential(multiplier=retry_delay, min=retry_delay, max=30.0),
+            before_sleep=before_sleep_log(logger, 30),  # WARNING
+            reraise=True,
+        )
 
     def _get_configured_tickers(self, market: str) -> list[str]:
         """Load the configured ticker universe for deterministic daily runs."""
@@ -126,33 +149,9 @@ class MarketDataFetcher:
         *args: Any,
         **kwargs: Any,
     ) -> pd.DataFrame:
-        """Retry API calls with exponential backoff."""
-        last_error: Exception | None = None
-        for attempt in range(self.retry_attempts):
-            try:
-                result: Any = func(*args, **kwargs)
-                if result is None:
-                    return pd.DataFrame()
-                if isinstance(result, pd.DataFrame):
-                    return result
-                if isinstance(result, pd.Series):
-                    return result.to_frame().T
-                return pd.DataFrame()
-            except Exception as exc:
-                last_error = exc
-                if attempt < self.retry_attempts - 1:
-                    wait_time = self.retry_delay * (2**attempt)
-                    logger.warning(
-                        "Attempt %s failed: %s. Retrying in %.1fs...",
-                        attempt + 1,
-                        exc,
-                        wait_time,
-                    )
-                    time.sleep(wait_time)
-                else:
-                    logger.error("All %s attempts failed: %s", self.retry_attempts, exc)
-                    raise last_error from exc
-        return pd.DataFrame()
+        """Retry API calls with exponential backoff via tenacity."""
+        wrapped = self._retry_decorator(func)
+        return _coerce_to_dataframe(wrapped(*args, **kwargs))
 
 
 __all__ = ["MacroIndicatorFetcher", "MarketDataFetcher"]

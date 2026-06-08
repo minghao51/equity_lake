@@ -11,9 +11,9 @@ Markets supported:
 - Singapore (SGX) via yfinance
 
 Usage:
-    uv run equity-daily
-    uv run equity-daily --date 2024-12-01
-    uv run equity-daily --markets us,cn --dry-run
+    uv run equity ingest
+    uv run equity ingest --date 2024-12-01
+    uv run equity ingest --markets us,cn --dry-run
 """
 
 import argparse
@@ -111,46 +111,46 @@ def parse_arguments() -> argparse.Namespace:
         epilog="""
 Examples:
   # Fetch yesterday's data for all markets (default config)
-  uv run equity-daily
+  uv run equity ingest
 
   # Fetch specific date
-  uv run equity-daily --date 2024-12-01
+  uv run equity ingest --date 2024-12-01
 
   # Fetch only US and China markets
-  uv run equity-daily --markets us cn
+  uv run equity ingest --markets us cn
 
   # Enable parallel fetching (3x faster)
-  uv run equity-daily --parallel
+  uv run equity ingest --parallel
 
   # Parallel fetching with custom worker count
-  uv run equity-daily --parallel --max-workers 4
+  uv run equity ingest --parallel --max-workers 4
 
   # Filter by tags (blue-chip stocks only)
-  uv run equity-daily --tags blue-chip
+  uv run equity ingest --tags blue-chip
 
   # Filter by groups (FAANG stocks)
-  uv run equity-daily --groups faang
+  uv run equity ingest --groups faang
 
   # Filter by sectors (technology and healthcare)
-  uv run equity-daily --sectors Technology Healthcare
+  uv run equity ingest --sectors Technology Healthcare
 
   # Filter by priority (priority 8+ only)
-  uv run equity-daily --min-priority 8
+  uv run equity ingest --min-priority 8
 
   # Combine filters (tech stocks with high priority)
-  uv run equity-daily --sectors Technology --min-priority 9
+  uv run equity ingest --sectors Technology --min-priority 9
 
   # Explicit ticker list (overrides config)
-  uv run equity-daily --tickers AAPL,GOOGL,MSFT --markets us
+  uv run equity ingest --tickers AAPL,GOOGL,MSFT --markets us
 
   # Use custom config file
-  uv run equity-daily --config /path/to/custom_tickers.yaml
+  uv run equity ingest --config /path/to/custom_tickers.yaml
 
   # List available tickers in config
-  uv run equity-daily --list-tickers
+  uv run equity ingest --list-tickers
 
   # Dry run (no writes)
-  uv run equity-daily --dry-run --verbose
+  uv run equity ingest --dry-run --verbose
         """,
     )
 

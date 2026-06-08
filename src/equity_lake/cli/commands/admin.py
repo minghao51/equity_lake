@@ -38,12 +38,56 @@ def config_get(
 
 
 @config_app.command("validate")
-def config_validate() -> None:
-    """Validate configuration files."""
-    from equity_lake.core.config import load_settings
+def config_validate(
+    tickers: Annotated[str, typer.Option("--tickers", "-t", help="Path to tickers.yaml")] = "config/tickers.yaml",
+    watchlist: Annotated[str, typer.Option("--watchlist", "-w", help="Path to watchlist.yaml")] = "config/watchlist.yaml",
+    signals: Annotated[str, typer.Option("--signals", "-s", help="Path to signals.yaml")] = "config/signals.yaml",
+    all_configs: Annotated[bool, typer.Option("--all", help="Validate all config files")] = False,
+) -> None:
+    """Validate YAML configuration files (tickers, watchlist, signals)."""
+    from pathlib import Path
 
-    load_settings()
-    typer.secho("valid", fg=typer.colors.GREEN)
+    from equity_lake.config.validators import (
+        validate_signals,
+        validate_tickers,
+        validate_watchlist,
+    )
+
+    tickers_path = Path(tickers)
+    watchlist_path = Path(watchlist)
+    signals_path = Path(signals)
+    default_watchlist = Path("config/watchlist.yaml")
+    default_signals = Path("config/signals.yaml")
+
+    all_errors: list[str] = []
+
+    typer.echo(f"Validating {tickers_path}...")
+    errors = validate_tickers(tickers_path)
+    all_errors.extend(errors)
+    typer.echo(f"  {'OK' if not errors else f'{len(errors)} error(s)'}")
+
+    selected_configs: list[tuple[str, Path, Any]] = []
+    if all_configs or watchlist_path != default_watchlist:
+        selected_configs.append(("watchlist", watchlist_path, validate_watchlist))
+    if all_configs or signals_path != default_signals:
+        selected_configs.append(("signals", signals_path, validate_signals))
+
+    for _name, path, validator in selected_configs:
+        if path.exists():
+            typer.echo(f"Validating {path}...")
+            errors = validator(path)
+            all_errors.extend(errors)
+            typer.echo(f"  {'OK' if not errors else f'{len(errors)} error(s)'}")
+        else:
+            typer.echo(f"Skipping {path} (not found)")
+
+    if all_errors:
+        typer.secho("\nValidation FAILED:", fg=typer.colors.RED)
+        for error in all_errors:
+            typer.secho(f"  {error}", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    typer.secho("\nAll validations passed!", fg=typer.colors.GREEN)
 
 
 @config_app.command("export")

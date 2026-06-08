@@ -17,12 +17,11 @@ def backtest_cmd(
     start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,
     end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
-    engine: Annotated[str, typer.Option("--engine", "-e", help="loop or vector")] = "vector",
     walk_forward: Annotated[bool, typer.Option("--walk-forward", help="Walk-forward validation")] = False,
     output: Annotated[str | None, typer.Option("--output", "-o", help="Output JSON")] = None,
 ) -> None:
     """Backtest trading strategies."""
-    from equity_lake.backtesting import BacktestEngine, VectorBacktestEngine
+    from equity_lake.backtesting import VectorBacktestEngine
     from equity_lake.backtesting.strategy import (
         BBMeanReversionStrategy,
         CrossSectionalMomentumStrategy,
@@ -39,8 +38,7 @@ def backtest_cmd(
         raise typer.Exit(1)
 
     strategy_inst = strategy_map[strategy](params={})
-    engine_class = VectorBacktestEngine if engine == "vector" else BacktestEngine
-    eng = engine_class(
+    eng = VectorBacktestEngine(
         strategy=strategy_inst,
         tickers=tickers.split(","),
         start_date=date.fromisoformat(start_date),

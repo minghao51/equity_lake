@@ -497,7 +497,8 @@ class Settings(BaseSettings):
         env_prefix="EQUITY_",
         env_nested_delimiter="__",
         yaml_file=str(CONFIG_DIR / "settings.yaml"),
-        extra="ignore",
+        extra="forbid",
+        validate_assignment=True,
     )
 
     @classmethod
@@ -566,8 +567,8 @@ logger = structlog.get_logger()
 class TickerConfig:
     DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "tickers.yaml"
 
-    def __init__(self, config_path: Path | None = None) -> None:
-        self.config_path = config_path or self.DEFAULT_CONFIG_PATH
+    def __init__(self, config_path: str | Path | None = None) -> None:
+        self.config_path = Path(config_path) if config_path is not None else self.DEFAULT_CONFIG_PATH
         self._config: TickerConfigRoot | None = None
         self._load_config()
 

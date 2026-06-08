@@ -8,8 +8,9 @@ and validate strategy robustness.
 import pandas as pd
 import structlog
 
-from equity_lake.backtesting.engine import BacktestEngine, BacktestResult
+from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.vector_engine import VectorBacktestEngine
 
 logger = structlog.get_logger(__name__)
 
@@ -90,7 +91,7 @@ class WalkForwardValidator:
 
             combined_data = pd.concat([train_data, test_data]).sort_index()
 
-            engine = BacktestEngine(
+            engine = VectorBacktestEngine(
                 strategy=strategy,
                 tickers=tickers,
                 start_date=test_data.index.min(),

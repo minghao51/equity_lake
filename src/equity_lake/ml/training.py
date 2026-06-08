@@ -1,4 +1,4 @@
-"""Training compatibility exports."""
+"""Training exports."""
 
 from equity_lake.ml.forecasting import PriceForecaster
 

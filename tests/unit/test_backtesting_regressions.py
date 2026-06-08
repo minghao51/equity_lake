@@ -5,8 +5,8 @@ from datetime import date
 import pandas as pd
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
-from equity_lake.backtesting.engine import BacktestEngine
 from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.vector_engine import VectorBacktestEngine
 
 
 class _PerTickerStrategy(BaseStrategy):
@@ -46,7 +46,7 @@ def test_backtest_engine_trades_only_signaled_ticker() -> None:
         columns=columns,
     )
 
-    engine = BacktestEngine(
+    engine = VectorBacktestEngine(
         strategy=_PerTickerStrategy(),
         tickers=["AAPL", "MSFT"],
         start_date=date(2026, 6, 1),
