@@ -27,7 +27,7 @@ services:
       - ./data:/app/data
       # Persist logs
       - ./logs:/app/logs
-    command: ["uv", "run", "equity", "sync", "--bucket", "${S3_BUCKET:-s3://your-bucket/us_equity/}"]
+    command: ["equity", "sync", "--bucket", "${S3_BUCKET:-s3://your-bucket/us_equity/}"]
     profiles:
       - sync
 
@@ -58,7 +58,7 @@ services:
     # Cron schedule: Daily at 8 AM (adjust as needed)
     # Format: minute hour day month weekday
     # For testing, use: "* * * * *" (every minute)
-    command: ["uv", "run", "equity", "pipeline", "--markets", "${MARKETS:-us,cn,hk_sg}"]
+    command: ["equity", "pipeline", "--markets", "${MARKETS:-us,cn,hk_sg}"]
     restart: unless-stopped
     profiles:
       - daily
@@ -79,7 +79,7 @@ services:
       - ./data:/app/data
     stdin_open: true
     tty: true
-    command: ["uv", "run", "equity", "query", "--query", "all"]
+    command: ["equity", "query", "--query", "all"]
     profiles:
       - query
 
@@ -140,7 +140,7 @@ services:
       "--port=8888",
       "--no-browser",
       "--allow-root",
-      "--NotebookApp.token=''"
+      "--ServerApp.token=${JUPYTER_TOKEN:-devonly}"
     ]
     profiles:
       - jupyter

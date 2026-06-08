@@ -140,9 +140,9 @@ data/lake/
 ## CLI Entry Points
 
 ### Primary Commands
-- **`equity-daily`**: Run daily EOD ingestion (`src/equity_lake/cli/daily.py`)
-- **`equity-sync`**: S3 historical data sync (`src/equity_lake/cli/sync.py`)
-- **`equity-query`**: DuckDB query interface (`src/equity_lake/cli/query.py`)
+- **`equity ingest`**: Run daily EOD ingestion (`src/equity_lake/cli/commands/data.py`)
+- **`equity sync`**: S3 historical data sync (`src/equity_lake/cli/commands/data.py`)
+- **`equity query`**: DuckDB query interface (`src/equity_lake/cli/commands/analysis.py`)
 
 ### Installation
 ```bash

@@ -669,7 +669,7 @@ import structlog
 
 # 3. Local
 from equity_lake.core.constants import STANDARD_COLUMNS
-from equity_lake.ingestion.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher
 from equity_lake.storage.parquet import write_to_partitioned_parquet
 ```
 
@@ -700,7 +700,7 @@ from typing import Optional, List, Dict, Tuple
 **Good**:
 ```python
 from equity_lake.core.constants import STANDARD_COLUMNS
-from equity_lake.ingestion.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher
 ```
 
 **Avoid**:

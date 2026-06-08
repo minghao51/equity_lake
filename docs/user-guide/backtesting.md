@@ -1,13 +1,14 @@
 # Backtesting Framework Usage Guide
 
 This guide shows how to use the equity_lake backtesting framework for testing trading strategies.
+`VectorBacktestEngine` is the supported engine surface.
 
 ## Quick Start
 
 ### 1. Basic Backtest Example
 
 ```python
-from equity_lake.backtesting import BacktestEngine, BacktestDataLoader
+from equity_lake.backtesting import BacktestDataLoader, VectorBacktestEngine
 from equity_lake.backtesting.strategy import SMACrossoverStrategy
 from datetime import date
 
@@ -19,7 +20,7 @@ strategy = SMACrossoverStrategy(params={
 })
 
 # Create backtest engine
-engine = BacktestEngine(
+engine = VectorBacktestEngine(
     strategy=strategy,
     tickers=["AAPL", "MSFT", "GOOGL"],
     start_date=date(2020, 1, 1),
@@ -58,7 +59,7 @@ strategy = SMACrossoverStrategy(params={
     "use_adx_filter": False # Only trade when ADX > 25
 })
 
-engine = BacktestEngine(
+engine = VectorBacktestEngine(
     strategy=strategy,
     tickers=["AAPL", "MSFT"],
     start_date=date(2020, 1, 1),
@@ -84,7 +85,7 @@ strategy = CrossSectionalMomentumStrategy(params={
 })
 
 # Works best with 20+ stocks
-engine = BacktestEngine(
+engine = VectorBacktestEngine(
     strategy=strategy,
     tickers=["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", ...],
     start_date=date(2020, 1, 1),
@@ -106,7 +107,7 @@ strategy = BBMeanReversionStrategy(params={
     "stop_loss_pct": 0.05      # 5% stop loss
 })
 
-engine = BacktestEngine(
+engine = VectorBacktestEngine(
     strategy=strategy,
     tickers=["AAPL", "MSFT"],
     start_date=date(2020, 1, 1),
@@ -263,12 +264,12 @@ class MyCustomStrategy(BaseStrategy):
 ### Using Custom Strategy
 
 ```python
-from equity_lake.backtesting import BacktestEngine
+from equity_lake.backtesting import VectorBacktestEngine
 from my_custom_strategies import MyCustomStrategy
 
 strategy = MyCustomStrategy(params={"param1": 20, "param2": 0.3})
 
-engine = BacktestEngine(
+engine = VectorBacktestEngine(
     strategy=strategy,
     tickers=["AAPL", "MSFT"],
     start_date=date(2020, 1, 1),
@@ -358,7 +359,7 @@ strategy = SMACrossoverStrategy(params={
 })
 
 # Backtest on US market
-us_result = BacktestEngine(
+us_result = VectorBacktestEngine(
     strategy=strategy,
     tickers=["AAPL", "MSFT", "GOOGL"],
     start_date=date(2020, 1, 1),
@@ -368,7 +369,7 @@ us_result = BacktestEngine(
 ).run()
 
 # Backtest on China market
-cn_result = BacktestEngine(
+cn_result = VectorBacktestEngine(
     strategy=strategy,
     tickers=["000001", "600000", "600519"],
     start_date=date(2020, 1, 1),
@@ -404,7 +405,7 @@ for fast, slow in product(fast_periods, slow_periods):
         "slow_period": slow
     })
 
-    engine = BacktestEngine(
+    engine = VectorBacktestEngine(
         strategy=strategy,
         tickers=["AAPL", "MSFT", "GOOGL"],
         start_date=date(2020, 1, 1),

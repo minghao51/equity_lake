@@ -27,30 +27,30 @@ Previously, markets were fetched sequentially (one after another). Now, you can 
 
 ```bash
 # Fetch all markets concurrently
-uv run equity-daily --parallel
+uv run equity ingest --parallel
 
 # Or using the short flag
-uv run equity-daily -p
+uv run equity ingest -p
 ```
 
 #### Custom Worker Count
 
 ```bash
 # Limit to 2 parallel workers (useful for rate-limited APIs)
-uv run equity-daily --parallel --max-workers 2
+uv run equity ingest --parallel --max-workers 2
 ```
 
 #### Combined with Other Options
 
 ```bash
 # Parallel mode with specific date and markets
-uv run equity-daily --date 2024-12-01 --markets us,cn,hk_sg --parallel
+uv run equity ingest --date 2024-12-01 --markets us,cn,hk_sg --parallel
 
 # Parallel mode with filters
-uv run equity-daily --parallel --tags blue-chip --min-priority 8
+uv run equity ingest --parallel --tags blue-chip --min-priority 8
 
 # Dry run with parallel mode (test without writing)
-uv run equity-daily --parallel --dry-run --verbose
+uv run equity ingest --parallel --dry-run --verbose
 ```
 
 ### How It Works
@@ -357,10 +357,10 @@ To enable parallel mode:
 
 ```bash
 # Before
-uv run equity-daily
+uv run equity ingest
 
 # After (3x faster)
-uv run equity-daily --parallel
+uv run equity ingest --parallel
 ```
 
 ### For Developers
@@ -438,7 +438,7 @@ Structured logging adds minimal overhead:
 **Solution**: Reduce worker count or use sequential mode
 
 ```bash
-uv run equity-daily --parallel --max-workers 2
+uv run equity ingest --parallel --max-workers 2
 ```
 
 **Problem**: Thread safety issues with file writes
@@ -467,7 +467,7 @@ uv pip install structlog>=24.1.0
 
 ```bash
 # Use verbose logging to see timing
-uv run equity-daily --parallel --verbose
+uv run equity ingest --parallel --verbose
 ```
 
 ---

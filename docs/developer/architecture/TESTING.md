@@ -146,7 +146,7 @@ from datetime import date
 from unittest.mock import patch, MagicMock
 import pandas as pd
 
-from equity_lake.ingestion.sources.us_equity import USEquityFetcher
+from equity_lake.sources.us import USEquityFetcher
 
 @pytest.mark.unit
 def test_us_fetcher_returns_valid_dataframe():
@@ -487,7 +487,7 @@ def test_with_temp_dir(temp_lake_dir):
 
 ```python
 import pytest
-from equity_lake.ingestion.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher
 import pandas as pd
 from datetime import date
 

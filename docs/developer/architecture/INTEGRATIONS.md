@@ -382,7 +382,7 @@ api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
 1. **System Cron** (Linux/macOS):
    ```crontab
    # Run daily at 6:00 PM (after market close)
-   0 18 * * 1-5 cd /path/to/equity_lake && .venv/bin/python -m equity_lake.cli.daily >> logs/cron.log 2>&1
+   0 18 * * 1-5 cd /path/to/equity_lake && dotenvx run -- uv run equity ingest >> logs/cron.log 2>&1
    ```
 
 2. **Docker Cron**:
@@ -407,7 +407,7 @@ api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
 # Run daily ingestion manually
 make daily
 # or
-uv run python -m equity_lake.cli.daily
+uv run equity ingest
 ```
 
 ---

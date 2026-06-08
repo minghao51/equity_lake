@@ -208,9 +208,7 @@ dev = [
 ]
 
 [project.scripts]
-equity-daily = "equity_lake.cli.daily:main"
-equity-sync = "equity_lake.cli.sync:main"
-equity-query = "equity_lake.cli.query:main"
+equity = "equity_lake.cli.__main__:app"
 
 [tool.ruff]
 line-length = 88
@@ -264,7 +262,7 @@ setup:
 	uv sync
 
 daily:
-	uv run python -m equity_lake.cli.daily
+	uv run equity ingest
 
 test:
 	uv run pytest --cov=src/equity_lake --cov-report=html
@@ -525,10 +523,10 @@ def temp_data_dir(tmp_path):
 **Pattern**: `kebab-case` (command name), `snake_case` (entry point)
 
 **Examples**:
-- **Command**: `equity-daily`
-- **Entry Point**: `equity_lake.cli.daily:main`
-- **Command**: `equity-sync`
-- **Entry Point**: `equity_lake.cli.sync:main`
+- **Command**: `equity ingest`
+- **Entry Point**: `equity_lake.cli.__main__:app`
+- **Command**: `equity sync`
+- **Entry Point**: `equity_lake.cli.__main__:app`
 
 **Rationale**: Follows CLI conventions for user-facing commands
 
@@ -586,7 +584,7 @@ import structlog
 
 # 3. Local
 from equity_lake.core.constants import STANDARD_COLUMNS
-from equity_lake.ingestion.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher
 ```
 
 ---
@@ -775,7 +773,7 @@ RUN uv pip install .
 COPY src/ src/equity_lake/
 
 # Entry point
-CMD ["python", "-m", "equity_lake.cli.daily"]
+CMD ["equity", "ingest"]
 ```
 
 ---

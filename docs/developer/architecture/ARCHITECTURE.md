@@ -58,7 +58,7 @@
 
 - `src/equity_lake/sources/`: all market and external-data source adapters
 - `src/equity_lake/ingestion/orchestrator.py`: authoritative ingestion runtime
-- `src/equity_lake/pipeline.py` and `src/equity_lake/run_pipeline.py`: stage helpers and pipeline orchestrator
+- `src/equity_lake/core/dag.py`: unified EOD pipeline executor (replaces legacy run_pipeline.py)
 - `src/equity_lake/core/config.py`: canonical settings and ticker-config module
 - `src/equity_lake/core/dag.py`: unified EOD pipeline executor
 - `src/equity_lake/ml/forecasting.py`: public forecasting orchestrator with helper modules in `src/equity_lake/ml/candidates.py`, `src/equity_lake/ml/labeling.py`, and `src/equity_lake/ml/validation.py`
@@ -67,7 +67,7 @@ Unsupported after the June 2026 refactor:
 
 - `equity_lake.ingestion.sources.*`
 - package-root helper imports from `equity_lake`
-- compatibility config wrappers under `equity_lake.config`
+- legacy flat modules such as `equity_lake.run_pipeline`, `equity_lake.pipeline`, `equity_lake.feature_jobs`, and `equity_lake.ml_jobs`
 
 ---
 
@@ -451,7 +451,7 @@ aapl_data = repo.get_ticker_data('AAPL', start, end)
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ 1. CLI Command                                               │
-│    uv run python -m equity_lake.cli.daily --date 2024-12-01 │
+│    uv run equity ingest --date 2024-12-01                   │
 └────────────────────────┬─────────────────────────────────────┘
                          │
                          ▼
@@ -510,7 +510,7 @@ aapl_data = repo.get_ticker_data('AAPL', start, end)
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │ 1. CLI Command                                               │
-│    uv run python -m equity_lake.cli.query --query top_volume │
+│    uv run equity query --query top_volume                    │
 └────────────────────────┬─────────────────────────────────────┘
                          │
                          ▼
@@ -583,7 +583,7 @@ def main():
 
 **Usage**:
 ```bash
-equity-daily --date 2024-12-01 --markets us,cn
+uv run equity ingest --date 2024-12-01 --markets us,cn
 ```
 
 **Flow**:
@@ -606,7 +606,7 @@ def main():
 
 **Usage**:
 ```bash
-equity-sync --bucket s3://my-bucket/us_equity/ --workers 32
+uv run equity sync --bucket s3://my-bucket/us_equity/ --workers 32
 ```
 
 **Flow**:
@@ -629,7 +629,7 @@ def main():
 
 **Usage**:
 ```bash
-equity-query --query top_volume --days 14 --output results.csv
+uv run equity query --query top_volume --days 14 --output results.csv
 ```
 
 **Flow**:

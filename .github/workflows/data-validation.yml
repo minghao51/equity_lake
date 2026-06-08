@@ -34,13 +34,5 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Validate tickers.yaml
-        run: uv run python scripts/validate_configs.py --tickers config/tickers.yaml
-
-      - name: Validate watchlist.yaml
-        if: hashFiles('config/watchlist.yaml') != ''
-        run: uv run python scripts/validate_configs.py --watchlist config/watchlist.yaml
-
-      - name: Validate signals.yaml
-        if: hashFiles('config/signals.yaml') != ''
-        run: uv run python scripts/validate_configs.py --signals config/signals.yaml
+      - name: Validate all config files
+        run: uv run equity config validate --all

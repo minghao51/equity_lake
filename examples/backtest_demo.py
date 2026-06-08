@@ -4,7 +4,7 @@ Backtesting Framework Test Demo
 This script tests the core backtesting functionality including:
 - BacktestDataLoader: Loading data from DuckDB/Parquet
 - Strategy implementations: SMA Crossover, Momentum, Mean Reversion
-- BacktestEngine: Running backtests
+- VectorBacktestEngine: Running backtests
 - BacktestResult: Analyzing results
 
 Usage:
@@ -19,7 +19,7 @@ from typing import Any
 
 import pandas as pd
 
-from equity_lake.backtesting import BacktestDataLoader, BacktestEngine
+from equity_lake.backtesting import BacktestDataLoader, VectorBacktestEngine
 from equity_lake.backtesting.strategy import (
     BBMeanReversionStrategy,
     CrossSectionalMomentumStrategy,
@@ -259,7 +259,7 @@ def test_sma_crossover_strategy(data_info: dict[str, Any]) -> TestResults:
         end_date = date.today() - timedelta(days=30)
         start_date = end_date - timedelta(days=365)
 
-        engine = BacktestEngine(
+        engine = VectorBacktestEngine(
             strategy=strategy,
             tickers=data_info["sample_tickers"],
             start_date=start_date,
@@ -267,7 +267,7 @@ def test_sma_crossover_strategy(data_info: dict[str, Any]) -> TestResults:
             initial_cash=100_000,
             markets=["us"],
         )
-        results.add_pass("BacktestEngine Initialization")
+        results.add_pass("VectorBacktestEngine Initialization")
 
         # Run backtest
         print("\n  Running backtest...")
@@ -338,7 +338,7 @@ def test_momentum_strategy(data_info: dict[str, Any]) -> TestResults:
         end_date = date.today() - timedelta(days=30)
         start_date = end_date - timedelta(days=365)
 
-        engine = BacktestEngine(
+        engine = VectorBacktestEngine(
             strategy=strategy,
             tickers=data_info["sample_tickers"],
             start_date=start_date,
@@ -346,7 +346,7 @@ def test_momentum_strategy(data_info: dict[str, Any]) -> TestResults:
             initial_cash=100_000,
             markets=["us"],
         )
-        results.add_pass("BacktestEngine Initialization")
+        results.add_pass("VectorBacktestEngine Initialization")
 
         # Run backtest
         print("\n  Running backtest...")
@@ -407,7 +407,7 @@ def test_mean_reversion_strategy(data_info: dict[str, Any]) -> TestResults:
         end_date = date.today() - timedelta(days=30)
         start_date = end_date - timedelta(days=365)
 
-        engine = BacktestEngine(
+        engine = VectorBacktestEngine(
             strategy=strategy,
             tickers=data_info["sample_tickers"],
             start_date=start_date,
@@ -415,7 +415,7 @@ def test_mean_reversion_strategy(data_info: dict[str, Any]) -> TestResults:
             initial_cash=100_000,
             markets=["us"],
         )
-        results.add_pass("BacktestEngine Initialization")
+        results.add_pass("VectorBacktestEngine Initialization")
 
         # Run backtest
         print("\n  Running backtest...")

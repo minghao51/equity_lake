@@ -26,8 +26,7 @@ Primary entrypoints:
 Implemented in the ingestion package and orchestrated by:
 
 - `src/equity_lake/ingestion/orchestrator.py`
-- `src/equity_lake/pipeline.py`
-- `src/equity_lake/run_pipeline.py`
+- `src/equity_lake/core/dag.py`
 
 Market coverage today:
 
@@ -54,7 +53,7 @@ data/lake/features/
 The public orchestration helper is:
 
 ```python
-from equity_lake.pipeline import run_feature_stage
+from equity_lake.pipelines.features import run_feature_pipeline
 ```
 
 ### ML Inference
@@ -63,7 +62,7 @@ The ML layer currently centers on price-forecast inference and related jobs.
 The public orchestration helper is:
 
 ```python
-from equity_lake.pipeline import run_ml_inference_stage
+from equity_lake.pipelines.ml import run_ml_inference
 ```
 
 The main user-facing wrapper is:
@@ -78,19 +77,19 @@ uv run equity pipeline --skip-ingestion --skip-features
 config/tickers.yaml
         |
         v
-equity ingest / run_ingestion_stage
+equity ingest / run_daily_ingestion
         |
         v
 data/lake/{us_equity,cn_ashare,hk_sg_equity}/
         |
         v
-run_feature_stage
+run_feature_pipeline
         |
         v
 data/lake/features/
         |
         v
-run_ml_inference_stage / equity forecast
+run_ml_inference / equity forecast
 ```
 
 ## Operational Model

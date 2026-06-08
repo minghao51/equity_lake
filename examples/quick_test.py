@@ -20,8 +20,8 @@ def test_imports():
     try:
         from equity_lake.backtesting import (  # noqa: F401
             BacktestDataLoader,
-            BacktestEngine,
             BacktestResult,
+            VectorBacktestEngine,
         )
 
         print("  ✅ Core backtesting modules imported")

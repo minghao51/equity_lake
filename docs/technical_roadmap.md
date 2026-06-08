@@ -45,11 +45,9 @@
 │  • Macro:          fredapi (FRED - free)                       │
 │  • News:           Web scraping + VADER sentiment              │
 ├─────────────────────────────────────────────────────────────────┤
-│  CLI Commands (12 entrypoints):                                 │
-│  equity-daily, equity-sync, equity-query, equity-pipeline,     │
-│  equity-monitor, equity-backfill, equity-macro,                │
-│  equity-price-forecast, equity-backtest, equity-news,          │
-│  equity-sentiment, equity-signal                               │
+│  CLI Commands (unified `equity` app):                           │
+│  ingest, sync, query, pipeline, monitor, backfill, macro,      │
+│  forecast, backtest, news, sentiment, signal                   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

@@ -1090,7 +1090,7 @@ validation:
     us: "^[A-Z]{1,5}(-[A-Z]{1,2})?$"  # e.g., AAPL, BRK-A
     cn: "^\\d{6}$"  # 6-digit code
     hk: "^\\d{4}\\.HK$"  # e.g., 0700.HK
-    sg: "^[A-Z]\\d{2}\\.SI$"  # e.g., D05.SI
+    sg: "^[A-Z][A-Z0-9]{2}\\.SI$"  # e.g., D05.SI, C6L.SI, BN4.SI
     jpx: "^\\d{4}\\.T$"  # e.g., 7203.T
     krx: "^\\d{6}$"  # 6-digit code
 
