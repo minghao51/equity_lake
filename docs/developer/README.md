@@ -21,9 +21,5 @@ Current system architecture and design documents:
 
 Superseded notes, implementation reports, and decision records:
 
-- [Implementation Complete Report](history/IMPLEMENTATION-COMPLETE-REPORT.md)
-- [Handoff Report](history/HANDOFF_2026-02-28_src_migration.md)
-- [Backtesting Research](history/backtesting-research-report.md)
-- [Decisions](history/decisions/) — Architecture decision records
-- [Reports](history/reports/) — Operational and analysis reports
-- [Research](history/research/) — Research notes and explorations
+- [Reports](../reports/README.md) — Operational analyses and handoff notes kept in the repo
+- Git history — superseded implementation details and older experiments that are no longer published as active docs

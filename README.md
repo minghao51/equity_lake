@@ -1,408 +1,166 @@
 # equity-lake
 
-*local first, setup once*
-Bootstrap from S3 Parquet → sync once → append daily updates locally → query with DuckDB
+Local-first equity data pipeline for bootstrapping historical data, appending daily market updates, generating features and ML outputs, and querying the lake with DuckDB.
 
-## Goal
+## What It Does
 
-[ External Market APIs / S3 Ingest ]
-                       │
-                       ▼
-           ┌──────────────────────┐
-           │   Ingestion Block    │ ──(Write Parquet)──> [ DuckDB Raw / Data Lake ]
-           └──────────────────────┘
-                       │
-                       ▼
-           ┌──────────────────────┐
-           │ Feature Engineering  │ <──(SQL / Polars Engine)
-           └──────────────────────┘
-                       │
-                       ▼
-           ┌──────────────────────┐
-           │  ML / Signal Engine  │ ──(Append History)──> [ DuckDB Signals Layer ]
-           └──────────────────────┘
-                       │
-                       ▼
-           ┌──────────────────────┐
-           │ Backtest / Dashboard │ ──(Static Export)──> [ GitHub Pages Site ]
-           └──────────────────────┘
+- Bootstraps historical data from S3 into a local Parquet lake
+- Appends daily EOD data across supported equity markets
+- Runs a three-stage pipeline: ingestion, features, and ML
+- Exposes local analysis, monitoring, signals, backtesting, and dashboard workflows through one `equity` CLI
 
-1. **Bootstrap** from a complete, partitioned Parquet dataset on AWS S3 (US equities)
-2. **Sync once** to local disk (`data/lake/`)
-3. **Append daily EOD updates** (US, China A-shares, HK, SG) using lightweight Python libraries
-4. **Query everything** via DuckDB (SQL-on-Parquet)
-5. **Orchestrate** via cron or Docker — fully local after initial sync
+## Pipeline
 
-**No cloud runtime dependency** | **Minimal bandwidth** | **Scalable to 10k+ tickers**
-
----
-
-## Architecture Overview
-
-```text
-AWS S3 Bucket → Local Data Lake (Parquet) → DuckDB (SQL Queries)
-(full historical)   data/lake/
-                       ├── us_equity/  ← from S3
-                       ├── cn_ashare/  ← local
-                       └── hk_sg_equity/ ← local
-
-Daily EOD Append (cron)
-• US/HK/SG: yfinance
-• CN A-shares: akshare
+```mermaid
+flowchart LR
+    S3["S3 historical parquet<br/>bootstrap"] --> Lake["Local lake<br/>data/lake/*"]
+    APIs["Market data APIs<br/>yfinance, akshare, others"] --> Ingest["equity ingest"]
+    Ingest --> Lake
+    Lake --> Query["equity query<br/>DuckDB on Parquet"]
+    Lake --> Features["Feature engineering"]
+    Features --> ML["ML inference"]
+    ML --> Signals["Signal scan / backtesting"]
+    Lake --> Monitor["Health monitoring"]
+    Lake --> Dashboard["Static + Streamlit dashboard"]
+    Monitor --> Dashboard
+    Signals --> Dashboard
 ```
-
----
-
-## Recommended Stack
-
-| Component | Tool(s) |
-|-----------|---------|
-| **Package Manager** | `uv` (ultra-fast Python package installer) |
-| **Initial Sync** | `aws-cli` or `s5cmd` (fast S3 sync) |
-| **Data Sources** | `yfinance` (US/HK/SG), `akshare` (CN A-shares) |
-| **Storage** | Hive-partitioned Parquet (`date=YYYY-MM-DD/`) |
-| **Query Engine** | [DuckDB](https://duckdb.org/) |
-| **Orchestration** | `cron` or `docker compose` |
-| **Language** | Python (ingest) + SQL (analysis) |
-
----
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.12 or 3.13
-- [uv](https://github.com/astral-sh/uv) installed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- AWS CLI (for S3 access) or s5cmd (recommended for faster sync)
+- [`uv`](https://github.com/astral-sh/uv)
+- [`dotenvx`](https://dotenvx.com/) for commands that rely on `.env`
+- AWS CLI or `s5cmd` if you want to bootstrap from S3
 
-### 1. Setup Environment
+### Install
 
 ```bash
-# Create virtual environment and install all dependencies
-uv sync --all-extras
-
-# Create local env file
+uv sync
 cp .env.example .env
 ```
 
-Credential setup and optional API keys are documented in
-[docs/20260406-api-keys.md](docs/20260406-api-keys.md).
-Core app defaults live in `config/settings.yaml`, and `EQUITY_*`
-variables in `.env` override them when set.
+Core defaults live in `config/settings.yaml`. Environment overrides use the `EQUITY_` prefix.
 
-### 2. Configure S3 Access
-
-You need read access to a bucket containing partitioned Parquet (e.g., `s3://my-equity-lake/us_equity/date=YYYY-MM-DD/`).
-
-**Options:**
-- Public bucket (no creds needed)
-- Private bucket: configure AWS credentials via `~/.aws/credentials` or env vars
-- Use [s5cmd](https://github.com/peak/s5cmd) for 10x faster sync
+### Verify The CLI
 
 ```bash
-# Install s5cmd (recommended)
-curl -L https://github.com/peak/s5cmd/releases/latest/download/s5cmd_$(uname -s)_$(uname -m).tar.gz | tar xz
-sudo mv s5cmd /usr/local/bin/
+uv run equity --help
+uv run equity ingest --help
+uv run equity pipeline --help
 ```
 
-### 3. Initial Sync from S3
+### Common Workflows
+
+Bootstrap from S3:
 
 ```bash
-make sync
-# Or: dotenvx run -- uv run equity sync
+dotenvx run -- uv run equity sync --bucket s3://your-bucket/us_equity
 ```
 
-Expected structure after sync:
-
-```text
-data/lake/us_equity/date=2020-01-01/2020-01-01.parquet
-data/lake/us_equity/date=2020-01-02/2020-01-02.parquet
-```
-
-### 4. Run Daily Append
+Run daily ingestion:
 
 ```bash
 dotenvx run -- uv run equity ingest
-dotenvx run -- uv run equity ingest --markets us,cn --verbose
+dotenvx run -- uv run equity ingest --markets us,cn --date 2026-06-06
 ```
 
-### 5. 🚀 Run Full ML Pipeline (New!)
-
-Automated pipeline: **Ingestion → Feature Engineering → ML/AI**
+Run the full pipeline:
 
 ```bash
-# Default entrypoint
-dotenvx run -- uv run equity pipeline --verbose
-
-# For a specific date
-dotenvx run -- uv run equity pipeline --date 2024-12-01
-
-# Dry run (test without writing)
-dotenvx run -- uv run equity pipeline --dry-run
+dotenvx run -- uv run equity pipeline
+dotenvx run -- uv run equity pipeline --dry-run --verbose
+dotenvx run -- uv run equity pipeline --markets us --tickers AAPL,MSFT,NVDA
 ```
 
-**What it does:**
-1. **Stage 1**: Fetches EOD data from US, CN, HK, SG markets (2-5 min)
-2. **Stage 2**: Computes 40+ technical indicators & features (1-3 min)
-3. **Stage 3**: Runs ML predictions for your tickers (1-2 min)
-
-**Total time**: 4-10 minutes for 10 tickers
-
-**Custom usage:**
+Inspect data quality and query results:
 
 ```bash
-# Custom tickers
-dotenvx run -- uv run equity pipeline --tickers AAPL,GOOGL,MSFT
-
-# US markets only
-dotenvx run -- uv run equity pipeline --markets us
-
-# Skip to ML only (if data exists)
-dotenvx run -- uv run equity pipeline --skip-ingestion --skip-features
+dotenvx run -- uv run equity monitor --output-json site/health-report.json
+dotenvx run -- uv run equity query --query latest_summary
 ```
 
-See [Pipeline Usage Guide](docs/user-guide/pipeline.md) for complete documentation.
-See [CLI Reference](docs/user-guide/20260406-cli-reference.md) for the newer
-`equity-config`, `equity-loader`, `equity-update`, and `equity-dashboard`
-commands.
-
-### 6. Monitor Pipeline Health
+Build or serve the dashboard:
 
 ```bash
-# Quick health check
-dotenvx run -- uv run equity monitor
-
-# Verbose mode with detailed metrics
-uv run equity-monitor --verbose
-
-# Save health report to JSON
-uv run equity-monitor --output-json health_report.json
+dotenvx run -- uv run equity dashboard build --output-dir site
+dotenvx run -- uv run equity dashboard serve --port 8501
 ```
 
-### 7. Query with DuckDB
+## Canonical CLI
+
+The supported interface is the unified Typer app:
 
 ```bash
-# Interactive SQL shell
-make query
-
-# Python query helpers
-uv run equity-query
+uv run equity --help
 ```
 
-### 8. Build The Static Dashboard
+Key commands:
 
-```bash
-uv run equity-monitor --output-json site/health-report.json
-uv run equity-dashboard build --output-dir site
+- `equity ingest`
+- `equity pipeline`
+- `equity query`
+- `equity monitor`
+- `equity signal scan`
+- `equity backtest`
+- `equity dashboard build`
+- `equity dashboard serve`
+- `equity config`
+- `equity loader`
+- `equity update`
+
+## Data Layout
+
+The local lake uses Hive-style partitions:
+
+```text
+data/lake/
+├── us_equity/date=YYYY-MM-DD/*.parquet
+├── cn_ashare/date=YYYY-MM-DD/*.parquet
+├── hk_sg_equity/date=YYYY-MM-DD/*.parquet
+├── jpx_equity/date=YYYY-MM-DD/*.parquet
+├── krx_equity/date=YYYY-MM-DD/*.parquet
+└── features/
 ```
 
-Hosting and Pages workflow details live in
-[docs/user-guide/20260406-dashboard-hosting.md](docs/user-guide/20260406-dashboard-hosting.md).
+DuckDB queries run directly on these Parquet files.
 
----
+## Docs Map
+
+- [Getting Started](docs/getting-started/quickstart.md): first install and first run
+- [Pipeline Guide](docs/user-guide/pipeline.md): pipeline stages, config, monitoring, scheduling
+- [CLI Reference](docs/user-guide/20260406-cli-reference.md): config, loader, update, and dashboard commands
+- [Signals Guide](docs/user-guide/signals.md): watchlists and signal outputs
+- [Backtesting Guide](docs/user-guide/backtesting.md): strategy workflows
+- [Dashboard Hosting](docs/user-guide/20260406-dashboard-hosting.md): static site build and Pages flow
+- [API Keys And Credentials](docs/20260406-api-keys.md): optional integrations and secret setup
+- [Architecture](docs/developer/architecture/ARCHITECTURE.md): system design and module boundaries
+- [Project Structure](docs/developer-guide/project-structure.md): package layout and contributor orientation
+- [Documentation Index](docs/README.md): entry point for the full docs tree
 
 ## Project Structure
 
 ```text
-equity-lake/
-├── src/equity_lake/    # Application package
-│   ├── cli/               # Unified CLI entrypoints
-│   ├── core/              # Runtime, paths, logging
-│   ├── ingestion/         # Market ingestion workflows
-│   ├── storage/           # DuckDB + S3 sync
-│   ├── features/          # Feature engineering
-│   ├── ml/                # Forecasting and ML jobs
-│   ├── backtesting/       # Strategy backtesting (loop + vectorbt)
-│   └── dashboard/         # Static + Streamlit dashboards
-├── tests/                  # Unit and integration tests
-├── config/                 # Config files and examples
-├── docs/                   # Audience-based documentation
-│   ├── getting-started/
-│   ├── user-guide/
-│   ├── developer/           # Architecture, history, decisions
-│   └── reports/
-├── data/                   # Local runtime artifacts (ignored)
-├── logs/                   # Local runtime logs (ignored)
-└── README.md               # Project overview
+src/equity_lake/
+├── cli/          Unified Typer CLI
+├── ingestion/    Market ingestion orchestration
+├── storage/      DuckDB, parquet, Delta, S3 sync
+├── features/     Feature engineering
+├── ml/           Forecasting and model workflows
+├── signals/      Signal generation and formatting
+├── backtesting/  Strategy execution and analysis
+├── dashboard/    Static export and Streamlit app
+└── core/         Runtime, paths, logging, config
 ```
 
----
+## Notes
 
-## Makefile Commands
-
-```bash
-make setup      # Create venv and install core dependencies
-make dev-setup  # Install ALL dependencies (equivalent to uv sync --all-extras)
-make sync       # One-time S3 sync
-make daily      # Run daily append
-make pipeline   # Run full ML pipeline (ingestion → features → ML)
-make monitor    # Run pipeline health checks
-make query      # Open DuckDB interactive shell
-make test       # Run tests
-make clean      # Clean cache and temp files
-make docker-up  # Start Docker container
-```
-
-**Unified CLI (recommended):**
-
-```bash
-equity --help              # See all available commands
-equity ingest --help       # Ingest market data
-equity pipeline --help     # Run full ML pipeline
-equity bootstrap sample    # Generate sample data for testing
-equity signal scan         # Scan watchlist for signals
-equity backtest --help     # Backtest strategies
-equity dashboard serve     # Launch local Streamlit dashboard
-```
-
-Legacy standalone command wrappers are no longer part of the supported CLI
-surface. Use `equity ...` commands directly.
-
----
-
-## Docker Deployment
-
-```bash
-# Build and run one-time sync
-docker compose build
-docker compose run --rm sync
-
-# Start daily cron job
-docker compose up -d daily
-```
-
-Edit `docker-compose.yml` to configure S3 bucket path, AWS credentials, and cron schedule.
-
----
-
-## S3 Bucket Requirements
-
-Your S3 bucket must contain partitioned Parquet with this layout:
-
-```text
-s3://your-bucket/
-└── us_equity/
-    ├── date=2020-01-01/
-    │   └── part-00000.parquet
-    ├── date=2020-01-02/
-    │   └── part-00000.parquet
-    └── ...
-```
-
-**Required Schema:**
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `ticker` | STRING | e.g., `"AAPL"` |
-| `date` | DATE | Partition key + column |
-| `open` | DOUBLE | |
-| `high` | DOUBLE | |
-| `low` | DOUBLE | |
-| `close` | DOUBLE | |
-| `volume` | BIGINT | |
-
----
-
-## What's New (v0.4.0)
-
-- **📊 Signal Scanner** - Generate buy/sell/hold signals for watchlists
-- **🎯 3 Signal Types** - Backtest strategies, news sentiment, ML predictions
-- **📝 Multi-Format Output** - JSON, Markdown, terminal tables
-- **💾 Signal History** - Track past signals in Parquet storage
-
-**Quick Start:**
-
-```bash
-# Configure watchlist in config/watchlist.yaml
-# Generate signals
-equity-signal scan --format md
-```
-
-See [Signal Scanner Guide](docs/user-guide/signals.md) for details.
-
----
-
-## What's New (v0.3.0)
-
-- **🚀 Full ML Pipeline** - Automated ingestion → feature engineering → ML inference
-- **📊 40+ Technical Indicators** - RSI, MACD, Bollinger Bands, ATR, momentum features
-- **🤖 XGBoost Models** - Price forecasting and risk analysis
-- **🔍 Health Monitoring** - Data quality checks and freshness alerts
-- **📈 Real-time Dashboard** - Streamlit-based visualization (ports 8502/8503)
-- **⚡ Parallel Optimization** - 3x faster multi-market fetching
-
-**Quick Start:**
-
-```bash
-# Run full ML pipeline
-uv run equity-pipeline --verbose
-
-# Check pipeline health
-uv run equity-monitor
-```
-
-**Previous Releases:**
-- **v0.2.0** - Parallel Market Fetching + Structured Logging
-- **v0.1.0** - Initial release with S3 sync and daily ingestion
-
----
-
-## Documentation
-
-### Quick Start Guides
-
-- **[Quick Start Guide](docs/getting-started/quickstart.md)** - Get started in 5 minutes
-- **[Pipeline Usage Guide](docs/user-guide/pipeline.md)** - Commands, config, scheduling, monitoring
-- **[Signal Scanner Guide](docs/user-guide/signals.md)** - Signal scanning and generation
-
-### Comprehensive Guides
-
-- **[Backtesting Guide](docs/user-guide/backtesting.md)** - Strategy testing and examples
-- **[CLI Reference](docs/user-guide/20260406-cli-reference.md)** - Config, dashboard, loader, and update commands
-- **[API Keys And Credentials](docs/20260406-api-keys.md)** - Optional API keys by feature
-- **[Dashboard Hosting](docs/user-guide/20260406-dashboard-hosting.md)** - Static build and GitHub Pages deployment
-- **[Architecture Docs](docs/developer/architecture/)** - System structure and subsystem design
-- **[Project Structure](docs/developer-guide/project-structure.md)** - Package layout and import policy
-- **[Technical Roadmap](docs/technical_roadmap.md)** - Phased enhancement plan
-- **[Roadmap Coverage](docs/20260406-roadmap-coverage.md)** - Current beta vs. roadmap status
-- **[Documentation Index](docs/README.md)** - Entry point for all active project docs
-- **[Reports](docs/reports/README.md)** - Current analyses and operational writeups
-- **[Historical Archive](docs/developer/history/)** - Superseded implementation notes and decision records
-
----
-
-## Additional Resources
-
-- [DuckDB Documentation](https://duckdb.org/docs/)
-- [yfinance GitHub](https://github.com/ranaroussi/yfinance)
-- [akshare Documentation](https://akshare.readthedocs.io/)
-- [uv Documentation](https://github.com/astral-sh/uv)
-- [Parquet Format Spec](https://parquet.apache.org/docs/)
-
----
+- The CLI is local-first after bootstrap; it does not require a long-running cloud service.
+- China ingestion currently defaults to the shipped `akshare` path.
+- Static hosting is generated from local artifacts; GitHub Pages is the documented deployment target.
 
 ## License
 
-MIT License - See LICENSE file for details
-
----
-
-## Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Run `make check-all`
-4. Submit a pull request with tests
-
----
-
-## Roadmap
-
-- [ ] Real-time intraday data option
-- [x] More Asian markets (JP, KR)
-- [x] Data quality validation (Streamlit dashboard)
-- [x] Web dashboard for monitoring (Streamlit + static HTML)
-- [x] Backtesting framework integration (vectorbt)
-- [x] Unified CLI
-- [x] Sample data generator
+MIT License.

@@ -1,148 +1,117 @@
 # Pipeline User Guide
 
-This is the current operational guide for the installed CLI entrypoints in
-`equity-lake`.
+This guide covers the current operational pipeline exposed by the unified `equity` CLI.
 
-## What the Pipeline Does
+## Overview
 
-The full pipeline runs three stages:
+The daily workflow has three core stages:
 
-1. `equity-daily`: ingest market data into partitioned Parquet
-2. feature stage: generate feature rows under `data/lake/features/`
-3. ML stage: run price-forecast inference for the requested tickers
+1. `equity ingest` fetches market data and writes Hive-partitioned Parquet
+2. the feature stage builds derived datasets under `data/lake/features/`
+3. the ML stage runs inference for the requested tickers
 
-The main wrapper is:
-
-```bash
-uv run equity-pipeline
-```
-
-## Installation
-
-Core install:
+The main command is:
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv sync
-```
-
-Install ML dependencies for the full pipeline:
-
-```bash
-uv sync --extra ml
-```
-
-Optional:
-
-```bash
-uv sync --extra s3
-uv sync --extra visualization
-uv sync --extra backtesting
-uv sync --group dev
-```
-
-If you want an env file, copy the checked-in template:
-
-```bash
-cp .env.example .env
+dotenvx run -- uv run equity pipeline
 ```
 
 ## Core Commands
 
-Daily ingestion:
+Run daily ingestion:
 
 ```bash
-uv run equity-daily
-uv run equity-daily --date 2026-03-12
-uv run equity-daily --markets us,cn
-uv run equity-daily --parallel --max-workers 2
-uv run equity-daily --dry-run --verbose
+dotenvx run -- uv run equity ingest
+dotenvx run -- uv run equity ingest --date 2026-06-06
+dotenvx run -- uv run equity ingest --markets us,cn
+dotenvx run -- uv run equity ingest --tickers AAPL,MSFT,NVDA --markets us
+dotenvx run -- uv run equity ingest --dry-run --verbose
 ```
 
-Ticker-config utilities:
+Run the full pipeline:
 
 ```bash
-uv run equity-daily --list-stats
-uv run equity-daily --list-tickers --markets us --verbose
-uv run equity-daily --tags blue-chip --min-priority 8
-uv run equity-daily --groups faang
-uv run equity-daily --tickers AAPL,MSFT,NVDA --markets us
-uv run equity-daily --config config/tickers.yaml
+dotenvx run -- uv run equity pipeline
+dotenvx run -- uv run equity pipeline --dry-run --verbose
+dotenvx run -- uv run equity pipeline --date 2026-06-06
+dotenvx run -- uv run equity pipeline --markets us
+dotenvx run -- uv run equity pipeline --tickers AAPL,MSFT,NVDA
+dotenvx run -- uv run equity pipeline --skip-ingestion
+dotenvx run -- uv run equity pipeline --skip-ingestion --skip-features
+dotenvx run -- uv run equity pipeline --skip-ml
+dotenvx run -- uv run equity pipeline --save-results
 ```
 
-Gap detection:
+Monitor pipeline health:
 
 ```bash
-uv run equity-daily --detect-gaps --days-back 90
-uv run equity-daily --coverage-stats --markets us,cn
+dotenvx run -- uv run equity monitor
+dotenvx run -- uv run equity monitor --verbose
+dotenvx run -- uv run equity monitor --output-json logs/health_report.json
 ```
 
-Full pipeline:
+Query the lake with DuckDB:
 
 ```bash
-uv run equity-pipeline
-uv run equity-pipeline --dry-run --verbose
-uv run equity-pipeline --date 2026-03-12
-uv run equity-pipeline --markets us
-uv run equity-pipeline --tickers AAPL,MSFT,NVDA
-uv run equity-pipeline --skip-ingestion
-uv run equity-pipeline --skip-ingestion --skip-features
-uv run equity-pipeline --save-results
+dotenvx run -- uv run equity query
+dotenvx run -- uv run equity query --query latest_summary
+dotenvx run -- uv run equity query --query top_volume
+dotenvx run -- uv run equity query --date 2026-06-06
 ```
 
-Monitoring:
+## Supported Pipeline Flags
 
-```bash
-uv run equity-monitor
-uv run equity-monitor --verbose
-uv run equity-monitor --output-json logs/health_report.json
-```
+`equity pipeline` currently supports:
 
-Queries:
+- `--date`
+- `--days-back`
+- `--markets`
+- `--tickers`
+- `--skip-ingestion`
+- `--skip-features`
+- `--skip-ml`
+- `--dry-run`
+- `--verbose`
+- `--save-results`
 
-```bash
-uv run equity-query
-uv run equity-query --query latest_summary
-uv run equity-query --query top_volume --days 14
-uv run equity-query --query gainers_losers --days 14
-uv run equity-query --query market_stats
-uv run equity-query --query benchmark
-```
+`equity ingest` currently supports:
+
+- `--date`
+- `--markets`
+- `--tickers`
+- `--dry-run`
+- `--verbose`
 
 ## Configuration
 
 Primary config files:
 
-- `config/tickers.yaml`: market/ticker metadata, priorities, groups, tags
-- `config/watchlist.yaml`: signal-scanner watchlist
-- `config/signals.yaml`: signal thresholds and aggregation settings
-- `config/settings.yaml`: default application settings
-- `.env.example`: canonical env template for local `.env`
+- `config/settings.yaml`: application defaults
+- `config/tickers.yaml`: ticker metadata by market
+- `config/watchlist.yaml`: watchlists for signal scanning
+- `config/signals.yaml`: signal thresholds and formatting
+- `.env.example`: local environment template
 
 Configuration precedence is:
 
-1. `config/settings.yaml` provides the default app settings.
-2. `EQUITY_LAKE_*` variables in `.env` override matching YAML settings.
-3. Feature-specific env vars such as API keys and object-storage credentials are
-   read directly by the commands that need them.
+1. command-line options
+2. `EQUITY_` environment variables
+3. `.env`
+4. `config/settings.yaml`
 
-Application settings that support `EQUITY_LAKE_*` overrides include:
+Common settings overrides include:
 
-- `EQUITY_LAKE_CONFIG_PATH`
-- `EQUITY_LAKE_ENVIRONMENT`
-- `EQUITY_LAKE_DATA_DIR`
-- `EQUITY_LAKE_LAKE_DIR`
-- `EQUITY_LAKE_LOGS_DIR`
-- `EQUITY_LAKE_MODELS_DIR`
-- `EQUITY_LAKE_DB_PATH`
-- `EQUITY_LAKE_DASHBOARD_OUTPUT_DIR`
-- `EQUITY_LAKE_DASHBOARD_TITLE`
-- `EQUITY_LAKE_SCHEDULE_CRON`
-- `EQUITY_LAKE_SCHEDULE_TIMEZONE`
-
-Additional features such as macro, news, and social sentiment may read their own
-API-specific env vars when invoked.
+- `EQUITY_CONFIG_PATH`
+- `EQUITY_ENVIRONMENT`
+- `EQUITY_DATA_DIR`
+- `EQUITY_LAKE_DIR`
+- `EQUITY_LOGS_DIR`
+- `EQUITY_MODELS_DIR`
+- `EQUITY_DB_PATH`
+- `EQUITY_DASHBOARD_OUTPUT_DIR`
+- `EQUITY_DASHBOARD_TITLE`
+- `EQUITY_SCHEDULE_CRON`
+- `EQUITY_SCHEDULE_TIMEZONE`
 
 ## Data Layout
 
@@ -151,102 +120,64 @@ Important runtime directories:
 - `data/lake/us_equity/`
 - `data/lake/cn_ashare/`
 - `data/lake/hk_sg_equity/`
+- `data/lake/jpx_equity/`
+- `data/lake/krx_equity/`
 - `data/lake/features/`
 - `data/models/`
 - `logs/`
 
-The package also creates:
+Market data is stored as:
 
-- `data/lake/macro_indicators/`
-- `data/lake/us_news/`
-- `data/lake/us_social_sentiment/`
+```text
+data/lake/<market>/date=YYYY-MM-DD/*.parquet
+```
 
-## China Market Note
+## Typical Operating Flows
 
-China ingestion is routed through `CNHybridFetcher`, but the current
-orchestrator constructs it with the default behavior from
-`src/equity_lake/ingestion/sources/cn_hybrid.py`: `akshare` enabled and
-`efinance` disabled unless the code path is changed. The docs should therefore
-describe the current shipped behavior as:
+Bootstrap and first run:
 
-- current default: `akshare`
-- implemented fallback-capable fetcher exists in code
-- `efinance` is not the default active source today
+```bash
+dotenvx run -- uv run equity sync --bucket s3://your-bucket/us_equity
+dotenvx run -- uv run equity pipeline --dry-run --verbose
+dotenvx run -- uv run equity pipeline
+```
 
-## Signals and Backtesting
+Daily local run:
+
+```bash
+dotenvx run -- uv run equity ingest
+dotenvx run -- uv run equity monitor
+```
+
+Daily full run:
+
+```bash
+dotenvx run -- uv run equity pipeline
+dotenvx run -- uv run equity monitor --output-json site/health-report.json
+dotenvx run -- uv run equity dashboard build --output-dir site
+```
+
+## Related Workflows
 
 Signals:
 
 ```bash
-uv run equity signal scan
-uv run equity signal scan --watchlist config/watchlist.yaml
-uv run equity signal scan --config config/signals.yaml
-uv run equity signal scan --format json --output signals.json
+dotenvx run -- uv run equity signal scan
+dotenvx run -- uv run equity signal scan --watchlist config/watchlist.yaml
+dotenvx run -- uv run equity signal scan --config config/signals.yaml
 ```
-
-Forecast training:
-
-```bash
-uv run equity forecast --mode train --ticker AAPL --start 2024-01-01 --end 2024-12-31
-uv run equity forecast --mode train --ticker AAPL --model-mode v2_meta_label --start 2024-01-01 --end 2024-12-31
-```
-
-Training writes model artifacts under `data/models/`. Each training run now produces:
-
-- the model file, for example `AAPL_xgboost_v1_direction_2024-12-31.pkl`
-- full metadata JSON: `*.training_metadata.json`
-- concise training summary JSON: `*.training_summary.json`
-- for `v2_meta_label`, an auditable candidate/label artifact: `*.training_audit.parquet`
-
-The train command also prints a concise summary in the terminal with the model mode, row counts, fold count, and core validation metrics. `v2_meta_label` summaries include the barrier settings used for that run.
 
 Backtesting:
 
 ```bash
-uv run equity-backtest \
-  --strategy sma_crossover \
-  --tickers AAPL,MSFT \
-  --start-date 2024-01-01 \
-  --end-date 2024-12-31
+dotenvx run -- uv run equity backtest --help
 ```
 
-Supported built-in strategy names in the CLI are:
-
-- `sma_crossover`
-- `momentum`
-- `mean_reversion`
-
-## Troubleshooting
-
-Missing ML dependencies:
+Dashboard:
 
 ```bash
-uv sync --extra ml
-```
-
-Check available CLI options:
-
-```bash
-uv run equity ingest --help
-uv run equity pipeline --help
-uv run equity forecast --help
-uv run equity signal --help
-```
-
-Validate ticker config before a run:
-
-```bash
-uv run equity-daily --list-stats
-uv run equity-daily --list-tickers --verbose
-```
-
-Inspect logs:
-
-```bash
-ls logs
-tail -f logs/ingest_daily.log
-tail -f logs/run_pipeline.log
-tail -f logs/monitor_pipeline.log
+dotenvx run -- uv run equity dashboard build --output-dir site
+dotenvx run -- uv run equity dashboard serve --port 8501
 ```
 
 ## Scheduling
@@ -254,55 +185,36 @@ tail -f logs/monitor_pipeline.log
 Example weekday cron jobs:
 
 ```bash
-0 19 * * 1-5 cd /path/to/equity-lake && uv run equity-daily >> logs/cron-daily.log 2>&1
-0 20 * * 1-5 cd /path/to/equity-lake && uv run equity-monitor >> logs/cron-monitor.log 2>&1
+0 19 * * 1-5 cd /path/to/equity-lake && dotenvx run -- uv run equity ingest >> logs/cron-daily.log 2>&1
+0 20 * * 1-5 cd /path/to/equity-lake && dotenvx run -- uv run equity monitor >> logs/cron-monitor.log 2>&1
 ```
 
-Full three-stage pipeline instead of ingestion only:
+Or, if you prefer a single scheduled run:
 
 ```bash
-0 19 * * 1-5 cd /path/to/equity-lake && uv run equity-pipeline >> logs/cron-pipeline.log 2>&1
+0 19 * * 1-5 cd /path/to/equity-lake && dotenvx run -- uv run equity pipeline >> logs/cron-pipeline.log 2>&1
 ```
 
-## Data Source Reality Check
+## Troubleshooting
 
-Current shipped behavior:
-
-- US, HK, SG pricing: `yfinance`
-- China pricing: `CNHybridFetcher` with `akshare` enabled, `efinance` disabled by default
-- Macro, news, and social sentiment are separate optional workflows
-
-Older docs describing China as fully migrated to `efinance`, or a built-in
-dashboard for monitoring, are not current.
-
-## Common Fixes
-
-Missing dependencies:
+Check the live CLI:
 
 ```bash
-uv sync
-uv sync --extra ml
+uv run equity --help
+uv run equity ingest --help
+uv run equity pipeline --help
+uv run equity query --help
+uv run equity monitor --help
 ```
 
-Check available CLI options:
+Common checks:
 
-```bash
-uv run equity-daily --help
-uv run equity-pipeline --help
-uv run equity-query --help
-uv run equity-monitor --help
-uv run equity-signal --help
-```
+- Verify `config/settings.yaml` and `.env` agree on paths and credentials
+- Run with `--dry-run --verbose` before changing a scheduled workflow
+- Export a health report with `equity monitor --output-json ...` before building the static dashboard
 
-Validate ticker config before a run:
+## Notes
 
-```bash
-uv run equity-daily --list-stats
-uv run equity-daily --list-tickers --verbose
-```
-
-## What Is Not Included
-
-- A built-in Streamlit and static dashboard ship with the current repo
-- No `requirements.txt`-based install is the source of truth; use `uv sync`
-- `config/example.env` has been removed; use `.env.example`
+- The unified `equity` command is the supported CLI surface.
+- China ingestion currently defaults to the shipped `akshare` path.
+- The pipeline is local-first after bootstrap; DuckDB reads directly from Parquet.

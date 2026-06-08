@@ -5,10 +5,10 @@ This beta build adds a few new operational commands on top of the existing inges
 ## Config
 
 ```bash
-uv run equity-config validate
-uv run equity-config show
-uv run equity-config get schedule.cron
-uv run equity-config export
+uv run equity config validate
+uv run equity config show
+uv run equity config get schedule.cron
+uv run equity config export
 ```
 
 Use this to inspect the unified application settings from `config/settings.yaml`.
@@ -16,7 +16,7 @@ Use this to inspect the unified application settings from `config/settings.yaml`
 ## Dashboard
 
 ```bash
-uv run equity-dashboard build --output-dir site
+dotenvx run -- uv run equity dashboard build --output-dir site
 ```
 
 This generates:
@@ -31,10 +31,10 @@ This generates:
 ## Loaders
 
 ```bash
-uv run equity-loader list
-uv run equity-loader show yfinance
-uv run equity-loader show options_flow
-uv run equity-loader test yfinance
+uv run equity loader list
+uv run equity loader show yfinance
+uv run equity loader show options_flow
+uv run equity loader test yfinance
 ```
 
 Built-in loaders now include:
@@ -47,28 +47,23 @@ Built-in loaders now include:
 ## Smart Updates
 
 ```bash
-uv run equity-update us_equity --symbols AAPL,MSFT --strategy incremental
-uv run equity-update us_equity --symbols AAPL --strategy delta --force
-uv run equity-update hk_sg_equity --symbols 0700.HK,D05.SI --strategy smart
+dotenvx run -- uv run equity update --markets us
+dotenvx run -- uv run equity update --markets us,cn --date 2026-06-06
+dotenvx run -- uv run equity update --markets hk_sg --dry-run
 ```
 
-Strategies:
-
-- `smart`
-- `incremental`
-- `delta`
-- `full`
+This command runs the shipped incremental update engine over the selected markets.
 
 ## Existing Pipeline Commands
 
 ```bash
-uv run equity-daily --markets us,cn,hk_sg
-uv run equity-pipeline --continue-on-error --save-results
-uv run equity-monitor --output-json site/health-report.json
+dotenvx run -- uv run equity ingest --markets us,cn,hk_sg
+dotenvx run -- uv run equity pipeline --save-results
+dotenvx run -- uv run equity monitor --output-json site/health-report.json
 ```
 
 Recommended hosted flow:
 
-1. Run `equity-monitor` to export health.
-2. Run `equity-dashboard build` to render the static site.
+1. Run `equity monitor` to export health.
+2. Run `equity dashboard build` to render the static site.
 3. Let GitHub Actions deploy `site/` to GitHub Pages.

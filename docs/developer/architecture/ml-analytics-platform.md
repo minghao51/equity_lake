@@ -14,10 +14,10 @@ market ingestion -> feature generation -> price-forecast inference
 
 Primary entrypoints:
 
-- `uv run equity-pipeline`
-- `uv run equity-price-forecast`
-- `uv run equity-query`
-- `uv run equity-monitor`
+- `uv run equity pipeline`
+- `uv run equity forecast`
+- `uv run equity query`
+- `uv run equity monitor`
 
 ## Implemented Components
 
@@ -69,7 +69,7 @@ from equity_lake.pipeline import run_ml_inference_stage
 The main user-facing wrapper is:
 
 ```bash
-uv run equity-pipeline --skip-ingestion --skip-features
+uv run equity pipeline --skip-ingestion --skip-features
 ```
 
 ## Data Flow
@@ -78,7 +78,7 @@ uv run equity-pipeline --skip-ingestion --skip-features
 config/tickers.yaml
         |
         v
-equity-daily / run_ingestion_stage
+equity ingest / run_ingestion_stage
         |
         v
 data/lake/{us_equity,cn_ashare,hk_sg_equity}/
@@ -90,7 +90,7 @@ run_feature_stage
 data/lake/features/
         |
         v
-run_ml_inference_stage / equity-price-forecast
+run_ml_inference_stage / equity forecast
 ```
 
 ## Operational Model
@@ -117,12 +117,12 @@ as proposals rather than current behavior.
 If you want to work with the current ML stack:
 
 1. install ML extras with `uv sync --extra ml`
-2. run `uv run equity-pipeline --dry-run --verbose`
+2. run `uv run equity pipeline --dry-run --verbose`
 3. inspect generated artifacts under `data/lake/features/` and `logs/`
-4. use `uv run equity-query` or notebooks for analysis
+4. use `uv run equity query` or notebooks for analysis
 
 ## Related Docs
 
-- [Quick Start](../getting-started/quickstart.md)
-- [Pipeline User Guide](../user-guide/pipeline.md)
-- [Project Structure](../developer-guide/project-structure.md)
+- [Quick Start](../../getting-started/quickstart.md)
+- [Pipeline User Guide](../../user-guide/pipeline.md)
+- [Project Structure](../../developer-guide/project-structure.md)

@@ -3,6 +3,7 @@ site_description: Local-first equity EOD data pipeline
 site_url: https://minghao.github.io/equity_lake
 repo_name: equity_lake
 repo_url: https://github.com/minghao/equity_lake
+exclude_docs: README.md
 
 theme:
   name: material
@@ -34,11 +35,11 @@ nav:
   - Getting Started:
       - Quickstart: getting-started/quickstart.md
   - User Guide:
-      - CLI Reference: user-guide/cli-reference.md
+      - CLI Reference: user-guide/20260406-cli-reference.md
       - Pipeline: user-guide/pipeline.md
       - Backtesting: user-guide/backtesting.md
       - Signals: user-guide/signals.md
-      - Dashboard Hosting: user-guide/dashboard-hosting.md
+      - Dashboard Hosting: user-guide/20260406-dashboard-hosting.md
   - Developer:
       - Architecture: developer/architecture/ARCHITECTURE.md
       - Stack: developer/architecture/STACK.md

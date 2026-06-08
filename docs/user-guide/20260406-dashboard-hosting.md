@@ -5,8 +5,8 @@ The current beta hosting path is static-first and GitHub Pages friendly.
 ## Local Build
 
 ```bash
-uv run equity-monitor --output-json site/health-report.json
-uv run equity-dashboard build --output-dir site
+dotenvx run -- uv run equity monitor --output-json site/health-report.json
+dotenvx run -- uv run equity dashboard build --output-dir site
 ```
 
 Open:
