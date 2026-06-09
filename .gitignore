@@ -60,3 +60,7 @@ Thumbs.db
 todo_audit.json
 AUDIT_*.md
 IMPLEMENTATION_PLAN.md
+
+# Jupyter
+.ipynb_checkpoints/
+.cache/mkdocs-jupyter/

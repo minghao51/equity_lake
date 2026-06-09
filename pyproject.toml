@@ -26,6 +26,7 @@ dependencies = [
     "finance-datareader>=0.9.96,<1.0",
     "duckdb>=1.0.0",
     "pandas>=2.2.0",
+    "polars>=1.0.0",
     "pyarrow>=18.0.0",
     "requests>=2.31.0",
     "numpy>=1.24.0",
@@ -103,6 +104,7 @@ docs = [
     "mike>=2.2.0",
     "mkdocs-material>=9.7.6",
     "mkdocstrings-python>=2.0.3",
+    "mkdocs-jupyter>=0.24.0",
 ]
 
 [project.scripts]
@@ -142,6 +144,7 @@ exclude = [
     "dist",
     "node_modules",
     "venv",
+    "notebooks",
 ]
 
 # Same as Black.
