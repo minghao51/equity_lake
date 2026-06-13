@@ -24,7 +24,8 @@
 - **efinance**: Alternative Chinese market data source
 
 ### Data Processing
-- **pandas** (>=2.2.0): Data manipulation and analysis
+- **polars** (>=1.0.0): Primary dataframe engine for ingestion, validation, feature engineering, and ML data prep
+- **pandas** (>=2.2.0): Compatibility layer for estimator interop and deferred backtesting surfaces
 - **numpy**: Numerical computing foundation
 - **pyarrow** (>=18.0.0): Parquet I/O and columnar storage
 

@@ -55,9 +55,9 @@ dev-setup: setup
 # Validation
 validate:
 	@echo "🔍 Validating project setup..."
-	@echo "Python version: $$(python --version)"
+	@echo "Python version: $$(uv run python --version)"
 	@echo "uv version: $$(uv --version)"
-	@echo "Virtual environment: $$(python -c 'import sys; print(sys.prefix)')"
+	@echo "Virtual environment: $$(uv run python -c 'import sys; print(sys.prefix)')"
 	@echo "Installed packages:"
 	uv pip list | grep -E "(yfinance|akshare|duckdb|pandas)"
 	@echo "✅ Validation complete!"

@@ -22,32 +22,29 @@
 
 ```
 src/equity_lake/          # Source
-├── backtesting/          # Backtesting framework (vector_engine.py is default; engine.py deprecated)
+├── backtesting/          # Backtesting framework (engine.py with polars-backtest)
 ├── cli/                  # Typer-based CLI (`equity` command, native Typer — no passthrough)
-│   └── __main__.py       # Single file with all Typer commands
-├── config/               # Pydantic Settings with YamlConfigSettingsSource
-│   ├── settings.py       # Settings(BaseSettings) with EQUITY_ prefix, __ nested delimiter
-│   ├── models.py         # Pydantic models for ticker config
-│   ├── loader.py         # TickerConfig class (YAML loader)
-│   └── selectors.py      # Query helpers for ticker config
+│   ├── __main__.py       # App entrypoint (wires sub-apps, imports command modules)
+│   ├── _app.py           # Typer app factory, logging init
+│   ├── commands/         # Command modules (data, pipeline, intelligence, analysis, admin)
+│   └── ...               # Domain-specific CLI modules (config, loader, news, sentiment, signal)
+├── config/               # YAML config validators (CI/CD)
+│   └── validators.py     # tickers.yaml / watchlist.yaml / signals.yaml validators
 ├── core/                 # paths.py (dirs), logging.py (structlog), schemas.py (columns)
 ├── dashboard/            # Dashboard/export components
 ├── devtools/             # Test data generators
 ├── features/             # Feature engineering (Hamilton-based); run_feature_job lives in __init__.py
-├── ingestion/            # Data ingestion pipeline (orchestrator, writers)
+├── ingestion/            # Data ingestion pipeline (orchestrator, writers, backfill)
 ├── loaders/              # Plugin-based data loaders (SEC, Reddit, options flow, yfinance)
 ├── ml/                   # ML inference; run_prediction_job lives in __init__.py
 ├── monitoring/           # Pipeline health checks
-├── pipelines/            # Hamilton DAG nodes (features.py, ml.py)
 ├── sentiment/            # Sentiment analysis
 ├── signals/              # Signal generators
-├── sources/              # Market data fetchers (us, cn, hk_sg, jpx, krx, news, sentiment)
+├── sources/              # Market data fetchers (us, cn, hk_sg, jpx, krx, news, sentiment, macro)
 ├── storage/              # DuckDB (EquityDataDB), S3 sync, Delta Lake
 ├── updates/              # Data update engine
-├── validation/           # Pandera-based data validation (schema contracts at ingestion)
+├── validation/           # pointblank-based data validation (schema contracts at ingestion)
 ├── pipeline.py           # PipelineOrchestrator + stage helpers (ingestion/feature/ml)
-├── backfill_data.py      # Historical backfill CLI
-├── fetch_macro.py        # Macro indicator fetcher CLI
 └── price_forecaster.py   # Price forecast CLI
 config/                   # YAML configs (tickers.yaml, settings.yaml, signals.yaml, watchlist.yaml)
 data/lake/                # Partitioned Parquet storage (market/date= partitions)
@@ -63,8 +60,8 @@ No `domain/` tree — top-level modules are canonical. Import boundary tests in 
 - **Logging:** structlog with JSON output and correlation IDs. Use `structlog.get_logger()`. Call `setup_structured_logging()` in CLI entry points.
 - **Markets:** us_equity, cn_ashare, hk_sg_equity, jpx_equity, krx_equity. Directory constants in `core/paths.py`, mapped via `MARKET_DIR_MAP` in `ingestion/types.py`.
 - **Retry:** All source fetchers use `tenacity` for retry/backoff (exponential, max 3 attempts). Do not hand-roll retry loops.
-- **Validation:** Pandera schemas (`PriceDataSchema`, `NewsDataSchema`, `MacroDataSchema`) enforced at ingestion write boundaries via `validation/pipeline.py`.
-- **Backtesting:** `VectorBacktestEngine` (vectorbt) is default. `BacktestEngine` (loop-based) emits `DeprecationWarning`.
+- **Validation:** pointblank schemas enforced at ingestion write boundaries via `validation/pipeline.py`.
+- **Backtesting:** `VectorBacktestEngine` (polars-backtest) is default. Requires `uv sync --extra backtesting`.
 
 ## 6. Commands
 
@@ -95,6 +92,7 @@ uv run ruff format .                     # Format
 New core dependencies (added for resilience/performance):
 - `tenacity` — retry/backoff for all API fetchers
 - `httpx` + `aiolimiter` — async HTTP for concurrent API ingestion
-- `polars` — for future feature engineering migration
+- `polars` — primary dataframe engine across the ingestion, validation, feature, and ML pipeline. Pandas only at external-library boundaries (yfinance, akshare, efinance).
 - `exchange-calendars` — trading-day calendar validation
 - `pytest-xdist` — parallel test execution
+- `pointblank` — Polars-native data validation and profiling (replaces whylogs)

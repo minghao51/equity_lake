@@ -17,7 +17,7 @@
 | **Storage Layer** | ✅ Complete | Hive-partitioned Parquet with DuckDB query engine |
 | **CLI Tools** | ✅ Complete | 12 CLI entrypoints (daily, sync, query, pipeline, monitor, etc.) |
 | **ML Pipeline** | ✅ Complete | XGBoost forecasting, 40+ technical indicators |
-| **Backtesting** | ✅ Complete | vectorbt integration, strategy testing |
+| **Backtesting** | ✅ Complete | polars-backtest integration, strategy testing |
 | **Signal Scanner** | ✅ Complete | Buy/sell/hold signals, multiple strategies |
 | **Sentiment Analysis** | ✅ Complete | VADER sentiment, news integration |
 | **Macro Indicators** | ✅ Complete | FRED API integration (fredapi) |
@@ -254,7 +254,7 @@ import logging
 class ConfigWatcher:
     """
     Watch configuration files for changes and reload automatically.
-    
+
     Usage:
         watcher = ConfigWatcher(
             config_path=Path("./config"),
