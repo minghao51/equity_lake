@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+import polars as pl
+from hamilton import base
+from hamilton.plugins import h_polars
+
+from equity_lake.core.polars_utils import FrameLike, ensure_polars
 
 FEATURE_SCHEMA_VERSION = 2
 
@@ -64,28 +68,29 @@ class FeaturePipeline:
 
         from equity_lake.features import hamilton_features
 
-        builder = driver.Builder().with_modules(hamilton_features)
+        adapter = base.SimplePythonGraphAdapter(h_polars.PolarsDataFrameResult())
+        builder = driver.Builder().with_modules(hamilton_features).with_adapter(adapter)
         if self.enable_cache:
             builder = builder.with_cache()
         return builder.build()
 
     def compute(
         self,
-        price_data: pd.DataFrame,
+        price_data: FrameLike,
         features: list[str] | None = None,
         inputs: dict[str, Any] | None = None,
-    ) -> pd.DataFrame:
+    ) -> pl.DataFrame:
         """Compute a feature frame for one ticker's price history."""
         requested = features or self.DEFAULT_FEATURES
-        execution_inputs = {"price_data": price_data}
+        execution_inputs = {"price_data": ensure_polars(price_data)}
         if inputs:
             execution_inputs.update(inputs)
 
         result = self._driver.execute(requested, inputs=execution_inputs)
-        frame = pd.DataFrame(result)
+        frame = result if isinstance(result, pl.DataFrame) else pl.DataFrame(result)
         if "open_price" in frame.columns:
-            frame = frame.rename(columns={"open_price": "open"})
-        frame["feature_schema_version"] = FEATURE_SCHEMA_VERSION
+            frame = frame.rename({"open_price": "open"})
+        frame = frame.with_columns(pl.lit(FEATURE_SCHEMA_VERSION).alias("feature_schema_version"))
         return frame
 
     def export_lineage(self, output_path: str | Path | None = None) -> str | None:
@@ -109,9 +114,9 @@ class FeaturePipeline:
 
 
 def compute_features(
-    price_data: pd.DataFrame,
+    price_data: FrameLike,
     features: list[str] | None = None,
-) -> pd.DataFrame:
+) -> pl.DataFrame:
     """Compute features from price data using the default pipeline."""
     return FeaturePipeline().compute(price_data=price_data, features=features)
 

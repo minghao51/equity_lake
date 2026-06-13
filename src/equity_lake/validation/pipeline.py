@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-import pandas as pd
+import polars as pl
 import structlog
 from pydantic import BaseModel, Field
 
+from equity_lake.core.polars_utils import FrameLike, ensure_polars
 from equity_lake.validation.profiling import DataProfiler, DriftReport  # noqa: F401 - re-exported
 from equity_lake.validation.schemas import SCHEMA_REGISTRY
 
@@ -36,18 +37,19 @@ class ValidationPipeline:
         self.strict = strict
         self._baselines: dict[str, Any] = {}
 
-    def set_baseline(self, name: str, df: pd.DataFrame) -> None:
+    def set_baseline(self, name: str, df: FrameLike) -> None:
         """Set a baseline profile for drift detection."""
         self._baselines[name] = self.profiler.profile(df, f"baseline_{name}")
 
     def validate(
         self,
-        df: pd.DataFrame,
+        df: FrameLike,
         data_type: str = "price",
         check_drift: bool = True,
         name: str | None = None,
     ) -> ValidationResult:
         """Validate DataFrame against schema and profile."""
+        df_polars = ensure_polars(df)
         errors: list[str] = []
         warnings: list[str] = []
         metrics: dict[str, Any] = {}
@@ -57,7 +59,7 @@ class ValidationPipeline:
         schema_class = SCHEMA_REGISTRY.get(data_type)
         if schema_class:
             try:
-                schema_class.validate(df)
+                schema_class().validate(df_polars)
             except Exception as exc:
                 schema_valid = False
                 errors.append(f"Schema validation failed: {exc}")
@@ -71,7 +73,7 @@ class ValidationPipeline:
         drift_detected = False
         if name:
             try:
-                profile = self.profiler.profile(df, name)
+                profile = self.profiler.profile(df_polars, name)
                 metrics["quality"] = self.profiler.get_quality_metrics(profile)
 
                 if check_drift and name in self._baselines:
@@ -85,7 +87,7 @@ class ValidationPipeline:
                 warnings.append(f"Profiling failed: {exc}")
 
         # 3. Custom checks
-        errors.extend(self._custom_checks(df))
+        errors.extend(self._custom_checks(df_polars))
 
         return ValidationResult(
             success=len(errors) == 0,
@@ -97,36 +99,41 @@ class ValidationPipeline:
             metrics=metrics,
         )
 
-    def validate_and_fix(self, df: pd.DataFrame, data_type: str = "price") -> tuple[pd.DataFrame, ValidationResult]:
+    def validate_and_fix(self, df: FrameLike, data_type: str = "price") -> tuple[pl.DataFrame, ValidationResult]:
         """Validate and attempt to fix common issues."""
-        df_fixed = df.copy()
+        df_fixed = ensure_polars(df)
 
-        before = len(df_fixed)
-        df_fixed = df_fixed.drop_duplicates(subset=["ticker", "date"], keep="last")
-        if len(df_fixed) < before:
-            logger.warning("Removed %d duplicate rows", before - len(df_fixed))
+        key_columns = [column for column in ("ticker", "date") if column in df_fixed.columns]
+        if key_columns:
+            before = df_fixed.height
+            df_fixed = df_fixed.unique(subset=key_columns, keep="last", maintain_order=True)
+            removed = before - df_fixed.height
+            if removed > 0:
+                logger.warning("Removed %d duplicate rows", removed)
 
         if "close" in df_fixed.columns:
-            df_fixed = df_fixed[df_fixed["close"] > 0]
+            df_fixed = df_fixed.filter(pl.col("close") > 0)
 
         if "volume" in df_fixed.columns:
-            df_fixed["volume"] = df_fixed["volume"].fillna(0)
+            df_fixed = df_fixed.with_columns(pl.col("volume").fill_null(0))
 
-        result = self.validate(df_fixed, data_type)
-        return df_fixed, result
+        return df_fixed, self.validate(df_fixed, data_type)
 
-    def _custom_checks(self, df: pd.DataFrame) -> list[str]:
+    def _custom_checks(self, df: pl.DataFrame) -> list[str]:
         """Run additional validation checks."""
         errors: list[str] = []
-        if df.empty:
+        if df.is_empty():
             errors.append("DataFrame is empty")
             return errors
 
-        null_cols = df.columns[df.isnull().all()].tolist()
+        row_count = df.height
+        null_counts = df.null_count().row(0, named=True)
+
+        null_cols = [column for column, count in null_counts.items() if count == row_count]
         if null_cols:
             errors.append(f"Columns with all null values: {null_cols}")
 
-        high_null = df.columns[df.isnull().mean() > 0.5].tolist()
+        high_null = [column for column, count in null_counts.items() if row_count > 0 and count / row_count > 0.5]
         if high_null:
             errors.append(f"Columns with >50% null values: {high_null}")
 

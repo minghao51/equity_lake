@@ -1,17 +1,17 @@
 """
 Backtesting module for trading strategies.
 
-VectorBacktestEngine (vectorbt-backed) is the canonical engine.
+VectorBacktestEngine (polars-backtest-backed) is the canonical engine.
 """
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
+from equity_lake.backtesting.engine import VectorBacktestEngine
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy import (
     BaseStrategy,
     StrategyRegistry,
     get_strategy,
 )
-from equity_lake.backtesting.vector_engine import VectorBacktestEngine
 
 __all__ = [
     "BacktestDataLoader",

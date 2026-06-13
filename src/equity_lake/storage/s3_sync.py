@@ -25,9 +25,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final
 
+from equity_lake.core.config import get_project_config
 from equity_lake.core.logging import setup_logging
 from equity_lake.core.paths import US_EQUITY_DIR
-from equity_lake.core.runtime import get_project_config
 
 # Logger configuration
 logger = logging.getLogger(__name__)
@@ -372,7 +372,7 @@ def main() -> None:
 
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"
-    logger = setup_logging(__name__, level=log_level, log_file="sync_from_s3.log")
+    logger = setup_logging(level=log_level, log_file=Path("sync_from_s3.log"))
 
     # Get S3 bucket from args or environment
     bucket = args.bucket

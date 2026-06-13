@@ -7,25 +7,13 @@ from typing import Any
 
 import structlog
 
-from equity_lake.backfill_data import backfill_cn, backfill_yfinance
 from equity_lake.core.config import TickerConfig, get_settings
+from equity_lake.features import run_feature_job
+from equity_lake.ingestion.backfill import backfill_date_range
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
-from equity_lake.pipelines.features import run_feature_pipeline
-from equity_lake.pipelines.ml import run_ml_inference
+from equity_lake.ml import run_prediction_job
 
 logger = structlog.get_logger()
-
-
-def _market_tickers(ticker_config: TickerConfig, tickers: list[str], market: str) -> list[str]:
-    """Filter requested tickers down to a configured market."""
-    if market == "hk_sg":
-        return [
-            ticker
-            for ticker in tickers
-            if ticker_config.get_ticker_metadata(ticker, market="hk") is not None
-            or ticker_config.get_ticker_metadata(ticker, market="sg") is not None
-        ]
-    return [ticker for ticker in tickers if ticker_config.get_ticker_metadata(ticker, market=market) is not None]
 
 
 def _backfill_feature_history(
@@ -34,24 +22,14 @@ def _backfill_feature_history(
     markets: list[str],
     ticker_config: TickerConfig,
 ) -> None:
-    """Fetch enough lookback history for feature generation and retry once."""
     start_date = trading_date - timedelta(days=120)
-    cn_tickers = _market_tickers(ticker_config, tickers, "cn") if "cn" in markets else []
-    hk_sg_tickers = _market_tickers(ticker_config, tickers, "hk_sg") if "hk_sg" in markets else []
-    us_tickers = _market_tickers(ticker_config, tickers, "us") if "us" in markets else []
-    assigned = set(cn_tickers) | set(hk_sg_tickers) | set(us_tickers)
-    unmatched_tickers = [ticker for ticker in tickers if ticker not in assigned]
-
-    if "us" in markets:
-        us_tickers = list(dict.fromkeys([*us_tickers, *unmatched_tickers]))
-        if us_tickers:
-            backfill_yfinance(us_tickers, "us_equity", start_date, trading_date, dry_run=False)
-
-    if "cn" in markets and cn_tickers:
-        backfill_cn(cn_tickers, start_date, trading_date, dry_run=False)
-
-    if "hk_sg" in markets and hk_sg_tickers:
-        backfill_yfinance(hk_sg_tickers, "hk_sg_equity", start_date, trading_date, dry_run=False)
+    backfill_date_range(
+        start_date=start_date,
+        end_date=trading_date,
+        markets=markets,
+        ticker_config=ticker_config,
+        dry_run=False,
+    )
 
 
 def execute_eod_pipeline(
@@ -97,26 +75,26 @@ def execute_eod_pipeline(
 
     if not skip_features:
         try:
-            features_df = run_feature_pipeline(
+            features_df = run_feature_job(
                 tickers=tickers,
                 output_start_date=trading_date,
                 output_end_date=trading_date,
                 compute_target=True,
             )
-            feature_output_tickers = sorted(features_df["ticker"].dropna().unique().tolist())
+            feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
             results["features"] = {"success": True, "rows": len(features_df)}
         except Exception as exc:
             if str(exc) == "No features generated":
                 logger.warning("feature_pipeline_missing_history", tickers=tickers, markets=markets)
                 _backfill_feature_history(trading_date, tickers, markets, ticker_config)
                 try:
-                    features_df = run_feature_pipeline(
+                    features_df = run_feature_job(
                         tickers=tickers,
                         output_start_date=trading_date,
                         output_end_date=trading_date,
                         compute_target=True,
                     )
-                    feature_output_tickers = sorted(features_df["ticker"].dropna().unique().tolist())
+                    feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
                     results["features"] = {"success": True, "rows": len(features_df)}
                 except Exception as retry_exc:
                     logger.error("feature_pipeline_failed", error=str(retry_exc))
@@ -132,7 +110,7 @@ def execute_eod_pipeline(
             logger.info("pipeline_completed", stages=len(results))
             return results
         try:
-            all_success, ml_results = run_ml_inference(
+            all_success, ml_results = run_prediction_job(
                 trading_date=trading_date,
                 tickers=feature_output_tickers,
             )

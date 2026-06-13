@@ -4,11 +4,12 @@ from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
+import polars as pl
 import structlog
 
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.schemas import STANDARD_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardize_columns
 
 logger = structlog.get_logger()
 
@@ -67,11 +68,11 @@ class KRXEquityFetcher(MarketDataFetcher):
             "028260",  # Samsung C&T
         ]
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch KRX equity data for a trading date using FinanceDataReader."""
         logger.info("Fetching KRX equity data for %s (%s tickers)", trading_date, len(self.tickers))
 
-        def _fetch() -> pd.DataFrame:
+        def _fetch() -> pl.DataFrame:
             try:
                 import FinanceDataReader as fdr
             except ImportError:
@@ -100,22 +101,12 @@ class KRXEquityFetcher(MarketDataFetcher):
 
             if not all_frames:
                 logger.warning("No data returned for KRX equities on %s", trading_date)
-                return pd.DataFrame()
+                return _empty_frame()
 
             frame = pd.concat(all_frames, ignore_index=True)
-            frame.columns = [str(column).lower() for column in frame.columns]
-
-            frame = frame.rename(columns={"adj close": "adj_close", "adjclose": "adj_close"})
-
-            if "date" in frame.columns:
-                frame["date"] = pd.to_datetime(frame["date"]).dt.date
-
-            available_cols = [column for column in STANDARD_COLUMNS if column in frame.columns]
-            frame = frame[available_cols]
-            frame = frame.dropna(how="all")
-
-            unique_tickers = frame["ticker"].nunique() if "ticker" in frame else 0
-            logger.info("Fetched %s rows for %s unique KRX tickers", len(frame), unique_tickers)
+            frame = standardize_columns(frame, rename={"adj close": "adj_close", "adjclose": "adj_close"}, columns=STANDARD_COLUMNS)
+            unique_tickers = frame["ticker"].n_unique() if "ticker" in frame.columns else 0
+            logger.info("Fetched %s rows for %s unique KRX tickers", frame.height, unique_tickers)
             return frame
 
         return self._retry_on_failure(_fetch)

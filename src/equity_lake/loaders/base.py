@@ -6,8 +6,10 @@ from abc import ABC, abstractmethod
 from datetime import UTC, date, datetime
 from typing import Any
 
-import pandas as pd
+import polars as pl
 from pydantic import BaseModel, Field
+
+from equity_lake.core.polars_utils import ensure_polars
 
 
 class LoaderMetadata(BaseModel):
@@ -27,7 +29,7 @@ class LoadResult(BaseModel):
     """Result of a loader fetch operation."""
 
     success: bool
-    data: pd.DataFrame | None = None
+    data: pl.DataFrame | None = None
     records_count: int = 0
     errors: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -67,13 +69,14 @@ class BaseDataLoader(ABC):
     def validate_connection(self) -> bool:
         """Return whether the data source is reachable."""
 
-    def normalize_data(self, df: pd.DataFrame) -> pd.DataFrame:
+    def normalize_data(self, df: pl.DataFrame) -> pl.DataFrame:
         """Normalize to the common OHLCV schema."""
+        df = ensure_polars(df)
         required = ["ticker", "date", "open", "high", "low", "close", "volume"]
         missing = [column for column in required if column not in df.columns]
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
-        return df[required]
+        return df.select(required)
 
 
 __all__ = ["BaseDataLoader", "LoadResult", "LoaderMetadata"]

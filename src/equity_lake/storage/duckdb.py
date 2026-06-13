@@ -17,16 +17,13 @@ Usage:
     uv run equity query --date 2024-12-01
 """
 
-import argparse
 import logging
-import sys
 from pathlib import Path
 from typing import Any
 
 import duckdb
-import pandas as pd
+import polars as pl
 
-from equity_lake.core.logging import setup_logging
 from equity_lake.core.paths import (
     CN_ASHARE_DIR,
     HK_SG_EQUITY_DIR,
@@ -35,7 +32,6 @@ from equity_lake.core.paths import (
     US_EQUITY_DIR,
 )
 
-# Logger configuration
 logger = logging.getLogger(__name__)
 
 
@@ -47,8 +43,8 @@ logger = logging.getLogger(__name__)
 class EquityDataDB:
     """DuckDB connection manager for equity data queries.
 
-    Supports both Hive-partitioned Parquet and Delta Lake tables.
-    Automatically detects which format is present per market directory.
+    All market tables are expected to be Delta Lake tables scanned via
+    ``delta_scan()``.
     """
 
     MARKET_VIEWS = [
@@ -89,23 +85,12 @@ class EquityDataDB:
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    @staticmethod
-    def _is_delta_table(data_dir: Path) -> bool:
-        from deltalake import DeltaTable
-
-        return DeltaTable.is_deltatable(str(data_dir))
-
     def _create_market_view(self, view_name: str, data_dir: Path, market_label: str) -> None:
         if not data_dir.exists():
             logger.warning(f"Data directory not found: {data_dir}")
             return
 
-        if self._is_delta_table(data_dir):
-            scan = f"SELECT *, '{market_label}' as market FROM delta_scan('{data_dir}')"
-        else:
-            parquet_pattern = str(data_dir / "date=*/*.parquet")
-            scan = f"SELECT *, '{market_label}' as market FROM read_parquet('{parquet_pattern}', hive_partitioning=1)"
-
+        scan = f"SELECT *, '{market_label}' as market FROM delta_scan('{data_dir}')"
         sql = f"CREATE OR REPLACE VIEW {view_name} AS {scan}"
 
         try:
@@ -129,14 +114,14 @@ class EquityDataDB:
         except Exception as e:
             logger.error(f"Failed to create unified view: {e}")
 
-    def query(self, sql: str) -> pd.DataFrame:
-        """Execute SQL query and return result as DataFrame."""
+    def query(self, sql: str) -> pl.DataFrame:
+        """Execute SQL query and return a Polars DataFrame."""
         self._ensure_views()
         try:
-            return self.con.execute(sql).df()
+            return self.con.execute(sql).pl()
         except Exception as e:
             logger.error(f"Query failed: {e}")
-            return pd.DataFrame()
+            return pl.DataFrame()
 
     def query_arrow(self, sql: str) -> Any:
         """Execute SQL query and return result as PyArrow Table (zero-copy)."""
@@ -158,6 +143,39 @@ class EquityDataDB:
             logger.error(f"Execution failed: {e}")
             raise
 
+    QUERY_MAP: dict[str, str] = {
+        "latest_summary": "query_1_latest_data_summary",
+        "top_volume": "query_2_top_volume_stocks",
+        "gainers_losers": "query_3_top_gainers_losers",
+        "cross_market": "query_4_cross_market_comparison",
+        "moving_avg": "query_5_moving_averages",
+        "volatility": "query_6_volatility_analysis",
+        "market_stats": "query_7_market_summary_stats",
+        "price_range": "query_8_price_range_analysis",
+    }
+
+    def run_named_query(self, name: str, **kwargs: Any) -> pl.DataFrame:
+        self._ensure_views()
+        examples = QueryExamples(self)
+        method_name = self.QUERY_MAP.get(name)
+        if method_name is None:
+            available = ", ".join(self.QUERY_MAP.keys())
+            logger.error(f"Unknown query: {name}. Available: {available}")
+            return pl.DataFrame()
+        return getattr(examples, method_name)(**kwargs)
+
+    def run_all_queries(self) -> dict[str, pl.DataFrame]:
+        self._ensure_views()
+        examples = QueryExamples(self)
+        results: dict[str, pl.DataFrame] = {}
+        for name, method_name in self.QUERY_MAP.items():
+            try:
+                results[name] = getattr(examples, method_name)()
+            except Exception as e:
+                logger.error(f"Query {name} failed: {e}")
+                results[name] = pl.DataFrame()
+        return results
+
 
 # =============================================================================
 # Example Queries
@@ -170,7 +188,7 @@ class QueryExamples:
     def __init__(self, db: EquityDataDB):
         self.db = db
 
-    def query_1_latest_data_summary(self) -> pd.DataFrame:
+    def query_1_latest_data_summary(self) -> pl.DataFrame:
         """Query 1: Summary of latest data by market."""
         logger.info("Running Query 1: Latest Data Summary")
 
@@ -196,7 +214,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_2_top_volume_stocks(self, days: int = 7) -> pd.DataFrame:
+    def query_2_top_volume_stocks(self, days: int = 7) -> pl.DataFrame:
         """Query 2: Top stocks by trading volume."""
         logger.info(f"Running Query 2: Top {days}-Day Volume Leaders")
 
@@ -228,7 +246,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_3_top_gainers_losers(self, days: int = 7) -> pd.DataFrame:
+    def query_3_top_gainers_losers(self, days: int = 7) -> pl.DataFrame:
         """Query 3: Top gainers and losers."""
         logger.info(f"Running Query 3: Top {days}-Day Gainers & Losers")
 
@@ -265,7 +283,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_4_cross_market_comparison(self, ticker: str) -> pd.DataFrame:
+    def query_4_cross_market_comparison(self, ticker: str) -> pl.DataFrame:
         """Query 4: Compare same ticker across markets (if available)."""
         logger.info(f"Running Query 4: Cross-Market Comparison for {ticker}")
 
@@ -284,7 +302,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_5_moving_averages(self, ticker: str, ma_days: int = 20) -> pd.DataFrame:
+    def query_5_moving_averages(self, ticker: str, ma_days: int = 20) -> pl.DataFrame:
         """Query 5: Moving averages for a stock."""
         logger.info(f"Running Query 5: {ma_days}-Day Moving Average for {ticker}")
 
@@ -317,7 +335,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_6_volatility_analysis(self, days: int = 30) -> pd.DataFrame:
+    def query_6_volatility_analysis(self, days: int = 30) -> pl.DataFrame:
         """Query 6: Most volatile stocks."""
         logger.info(f"Running Query 6: {days}-Day Volatility Analysis")
 
@@ -361,7 +379,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_7_market_summary_stats(self) -> pd.DataFrame:
+    def query_7_market_summary_stats(self) -> pl.DataFrame:
         """Query 7: Summary statistics by market."""
         logger.info("Running Query 7: Market Summary Statistics")
 
@@ -390,7 +408,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_8_price_range_analysis(self, days: int = 30) -> pd.DataFrame:
+    def query_8_price_range_analysis(self, days: int = 30) -> pl.DataFrame:
         """Query 8: Price range analysis (52-week high/low)."""
         logger.info(f"Running Query 8: {days}-Day Price Range Analysis")
 
@@ -462,174 +480,3 @@ def benchmark_queries(db: EquityDataDB) -> dict[str, float]:
             benchmarks[name] = -1
 
     return benchmarks
-
-
-# =============================================================================
-# CLI Interface
-# =============================================================================
-
-
-def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="DuckDB query examples for equity EOD data",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Available Queries:
-  latest_summary      Latest data summary by market
-  top_volume          Top stocks by volume (last N days)
-  gainers_losers      Top gainers and losers
-  volatility          Most volatile stocks
-  market_stats        Market summary statistics
-  price_range         Price range analysis
-  benchmark           Run performance benchmarks
-  all                 Run all queries
-
-Examples:
-  # Run all queries
-  uv run equity query
-
-  # Run specific query
-  uv run equity query --query top_volume
-
-  # Query with parameters
-  uv run equity query --query gainers_losers --days 14
-
-  # Export results to CSV
-  uv run equity query --query top_volume --output results.csv
-
-  # Benchmark performance
-  uv run equity query --query benchmark
-        """,
-    )
-
-    parser.add_argument(
-        "--query",
-        "-q",
-        type=str,
-        default="all",
-        help="Query name to run (default: all)",
-    )
-
-    parser.add_argument(
-        "--ticker",
-        "-t",
-        type=str,
-        help="Ticker symbol for ticker-specific queries",
-    )
-
-    parser.add_argument(
-        "--days",
-        "-d",
-        type=int,
-        default=7,
-        help="Number of days for rolling calculations (default: 7)",
-    )
-
-    parser.add_argument(
-        "--output",
-        "-o",
-        type=str,
-        help="Output CSV file path",
-    )
-
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose logging",
-    )
-
-    parser.add_argument(
-        "--db-path",
-        type=str,
-        default=":memory:",
-        help="DuckDB database path (default: :memory:)",
-    )
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Main entry point."""
-    args = parse_arguments()
-
-    # Setup logging
-    log_level = "DEBUG" if args.verbose else "INFO"
-    logger = setup_logging(__name__, level=log_level)
-
-    try:
-        # Initialize database connection
-        logger.info(f"Connecting to DuckDB: {args.db_path}")
-        db = EquityDataDB(db_path=args.db_path)
-
-        # Initialize queries
-        queries = QueryExamples(db)
-
-        # Map query names to functions
-        query_map = {
-            "latest_summary": lambda: queries.query_1_latest_data_summary(),
-            "top_volume": lambda: queries.query_2_top_volume_stocks(args.days),
-            "gainers_losers": lambda: queries.query_3_top_gainers_losers(args.days),
-            "cross_market": lambda: queries.query_4_cross_market_comparison(args.ticker) if args.ticker else pd.DataFrame(),
-            "moving_avg": lambda: queries.query_5_moving_averages(args.ticker, args.days) if args.ticker else pd.DataFrame(),
-            "volatility": lambda: queries.query_6_volatility_analysis(args.days),
-            "market_stats": lambda: queries.query_7_market_summary_stats(),
-            "price_range": lambda: queries.query_8_price_range_analysis(args.days),
-        }
-
-        # Execute query
-        if args.query == "benchmark":
-            results = benchmark_queries(db)
-            print("\n" + "=" * 60)
-            print("Performance Benchmarks")
-            print("=" * 60)
-            for name, elapsed in results.items():
-                status = f"{elapsed:.3f}s" if elapsed > 0 else "FAILED"
-                print(f"  {name:20s}: {status}")
-
-        elif args.query == "all":
-            # Run all queries
-            for name, query_func in query_map.items():
-                print(f"\n{'=' * 60}")
-                print(f"Query: {name}")
-                print(f"{'=' * 60}")
-
-                df = query_func()
-                if not df.empty:
-                    print(df.to_string(index=False))
-                else:
-                    print("No results or missing parameters")
-
-        else:
-            # Run specific query
-            if args.query not in query_map:
-                logger.error(f"Unknown query: {args.query}")
-                logger.error(f"Available queries: {', '.join(query_map.keys())}")
-                sys.exit(1)
-
-            df = query_map[args.query]()
-
-            if df.empty:
-                logger.warning("No results returned")
-                if args.query in ["cross_market", "moving_avg"] and not args.ticker:
-                    logger.error("This query requires --ticker parameter")
-                    sys.exit(1)
-            else:
-                print(f"\n{'=' * 60}")
-                print(f"Query: {args.query}")
-                print(f"{'=' * 60}\n")
-                print(df.to_string(index=False))
-
-                # Export to CSV if requested
-                if args.output:
-                    df.to_csv(args.output, index=False)
-                    logger.info(f"✅ Results exported to {args.output}")
-
-    except Exception as e:
-        logger.error(f"Query execution failed: {e}", exc_info=True)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()

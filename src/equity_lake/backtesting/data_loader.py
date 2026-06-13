@@ -1,29 +1,10 @@
-"""
-Data loader for backtesting strategies.
-
-This module provides efficient data loading from DuckDB and Parquet files
-for backtesting, with support for caching and multi-market queries.
-
-Usage:
-    from equity_lake.backtesting import BacktestDataLoader
-    from datetime import date
-
-    loader = BacktestDataLoader()
-    data = loader.load(
-        tickers=["AAPL", "MSFT", "GOOGL"],
-        start_date=date(2020, 1, 1),
-        end_date=date(2024, 12, 31),
-        markets=["us"]
-    )
-"""
-
 from __future__ import annotations
 
 from datetime import date
 from typing import Any, Self
 
 import duckdb
-import pandas as pd
+import polars as pl
 import structlog
 from joblib import Memory
 
@@ -38,37 +19,11 @@ from equity_lake.core.paths import (
 
 logger = structlog.get_logger(__name__)
 
-# Cache directory for joblib
 CACHE_DIR = LOGS_DIR / "backtest_cache"
 memory = Memory(CACHE_DIR, verbose=0)
 
 
 class BacktestDataLoader:
-    """
-    Load and prepare data for backtesting strategies.
-
-    This class provides efficient loading of OHLCV data from Hive-partitioned
-    Parquet files, with support for:
-    - Multi-market queries (US, CN, HK/SG)
-    - Data caching for performance
-    - Wide-format pivot for VectorBT compatibility
-    - Missing data handling
-
-    Attributes:
-        conn: DuckDB connection
-        cache_enabled: Whether to use caching
-
-    Example:
-        >>> loader = BacktestDataLoader()
-        >>> data = loader.load(
-        ...     tickers=["AAPL", "MSFT"],
-        ...     start_date=date(2020, 1, 1),
-        ...     end_date=date(2024, 12, 31)
-        ... )
-        >>> print(data.head())
-    """
-
-    # Market directory mappings
     MARKET_DIRS = {
         "us": US_EQUITY_DIR,
         "cn": CN_ASHARE_DIR,
@@ -82,13 +37,6 @@ class BacktestDataLoader:
         db_path: str = ":memory:",
         cache_enabled: bool = True,
     ):
-        """
-        Initialize the data loader.
-
-        Args:
-            db_path: DuckDB database path (default: :memory:)
-            cache_enabled: Enable joblib caching (default: True)
-        """
         self.db_path = db_path
         self.cache_enabled = cache_enabled
         self.conn = duckdb.connect(db_path)
@@ -101,7 +49,6 @@ class BacktestDataLoader:
         )
 
     def _setup_views(self) -> None:
-        """Create DuckDB views for each market."""
         from deltalake import DeltaTable
 
         logger.debug("Setting up market views...")
@@ -154,39 +101,11 @@ class BacktestDataLoader:
         end_date: date,
         markets: list[str] | None = None,
         columns: list[str] | None = None,
-        wide_format: bool = True,
         fill_method: str = "ffill",
-    ) -> pd.DataFrame:
-        """
-        Load OHLCV data for backtesting.
-
-        Args:
-            tickers: List of ticker symbols to load
-            start_date: Start date (inclusive)
-            end_date: End date (inclusive)
-            markets: List of markets to query (default: all available)
-            columns: Columns to load (default: all OHLCV columns)
-            wide_format: Return wide format (tickers as columns)
-            fill_method: Method to fill missing data ('ffill', 'bfill', or None)
-
-        Returns:
-            DataFrame with price data. If wide_format=True, returns
-            wide-format DataFrame with tickers as columns (for VectorBT).
-            If wide_format=False, returns long-format DataFrame.
-
-        Example:
-            >>> data = loader.load(
-            ...     tickers=["AAPL", "MSFT"],
-            ...     start_date=date(2020, 1, 1),
-            ...     end_date=date(2024, 12, 31)
-            ... )
-            >>> print(data.shape)
-            (1258, 2)  # 1258 trading days, 2 tickers
-        """
+    ) -> pl.DataFrame:
         if markets is None:
             markets = list(self.MARKET_DIRS.keys())
 
-        # Default columns to load
         if columns is None:
             columns = [
                 "ticker",
@@ -206,30 +125,19 @@ class BacktestDataLoader:
             markets=markets,
         )
 
-        # Build query
         data = self._query_data(tickers, start_date, end_date, markets, columns)
 
-        if data.empty:
+        if data.is_empty():
             logger.warning("No data found for query", tickers=tickers)
-            return pd.DataFrame()
+            return pl.DataFrame()
 
-        # Data cleaning
         data = self._clean_data(data, fill_method)
 
-        # Convert to wide format if requested
-        if wide_format:
-            data = self._to_wide_format(data)
-            logger.debug(
-                "Converted to wide format",
-                shape=data.shape,
-                date_range=f"{data.index.min()} to {data.index.max()}",
-            )
-        else:
-            logger.debug(
-                "Returned long format",
-                shape=data.shape,
-                tickers=data["ticker"].nunique(),
-            )
+        logger.debug(
+            "Returned long format",
+            shape=data.shape,
+            tickers=data["ticker"].n_unique(),
+        )
 
         return data
 
@@ -240,16 +148,12 @@ class BacktestDataLoader:
         end_date: date,
         markets: list[str],
         columns: list[str],
-    ) -> pd.DataFrame:
-        """Execute DuckDB query to load data."""
-
-        # Build UNION ALL query for selected markets
+    ) -> pl.DataFrame:
         union_queries = []
         for market in markets:
             view_name = f"backtest_{market}"
             data_dir = self.MARKET_DIRS.get(market)
 
-            # Validate directory exists for JPX/KRX markets
             if market in ["jpx", "krx"] and (not data_dir or not data_dir.exists()):
                 logger.warning(
                     "Market data directory not found",
@@ -267,7 +171,9 @@ class BacktestDataLoader:
                 requested_markets=markets,
                 available_markets=[m for m, d in self.MARKET_DIRS.items() if d.exists()],
             )
-            return pd.DataFrame()
+            return pl.DataFrame()
+
+        import pandas as pd
 
         self.conn.register("selected_tickers", pd.DataFrame({"ticker": tickers}))
         sql = """
@@ -285,81 +191,38 @@ class BacktestDataLoader:
         logger.debug("Executing query", sql_preview=sql[:200] + "...")
 
         try:
-            data = self.conn.execute(sql, [start_date, end_date]).fetch_arrow_table()
-            return data.to_pandas()
+            arrow_tbl = self.conn.execute(sql, [start_date, end_date]).fetch_arrow_table()
+            return pl.from_arrow(arrow_tbl)
         except Exception as e:
             logger.error("Query failed", error=str(e))
-            return pd.DataFrame()
+            return pl.DataFrame()
 
     def _clean_data(
         self,
-        data: pd.DataFrame,
+        data: pl.DataFrame,
         fill_method: str | None = "ffill",
-    ) -> pd.DataFrame:
-        """
-        Clean and prepare data.
+    ) -> pl.DataFrame:
+        if "date" in data.columns:
+            data = data.with_columns(pl.col("date").cast(pl.Date))
 
-        Args:
-            data: Raw data from query
-            fill_method: Method to fill missing values
+        data = data.unique(subset=["ticker", "date"], keep="last")
+        data = data.sort(["ticker", "date"])
 
-        Returns:
-            Cleaned DataFrame
-        """
-        # Ensure date column is datetime
-        data["date"] = pd.to_datetime(data["date"])
-
-        # Remove duplicates (keep last)
-        duplicates = data.duplicated(subset=["ticker", "date"], keep="last")
-        if duplicates.sum() > 0:
-            logger.warning("Found duplicate entries, removing", count=duplicates.sum())
-            data = data[~duplicates]
-
-        # Sort by ticker and date
-        data = data.sort_values(["ticker", "date"])
-
-        # Fill missing values if requested
         if fill_method:
-            value_columns = [column for column in data.columns if column not in {"ticker", "date"}]
-            if fill_method == "ffill":
-                data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].ffill()
-            elif fill_method == "bfill":
-                data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].bfill()
-            if fill_method == "ffill":
-                data[value_columns] = data.groupby("ticker", group_keys=False)[value_columns].bfill()
+            price_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in data.columns]
+            if price_cols:
+                if fill_method == "ffill":
+                    data = data.with_columns([pl.col(c).forward_fill().over("ticker") for c in price_cols])
+                elif fill_method == "bfill":
+                    data = data.with_columns([pl.col(c).backward_fill().over("ticker") for c in price_cols])
 
-        # Drop rows with all NaN prices
         price_cols = [c for c in ["open", "high", "low", "close"] if c in data.columns]
-        data = data.dropna(subset=price_cols, how="all")
+        if price_cols:
+            data = data.filter(~pl.all_horizontal([pl.col(c).is_null() for c in price_cols]))
 
         return data
 
-    def _to_wide_format(self, data: pd.DataFrame) -> pd.DataFrame:
-        """
-        Convert long-format data to wide format.
-
-        Transforms data from:
-            ticker | date       | open  | close | volume
-            AAPL   | 2020-01-01 | 75.0  | 76.0  | 1000000
-            MSFT   | 2020-01-01 | 150.0 | 151.0 | 900000
-
-        To:
-            date       | (AAPL, close) | (AAPL, volume) | (MSFT, close) | ...
-            2020-01-01 | 76.0          | 1000000        | 151.0         | ...
-
-        Args:
-            data: Long-format DataFrame
-
-        Returns:
-            Wide-format DataFrame with MultiIndex columns
-        """
-        value_columns = [column for column in ["open", "high", "low", "close", "volume"] if column in data.columns]
-        wide_df = data.set_index(["date", "ticker"])[value_columns].unstack("ticker")
-        wide_df = wide_df.swaplevel(0, 1, axis=1).sort_index(axis=1)
-        wide_df.columns.names = ["ticker", "field"]
-        return wide_df
-
-    @memory.cache  # type: ignore[untyped-decorator]
+    @memory.cache  # type: ignore[misc]
     def load_cached(
         self,
         tickers: tuple[str, ...],
@@ -367,39 +230,13 @@ class BacktestDataLoader:
         end_date: str,
         markets: tuple[str, ...],
         columns: tuple[str, ...],
-    ) -> pd.DataFrame:
-        """
-        Load data with joblib caching.
-
-        This method caches the query results to disk, making subsequent
-        calls with the same parameters much faster.
-
-        Args:
-            tickers: Tuple of ticker symbols
-            start_date: Start date string (YYYY-MM-DD)
-            end_date: End date string (YYYY-MM-DD)
-            markets: Tuple of markets
-            columns: Tuple of columns to load
-
-        Returns:
-            Wide-format DataFrame
-
-        Example:
-            >>> data = loader.load_cached(
-            ...     tickers=("AAPL", "MSFT"),
-            ...     start_date="2020-01-01",
-            ...     end_date="2024-12-31",
-            ...     markets=("us",),
-            ...     columns=("ticker", "date", "close", "volume")
-            ... )
-        """
+    ) -> pl.DataFrame:
         return self.load(
             tickers=list(tickers),
             start_date=date.fromisoformat(start_date),
             end_date=date.fromisoformat(end_date),
             markets=list(markets),
             columns=list(columns),
-            wide_format=True,
         )
 
     def get_available_tickers(
@@ -407,20 +244,6 @@ class BacktestDataLoader:
         market: str,
         as_of_date: date | None = None,
     ) -> list[str]:
-        """
-        Get list of available tickers for a market.
-
-        Args:
-            market: Market label ('us', 'cn', or 'hk_sg')
-            as_of_date: Date to check availability (default: latest)
-
-        Returns:
-            List of ticker symbols
-
-        Example:
-            >>> tickers = loader.get_available_tickers("us")
-            >>> print(f"Available US tickers: {len(tickers)}")
-        """
         view_name = f"backtest_{market}"
 
         if as_of_date:
@@ -451,20 +274,6 @@ class BacktestDataLoader:
         market: str,
         ticker: str | None = None,
     ) -> tuple[date | None, date | None]:
-        """
-        Get available date range for a market or ticker.
-
-        Args:
-            market: Market label ('us', 'cn', or 'hk_sg')
-            ticker: Optional ticker to check (default: all tickers in market)
-
-        Returns:
-            Tuple of (min_date, max_date) - either can be None if not found
-
-        Example:
-            >>> min_date, max_date = loader.get_date_range("us", "AAPL")
-            >>> print(f"AAPL data: {min_date} to {max_date}")
-        """
         view_name = f"backtest_{market}"
 
         if ticker:
@@ -498,21 +307,17 @@ class BacktestDataLoader:
         return (None, None)
 
     def clear_cache(self) -> None:
-        """Clear the joblib cache."""
         memory.clear()
         logger.info("Cache cleared")
 
     def close(self) -> None:
-        """Close the DuckDB connection."""
         self.conn.close()
         logger.debug("DuckDB connection closed")
 
     def __enter__(self) -> Self:
-        """Context manager entry."""
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Context manager exit."""
         self.close()
 
 

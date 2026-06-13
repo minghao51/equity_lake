@@ -59,7 +59,6 @@ def fetch_markets_parallel(
 
 
 def summarize_results(results: dict[str, FetchResult]) -> dict[str, Any]:
-    """Summarize parallel fetch results."""
     total = len(results)
     succeeded = sum(1 for r in results.values() if r.success)
     return {
@@ -68,3 +67,36 @@ def summarize_results(results: dict[str, FetchResult]) -> dict[str, Any]:
         "failed": total - succeeded,
         "markets": list(results.keys()),
     }
+
+
+def fetch_items_parallel(
+    items: list[str],
+    work_func: Callable[[str, date], list[Any]],
+    trading_date: date,
+    max_workers: int = 4,
+    rate_limit_seconds: float = 0.0,
+) -> list[Any]:
+    if max_workers <= 1 or len(items) <= 1:
+        results: list[Any] = []
+        for i, item in enumerate(items):
+            if rate_limit_seconds > 0 and i > 0:
+                import time
+
+                time.sleep(rate_limit_seconds)
+            try:
+                results.extend(work_func(item, trading_date))
+            except Exception as exc:
+                logger.error("fetch_item_failed", item=item, error=str(exc))
+        return results
+
+    workers = min(max_workers, len(items))
+    all_results: list[Any] = []
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_to_item = {executor.submit(work_func, item, trading_date): item for item in items}
+        for future in as_completed(future_to_item):
+            item = future_to_item[future]
+            try:
+                all_results.extend(future.result())
+            except Exception as exc:
+                logger.error("fetch_item_failed", item=item, error=str(exc))
+    return all_results

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import duckdb
-import pandas as pd
+import polars as pl
 
 from equity_lake.core.config import get_settings
 from equity_lake.core.paths import DATA_DIR, JPX_EQUITY_DIR, KRX_EQUITY_DIR, LAKE_DIR, LOGS_DIR
@@ -150,10 +150,10 @@ class DashboardExporter:
         update_history_path = DATA_DIR / "update_history.parquet"
         update_rows: list[dict[str, Any]] = []
         if update_history_path.exists():
-            frame = pd.read_parquet(update_history_path)
-            if not frame.empty:
-                recent = frame.sort_values("updated_at", ascending=False).head(20)
-                update_rows = recent.to_dict(orient="records")
+            frame = pl.read_parquet(update_history_path)
+            if not frame.is_empty():
+                recent = frame.sort("updated_at", descending=True).head(20)
+                update_rows = recent.to_dicts()
 
         pipeline_results = []
         for result_path in sorted(LOGS_DIR.glob("pipeline_results_*.json"), reverse=True)[:10]:

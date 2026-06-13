@@ -1,18 +1,17 @@
 """Finnhub news data fetcher for US equities."""
 
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
-import pandas as pd
+import polars as pl
 import requests
 import structlog
 
 from equity_lake.core.schemas import NEWS_COLUMNS
+from equity_lake.ingestion.parallel import fetch_items_parallel
 from equity_lake.sentiment import SentimentAnalyzer
-from equity_lake.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardize_columns
 
 logger = structlog.get_logger()
 
@@ -92,7 +91,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             max_workers=max_workers,
         )
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """
         Fetch news for all tickers on the given date.
 
@@ -104,7 +103,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         """
         if not self.tickers:
             logger.warning("No tickers configured for news fetching")
-            return pd.DataFrame()
+            return _empty_frame()
 
         logger.info(
             "Fetching news for %s tickers on %s (workers=%s)",
@@ -113,42 +112,43 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             self.max_workers,
         )
 
-        all_articles = self._fetch_parallel(trading_date) if self.max_workers > 1 else self._fetch_sequential(trading_date)
+        all_articles = fetch_items_parallel(
+            self.tickers,
+            self._fetch_news_for_ticker,
+            trading_date,
+            max_workers=self.max_workers,
+            rate_limit_seconds=1.0,
+        )
 
         if not all_articles:
             logger.warning("No articles fetched for any ticker")
-            return pd.DataFrame()
+            return _empty_frame()
 
         logger.info("Fetched %s total articles", len(all_articles))
 
-        # Convert to DataFrame
-        df = pd.DataFrame(all_articles)
+        df = pl.DataFrame(all_articles, orient="row")
 
-        # Analyze sentiment if analyzer available
-        if self.sentiment_analyzer and not df.empty:
+        if self.sentiment_analyzer and not df.is_empty():
             df = self._add_sentiment_analysis(df)
 
-        # Ensure all columns present
         for col in NEWS_COLUMNS:
             if col not in df.columns:
                 if col == "category":
-                    df[col] = "general"
+                    df = df.with_columns(pl.lit("general").alias(col))
                 elif col == "relevance_score":
-                    df[col] = 1.0
+                    df = df.with_columns(pl.lit(1.0).alias(col))
                 else:
-                    df[col] = None
+                    df = df.with_columns(pl.lit(None).alias(col))
 
-        # Filter by minimum relevance
         if self.min_relevance > 0:
-            df = df[df["relevance_score"] >= self.min_relevance]
+            df = df.filter(pl.col("relevance_score") >= self.min_relevance)
             logger.info(
                 "Filtered to %s articles with relevance >= %.2f",
-                len(df),
+                df.height,
                 self.min_relevance,
             )
 
-        # Select only NEWS_COLUMNS
-        df = df[NEWS_COLUMNS]
+        df = df.select([col for col in NEWS_COLUMNS if col in df.columns])
 
         logger.info(
             "Returning %s articles for %s",
@@ -156,95 +156,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             trading_date,
         )
 
-        return df
-
-    def _fetch_sequential(self, trading_date: date) -> list[dict[str, Any]]:
-        """
-        Fetch news sequentially (one ticker at a time).
-
-        Args:
-            trading_date: Date to fetch news for
-
-        Returns:
-            List of article dictionaries
-        """
-        all_articles = []
-
-        for i, ticker in enumerate(self.tickers):
-            try:
-                ticker_num = i + 1
-                total = len(self.tickers)
-                logger.debug(
-                    "Fetching news for %s (%s/%s)",
-                    ticker,
-                    ticker_num,
-                    total,
-                )
-
-                # Rate limiting: Finnhub allows 60 calls/minute
-                # Add 1 second delay between tickers to be safe
-                if i > 0:
-                    time.sleep(1.0)
-
-                articles = self._fetch_news_for_ticker(ticker, trading_date)
-                all_articles.extend(articles)
-
-            except Exception as exc:
-                logger.error("Failed to fetch news for %s: %s", ticker, exc)
-                continue
-
-        return all_articles
-
-    def _fetch_parallel(self, trading_date: date) -> list[dict[str, Any]]:
-        """
-        Fetch news in parallel using ThreadPoolExecutor.
-
-        Args:
-            trading_date: Date to fetch news for
-
-        Returns:
-            List of article dictionaries
-        """
-        all_articles = []
-
-        # Limit workers to number of tickers
-        workers = min(self.max_workers, len(self.tickers))
-
-        logger.info(
-            "Using parallel fetching with %s workers",
-            workers,
-        )
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            # Submit all tasks
-            future_to_ticker = {
-                executor.submit(
-                    self._fetch_news_for_ticker,
-                    ticker,
-                    trading_date,
-                ): ticker
-                for ticker in self.tickers
-            }
-
-            # Process completed tasks
-            for future in as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
-                try:
-                    articles = future.result()
-                    all_articles.extend(articles)
-                    logger.debug(
-                        "Fetched %s articles for %s",
-                        len(articles),
-                        ticker,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Failed to fetch news for %s: %s",
-                        ticker,
-                        exc,
-                    )
-
-        return all_articles
+        return standardize_columns(df, columns=NEWS_COLUMNS, date_columns=("date",), datetime_columns=("datetime",))
 
     def _fetch_news_for_ticker(
         self,
@@ -285,7 +197,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             logger.error("API request failed for %s: %s", ticker, exc)
             return []
 
-        data = (response.json() if hasattr(response, "json") else []) if not isinstance(response, pd.DataFrame) else []
+        data = response.json() if hasattr(response, "json") else []
 
         if not isinstance(data, list):
             logger.warning("Unexpected response format for %s: %s", ticker, type(data))
@@ -322,7 +234,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         # Extract datetime
         datetime_str = article.get("datetime", 0)
         try:
-            dt = datetime.fromtimestamp(datetime_str) if isinstance(datetime_str, int) else pd.to_datetime(datetime_str)
+            dt = datetime.fromtimestamp(datetime_str) if isinstance(datetime_str, int) else datetime.fromisoformat(str(datetime_str))
         except Exception:
             dt = datetime.now()
 
@@ -340,25 +252,15 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             "relevance_score": 1.0,  # Finnhub doesn't provide relevance
         }
 
-    def _add_sentiment_analysis(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Add sentiment analysis to news DataFrame.
-
-        Args:
-            df: DataFrame with headline column
-
-        Returns:
-            DataFrame with sentiment columns added
-        """
-        if df.empty or "headline" not in df.columns:
+    def _add_sentiment_analysis(self, df: pl.DataFrame) -> pl.DataFrame:
+        """Add sentiment analysis to news DataFrame."""
+        if df.is_empty() or "headline" not in df.columns:
             return df
 
-        logger.info("Analyzing sentiment for %s articles...", len(df))
+        logger.info("Analyzing sentiment for %s articles...", df.height)
 
-        # Analyze headlines (more reliable than summaries)
-        headlines = df["headline"].fillna("").tolist()
+        headlines = df.get_column("headline").fill_null("").to_list()
 
-        # Batch analyze
         sentiment_results = []
         for headline in headlines:
             result = {"compound": 0.0, "label": "neutral"} if self.sentiment_analyzer is None else self.sentiment_analyzer.analyze(headline)
@@ -369,16 +271,16 @@ class FinnhubNewsFetcher(MarketDataFetcher):
                 }
             )
 
-        # Add to DataFrame
-        sentiment_df = pd.DataFrame(sentiment_results)
-        df["sentiment_score"] = sentiment_df["sentiment_score"].values
-        df["sentiment_label"] = sentiment_df["sentiment_label"].values
+        sentiment_df = pl.DataFrame(sentiment_results)
+        df = df.with_columns(
+            sentiment_df.get_column("sentiment_score").alias("sentiment_score"),
+            sentiment_df.get_column("sentiment_label").alias("sentiment_label"),
+        )
 
-        # Log distribution
-        label_counts = df["sentiment_label"].value_counts()
+        label_counts = df.group_by("sentiment_label").agg(pl.len().alias("count")).rows(named=True)
         logger.info(
             "Sentiment distribution: %s",
-            dict(label_counts),
+            {row["sentiment_label"]: row["count"] for row in label_counts},
         )
 
         return df

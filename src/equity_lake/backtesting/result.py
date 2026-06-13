@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Any
 
-import pandas as pd
+import polars as pl
 
 
 class BacktestResult:
@@ -15,7 +15,7 @@ class BacktestResult:
         end_date: date,
         initial_cash: float,
         final_cash: float,
-        equity_curve: pd.Series,
+        equity_curve: pl.Series,
         trades: list[dict[str, Any]],
         metrics: dict[str, float],
     ):

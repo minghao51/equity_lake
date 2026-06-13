@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
-import pandas as pd
+import polars as pl
 
 from equity_lake.core.paths import DATA_DIR
 
@@ -17,45 +17,34 @@ class UpdateHistory:
     def __init__(self, path: Path | None = None):
         self.path = path or (DATA_DIR / "update_history.parquet")
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._history: pd.DataFrame | None = None
+        self._history: pl.DataFrame | None = None
 
     @property
-    def history(self) -> pd.DataFrame:
+    def history(self) -> pl.DataFrame:
         if self._history is None:
             self._history = self._load()
         return self._history
 
-    def _load(self) -> pd.DataFrame:
+    def _load(self) -> pl.DataFrame:
         if self.path.exists():
-            return pd.read_parquet(self.path)
-        return pd.DataFrame(columns=["source", "symbol", "updated_at", "records"])
+            return pl.read_parquet(self.path)
+        return pl.DataFrame(schema={"source": pl.Utf8, "symbol": pl.Utf8, "updated_at": pl.Datetime, "records": pl.Int64})
 
     def get_last_update(self, source: str, symbol: str | None = None) -> datetime | None:
-        frame = self.history
-        mask = frame["source"] == source
+        subset = self.history.filter(pl.col("source") == source)
         if symbol is not None:
-            mask &= frame["symbol"] == symbol
-        subset = frame[mask]
-        if subset.empty:
+            subset = subset.filter(pl.col("symbol") == symbol)
+        if subset.is_empty():
             return None
-        return cast(datetime, pd.to_datetime(subset["updated_at"].max()).to_pydatetime())
+        latest = subset["updated_at"].max()
+        if latest is None:
+            return None
+        return cast(datetime, latest)
 
     def record(self, source: str, symbol: str, records: int = 0) -> None:
-        new_row = pd.DataFrame(
-            [
-                {
-                    "source": source,
-                    "symbol": symbol,
-                    "updated_at": datetime.now(UTC),
-                    "records": records,
-                }
-            ]
-        )
-        if self.history.empty:
-            self._history = new_row
-        else:
-            self._history = pd.concat([self.history, new_row], ignore_index=True)
-        self._history.to_parquet(self.path, index=False)
+        new_row = pl.DataFrame([{"source": source, "symbol": symbol, "updated_at": datetime.now(UTC), "records": records}])
+        self._history = new_row if self.history.is_empty() else pl.concat([self.history, new_row], how="vertical_relaxed")
+        self._history.write_parquet(self.path)
 
 
 __all__ = ["UpdateHistory"]

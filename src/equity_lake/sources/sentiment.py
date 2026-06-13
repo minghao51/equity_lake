@@ -1,16 +1,15 @@
 """Finnhub social sentiment fetcher for US equities."""
 
 import os
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Any
 
-import pandas as pd
+import polars as pl
 import requests
 import structlog
 
 from equity_lake.core.schemas import SOCIAL_COLUMNS
+from equity_lake.ingestion.parallel import fetch_items_parallel
 from equity_lake.sources.base import MarketDataFetcher
 
 logger = structlog.get_logger()
@@ -68,7 +67,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
             max_workers=max_workers,
         )
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """
         Fetch social sentiment for all tickers on the given date.
 
@@ -80,7 +79,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         """
         if not self.tickers:
             logger.warning("No tickers configured for social sentiment fetching")
-            return pd.DataFrame()
+            return pl.DataFrame()
 
         logger.info(
             "Fetching social sentiment for %s tickers on %s (workers=%s)",
@@ -89,27 +88,29 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
             self.max_workers,
         )
 
-        all_metrics = self._fetch_parallel(trading_date) if self.max_workers > 1 else self._fetch_sequential(trading_date)
+        all_metrics = fetch_items_parallel(
+            self.tickers,
+            self._fetch_sentiment_for_ticker,
+            trading_date,
+            max_workers=self.max_workers,
+            rate_limit_seconds=1.0,
+        )
 
         if not all_metrics:
             logger.warning("No social sentiment metrics fetched for any ticker")
-            return pd.DataFrame()
+            return pl.DataFrame()
 
         logger.info("Fetched %s total social sentiment records", len(all_metrics))
 
         # Convert to DataFrame
-        df = pd.DataFrame(all_metrics)
+        df = pl.DataFrame(all_metrics)
 
         # Ensure all columns present
         for col in SOCIAL_COLUMNS:
             if col not in df.columns:
-                if col == "social_metric":
-                    df[col] = "mention_count"
-                else:
-                    df[col] = None
+                df = df.with_columns(pl.lit("mention_count").alias(col)) if col == "social_metric" else df.with_columns(pl.lit(None).alias(col))
 
-        # Select only SOCIAL_COLUMNS
-        df = df[SOCIAL_COLUMNS]
+        df = df.select(SOCIAL_COLUMNS)
 
         logger.info(
             "Returning %s social sentiment records for %s",
@@ -118,94 +119,6 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         )
 
         return df
-
-    def _fetch_sequential(self, trading_date: date) -> list[dict[str, Any]]:
-        """
-        Fetch social sentiment sequentially (one ticker at a time).
-
-        Args:
-            trading_date: Date to fetch sentiment for
-
-        Returns:
-            List of sentiment metric dictionaries
-        """
-        all_metrics = []
-
-        for i, ticker in enumerate(self.tickers):
-            try:
-                ticker_num = i + 1
-                total = len(self.tickers)
-                logger.debug(
-                    "Fetching social sentiment for %s (%s/%s)",
-                    ticker,
-                    ticker_num,
-                    total,
-                )
-
-                # Rate limiting: Finnhub allows 60 calls/minute
-                # Add 1 second delay between tickers to be safe
-                if i > 0:
-                    time.sleep(1.0)
-
-                metrics = self._fetch_sentiment_for_ticker(ticker, trading_date)
-                all_metrics.extend(metrics)
-
-            except Exception as exc:
-                logger.error("Failed to fetch social sentiment for %s: %s", ticker, exc)
-                continue
-
-        return all_metrics
-
-    def _fetch_parallel(self, trading_date: date) -> list[dict[str, Any]]:
-        """
-        Fetch social sentiment in parallel using ThreadPoolExecutor.
-
-        Args:
-            trading_date: Date to fetch sentiment for
-
-        Returns:
-            List of sentiment metric dictionaries
-        """
-        all_metrics = []
-
-        # Limit workers to number of tickers
-        workers = min(self.max_workers, len(self.tickers))
-
-        logger.info(
-            "Using parallel fetching with %s workers",
-            workers,
-        )
-
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            # Submit all tasks
-            future_to_ticker = {
-                executor.submit(
-                    self._fetch_sentiment_for_ticker,
-                    ticker,
-                    trading_date,
-                ): ticker
-                for ticker in self.tickers
-            }
-
-            # Process completed tasks
-            for future in as_completed(future_to_ticker):
-                ticker = future_to_ticker[future]
-                try:
-                    metrics = future.result()
-                    all_metrics.extend(metrics)
-                    logger.debug(
-                        "Fetched %s sentiment records for %s",
-                        len(metrics),
-                        ticker,
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Failed to fetch social sentiment for %s: %s",
-                        ticker,
-                        exc,
-                    )
-
-        return all_metrics
 
     def _fetch_sentiment_for_ticker(
         self,
@@ -295,7 +208,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         try:
             # Extract mention count
             mention_count = source_data.get("mention", 0)
-            if not isinstance(mention_count, (int, float)):
+            if not isinstance(mention_count, int | float):
                 mention_count = 0
 
             # Extract positive and negative scores

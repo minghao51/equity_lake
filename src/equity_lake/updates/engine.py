@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import cast
 
 import duckdb
-import pandas as pd
+import polars as pl
 from pydantic import BaseModel, Field
 
 from equity_lake.core.paths import LAKE_DIR
+from equity_lake.core.polars_utils import FrameLike, ensure_polars, frame_is_empty
 from equity_lake.ingestion.writers import write_to_partitioned_parquet
 from equity_lake.loaders import registry
 from equity_lake.sources.cn_hybrid import CNHybridFetcher
@@ -105,11 +106,11 @@ class UpdateEngine:
             if src.loader_name is not None:
                 loader = registry.create(src.loader_name, {})
                 result = loader.load([symbol], start_date, end_date + timedelta(days=1))
-                if not result.success or result.data is None or result.data.empty:
+                if not result.success or result.data is None or frame_is_empty(result.data):
                     errors.extend(result.errors or [f"{symbol}: no data returned"])
                     continue
                 total_records += self._write_result_frame(source, result.data)
-                self.history.record(source, symbol, records=len(result.data))
+                self.history.record(source, symbol, records=result.data.height)
                 continue
 
             if src.fetcher_class is None:
@@ -152,25 +153,26 @@ class UpdateEngine:
         current_date = start_date
         while current_date <= end_date:
             frame = fetcher.fetch(current_date)
-            if not frame.empty:
+            if not frame_is_empty(frame):
                 total_records += self._write_result_frame(source, frame)
             current_date += timedelta(days=1)
         return total_records
 
-    def _write_result_frame(self, source: str, result_df: pd.DataFrame) -> int:
+    def _write_result_frame(self, source: str, result_df: FrameLike) -> int:
         """Write fetched rows grouped by trading date."""
         src = SOURCES[source]
-        trading_dates = sorted({d.date() for d in result_df["date"]})
+        frame = ensure_polars(result_df)
+        trading_dates = sorted({value.date() if hasattr(value, "date") else value for value in frame["date"].to_list()})
         written_records = 0
         for trading_date in trading_dates:
-            slice_df = result_df[result_df["date"].dt.date == trading_date]
+            slice_df = frame.filter(pl.col("date") == trading_date)
             if write_to_partitioned_parquet(
                 slice_df,
                 src.dir_name,
                 trading_date,
                 validate_quality=self.validate_quality,
             ):
-                written_records += len(slice_df)
+                written_records += slice_df.height
         return written_records
 
     def needs_update(self, source: str, symbol: str | None = None) -> bool:

@@ -14,18 +14,35 @@ Usage:
 import argparse
 import json
 import sys
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import duckdb
-import pandas as pd
 import structlog
 
+from equity_lake.core.calendar import is_trading_day, market_now
 from equity_lake.core.config import get_settings
 from equity_lake.core.logging import setup_logging
 from equity_lake.core.paths import LAKE_DIR, LOGS_DIR
+from equity_lake.monitoring.alerting import Alerter, build_alerter
 
 logger = structlog.get_logger()
+
+_MARKET_DISPLAY = {
+    "us_equity": "US Equity",
+    "cn_ashare": "China A-Share",
+    "hk_sg_equity": "HK/SG Equity",
+}
+
+
+def _date_scalar(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, datetime):
+        return value.date()
+    return None
 
 
 class PipelineMonitor:
@@ -36,6 +53,7 @@ class PipelineMonitor:
         max_age_days: int = 2,
         null_threshold_pct: float = 5.0,
         verbose: bool = False,
+        alerter: Alerter | None = None,
     ):
         """
         Initialize pipeline monitor.
@@ -44,14 +62,27 @@ class PipelineMonitor:
             max_age_days: Maximum allowed data age in days
             null_threshold_pct: Max acceptable null percentage
             verbose: Enable verbose logging
+            alerter: Alert dispatcher (defaults to console)
         """
         self.max_age_days = max_age_days
         self.null_threshold_pct = null_threshold_pct
         self.verbose = verbose
+        self.alerter = alerter or build_alerter()
 
         self.conn = duckdb.connect(":memory:")
         self.alerts: list[str] = []
         self.metrics: dict = {}
+
+    @staticmethod
+    def _last_trading_day(market: str) -> date:
+        from datetime import timedelta
+
+        d = market_now(market)
+        for _ in range(10):
+            d -= timedelta(days=1)
+            if is_trading_day(market, d):
+                return d
+        return d
 
     # -------------------------------------------------------------------------
     # Health Checks
@@ -87,39 +118,39 @@ class PipelineMonitor:
         """
 
         try:
-            df = self.conn.execute(query).df()
-            today = date.today()
+            df = self.conn.execute(query).pl()
 
             fresh_markets = []
             stale_markets = []
 
-            for _, row in df.iterrows():
+            for row in df.iter_rows(named=True):
                 market = row["market"]
-                latest_date = row["latest_date"]
+                latest_date = _date_scalar(row["latest_date"])
                 date_count = row["date_count"]
 
-                if pd.isna(latest_date):
-                    self.alerts.append(f"❌ {market}: No data found")
+                if latest_date is None:
+                    self.alerts.append(f"\u274c {market}: No data found")
                     stale_markets.append(market)
                     continue
 
-                latest_date = pd.to_datetime(latest_date).date()
-                age_days = (today - latest_date).days
+                market_today = market_now(market)
+                is_today_trading = is_trading_day(market, market_today)
+                reference_date = market_today if is_today_trading else self._last_trading_day(market)
+                age_days = (reference_date - latest_date).days
 
-                status = "✅" if age_days <= self.max_age_days else "⚠️"
+                status = "\u2705" if age_days <= self.max_age_days else "\u26a0\ufe0f"
                 logger.info(f"{status} {market}: Latest data = {latest_date} ({age_days} days old, {date_count} dates total)")
 
                 if age_days > self.max_age_days:
-                    self.alerts.append(f"⚠️  {market} data is stale: {age_days} days old (latest: {latest_date})")
+                    self.alerts.append(f"\u26a0\ufe0f  {market} data is stale: {age_days} days old (latest: {latest_date})")
                     stale_markets.append(market)
                 else:
                     fresh_markets.append(market)
 
-            # Store metrics
             self.metrics["data_freshness"] = {
                 "fresh_markets": fresh_markets,
                 "stale_markets": stale_markets,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
             }
 
             return len(stale_markets) == 0
@@ -159,11 +190,11 @@ class PipelineMonitor:
         """
 
         try:
-            df = self.conn.execute(query).df()
+            df = self.conn.execute(query).pl()
 
             quality_issues = []
 
-            for _, row in df.iterrows():
+            for row in df.iter_rows(named=True):
                 market = row["market"]
                 total_rows = row["total_rows"]
 
@@ -189,7 +220,7 @@ class PipelineMonitor:
             self.metrics["data_quality"] = {
                 "issues_found": len(quality_issues),
                 "markets_with_issues": quality_issues,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
             }
 
             return len(quality_issues) == 0
@@ -249,7 +280,7 @@ class PipelineMonitor:
         self.metrics["pipeline_logs"] = {
             "error_count": total_errors,
             "warning_count": total_warnings,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         }
 
         return total_errors == 0
@@ -280,17 +311,20 @@ class PipelineMonitor:
         """
 
         try:
-            df = self.conn.execute(query).df()
+            df = self.conn.execute(query).pl()
 
-            if df.empty or df["total_rows"].iloc[0] == 0:
+            if df.is_empty() or int(df["total_rows"][0]) == 0:
                 self.alerts.append("⚠️  No features in last 7 days")
                 return False
 
-            total_rows = df["total_rows"].iloc[0]
-            unique_tickers = df["unique_tickers"].iloc[0]
-            latest_date = df["latest_date"].iloc[0]
+            total_rows = int(df["total_rows"][0])
+            unique_tickers = int(df["unique_tickers"][0])
+            latest_date = _date_scalar(df["latest_date"][0])
+            if latest_date is None:
+                self.alerts.append("⚠️  Feature store latest date is missing")
+                return False
 
-            age_days = (date.today() - pd.to_datetime(latest_date).date()).days
+            age_days = (market_now("us_equity") - latest_date).days
 
             if age_days > self.max_age_days:
                 self.alerts.append(f"⚠️  Features are stale: {age_days} days old (latest: {latest_date})")
@@ -302,7 +336,7 @@ class PipelineMonitor:
                 "total_rows": int(total_rows),
                 "unique_tickers": int(unique_tickers),
                 "latest_date": str(latest_date),
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
             }
 
             return True
@@ -348,6 +382,8 @@ class PipelineMonitor:
             for alert in self.alerts:
                 print(f"  {alert}")
 
+            self.alerter.send_alert(self.alerts, severity="warning" if all_healthy else "error", metrics=self.metrics)
+
         # Summary
         print("\n" + "=" * 70)
         if all_healthy:
@@ -363,7 +399,7 @@ class PipelineMonitor:
         report = {
             "alerts": self.alerts,
             "metrics": self.metrics,
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(tz=UTC).isoformat(),
         }
 
         with open(output_file, "w") as f:
@@ -415,7 +451,7 @@ def main() -> None:
 
     # Setup logging
     log_level = "DEBUG" if args.verbose else "INFO"
-    setup_logging(__name__, level=log_level, log_file="monitor_pipeline.log")
+    setup_logging(level=log_level, log_file=Path("monitor_pipeline.log"))
 
     # Run health check
     monitor = PipelineMonitor(

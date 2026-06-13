@@ -1,168 +1,97 @@
-"""
-Performance attribution for backtesting.
-
-This module provides performance attribution analysis across
-different dimensions (time, sector, trade type).
-"""
-
-import pandas as pd
+import polars as pl
 import structlog
 
 logger = structlog.get_logger(__name__)
 
 
 class AttributionAnalyzer:
-    """
-    Performance attribution analyzer.
-
-    Analyzes portfolio performance across different dimensions:
-    - Time-based (monthly, quarterly, yearly)
-    - Market regime (bull vs bear)
-    - Trade type (winners vs losers)
-
-    Example:
-        >>> analyzer = AttributionAnalyzer()
-        >>> attribution = analyzer.analyze(
-        ...     equity_curve=equity_series,
-        ...     trades=trades_df,
-        ...     benchmark=benchmark_series
-        ... )
-    """
-
     def analyze(
         self,
-        equity_curve: pd.Series,
-        trades: pd.DataFrame | None = None,
-        benchmark: pd.Series | None = None,
-    ) -> dict[str, pd.DataFrame]:
-        """
-        Perform comprehensive attribution analysis.
-
-        Args:
-            equity_curve: Portfolio value over time
-            trades: Optional trade history
-            benchmark: Optional benchmark for comparison
-
-        Returns:
-            Dictionary with attribution DataFrames
-        """
+        equity_curve: pl.Series,
+        trades: pl.DataFrame | None = None,
+        benchmark: pl.Series | None = None,
+    ) -> dict[str, pl.DataFrame]:
         results = {}
-
-        # Time-based attribution
         results["monthly"] = self._monthly_attribution(equity_curve)
         results["yearly"] = self._yearly_attribution(equity_curve)
 
-        # Trade attribution
-        if trades is not None and not trades.empty:
+        if trades is not None and not trades.is_empty():
             results["trades"] = self._trade_attribution(trades)
 
-        # Benchmark comparison
         if benchmark is not None:
             results["benchmark_comparison"] = self._benchmark_comparison(equity_curve, benchmark)
 
         return results
 
-    def _monthly_attribution(self, equity_curve: pd.Series) -> pd.DataFrame:
-        """Calculate monthly performance attribution."""
-        if equity_curve.empty:
-            return pd.DataFrame()
+    def _monthly_attribution(self, equity_curve: pl.Series) -> pl.DataFrame:
+        if equity_curve.is_empty():
+            return pl.DataFrame()
 
-        # Resample to month-end
-        monthly_values = equity_curve.resample("M").last()
-
-        # Calculate monthly returns
-        monthly_returns = monthly_values.pct_change()
-
-        # Create attribution DataFrame
-        attribution = pd.DataFrame(
+        monthly_returns = equity_curve.pct_change().slice(1)
+        n = monthly_returns.len()
+        return pl.DataFrame(
             {
-                "month": monthly_returns.index,
-                "value": monthly_values.values,
-                "return": monthly_returns.values,
-                "cumulative_return": monthly_values.values / monthly_values.iloc[0] - 1,
+                "idx": list(range(n)),
+                "value": equity_curve.slice(1).to_list(),
+                "return": monthly_returns.to_list(),
             }
         )
 
-        return attribution
+    def _yearly_attribution(self, equity_curve: pl.Series) -> pl.DataFrame:
+        if equity_curve.is_empty():
+            return pl.DataFrame()
 
-    def _yearly_attribution(self, equity_curve: pd.Series) -> pd.DataFrame:
-        """Calculate yearly performance attribution."""
-        if equity_curve.empty:
-            return pd.DataFrame()
-
-        # Resample to year-end
-        yearly_values = equity_curve.resample("Y").last()
-
-        # Calculate yearly returns
-        yearly_returns = yearly_values.pct_change()
-
-        attribution = pd.DataFrame(
+        yearly_returns = equity_curve.pct_change().slice(1)
+        n = yearly_returns.len()
+        return pl.DataFrame(
             {
-                "year": yearly_values.index.year,
-                "value": yearly_values.values,
-                "return": yearly_returns.values,
+                "idx": list(range(n)),
+                "value": equity_curve.slice(1).to_list(),
+                "return": yearly_returns.to_list(),
             }
         )
 
-        return attribution
+    def _trade_attribution(self, trades: pl.DataFrame) -> pl.DataFrame:
+        if trades.is_empty() or "pnl" not in trades.columns:
+            return pl.DataFrame()
 
-    def _trade_attribution(self, trades: pd.DataFrame) -> pd.DataFrame:
-        """Analyze trades by performance."""
-        if trades.empty or "pnl" not in trades.columns:
-            return pd.DataFrame()
+        pnls = trades["pnl"]
+        winners = pnls.filter(pnls > 0)
+        losers = pnls.filter(pnls <= 0)
 
-        # Categorize trades
-        winning_trades = trades[trades["pnl"] > 0]
-        losing_trades = trades[trades["pnl"] <= 0]
-
-        attribution = pd.DataFrame(
-            [
-                {
-                    "category": "Winners",
-                    "count": len(winning_trades),
-                    "total_pnl": winning_trades["pnl"].sum(),
-                    "avg_pnl": winning_trades["pnl"].mean() if len(winning_trades) > 0 else 0,
-                },
-                {
-                    "category": "Losers",
-                    "count": len(losing_trades),
-                    "total_pnl": losing_trades["pnl"].sum(),
-                    "avg_pnl": losing_trades["pnl"].mean() if len(losing_trades) > 0 else 0,
-                },
-            ]
+        return pl.DataFrame(
+            {
+                "category": ["Winners", "Losers"],
+                "count": [winners.len(), losers.len()],
+                "total_pnl": [float(winners.sum()) if winners.len() > 0 else 0.0, float(losers.sum()) if losers.len() > 0 else 0.0],
+                "avg_pnl": [float(winners.mean()) if winners.len() > 0 else 0.0, float(losers.mean()) if losers.len() > 0 else 0.0],
+            }
         )
-
-        return attribution
 
     def _benchmark_comparison(
         self,
-        equity_curve: pd.Series,
-        benchmark: pd.Series,
-    ) -> pd.DataFrame:
-        """Compare with benchmark."""
-        # Align data
-        aligned_equity, aligned_benchmark = equity_curve.align(benchmark, join="inner")
+        equity_curve: pl.Series,
+        benchmark: pl.Series,
+    ) -> pl.DataFrame:
+        min_len = min(equity_curve.len(), benchmark.len())
+        if min_len < 2:
+            return pl.DataFrame()
 
-        if aligned_equity.empty:
-            return pd.DataFrame()
+        ec = equity_curve.slice(0, min_len)
+        bm = benchmark.slice(0, min_len)
 
-        # Calculate returns
-        strategy_returns = aligned_equity.pct_change().dropna()
-        benchmark_returns = aligned_benchmark.pct_change().dropna()
+        strategy_returns = ec.pct_change().slice(1)
+        benchmark_returns = bm.pct_change().slice(1)
 
-        # Create comparison DataFrame
-        comparison = pd.DataFrame(
+        return pl.DataFrame(
             {
-                "strategy_value": aligned_equity.values,
-                "benchmark_value": aligned_benchmark.values,
-                "strategy_return": strategy_returns.values,
-                "benchmark_return": benchmark_returns.values,
-                "excess_return": (strategy_returns - benchmark_returns).values,
-            },
-            index=strategy_returns.index,
+                "strategy_value": ec.slice(1).to_list(),
+                "benchmark_value": bm.slice(1).to_list(),
+                "strategy_return": strategy_returns.to_list(),
+                "benchmark_return": benchmark_returns.to_list(),
+                "excess_return": (strategy_returns - benchmark_returns).to_list(),
+            }
         )
-
-        return comparison
 
 
 __all__ = ["AttributionAnalyzer"]

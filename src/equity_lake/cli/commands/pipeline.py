@@ -34,7 +34,7 @@ def pipeline(
     import json
     from pathlib import Path
 
-    from equity_lake.core.dag import execute_eod_pipeline
+    from equity_lake.pipeline import execute_eod_pipeline
 
     _init_logging(verbose)
     trading_date = _resolve_date(date_str, days_back)

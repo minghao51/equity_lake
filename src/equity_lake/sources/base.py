@@ -1,11 +1,15 @@
 """Base ingestion source adapters."""
 
+from __future__ import annotations
+
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
+import polars as pl
 import structlog
+import yfinance as yf
 from tenacity import (
     before_sleep_log,
     retry,
@@ -15,19 +19,58 @@ from tenacity import (
 )
 
 from equity_lake.core.config import TickerConfig
-from equity_lake.fetch_macro import MacroIndicatorFetcher
+from equity_lake.core.polars_utils import ensure_polars, normalize_temporal_columns
+from equity_lake.core.schemas import STANDARD_COLUMNS
+from equity_lake.sources.macro import MacroIndicatorFetcher
 
 logger = structlog.get_logger()
 
 
-def _coerce_to_dataframe(result: Any) -> pd.DataFrame:
+def _empty_frame() -> pl.DataFrame:
+    return pl.DataFrame()
+
+
+def _coerce_to_polars(result: Any) -> pl.DataFrame:
     if result is None:
-        return pd.DataFrame()
-    if isinstance(result, pd.DataFrame):
-        return result
+        return _empty_frame()
+    if isinstance(result, pd.DataFrame | pl.DataFrame):
+        return ensure_polars(result)
     if isinstance(result, pd.Series):
-        return result.to_frame().T
-    return pd.DataFrame()
+        return pl.from_pandas(result.to_frame().T)
+    return _empty_frame()
+
+
+def standardize_columns(
+    frame: pd.DataFrame | pl.DataFrame,
+    *,
+    rename: dict[str, str] | None = None,
+    columns: list[str],
+    date_columns: tuple[str, ...] = ("date",),
+    datetime_columns: tuple[str, ...] = ("datetime",),
+) -> pl.DataFrame:
+    """Lowercase, rename, normalize temporal columns, and select a known schema."""
+    result = ensure_polars(frame)
+    result = result.rename({column: str(column).lower() for column in result.columns})
+
+    if rename:
+        applicable = {key: value for key, value in rename.items() if key in result.columns}
+        if applicable:
+            result = result.rename(applicable)
+
+    result = normalize_temporal_columns(result, date_columns=date_columns, datetime_columns=datetime_columns)
+
+    temporal_exprs: list[pl.Expr] = []
+    for column in date_columns:
+        if column in result.columns and result.schema[column] == pl.Datetime:
+            temporal_exprs.append(pl.col(column).dt.date().alias(column))
+    if temporal_exprs:
+        result = result.with_columns(temporal_exprs)
+
+    available = [column for column in columns if column in result.columns]
+    if not available:
+        return _empty_frame()
+    selected = result.select(available)
+    return selected.filter(~pl.all_horizontal(pl.all().is_null()))
 
 
 class MarketDataFetcher:
@@ -139,7 +182,7 @@ class MarketDataFetcher:
 
         return config.get_tickers_for_market(self.market, active_only=True)
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch data for a specific date."""
         raise NotImplementedError("Subclasses must implement fetch()")
 
@@ -148,10 +191,117 @@ class MarketDataFetcher:
         func: Callable[..., Any],
         *args: Any,
         **kwargs: Any,
-    ) -> pd.DataFrame:
+    ) -> Any:
         """Retry API calls with exponential backoff via tenacity."""
         wrapped = self._retry_decorator(func)
-        return _coerce_to_dataframe(wrapped(*args, **kwargs))
+        return wrapped(*args, **kwargs)
 
 
-__all__ = ["MacroIndicatorFetcher", "MarketDataFetcher"]
+class YFinanceBaseFetcher(MarketDataFetcher):
+    """Base class for yfinance-based market data fetchers.
+
+    Provides batching, download, MultiIndex/flat-frame handling, and
+    column standardization. Subclasses provide market name, fallback
+    tickers, and optional column-rename overrides.
+    """
+
+    market: str = ""
+    DEFAULT_BATCH_SIZE = 500
+
+    def __init__(
+        self,
+        *,
+        tickers: list[str] | None = None,
+        retry_attempts: int = 3,
+        retry_delay: float = 1.0,
+        ticker_config: TickerConfig | None = None,
+        filters: dict[str, Any] | None = None,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        fallback_tickers: list[str] | None = None,
+    ):
+        super().__init__(retry_attempts, retry_delay, ticker_config=ticker_config)
+        self.batch_size = batch_size
+        self._fallback_tickers = fallback_tickers or []
+        if tickers is not None:
+            self.tickers = tickers
+            logger.info("Using explicit ticker list: %s tickers (batch_size=%s)", len(tickers), batch_size)
+        else:
+            self.tickers = self.load_tickers_from_config(ticker_config, filters, self._fallback_tickers)
+
+    @staticmethod
+    def _chunked(iterable: list[str], chunk_size: int) -> list[list[str]]:
+        chunk_list = list(iterable)
+        if not chunk_list:
+            return []
+        return [chunk_list[i : i + chunk_size] for i in range(0, len(chunk_list), chunk_size)]
+
+    def _download_batch(self, ticker_batch: list[str], start_date: str, end_date: str) -> list[pd.DataFrame]:
+        data = yf.download(
+            ticker_batch,
+            start=start_date,
+            end=end_date,
+            group_by="ticker",
+            progress=False,
+            auto_adjust=False,
+        )
+        if data is None or (hasattr(data, "empty") and data.empty):
+            return []
+
+        frames: list[pd.DataFrame] = []
+        if not isinstance(data.columns, pd.MultiIndex):
+            base_frame = data.reset_index()
+            tickers = ticker_batch if len(ticker_batch) > 1 else [ticker_batch[0]]
+            for ticker in tickers:
+                frame = base_frame.copy()
+                frame["ticker"] = ticker
+                frames.append(frame)
+        else:
+            for ticker in ticker_batch:
+                if ticker in data.columns:
+                    ticker_data = data[ticker].reset_index()
+                    ticker_data["ticker"] = ticker
+                    frames.append(ticker_data)
+        return frames
+
+    def _get_column_rename(self) -> dict[str, str]:
+        return {"adj close": "adj_close", "datetime": "date", "index": "date"}
+
+    def fetch(self, trading_date: date) -> pl.DataFrame:
+        logger.info("Fetching %s data for %s (%s tickers)", self.market, trading_date, len(self.tickers))
+
+        def _fetch() -> pl.DataFrame:
+            start_date = trading_date.strftime("%Y-%m-%d")
+            end_date = (trading_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+            all_frames: list[pd.DataFrame] = []
+            batches = self._chunked(self.tickers, self.batch_size)
+            total_batches = len(batches)
+
+            logger.info("Downloading in %s batches (batch_size=%s)", total_batches, self.batch_size)
+
+            for batch_idx, batch in enumerate(batches, 1):
+                frames = self._download_batch(batch, start_date, end_date)
+                all_frames.extend(frames)
+                logger.debug("Batch %s/%s: %s cumulative frames", batch_idx, total_batches, len(all_frames))
+
+            if not all_frames:
+                logger.warning("No data returned for %s on %s", self.market, trading_date)
+                return _empty_frame()
+
+            frame = pd.concat(all_frames, ignore_index=True)
+            frame = standardize_columns(frame, rename=self._get_column_rename(), columns=STANDARD_COLUMNS)
+            unique_tickers = frame["ticker"].n_unique() if "ticker" in frame.columns else 0
+            logger.info("Fetched %s rows for %s unique %s tickers", frame.height, unique_tickers, self.market)
+            return frame
+
+        return self._retry_on_failure(_fetch)
+
+
+__all__ = [
+    "MacroIndicatorFetcher",
+    "MarketDataFetcher",
+    "YFinanceBaseFetcher",
+    "_coerce_to_polars",
+    "_empty_frame",
+    "standardize_columns",
+]

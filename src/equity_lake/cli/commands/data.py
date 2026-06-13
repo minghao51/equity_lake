@@ -27,7 +27,7 @@ def ingest(
     ticker_list = _parse_comma_list(tickers)
     run_daily_ingestion(
         trading_date=trading_date,
-        markets=market_list,
+        markets=market_list or [],
         dry_run=dry_run,
         parallel=True,
         explicit_tickers=ticker_list,
@@ -46,8 +46,8 @@ def backfill(
     """Backfill historical data."""
     from datetime import timedelta
 
-    from equity_lake.backfill_data import backfill_cn, backfill_yfinance
     from equity_lake.core.config import TickerConfig, get_settings
+    from equity_lake.ingestion.backfill import backfill_date_range
 
     _init_logging(verbose)
     yesterday = date.today() - timedelta(days=1)
@@ -65,23 +65,15 @@ def backfill(
     ticker_config = TickerConfig(config_path=config_path)
 
     market_list = [m.strip() for m in markets.split(",")]
-    total = 0
+    total = backfill_date_range(
+        start_date=start_date,
+        end_date=end_date,
+        markets=market_list,
+        ticker_config=ticker_config,
+        dry_run=dry_run,
+    )
 
-    for market in market_list:
-        if market == "us":
-            tickers = ticker_config.get_tickers_for_market("us", active_only=True)
-            total += backfill_yfinance(tickers, "us_equity", start_date, end_date, dry_run)
-        elif market == "hk_sg":
-            hk = ticker_config.get_tickers_for_market("hk", active_only=True)
-            sg = ticker_config.get_tickers_for_market("sg", active_only=True)
-            total += backfill_yfinance(hk + sg, "hk_sg_equity", start_date, end_date, dry_run)
-        elif market == "cn":
-            tickers = ticker_config.get_tickers_for_market("cn", active_only=True)
-            total += backfill_cn(tickers, start_date, end_date, dry_run)
-        else:
-            typer.secho(f"Unknown market: {market}", fg=typer.colors.RED)
-
-    typer.echo(f"Backfill complete: {total} total rows across {market_list}")
+    typer.echo(f"Backfill complete: {total} dates processed across {market_list}")
 
 
 @app.command("update")
@@ -98,7 +90,7 @@ def update(
     trading_date = _resolve_date(date_str)
     market_list = _parse_comma_list(markets)
     engine_inst = UpdateEngine()
-    engine_inst.run(trading_date=trading_date, markets=market_list, dry_run=dry_run)
+    engine_inst.run(trading_date=trading_date, markets=market_list or [], dry_run=dry_run)  # type: ignore[attr-defined]
 
 
 @app.command("auto-backfill")
@@ -157,7 +149,7 @@ def macro(
 ) -> None:
     """Fetch macro indicators."""
     from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.fetch_macro import MacroDataPipeline, validate_macro_schema, write_macro_to_parquet
+    from equity_lake.sources.macro import MacroDataPipeline, validate_macro_schema, write_macro_to_parquet
 
     _init_logging(verbose)
     trading_date = resolve_trading_date(date_str)

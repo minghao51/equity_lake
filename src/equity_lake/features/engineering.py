@@ -10,61 +10,51 @@ Usage:
     python -m equity_lake.features.engineering --tickers AAPL,GOOGL --start 2024-01-01 --end 2024-12-31
 """
 
-from datetime import date
-from pathlib import Path
+from __future__ import annotations
+
+from datetime import date, datetime
 
 import duckdb
-import numpy as np
-import pandas as pd
+import polars as pl
 import structlog
 from tqdm import tqdm
 
 from equity_lake.core.paths import LAKE_DIR
+from equity_lake.core.polars_utils import FrameLike, ensure_polars
 from equity_lake.features.pipeline import FeaturePipeline
+from equity_lake.storage.lake_reader import duckdb_scan_for
 
-# Logger configuration - use structlog for consistency
 logger = structlog.get_logger()
 
-
-def _scan_for(market_path: Path) -> str:
-    from deltalake import DeltaTable
-
-    if DeltaTable.is_deltatable(str(market_path)):
-        return f"delta_scan('{market_path}')"
-    return f"read_parquet('{market_path}/**/*.parquet', hive_partitioning=1)"
-
-
-# =============================================================================
-# Feature Engineer
-# =============================================================================
+NUMERIC_DTYPES = {pl.Float32, pl.Float64, pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64}
+NON_NUMERIC_FOR_ZSCORE = {
+    "next_day_return",
+    "target",
+    "meta_label",
+    "barrier_outcome",
+    "upper_barrier_return",
+    "lower_barrier_return",
+    "vertical_barrier_days",
+    "candidate_score",
+}
 
 
 class FeatureEngineer:
     """Computes ML features from raw OHLCV data."""
 
     def __init__(self, db_path: str | None = ":memory:"):
-        """
-        Initialize the feature engineer.
-
-        Args:
-            db_path: Path to DuckDB database file (default: in-memory)
-        """
         self.db_path: str = db_path if db_path is not None else ":memory:"
         self.conn = duckdb.connect(str(self.db_path))
         self.feature_pipeline = FeaturePipeline()
-
         self._setup_views()
 
-    def __enter__(self) -> "FeatureEngineer":
+    def __enter__(self) -> FeatureEngineer:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
 
     def _setup_views(self) -> None:
-        """Set up DuckDB views for accessing OHLCV data."""
-        from deltalake import DeltaTable
-
         self.conn.execute("INSTALL delta; LOAD delta;")
 
         markets = [
@@ -80,7 +70,7 @@ class FeatureEngineer:
             path = LAKE_DIR / market_dir
             if not path.exists():
                 continue
-            scan = f"delta_scan('{path}')" if DeltaTable.is_deltatable(str(path)) else f"read_parquet('{path}/**/*.parquet', hive_partitioning=1)"
+            scan = duckdb_scan_for(path)
             union_parts.append(f"SELECT '{label}' as market, ticker, date, open, high, low, close, volume FROM {scan}")
 
         if union_parts:
@@ -88,9 +78,13 @@ class FeatureEngineer:
             self.conn.execute(sql)
         logger.info("DuckDB views created successfully")
 
-    # -------------------------------------------------------------------------
-    # Main Feature Generation
-    # -------------------------------------------------------------------------
+    @staticmethod
+    def _date_scalar(value: object) -> date:
+        if isinstance(value, date) and not isinstance(value, datetime):
+            return value
+        if isinstance(value, datetime):
+            return value.date()
+        raise TypeError(f"Expected date-like value, got {type(value)!r}")
 
     def generate_features(
         self,
@@ -100,24 +94,12 @@ class FeatureEngineer:
         compute_target: bool = True,
         include_sentiment: bool = False,
         include_social_sentiment: bool = False,
-    ) -> pd.DataFrame:
-        """
-        Generate all features for specified tickers and date range.
-
-        Args:
-            tickers: List of ticker symbols
-            start_date: Start date for feature computation
-            end_date: End date for feature computation
-            compute_target: Whether to compute target variable (next-day return)
-            include_sentiment: Whether to include sentiment features from news
-            include_social_sentiment: Whether to include social sentiment features
-
-        Returns:
-            DataFrame with all features computed
-        """
+        include_macro: bool = True,
+        normalize_cross_sectional: bool = False,
+    ) -> pl.DataFrame:
+        """Generate all features for specified tickers and date range."""
         logger.info(f"Generating features for {len(tickers)} tickers from {start_date} to {end_date}")
 
-        # Load OHLCV data from DuckDB
         query = """
             SELECT
                 ticker,
@@ -134,45 +116,39 @@ class FeatureEngineer:
         """
 
         logger.debug("Executing parameterized query for %d tickers", len(tickers))
-        df = self.conn.execute(query, [tickers, start_date, end_date]).df()
+        df = self.conn.execute(query, [tickers, start_date, end_date]).pl()
 
-        if df.empty:
+        if df.is_empty():
             logger.warning(f"No data found for tickers: {tickers}")
             return df
 
-        logger.info(f"Loaded {len(df)} rows of OHLCV data")
+        logger.info(f"Loaded {df.height} rows of OHLCV data")
 
-        # Compute all features by ticker group
-        result_dfs = []
-        ticker_groups = {ticker: ticker_df.copy() for ticker, ticker_df in df.groupby("ticker", sort=False)}
+        if "date" in df.columns and df.schema["date"] != pl.Date:
+            df = df.with_columns(pl.col("date").cast(pl.Date))
+
+        result_dfs: list[pl.DataFrame] = []
         for ticker in tqdm(tickers, desc="Computing features"):
-            ticker_df = ticker_groups.get(ticker)
-            if ticker_df is None:
+            ticker_df = df.filter(pl.col("ticker") == ticker)
+            if ticker_df.is_empty():
+                continue
+            if ticker_df.height < 60:
+                logger.warning(f"Skipping {ticker}: only {ticker_df.height} days of data")
                 continue
 
-            # Skip if not enough data
-            if len(ticker_df) < 60:  # Minimum 60 days for rolling calculations
-                logger.warning(f"Skipping {ticker}: only {len(ticker_df)} days of data")
-                continue
+            computed = self.feature_pipeline.compute(ticker_df)
+            if not compute_target and "next_day_return" in computed.columns:
+                computed = computed.drop("next_day_return")
+            result_dfs.append(computed)
 
-            ticker_df = self.feature_pipeline.compute(ticker_df)
-            if not compute_target and "next_day_return" in ticker_df.columns:
-                ticker_df = ticker_df.drop(columns=["next_day_return"])
-
-            result_dfs.append(ticker_df)
-
-        # Combine all tickers
         if not result_dfs:
             logger.error("No features generated - all tickers were skipped (insufficient data)")
-            return pd.DataFrame()
+            return pl.DataFrame()
 
-        features_df = pd.concat(result_dfs, ignore_index=True)
-
-        # Remove rows with NaN in critical columns
+        features_df = pl.concat(result_dfs, how="vertical_relaxed")
         critical_cols = ["close", "volume", "rsi_14", "macd"]
-        features_df = features_df.dropna(subset=critical_cols, how="any")
+        features_df = features_df.filter(~pl.any_horizontal([pl.col(column).is_null() for column in critical_cols if column in features_df.columns]))
 
-        # Merge sentiment features if requested
         if include_sentiment:
             features_df = self.merge_sentiment_features(
                 features_df,
@@ -188,55 +164,40 @@ class FeatureEngineer:
 
         features_df = self.add_cross_modal_sentiment_features(features_df)
 
-        logger.info(f"Generated {len(features_df)} rows of features with {len(features_df.columns)} columns")
+        if include_macro:
+            features_df = self.merge_macro_features(
+                features_df,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        if normalize_cross_sectional:
+            features_df = self.zscore_cross_sectional(features_df)
+
+        logger.info(f"Generated {features_df.height} rows of features with {len(features_df.columns)} columns")
         logger.debug(f"Feature columns: {list(features_df.columns)}")
-
         return features_df
-
-    # -------------------------------------------------------------------------
-    # Sentiment Feature Merging
-    # -------------------------------------------------------------------------
 
     def merge_sentiment_features(
         self,
-        features_df: pd.DataFrame,
+        features_df: FrameLike,
         start_date: date,
         end_date: date,
-    ) -> pd.DataFrame:
-        """
-        Merge aggregated sentiment scores into features DataFrame.
-
-        Computes daily sentiment metrics from news data and joins with
-        existing features. Missing sentiment (no news that day) is filled
-        with neutral values (0.0).
-
-        Args:
-            features_df: DataFrame with existing features (must have ticker, date columns)
-            start_date: Start date for sentiment data
-            end_date: End date for sentiment data
-
-        Returns:
-            DataFrame with additional sentiment columns:
-                - avg_daily_sentiment: Average sentiment score for the day
-                - news_count: Number of news articles for the day
-                - positive_count: Number of positive articles
-                - negative_count: Number of negative articles
-                - neutral_count: Number of neutral articles
-                - sentiment_std: Standard deviation of sentiment scores
-        """
-        if features_df.empty:
+    ) -> pl.DataFrame:
+        """Merge aggregated sentiment scores into the feature frame."""
+        features_df = ensure_polars(features_df)
+        if features_df.is_empty():
             logger.warning("Empty features DataFrame, skipping sentiment merge")
             return features_df
 
         logger.info(
             "Merging sentiment features for %s tickers from %s to %s",
-            features_df["ticker"].nunique(),
+            features_df["ticker"].n_unique(),
             start_date,
             end_date,
         )
-        ticker_filter = tuple(sorted(features_df["ticker"].unique()))
+        ticker_filter = tuple(sorted(str(value) for value in features_df["ticker"].unique().to_list()))
 
-        # Load sentiment data from news parquet files
         sentiment_query = f"""
             SELECT
                 ticker,
@@ -247,97 +208,71 @@ class FeatureEngineer:
                 SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count,
                 SUM(CASE WHEN sentiment_label = 'neutral' THEN 1 ELSE 0 END) as neutral_count,
                 STDDEV(sentiment_score) as sentiment_std
-            FROM {_scan_for(LAKE_DIR / "us_news")}
+            FROM {duckdb_scan_for(LAKE_DIR / "us_news")}
             WHERE ticker IN {ticker_filter}
             AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
         """
 
         try:
-            sentiment_df = self.conn.execute(sentiment_query).df()
-
-            if sentiment_df.empty:
+            sentiment_df = self.conn.execute(sentiment_query).pl()
+            if sentiment_df.is_empty():
                 logger.warning("No sentiment data found, adding neutral sentiment columns")
-                features_df["avg_daily_sentiment"] = 0.0
-                features_df["news_count"] = 0
-                features_df["positive_count"] = 0
-                features_df["negative_count"] = 0
-                features_df["neutral_count"] = 0
-                features_df["sentiment_std"] = 0.0
-                return features_df
+                return features_df.with_columns(
+                    pl.lit(0.0).alias("avg_daily_sentiment"),
+                    pl.lit(0).alias("news_count"),
+                    pl.lit(0).alias("positive_count"),
+                    pl.lit(0).alias("negative_count"),
+                    pl.lit(0).alias("neutral_count"),
+                    pl.lit(0.0).alias("sentiment_std"),
+                )
 
-            logger.info(f"Loaded {len(sentiment_df)} sentiment data points")
-
-            # Merge with features
-            merged_df = features_df.merge(
-                sentiment_df,
-                on=["ticker", "date"],
-                how="left",
+            logger.info(f"Loaded {sentiment_df.height} sentiment data points")
+            merged_df = features_df.join(sentiment_df, on=["ticker", "date"], how="left").with_columns(
+                pl.col("avg_daily_sentiment").fill_null(0.0),
+                pl.col("news_count").fill_null(0).cast(pl.Int64),
+                pl.col("positive_count").fill_null(0).cast(pl.Int64),
+                pl.col("negative_count").fill_null(0).cast(pl.Int64),
+                pl.col("neutral_count").fill_null(0).cast(pl.Int64),
+                pl.col("sentiment_std").fill_null(0.0),
             )
-
-            # Fill missing sentiment (no news that day) with neutral values
-            merged_df["avg_daily_sentiment"] = merged_df["avg_daily_sentiment"].fillna(0.0)
-            merged_df["news_count"] = merged_df["news_count"].fillna(0).astype(int)
-            merged_df["positive_count"] = merged_df["positive_count"].fillna(0).astype(int)
-            merged_df["negative_count"] = merged_df["negative_count"].fillna(0).astype(int)
-            merged_df["neutral_count"] = merged_df["neutral_count"].fillna(0).astype(int)
-            merged_df["sentiment_std"] = merged_df["sentiment_std"].fillna(0.0)
+            merged_df = merged_df.sort(["ticker", "date"])
+            merged_df = merged_df.with_columns(
+                pl.col("avg_daily_sentiment").ewm_mean(half_life=3.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_3d"),
+                pl.col("avg_daily_sentiment").ewm_mean(half_life=7.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_7d"),
+                pl.col("avg_daily_sentiment").ewm_mean(half_life=30.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_30d"),
+            )
 
             logger.info(
                 "Merged sentiment features: %s rows with news, %s rows without news",
-                (merged_df["news_count"] > 0).sum(),
-                (merged_df["news_count"] == 0).sum(),
+                merged_df.filter(pl.col("news_count") > 0).height,
+                merged_df.filter(pl.col("news_count") == 0).height,
             )
-
             return merged_df
-
-        except Exception as e:
-            logger.error(f"Failed to merge sentiment features: {e}")
-            # Return original features without sentiment
+        except Exception as exc:
+            logger.error(f"Failed to merge sentiment features: {exc}")
             return features_df
 
     def merge_social_sentiment_features(
         self,
-        features_df: pd.DataFrame,
+        features_df: FrameLike,
         start_date: date,
         end_date: date,
-    ) -> pd.DataFrame:
-        """
-        Merge aggregated social sentiment scores into features DataFrame.
-
-        Computes daily social sentiment metrics from Reddit/Twitter data and joins
-        with existing features. Missing sentiment (no data that day) is filled
-        with neutral values (0.0 mentions).
-
-        Args:
-            features_df: DataFrame with existing features (must have ticker, date columns)
-            start_date: Start date for social sentiment data
-            end_date: End date for social sentiment data
-
-        Returns:
-            DataFrame with additional social sentiment columns:
-                - social_mention_count: Total number of mentions (Reddit + Twitter)
-                - social_sentiment_score: Average normalized sentiment (-1.0 to 1.0)
-                - social_positive_score: Total positive mentions
-                - social_negative_score: Total negative mentions
-                - social_reddit_mentions: Reddit mention count
-                - social_twitter_mentions: Twitter mention count
-                - social_momentum: 5-day change in mention count
-                - social_sentiment_momentum: 5-day change in sentiment score
-        """
-        if features_df.empty:
+    ) -> pl.DataFrame:
+        """Merge aggregated social sentiment scores into the feature frame."""
+        features_df = ensure_polars(features_df)
+        if features_df.is_empty():
             logger.warning("Empty features DataFrame, skipping social sentiment merge")
             return features_df
 
         logger.info(
             "Merging social sentiment features for %s tickers from %s to %s",
-            features_df["ticker"].nunique(),
+            features_df["ticker"].n_unique(),
             start_date,
             end_date,
         )
-        ticker_filter = tuple(sorted(features_df["ticker"].unique()))
+        ticker_filter = tuple(sorted(str(value) for value in features_df["ticker"].unique().to_list()))
 
-        # Load social sentiment data from parquet files
         sentiment_query = f"""
             SELECT
                 ticker,
@@ -348,90 +283,229 @@ class FeatureEngineer:
                 SUM(negative_score) as social_negative_score,
                 SUM(CASE WHEN source = 'reddit' THEN mention_count ELSE 0 END) as social_reddit_mentions,
                 SUM(CASE WHEN source = 'twitter' THEN mention_count ELSE 0 END) as social_twitter_mentions
-            FROM {_scan_for(LAKE_DIR / "us_social_sentiment")}
+            FROM {duckdb_scan_for(LAKE_DIR / "us_social_sentiment")}
             WHERE ticker IN {ticker_filter}
             AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
         """
 
         try:
-            sentiment_df = self.conn.execute(sentiment_query).df()
-
-            if sentiment_df.empty:
+            sentiment_df = self.conn.execute(sentiment_query).pl()
+            if sentiment_df.is_empty():
                 logger.warning("No social sentiment data found, adding neutral social sentiment columns")
-                # Add neutral social sentiment columns
-                features_df["social_mention_count"] = 0
-                features_df["social_sentiment_score"] = 0.0
-                features_df["social_positive_score"] = 0.0
-                features_df["social_negative_score"] = 0.0
-                features_df["social_reddit_mentions"] = 0
-                features_df["social_twitter_mentions"] = 0
-                features_df["social_momentum"] = 0.0
-                features_df["social_sentiment_momentum"] = 0.0
-                return features_df
+                return features_df.with_columns(
+                    pl.lit(0).alias("social_mention_count"),
+                    pl.lit(0.0).alias("social_sentiment_score"),
+                    pl.lit(0.0).alias("social_positive_score"),
+                    pl.lit(0.0).alias("social_negative_score"),
+                    pl.lit(0).alias("social_reddit_mentions"),
+                    pl.lit(0).alias("social_twitter_mentions"),
+                    pl.lit(0.0).alias("social_momentum"),
+                    pl.lit(0.0).alias("social_sentiment_momentum"),
+                    pl.lit(0.0).alias("social_sentiment_ewma_3d"),
+                    pl.lit(0.0).alias("social_sentiment_ewma_7d"),
+                    pl.lit(0.0).alias("social_sentiment_ewma_30d"),
+                )
 
-            logger.info(f"Loaded {len(sentiment_df)} social sentiment data points")
-
-            # Merge with features
-            merged_df = features_df.merge(
-                sentiment_df,
-                on=["ticker", "date"],
-                how="left",
+            logger.info(f"Loaded {sentiment_df.height} social sentiment data points")
+            merged_df = (
+                features_df.join(sentiment_df, on=["ticker", "date"], how="left")
+                .with_columns(
+                    pl.col("social_mention_count").fill_null(0).cast(pl.Int64),
+                    pl.col("social_sentiment_score").fill_null(0.0),
+                    pl.col("social_positive_score").fill_null(0.0),
+                    pl.col("social_negative_score").fill_null(0.0),
+                    pl.col("social_reddit_mentions").fill_null(0).cast(pl.Int64),
+                    pl.col("social_twitter_mentions").fill_null(0).cast(pl.Int64),
+                )
+                .sort(["ticker", "date"])
+                .with_columns(
+                    pl.col("social_mention_count").cast(pl.Float64).pct_change(5).over("ticker").fill_null(0.0).alias("social_momentum"),
+                    pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum"),
+                    pl.col("social_sentiment_score")
+                    .ewm_mean(half_life=3.0, ignore_nulls=True)
+                    .over("ticker")
+                    .fill_null(0.0)
+                    .alias("social_sentiment_ewma_3d"),
+                    pl.col("social_sentiment_score")
+                    .ewm_mean(half_life=7.0, ignore_nulls=True)
+                    .over("ticker")
+                    .fill_null(0.0)
+                    .alias("social_sentiment_ewma_7d"),
+                    pl.col("social_sentiment_score")
+                    .ewm_mean(half_life=30.0, ignore_nulls=True)
+                    .over("ticker")
+                    .fill_null(0.0)
+                    .alias("social_sentiment_ewma_30d"),
+                )
             )
-
-            # Fill missing social sentiment (no data that day) with neutral values
-            merged_df["social_mention_count"] = merged_df["social_mention_count"].fillna(0).astype(int)
-            merged_df["social_sentiment_score"] = merged_df["social_sentiment_score"].fillna(0.0)
-            merged_df["social_positive_score"] = merged_df["social_positive_score"].fillna(0.0)
-            merged_df["social_negative_score"] = merged_df["social_negative_score"].fillna(0.0)
-            merged_df["social_reddit_mentions"] = merged_df["social_reddit_mentions"].fillna(0).astype(int)
-            merged_df["social_twitter_mentions"] = merged_df["social_twitter_mentions"].fillna(0).astype(int)
-
-            # Compute momentum metrics (5-day change)
-            merged_df = merged_df.sort_values(["ticker", "date"])
-            merged_df["social_momentum"] = merged_df.groupby("ticker")["social_mention_count"].pct_change(5)
-            merged_df["social_sentiment_momentum"] = merged_df.groupby("ticker")["social_sentiment_score"].diff(5)
-
-            # Fill NaN momentum values for first 5 days
-            merged_df["social_momentum"] = merged_df["social_momentum"].fillna(0.0)
-            merged_df["social_sentiment_momentum"] = merged_df["social_sentiment_momentum"].fillna(0.0)
 
             logger.info(
                 "Merged social sentiment features: %s rows with data, %s rows without data",
-                (merged_df["social_mention_count"] > 0).sum(),
-                (merged_df["social_mention_count"] == 0).sum(),
+                merged_df.filter(pl.col("social_mention_count") > 0).height,
+                merged_df.filter(pl.col("social_mention_count") == 0).height,
             )
-
             return merged_df
-
-        except Exception as e:
-            logger.error(f"Failed to merge social sentiment features: {e}")
-            # Return original features without social sentiment
+        except Exception as exc:
+            logger.error(f"Failed to merge social sentiment features: {exc}")
             return features_df
 
-    def add_cross_modal_sentiment_features(self, features_df: pd.DataFrame) -> pd.DataFrame:
+    def add_cross_modal_sentiment_features(self, features_df: FrameLike) -> pl.DataFrame:
         """Add minimal cross-modal sentiment features on top of merged sentiment columns."""
-        if features_df.empty:
-            return features_df
+        enriched = ensure_polars(features_df)
+        if enriched.is_empty():
+            return enriched
 
-        enriched = features_df.sort_values(["ticker", "date"]).copy()
-        log_volume = np.log1p(enriched["volume"].clip(lower=0))
+        enriched = enriched.sort(["ticker", "date"])
+        log_volume = (pl.col("volume").cast(pl.Float64).clip(lower_bound=0) + 1).log()
+        expressions: list[pl.Expr] = []
 
         if "avg_daily_sentiment" in enriched.columns:
-            enriched["sentiment_x_log_volume"] = enriched["avg_daily_sentiment"].fillna(0.0) * log_volume
-            enriched["news_sentiment_momentum_5d"] = enriched.groupby("ticker")["avg_daily_sentiment"].diff(5).fillna(0.0)
+            expressions.extend(
+                [
+                    (pl.col("avg_daily_sentiment").fill_null(0.0) * log_volume).alias("sentiment_x_log_volume"),
+                    pl.col("avg_daily_sentiment").diff(5).over("ticker").fill_null(0.0).alias("news_sentiment_momentum_5d"),
+                ]
+            )
 
         if "social_sentiment_score" in enriched.columns:
-            enriched["social_sentiment_x_log_volume"] = enriched["social_sentiment_score"].fillna(0.0) * log_volume
-            enriched["social_sentiment_momentum_5d"] = enriched.groupby("ticker")["social_sentiment_score"].diff(5).fillna(0.0)
+            expressions.extend(
+                [
+                    (pl.col("social_sentiment_score").fill_null(0.0) * log_volume).alias("social_sentiment_x_log_volume"),
+                    pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum_5d"),
+                ]
+            )
 
         if {"avg_daily_sentiment", "social_sentiment_score"}.issubset(enriched.columns):
-            enriched["news_social_sentiment_gap"] = enriched["avg_daily_sentiment"].fillna(0.0) - enriched["social_sentiment_score"].fillna(0.0)
+            expressions.append(
+                (pl.col("avg_daily_sentiment").fill_null(0.0) - pl.col("social_sentiment_score").fill_null(0.0)).alias("news_social_sentiment_gap")
+            )
 
         if {"news_count", "social_mention_count"}.issubset(enriched.columns):
-            enriched["news_social_mentions_gap"] = enriched["news_count"].fillna(0) - enriched["social_mention_count"].fillna(0)
+            expressions.append((pl.col("news_count").fill_null(0) - pl.col("social_mention_count").fill_null(0)).alias("news_social_mentions_gap"))
 
-        return enriched
+        return enriched.with_columns(expressions) if expressions else enriched
+
+    def merge_macro_features(
+        self,
+        features_df: FrameLike,
+        start_date: date,
+        end_date: date,
+    ) -> pl.DataFrame:
+        """Pivot macro indicators to wide format and as-of join on date.
+
+        Macro data lives in ``MACRO_INDICATORS_DIR/date=YYYY-MM-DD/...parquet`` in
+        long format ``(date, indicator, value, source, updated_at)``. We pivot to
+        one column per indicator, forward-fill across the requested date range,
+        and left-join onto the feature frame on date.
+        """
+        features_df = ensure_polars(features_df)
+        if features_df.is_empty():
+            logger.warning("Empty features DataFrame, skipping macro merge")
+            return features_df
+
+        macro_path = LAKE_DIR / "macro_indicators"
+        if not macro_path.exists():
+            logger.info("Macro indicators directory not found, skipping macro merge")
+            return features_df
+
+        try:
+            macro_scan = duckdb_scan_for(macro_path)
+            raw = self.conn.execute(
+                f"""
+                SELECT date, indicator, value
+                FROM {macro_scan}
+                WHERE date BETWEEN '{start_date}' AND '{end_date}'
+                """
+            ).pl()
+        except Exception as exc:
+            logger.warning("macro_load_failed", error=str(exc))
+            return features_df
+
+        if raw.is_empty():
+            logger.info("No macro indicators found for date range")
+            return features_df
+
+        wide = raw.pivot(values="value", index="date", on="indicator").sort("date")
+        numeric_cols = [col for col in wide.columns if col != "date"]
+        wide = wide.with_columns([pl.col(col).cast(pl.Float64) for col in numeric_cols])
+
+        full_dates = pl.DataFrame({"date": features_df["date"].unique().sort()})
+        wide = full_dates.join(wide, on="date", how="left").sort("date")
+        for col_name in numeric_cols:
+            wide = wide.with_columns(pl.col(col_name).forward_fill().alias(col_name))
+
+        derived_exprs: list[pl.Expr] = []
+        if "vix" in wide.columns:
+            derived_exprs.append((pl.col("vix") - pl.col("vix").shift(5)).alias("vix_change_5d"))
+        if {"treasury_10y", "tips_yield"}.issubset(wide.columns):
+            derived_exprs.append((pl.col("treasury_10y") - pl.col("tips_yield")).alias("yield_curve_slope"))
+        if "dxy" in wide.columns:
+            derived_exprs.append((pl.col("dxy") - pl.col("dxy").shift(5)).alias("dxy_change_5d"))
+        if derived_exprs:
+            wide = wide.with_columns(derived_exprs)
+
+        macro_cols = [c for c in wide.columns if c != "date"]
+        for col_name in macro_cols:
+            wide = wide.with_columns(pl.col(col_name).fill_null(0.0))
+
+        joined = features_df.join(wide, on="date", how="left")
+        for col_name in macro_cols:
+            if col_name in joined.columns:
+                joined = joined.with_columns(pl.col(col_name).fill_null(0.0))
+        logger.info(
+            "merged_macro_features",
+            indicator_count=len(macro_cols),
+            rows=joined.height,
+        )
+        return joined
+
+    def zscore_cross_sectional(
+        self,
+        features_df: FrameLike,
+        *,
+        columns: list[str] | None = None,
+        suffix: str = "_zscore",
+        eps: float = 1e-8,
+    ) -> pl.DataFrame:
+        """Z-score numeric features cross-sectionally across tickers per date.
+
+        For each date, compute (x - mean) / (std + eps) over all tickers.
+        Adds new columns with ``suffix`` appended; original columns are kept
+        unchanged. Skips columns that are non-numeric, contain nulls in the
+        grouping key, or have zero variance.
+        """
+        frame = ensure_polars(features_df)
+        if frame.is_empty():
+            return frame
+
+        skip = {
+            "ticker",
+            "date",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "feature_schema_version",
+            "candidate_action",
+            "candidate_source",
+        }
+        if columns is None:
+            columns = [col for col in frame.columns if col not in skip and col not in NON_NUMERIC_FOR_ZSCORE and frame.schema[col] in NUMERIC_DTYPES]
+
+        expressions: list[pl.Expr] = []
+        for col_name in columns:
+            if col_name not in frame.columns:
+                continue
+            mean_expr = pl.col(col_name).fill_null(0.0).mean().over("date")
+            std_expr = pl.col(col_name).fill_null(0.0).std().over("date")
+            z_expr = ((pl.col(col_name).fill_null(0.0) - mean_expr) / (std_expr + eps)).alias(f"{col_name}{suffix}")
+            expressions.append(z_expr)
+
+        if not expressions:
+            return frame
+        return frame.with_columns(expressions)
 
     def close(self) -> None:
         """Close database connection."""

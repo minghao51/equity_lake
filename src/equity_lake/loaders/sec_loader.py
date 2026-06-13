@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import cast
 from xml.etree import ElementTree
 
-import pandas as pd
+import polars as pl
 import requests
 
 from equity_lake.loaders.base import BaseDataLoader, LoaderMetadata, LoadResult
@@ -53,11 +52,11 @@ class SECFilingsLoader(BaseDataLoader):
             except Exception as exc:
                 errors.append(f"{symbol}: {exc}")
 
-        frame = pd.DataFrame.from_records(records)
+        frame = pl.DataFrame(records)
         return LoadResult(
             success=not errors,
             data=frame,
-            records_count=len(frame),
+            records_count=frame.height,
             errors=errors,
         )
 
@@ -144,7 +143,7 @@ class SECFilingsLoader(BaseDataLoader):
             response: requests.Response = self.session.get(SEC_TICKER_URL, timeout=10)
         except Exception:
             return False
-        return cast(bool, response.status_code == 200)
+        return response.status_code == 200
 
 
 __all__ = ["SECFilingsLoader"]

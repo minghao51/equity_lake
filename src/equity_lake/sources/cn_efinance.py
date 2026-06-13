@@ -6,12 +6,13 @@ from datetime import date
 from typing import Any
 
 import pandas as pd
+import polars as pl
 import structlog
 
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.logging import timer
 from equity_lake.core.schemas import STANDARD_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardize_columns
 
 try:
     import efinance
@@ -66,7 +67,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
         self,
         stock_data: pd.DataFrame,
         stock_code: str,
-    ) -> pd.DataFrame | None:
+    ) -> pl.DataFrame | None:
         """Standardize a single efinance history frame."""
         if stock_data is None or stock_data.empty:
             return None
@@ -83,18 +84,16 @@ class CNEfinanceFetcher(MarketDataFetcher):
             "成交量": "volume",
             "成交额": "amount",
         }
-        stock_data = stock_data.rename(columns=column_mapping)
+        if "adj_close" not in stock_data.columns and "收盘" in stock_data.columns:
+            stock_data["adj_close"] = stock_data["收盘"]
 
-        if "adj_close" not in stock_data.columns:
-            stock_data["adj_close"] = stock_data["close"]
-
-        return stock_data
+        return standardize_columns(stock_data, rename=column_mapping, columns=STANDARD_COLUMNS)
 
     def _fetch_history_batch(
         self,
         stock_codes: list[str],
         trading_date: date,
-    ) -> list[pd.DataFrame]:
+    ) -> list[pl.DataFrame]:
         """Fetch a batch of China A-shares using one efinance history request."""
         try:
             assert efinance is not None
@@ -108,7 +107,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
                 standardized = self._standardize_history_frame(history, stock_codes[0])
                 return [standardized] if standardized is not None else []
 
-            frames: list[pd.DataFrame] = []
+            frames: list[pl.DataFrame] = []
             for stock_code, stock_data in history.items():
                 standardized = self._standardize_history_frame(stock_data, stock_code)
                 if standardized is not None:
@@ -123,7 +122,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
             )
             return []
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch China A-share data for a trading date using efinance."""
         tickers = self._get_configured_tickers("cn")
         logger.info(
@@ -134,7 +133,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
             configured_ticker_count=len(tickers),
         )
 
-        def _fetch() -> pd.DataFrame:
+        def _fetch() -> pl.DataFrame:
             try:
                 if not tickers:
                     logger.warning(
@@ -142,9 +141,9 @@ class CNEfinanceFetcher(MarketDataFetcher):
                         date=str(trading_date),
                         message="Cannot fetch CN data without configured tickers",
                     )
-                    return pd.DataFrame()
+                    return _empty_frame()
 
-                frames: list[pd.DataFrame] = []
+                frames: list[pl.DataFrame] = []
                 batch_size = max(1, min(self.batch_size, len(tickers)))
                 ticker_batches = self._chunked(tickers, batch_size)
 
@@ -175,21 +174,15 @@ class CNEfinanceFetcher(MarketDataFetcher):
                         date=str(trading_date),
                         message="No data returned for China A-shares via efinance",
                     )
-                    return pd.DataFrame()
+                    return _empty_frame()
 
-                # Concatenate all frames
-                frame = pd.concat(frames, ignore_index=True)
-
-                # Ensure standard column set
-                available_cols = [column for column in STANDARD_COLUMNS if column in frame.columns]
-                frame = frame[available_cols]
-                frame = frame.dropna(how="all")
-
-                unique_tickers = int(frame["ticker"].nunique()) if "ticker" in frame else 0
+                frame = pl.concat(frames, how="vertical_relaxed")
+                frame = frame.filter(~pl.all_horizontal(pl.all().is_null()))
+                unique_tickers = int(frame["ticker"].n_unique()) if "ticker" in frame.columns else 0
 
                 logger.info(
                     "fetch_cn_ashare_efinance_completed",
-                    rows=len(frame),
+                    rows=frame.height,
                     unique_tickers=unique_tickers,
                 )
 

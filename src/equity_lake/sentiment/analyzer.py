@@ -1,12 +1,15 @@
 """Sentiment analysis for financial text using VADER and FinBERT."""
 
+from __future__ import annotations
+
 from enum import StrEnum
 from typing import Literal
 
-import pandas as pd
+import polars as pl
 import structlog
 
-# Try to import VADER
+from equity_lake.core.polars_utils import FrameLike, ensure_polars
+
 try:
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
@@ -33,31 +36,9 @@ class SentimentLabel(StrEnum):
 
 
 class SentimentAnalyzer:
-    """
-    Analyze sentiment of financial text using VADER or FinBERT.
-
-    VADER (Valence Aware Dictionary and sEntiment Reasoner) is a fast,
-    rule-based sentiment analysis tool optimized for social media text.
-    It's suitable for MVP and real-time applications.
-
-    FinBERT is a transformer model fine-tuned on financial communications
-    for superior accuracy on financial text. Use for batch processing.
-
-    Attributes:
-        method: Sentiment analysis method ("vader" or "finbert")
-        analyzer: The underlying analyzer instance
-    """
+    """Analyze sentiment of financial text using VADER or FinBERT."""
 
     def __init__(self, method: Literal["vader", "finbert"] = "vader"):
-        """
-        Initialize the sentiment analyzer.
-
-        Args:
-            method: Sentiment analysis method (default: "vader")
-
-        Raises:
-            ImportError: If required dependencies are not installed
-        """
         self.method = method
 
         if method == "vader":
@@ -66,24 +47,12 @@ class SentimentAnalyzer:
             self.analyzer = SentimentIntensityAnalyzer()
             logger.info("Initialized VADER sentiment analyzer")
         elif method == "finbert":
-            # FinBERT support planned for Phase 5
             raise NotImplementedError("FinBERT method not yet implemented. Use method='vader' for now.")
         else:
             raise ValueError(f"Unknown method: {method}. Use 'vader' or 'finbert'")
 
-    def analyze(self, text: str) -> dict:
-        """
-        Analyze sentiment of a single text string.
-
-        Args:
-            text: Text to analyze
-
-        Returns:
-            Dictionary with:
-                - compound: Compound sentiment score (-1.0 to 1.0)
-                - label: Sentiment label ('positive', 'negative', 'neutral')
-                - scores: Individual scores (neg, neu, pos) for VADER
-        """
+    def analyze(self, text: str) -> dict[str, object]:
+        """Analyze sentiment of a single text string."""
         if not text or not isinstance(text, str):
             return self._neutral_result()
 
@@ -93,27 +62,12 @@ class SentimentAnalyzer:
 
         if self.method == "vader":
             return self._analyze_vader(text)
-
         raise NotImplementedError(f"analyze() not implemented for method={self.method}")
 
-    def analyze_batch(self, texts: list[str]) -> pd.DataFrame:
-        """
-        Analyze sentiment for multiple texts.
-
-        Args:
-            texts: List of text strings to analyze
-
-        Returns:
-            DataFrame with columns:
-                - text: Original text
-                - compound: Compound sentiment score
-                - label: Sentiment label
-                - neg: Negative score (VADER only)
-                - neu: Neutral score (VADER only)
-                - pos: Positive score (VADER only)
-        """
+    def analyze_batch(self, texts: list[str]) -> pl.DataFrame:
+        """Analyze sentiment for multiple texts."""
         if not texts:
-            return pd.DataFrame()
+            return pl.DataFrame()
 
         results = []
         for text in texts:
@@ -121,21 +75,13 @@ class SentimentAnalyzer:
             result["text"] = text
             results.append(result)
 
-        df = pd.DataFrame(results)
-        # Reorder columns
-        cols = ["text", "compound", "label"]
+        columns = ["text", "compound", "label"]
         if self.method == "vader":
-            cols.extend(["neg", "neu", "pos"])
-        df = df[cols]
+            columns.extend(["neg", "neu", "pos"])
+        return pl.DataFrame(results).select(columns)
 
-        return df
-
-    def _analyze_vader(self, text: str) -> dict:
-        """Analyze sentiment using VADER."""
+    def _analyze_vader(self, text: str) -> dict[str, object]:
         scores = self.analyzer.polarity_scores(text)
-
-        # Determine label based on compound score
-        # Standard thresholds: positive >= 0.05, negative <= -0.05, else neutral
         compound = scores["compound"]
         if compound >= 0.05:
             label = SentimentLabel.POSITIVE
@@ -147,18 +93,13 @@ class SentimentAnalyzer:
         return {
             "compound": compound,
             "label": label.value,
-            "scores": {
-                "neg": scores["neg"],
-                "neu": scores["neu"],
-                "pos": scores["pos"],
-            },
+            "scores": {"neg": scores["neg"], "neu": scores["neu"], "pos": scores["pos"]},
             "neg": scores["neg"],
             "neu": scores["neu"],
             "pos": scores["pos"],
         }
 
-    def _neutral_result(self) -> dict:
-        """Return neutral sentiment for empty/invalid text."""
+    def _neutral_result(self) -> dict[str, object]:
         return {
             "compound": 0.0,
             "label": SentimentLabel.NEUTRAL.value,
@@ -170,45 +111,30 @@ class SentimentAnalyzer:
 
 
 def analyze_sentiment_scores(
-    df: pd.DataFrame,
+    df: FrameLike,
     text_column: str = "headline",
     method: Literal["vader", "finbert"] = "vader",
-) -> pd.DataFrame:
-    """
-    Add sentiment scores to a DataFrame with text data.
-
-    Args:
-        df: Input DataFrame with text column
-        text_column: Name of column containing text
-        method: Sentiment analysis method
-
-    Returns:
-        DataFrame with additional columns:
-            - sentiment_score: Compound sentiment score
-            - sentiment_label: Sentiment label
-            - neg: Negative score (VADER only)
-            - neu: Neutral score (VADER only)
-            - pos: Positive score (VADER only)
-    """
-    if text_column not in df.columns:
+) -> pl.DataFrame:
+    """Add sentiment scores to a frame with text data."""
+    frame = ensure_polars(df)
+    if text_column not in frame.columns:
         raise ValueError(f"Column '{text_column}' not found in DataFrame")
 
     analyzer = SentimentAnalyzer(method=method)
-    texts = df[text_column].fillna("").tolist()
-
+    texts = frame[text_column].fill_null("").cast(pl.Utf8).to_list()
     results_df = analyzer.analyze_batch(texts)
 
-    # Add results to original DataFrame
-    df = df.copy()
-    df["sentiment_score"] = results_df["compound"].values
-    df["sentiment_label"] = results_df["label"].values
-
+    enriched = frame.with_columns(
+        pl.Series("sentiment_score", results_df["compound"].to_list()),
+        pl.Series("sentiment_label", results_df["label"].to_list()),
+    )
     if method == "vader":
-        df["neg"] = results_df["neg"].values
-        df["neu"] = results_df["neu"].values
-        df["pos"] = results_df["pos"].values
-
-    return df
+        enriched = enriched.with_columns(
+            pl.Series("neg", results_df["neg"].to_list()),
+            pl.Series("neu", results_df["neu"].to_list()),
+            pl.Series("pos", results_df["pos"].to_list()),
+        )
+    return enriched
 
 
 __all__ = [

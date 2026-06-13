@@ -1,17 +1,14 @@
-"""Parquet compaction for lake maintenance.
+"""Delta Lake compaction for lake maintenance.
 
-Merges small date-partitioned Parquet files into fewer, larger files
-to improve read performance and reduce storage overhead.
-
-For Delta Lake tables, delegates to ``DeltaTable.optimize.compact()``.
+Compacts small files in Delta tables using native ``optimize.compact()``
+for better read performance and reduced storage overhead.
 """
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
+from typing import Any
 
-import pandas as pd
 import structlog
 
 from equity_lake.core.paths import LAKE_DIR
@@ -24,137 +21,30 @@ def compact_market(
     max_days_per_file: int = 30,
     dry_run: bool = False,
 ) -> int:
-    """Compact a single market directory by merging small partition files.
+    """Compact a single market Delta table using ``optimize.compact()``.
 
-    For Delta Lake tables, uses native ``optimize.compact()``.
-    For legacy Hive-partitioned Parquet, merges consecutive date partitions.
+    Returns the number of files removed, or 0 if the directory is not a
+    Delta table.
     """
     if not market_dir.exists():
         logger.warning("market_dir_not_found", path=str(market_dir))
         return 0
 
-    try:
-        from deltalake import DeltaTable
+    from deltalake import DeltaTable
 
-        if DeltaTable.is_deltatable(str(market_dir)):
-            if dry_run:
-                logger.info("delta_compact_dry_run", market=str(market_dir.name))
-                return 0
-            dt = DeltaTable(str(market_dir))
-            metrics = dt.optimize.compact()
-            removed = metrics.get("numFilesRemoved", 0)
-            logger.info("delta_compact_done", market=str(market_dir.name), metrics=metrics)
-            return removed
-    except ImportError:
-        pass
-
-    return _compact_parquet(market_dir, max_days_per_file, dry_run)
-
-
-def _compact_parquet(market_dir: Path, max_days_per_file: int, dry_run: bool) -> int:
-    partition_dirs = sorted(market_dir.glob("date=*"))
-    if not partition_dirs:
+    if not DeltaTable.is_deltatable(str(market_dir)):
+        logger.warning("compact_skip", market=str(market_dir.name), reason="not a delta table")
         return 0
 
-    groups = _group_consecutive_dates(partition_dirs, max_days_per_file)
-    total_compacted = 0
+    if dry_run:
+        logger.info("delta_compact_dry_run", market=str(market_dir.name))
+        return 0
 
-    for group in groups:
-        if len(group) <= 1:
-            continue
-
-        logger.info(
-            "compacting_date_range",
-            dates=f"{group[0].name}..{group[-1].name}",
-            partitions=len(group),
-            dry_run=dry_run,
-        )
-
-        if dry_run:
-            total_compacted += len(group)
-            continue
-
-        frames: list[pd.DataFrame] = []
-        for partition_dir in group:
-            for pq_file in partition_dir.glob("*.parquet"):
-                frames.append(pd.read_parquet(pq_file))
-
-        if not frames:
-            continue
-
-        merged = pd.concat(frames, ignore_index=True)
-        key_cols = [c for c in ("ticker", "date") if c in merged.columns]
-        if key_cols:
-            merged = merged.drop_duplicates(subset=key_cols, keep="last")
-            merged = merged.sort_values(key_cols).reset_index(drop=True)
-
-        target_dir = group[-1]
-        target_file = target_dir / f"{target_dir.name.split('=', 1)[1]}.parquet"
-
-        for pq_file in target_dir.glob("*.parquet"):
-            if pq_file != target_file:
-                pq_file.unlink()
-
-        merged.to_parquet(target_file, index=False, compression="snappy")
-
-        for old_dir in group[:-1]:
-            for pq_file in old_dir.glob("*.parquet"):
-                pq_file.unlink()
-            old_dir.rmdir()
-
-        total_compacted += len(group) - 1
-
-    return total_compacted
-
-
-def _group_consecutive_dates(
-    partition_dirs: list[Path],
-    max_per_group: int,
-) -> list[list[Path]]:
-    """Group consecutive date-partition directories into batches."""
-    if not partition_dirs:
-        return []
-
-    groups: list[list[Path]] = []
-    current_group: list[Path] = [partition_dirs[0]]
-    prev_date = _extract_date(partition_dirs[0].name)
-
-    for pd_dir in partition_dirs[1:]:
-        cur_date = _extract_date(pd_dir.name)
-        if cur_date is None or prev_date is None:
-            if current_group:
-                groups.append(current_group)
-            current_group = [pd_dir]
-            prev_date = cur_date
-            continue
-
-        gap_days = (cur_date - prev_date).days
-        if gap_days <= 3 and len(current_group) < max_per_group:
-            current_group.append(pd_dir)
-        else:
-            if current_group:
-                groups.append(current_group)
-            current_group = [pd_dir]
-
-        prev_date = cur_date
-
-    if current_group:
-        groups.append(current_group)
-
-    return groups
-
-
-def _extract_date(partition_name: str) -> date | None:
-    """Extract date from 'date=YYYY-MM-DD...' partition name.
-
-    Handles both plain ``date=2024-01-01`` and timestamp-format
-    ``date=2024-01-01%2000%3A00%3A00.000000`` names produced by Delta Lake.
-    """
-    try:
-        raw = partition_name.split("=", 1)[1]
-        return date.fromisoformat(raw[:10])
-    except (ValueError, IndexError):
-        return None
+    dt = DeltaTable(str(market_dir))
+    metrics: dict[str, Any] = dt.optimize.compact()
+    removed = int(metrics.get("numFilesRemoved", 0))
+    logger.info("delta_compact_done", market=str(market_dir.name), metrics=metrics)
+    return removed
 
 
 def compact_all_markets(
@@ -164,7 +54,7 @@ def compact_all_markets(
 ) -> dict[str, int]:
     """Run compaction across all market directories.
 
-    Returns dict mapping market name to number of partitions compacted.
+    Returns dict mapping market name to number of files removed.
     """
     lake = lake_dir or LAKE_DIR
     results: dict[str, int] = {}

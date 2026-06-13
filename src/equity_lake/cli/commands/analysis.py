@@ -14,8 +14,8 @@ from equity_lake.cli._app import _init_logging, app
 def backtest_cmd(
     strategy: Annotated[str, typer.Option("--strategy", "-s", help="Strategy name")] = "sma_crossover",
     tickers: Annotated[str, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = "AAPL,MSFT",
-    start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,
-    end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,
+    start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
+    end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
     walk_forward: Annotated[bool, typer.Option("--walk-forward", help="Walk-forward validation")] = False,
     output: Annotated[str | None, typer.Option("--output", "-o", help="Output JSON")] = None,
@@ -37,7 +37,7 @@ def backtest_cmd(
         typer.secho(f"Unknown strategy: {strategy}. Available: {', '.join(strategy_map.keys())}", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    strategy_inst = strategy_map[strategy](params={})
+    strategy_inst = strategy_map[strategy](params={})  # type: ignore[abstract]
     eng = VectorBacktestEngine(
         strategy=strategy_inst,
         tickers=tickers.split(","),
@@ -62,11 +62,23 @@ def query(
     from equity_lake.storage.duckdb import EquityDataDB
 
     _init_logging(verbose)
-    db = EquityDataDB(db_path=db_path)
-    if query_name:
-        db.run_named_query(query_name)
-    else:
-        db.run_all_queries()
+    with EquityDataDB(db_path=db_path) as db:
+        if query_name:
+            df = db.run_named_query(query_name)
+            if not df.is_empty():
+                typer.echo(df)
+            else:
+                typer.secho(f"No results for query: {query_name}", fg=typer.colors.YELLOW)
+        else:
+            results = db.run_all_queries()
+            for name, df in results.items():
+                typer.echo(f"\n{'=' * 60}")
+                typer.echo(f"Query: {name}")
+                typer.echo(f"{'=' * 60}")
+                if not df.is_empty():
+                    typer.echo(df)
+                else:
+                    typer.secho("No results", fg=typer.colors.YELLOW)
 
 
 @app.command("monitor")
@@ -85,6 +97,6 @@ def monitor(
         null_threshold_pct=null_threshold or 5.0,
         verbose=verbose,
     )
-    report = monitor_inst.run()
+    report = {"healthy": monitor_inst.run_health_check()}
     if output_json:
         Path(output_json).write_text(json.dumps(report, indent=2, default=str))

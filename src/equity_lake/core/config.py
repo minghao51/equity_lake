@@ -20,6 +20,8 @@ from pydantic_settings import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_DIR = PROJECT_ROOT / "config"
+DATA_DIR = PROJECT_ROOT / "data"
+LOGS_DIR = PROJECT_ROOT / "logs"
 
 
 class TickerMetadata(BaseModel):
@@ -136,7 +138,7 @@ class MarketConfig(BaseModel):
 class GroupConfig(BaseModel):
     description: str
     markets: list[str]
-    tickers: list[str] | dict[str, list[str]] = Field(default_factory=list)
+    tickers: list[str] | dict[str, list[str]] = Field(default_factory=lambda: [])
 
 
 class ValidationConfig(BaseModel):
@@ -561,6 +563,21 @@ def clear_settings_cache() -> None:
     get_settings.cache_clear()
 
 
+def get_project_config() -> dict[str, str | int | float | bool]:
+    settings = get_settings()
+    return {
+        "db_path": settings.storage.db_path,
+        "log_level": "INFO",
+        "log_dir": str(LOGS_DIR),
+        "data_dir": str(DATA_DIR),
+        "markets": ",".join(settings.ingestion.default_markets),
+        "dev_mode": settings.project.environment == "development",
+        "use_test_data": settings.project.environment == "testing",
+        "retry_attempts": 3,
+        "retry_delay": 1.0,
+    }
+
+
 logger = structlog.get_logger()
 
 
@@ -779,159 +796,6 @@ def load_tickers_for_market(
     return config.get_tickers_for_market(market, active_only=active_only)
 
 
-def get_markets(config: TickerConfigRoot | None) -> list[str]:
-    if not config:
-        return []
-    return config.get_markets()
-
-
-def get_market_info(
-    config: TickerConfigRoot | None,
-    market: str,
-) -> MarketConfig | None:
-    if not config:
-        return None
-    return config.get_market_info(market)
-
-
-def get_market_currency(config: TickerConfigRoot | None, market: str) -> str:
-    market_info = get_market_info(config, market)
-    return market_info.currency if market_info else "USD"
-
-
-def get_tickers_for_market(
-    config: TickerConfigRoot | None,
-    market: str,
-    active_only: bool = True,
-    min_priority: int | None = None,
-) -> list[str]:
-    if not config:
-        return []
-    return config.get_tickers_for_market(market, active_only=active_only, min_priority=min_priority)
-
-
-def get_ticker_metadata(
-    config: TickerConfigRoot | None,
-    symbol: str,
-    market: str | None = None,
-) -> TickerMetadata | None:
-    if not config:
-        return None
-    return config.get_ticker_metadata(symbol, market=market)
-
-
-def get_all_tickers(
-    config: TickerConfigRoot | None,
-    active_only: bool = True,
-) -> dict[str, list[str]]:
-    if not config:
-        return {}
-    return config.get_all_tickers(active_only=active_only)
-
-
-def get_tickers_by_tag(
-    config: TickerConfigRoot | None,
-    tag: str,
-    market: str | None = None,
-    active_only: bool = True,
-) -> list[str]:
-    if not config:
-        return []
-    return config.get_tickers_by_tag(tag, market=market, active_only=active_only)
-
-
-def get_tickers_by_sector(
-    config: TickerConfigRoot | None,
-    sector: str,
-    market: str | None = None,
-    active_only: bool = True,
-) -> list[str]:
-    if not config:
-        return []
-    return config.get_tickers_by_sector(sector, market=market, active_only=active_only)
-
-
-def get_tickers_by_exchange(
-    config: TickerConfigRoot | None,
-    exchange: str,
-    market: str | None = None,
-    active_only: bool = True,
-) -> list[str]:
-    if not config:
-        return []
-    return config.get_tickers_by_exchange(exchange, market=market, active_only=active_only)
-
-
-def get_tickers_by_tags(
-    config: TickerConfigRoot | None,
-    tags: list[str],
-    match_all: bool = False,
-    market: str | None = None,
-    active_only: bool = True,
-) -> list[str]:
-    if not config:
-        return []
-    return config.get_tickers_by_tags(tags, match_all=match_all, market=market, active_only=active_only)
-
-
-def get_groups(config: TickerConfigRoot | None) -> list[str]:
-    if not config:
-        return []
-    return config.get_groups()
-
-
-def get_group_info(
-    config: TickerConfigRoot | None,
-    group_name: str,
-) -> GroupConfig | None:
-    if not config:
-        return None
-    return config.get_group_info(group_name)
-
-
-def get_tickers_by_group(
-    config: TickerConfigRoot | None,
-    group_name: str,
-    active_only: bool = True,
-) -> list[str]:
-    if not config:
-        return []
-    return config.get_tickers_by_group(group_name, active_only=active_only)
-
-
-def list_tickers(
-    config: TickerConfigRoot | None,
-    market: str | None = None,
-    active_only: bool = True,
-    include_metadata: bool = False,
-) -> list[str] | dict[str, list[str]] | dict[str, dict[str, Any]]:
-    if not config:
-        return {}
-    return config.list_tickers(market=market, active_only=active_only, include_metadata=include_metadata)
-
-
-def get_stats(config: TickerConfigRoot | None) -> dict[str, Any]:
-    if not config:
-        return {}
-    return config.get_stats()
-
-
-def validate_ticker_format(
-    config: TickerConfigRoot | None,
-    symbol: str,
-    market: str,
-) -> bool:
-    if not config:
-        return True
-    return config.validate_ticker_format(symbol, market)
-
-
-def validate_config(config: TickerConfigRoot | None) -> dict[str, list[str]]:
-    if not config:
-        return {"errors": ["No configuration loaded"], "warnings": []}
-    return config.validate_config()
-
-
 __all__ = [
     "AppSettings",
     "DashboardSettings",
@@ -948,25 +812,9 @@ __all__ = [
     "TickerMetadata",
     "ValidationConfig",
     "clear_settings_cache",
-    "get_all_tickers",
     "get_default_config",
-    "get_group_info",
-    "get_groups",
-    "get_market_currency",
-    "get_market_info",
-    "get_markets",
+    "get_project_config",
     "get_settings",
-    "get_stats",
-    "get_ticker_metadata",
-    "get_tickers_by_exchange",
-    "get_tickers_by_group",
-    "get_tickers_by_sector",
-    "get_tickers_by_tag",
-    "get_tickers_by_tags",
-    "get_tickers_for_market",
-    "list_tickers",
     "load_settings",
     "load_tickers_for_market",
-    "validate_config",
-    "validate_ticker_format",
 ]

@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
-import pandas as pd
-from hamilton.function_modifiers import check_output
+import polars as pl
 
 from equity_lake.features.indicators import (
     atr,
@@ -20,182 +19,190 @@ from equity_lake.features.indicators import (
 )
 
 
-def ticker(price_data: pd.DataFrame) -> pd.Series:
+def ticker(price_data: pl.DataFrame) -> pl.Series:
     return price_data["ticker"]
 
 
-def date(price_data: pd.DataFrame) -> pd.Series:
-    return pd.to_datetime(price_data["date"], format="mixed")
+def date(price_data: pl.DataFrame) -> pl.Series:
+    date_column = price_data["date"]
+    if date_column.dtype == pl.Utf8:
+        return date_column.str.to_datetime(strict=False)
+    if date_column.dtype == pl.Date:
+        return date_column.cast(pl.Datetime)
+    return date_column
 
 
-def open_price(price_data: pd.DataFrame) -> pd.Series:
+def open_price(price_data: pl.DataFrame) -> pl.Series:
     return price_data["open"]
 
 
-def high(price_data: pd.DataFrame) -> pd.Series:
+def high(price_data: pl.DataFrame) -> pl.Series:
     return price_data["high"]
 
 
-def low(price_data: pd.DataFrame) -> pd.Series:
+def low(price_data: pl.DataFrame) -> pl.Series:
     return price_data["low"]
 
 
-@check_output(data_type=np.float64, importance="warn")
-def close(price_data: pd.DataFrame) -> pd.Series:
-    return price_data["close"]
+def close(price_data: pl.DataFrame) -> pl.Series:
+    return price_data["close"].cast(pl.Float64)
 
 
-@check_output(data_type=np.float64, range=(0, None), importance="warn")
-def volume(price_data: pd.DataFrame) -> pd.Series:
-    return price_data["volume"].astype(np.float64)
+def volume(price_data: pl.DataFrame) -> pl.Series:
+    return price_data["volume"].cast(pl.Float64)
 
 
-@check_output(data_type=np.float64, importance="warn")
-def returns(close: pd.Series) -> pd.Series:
+def returns(close: pl.Series) -> pl.Series:
     return close.pct_change()
 
 
-@check_output(data_type=np.float64, range=(0, 100), importance="warn")
-def rsi_14(close: pd.Series) -> pd.Series:
+def rsi_14(close: pl.Series) -> pl.Series:
     return rsi(close, length=14)
 
 
-def macd_frame(close: pd.Series) -> pd.DataFrame:
+def macd_frame(close: pl.Series) -> pl.DataFrame:
     return macd_indicator(close, fast=12, slow=26, signal=9)
 
 
-def macd(macd_frame: pd.DataFrame) -> pd.Series:
+def macd(macd_frame: pl.DataFrame) -> pl.Series:
     return macd_frame["macd"]
 
 
-def macd_signal(macd_frame: pd.DataFrame) -> pd.Series:
+def macd_signal(macd_frame: pl.DataFrame) -> pl.Series:
     return macd_frame["signal"]
 
 
-def macd_histogram(macd_frame: pd.DataFrame) -> pd.Series:
+def macd_histogram(macd_frame: pl.DataFrame) -> pl.Series:
     return macd_frame["histogram"]
 
 
-def bollinger_frame(close: pd.Series) -> pd.DataFrame:
+def bollinger_frame(close: pl.Series) -> pl.DataFrame:
     return bollinger_bands(close, length=20, std=2)
 
 
-def bb_upper(bollinger_frame: pd.DataFrame) -> pd.Series:
+def bb_upper(bollinger_frame: pl.DataFrame) -> pl.Series:
     return bollinger_frame["upper"]
 
 
-def bb_middle(bollinger_frame: pd.DataFrame) -> pd.Series:
+def bb_middle(bollinger_frame: pl.DataFrame) -> pl.Series:
     return bollinger_frame["middle"]
 
 
-def bb_lower(bollinger_frame: pd.DataFrame) -> pd.Series:
+def bb_lower(bollinger_frame: pl.DataFrame) -> pl.Series:
     return bollinger_frame["lower"]
 
 
-def bb_width(bb_upper: pd.Series, bb_lower: pd.Series, bb_middle: pd.Series) -> pd.Series:
+def bb_width(bb_upper: pl.Series, bb_lower: pl.Series, bb_middle: pl.Series) -> pl.Series:
     return (bb_upper - bb_lower) / bb_middle
 
 
-def bb_pct(close: pd.Series, bb_upper: pd.Series, bb_lower: pd.Series) -> pd.Series:
+def bb_pct(close: pl.Series, bb_upper: pl.Series, bb_lower: pl.Series) -> pl.Series:
     return (close - bb_lower) / (bb_upper - bb_lower)
 
 
-def atr_14(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+def atr_14(high: pl.Series, low: pl.Series, close: pl.Series) -> pl.Series:
     return atr(high, low, close, length=14)
 
 
-def roc_5(close: pd.Series) -> pd.Series:
+def roc_5(close: pl.Series) -> pl.Series:
     return roc(close, length=5)
 
 
-def roc_10(close: pd.Series) -> pd.Series:
+def roc_10(close: pl.Series) -> pl.Series:
     return roc(close, length=10)
 
 
-def roc_20(close: pd.Series) -> pd.Series:
+def roc_20(close: pl.Series) -> pl.Series:
     return roc(close, length=20)
 
 
-def return_1d(close: pd.Series) -> pd.Series:
+def return_1d(close: pl.Series) -> pl.Series:
     return close.pct_change(1)
 
 
-def return_5d(close: pd.Series) -> pd.Series:
+def return_5d(close: pl.Series) -> pl.Series:
     return close.pct_change(5)
 
 
-def return_10d(close: pd.Series) -> pd.Series:
+def return_10d(close: pl.Series) -> pl.Series:
     return close.pct_change(10)
 
 
-def return_20d(close: pd.Series) -> pd.Series:
+def return_20d(close: pl.Series) -> pl.Series:
     return close.pct_change(20)
 
 
-def overnight_return(open_price: pd.Series, close: pd.Series) -> pd.Series:
+def overnight_return(open_price: pl.Series, close: pl.Series) -> pl.Series:
     prev_close = close.shift(1)
     return (open_price - prev_close) / prev_close
 
 
-def intraday_return(open_price: pd.Series, close: pd.Series) -> pd.Series:
+def intraday_return(open_price: pl.Series, close: pl.Series) -> pl.Series:
     return (close - open_price) / open_price
 
 
-def hl_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
+def hl_range(high: pl.Series, low: pl.Series, close: pl.Series) -> pl.Series:
     return (high - low) / close
 
 
-def volume_ma_20(volume: pd.Series) -> pd.Series:
-    return volume.rolling(window=20).mean()
+def volume_ma_20(volume: pl.Series) -> pl.Series:
+    return volume.rolling_mean(window_size=20)
 
 
-def volume_roc_5(volume: pd.Series) -> pd.Series:
+def volume_roc_5(volume: pl.Series) -> pl.Series:
     return volume.pct_change(5)
 
 
-def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
+def obv(close: pl.Series, volume: pl.Series) -> pl.Series:
     return obv_indicator(close, volume)
 
 
-def volume_ratio(volume: pd.Series, volume_ma_20: pd.Series) -> pd.Series:
+def volume_ratio(volume: pl.Series, volume_ma_20: pl.Series) -> pl.Series:
     return volume / volume_ma_20
 
 
-def day_of_week(date: pd.Series) -> pd.Series:
-    return date.dt.dayofweek
+def day_of_week(date: pl.Series) -> pl.Series:
+    return date.dt.weekday()
 
 
-def day_of_month(date: pd.Series) -> pd.Series:
-    return date.dt.day
+def day_of_month(date: pl.Series) -> pl.Series:
+    return date.dt.day()
 
 
-def month(date: pd.Series) -> pd.Series:
-    return date.dt.month
+def month(date: pl.Series) -> pl.Series:
+    return date.dt.month()
 
 
-def quarter(date: pd.Series) -> pd.Series:
-    return date.dt.quarter
+def quarter(date: pl.Series) -> pl.Series:
+    return date.dt.quarter()
 
 
-def days_to_month_end(date: pd.Series) -> pd.Series:
-    month_end = date + pd.offsets.MonthEnd(0)
-    return (month_end - date).dt.days
+def days_to_month_end(date: pl.Series) -> pl.Series:
+    return (date.dt.month_end() - date).dt.total_days()
 
 
-def trading_day_of_month(date: pd.Series) -> pd.Series:
-    return date.groupby([date.dt.year, date.dt.month]).cumcount() + 1
+def trading_day_of_month(ticker: pl.Series, date: pl.Series) -> pl.Series:
+    return (
+        pl.DataFrame({"ticker": ticker, "date": date})
+        .with_row_index("row_nr")
+        .with_columns(
+            (pl.int_range(pl.len()).over(["ticker", pl.col("date").dt.year(), pl.col("date").dt.month()]) + 1).alias("trading_day_of_month")
+        )
+        .sort("row_nr")["trading_day_of_month"]
+    )
 
 
-def volatility_20(returns: pd.Series) -> pd.Series:
-    return returns.rolling(20).std() * np.sqrt(252)
+def volatility_20(returns: pl.Series) -> pl.Series:
+    annualization_factor = float(np.sqrt(252))
+    return returns.rolling_std(window_size=20) * annualization_factor
 
 
-def next_day_return(close: pd.Series) -> pd.Series:
+def next_day_return(close: pl.Series) -> pl.Series:
     return close.shift(-1) / close - 1
 
 
 next_day_return.__doc__ = (
     "Target variable. Uses future data (shift -1). "
-    "Must be excluded from inference feature lists — "
+    "Must be excluded from inference feature lists - "
     "FeatureEngineer.generate_features(compute_target=False) handles this."
 )

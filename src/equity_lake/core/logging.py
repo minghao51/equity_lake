@@ -167,7 +167,7 @@ def setup_structured_logging(
             logging.getLogger().addHandler(file_handler)
             _configured_log_files.add(resolved_log_file)
 
-    return logger  # type: ignore[no-any-return]
+    return logger
 
 
 # =============================================================================

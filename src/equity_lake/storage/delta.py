@@ -10,11 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+import polars as pl
 import structlog
 from deltalake import DeltaTable, write_deltalake
 
 from equity_lake.core.paths import LAKE_DIR
+from equity_lake.core.polars_utils import FrameLike, normalize_temporal_columns
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +27,7 @@ def delta_table_path(market: str, lake_dir: Path | None = None) -> Path:
 
 
 def write_delta(
-    df: pd.DataFrame,
+    df: FrameLike,
     market: str,
     mode: str = "append",
     partition_by: list[str] | None = None,
@@ -44,14 +45,12 @@ def write_delta(
     """
     table_path = delta_table_path(market, lake_dir)
     partitions = partition_by or [_DATE_COL]
-
-    if _DATE_COL in df.columns:
-        df[_DATE_COL] = pd.to_datetime(df[_DATE_COL])
+    df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
 
     try:
         write_deltalake(
             str(table_path),
-            df,
+            df_polars,
             mode=mode,
             partition_by=partitions,
             schema_mode=schema_mode,
@@ -59,7 +58,7 @@ def write_delta(
         logger.info(
             "delta_write",
             market=market,
-            rows=len(df),
+            rows=df_polars.height,
             mode=mode,
             path=str(table_path),
         )
@@ -70,7 +69,7 @@ def write_delta(
 
 
 def merge_delta(
-    df: pd.DataFrame,
+    df: FrameLike,
     market: str,
     key_columns: list[str] | None = None,
     lake_dir: Path | None = None,
@@ -81,21 +80,19 @@ def merge_delta(
     """
     table_path = delta_table_path(market, lake_dir)
     keys = key_columns or ["ticker", _DATE_COL]
+    df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
 
     if not DeltaTable.is_deltatable(str(table_path)):
-        return write_delta(df, market, mode="append", lake_dir=lake_dir)
+        return write_delta(df_polars, market, mode="append", lake_dir=lake_dir)
 
     dt = DeltaTable(str(table_path))
-
-    if _DATE_COL in df.columns:
-        df[_DATE_COL] = pd.to_datetime(df[_DATE_COL])
 
     predicate = " AND ".join(f"target.{k} = source.{k}" for k in keys)
 
     try:
         (
             dt.merge(
-                source=df,
+                source=df_polars.to_arrow(),
                 predicate=predicate,
                 source_alias="source",
                 target_alias="target",
@@ -104,7 +101,7 @@ def merge_delta(
             .when_not_matched_insert_all()
             .execute()
         )
-        logger.info("delta_merge", market=market, rows=len(df))
+        logger.info("delta_merge", market=market, rows=df_polars.height)
         return True
     except Exception as exc:
         logger.error("delta_merge_failed", market=market, error=str(exc))
@@ -115,15 +112,15 @@ def read_delta(
     market: str,
     version: int | None = None,
     lake_dir: Path | None = None,
-) -> pd.DataFrame:
-    """Read a Delta table as a pandas DataFrame (optionally at a given version)."""
+) -> pl.DataFrame:
+    """Read a Delta table as a Polars DataFrame."""
     table_path = delta_table_path(market, lake_dir)
     try:
         dt = DeltaTable(str(table_path), version=version) if version is not None else DeltaTable(str(table_path))
-        return dt.to_pandas()
+        return pl.from_arrow(dt.to_pyarrow_table())
     except Exception as exc:
         logger.error("delta_read_failed", market=market, error=str(exc))
-        return pd.DataFrame()
+        return pl.DataFrame()
 
 
 def compact_delta(market: str, lake_dir: Path | None = None) -> dict[str, Any]:
@@ -133,7 +130,7 @@ def compact_delta(market: str, lake_dir: Path | None = None) -> dict[str, Any]:
         logger.warning("delta_compact_skip", market=market, reason="not a delta table")
         return {}
     dt = DeltaTable(str(table_path))
-    metrics = dt.optimize.compact()
+    metrics: dict[str, Any] = dict(dt.optimize.compact())
     logger.info("delta_compact", market=market, metrics=metrics)
     return metrics
 
@@ -149,7 +146,7 @@ def vacuum_delta(
     if not DeltaTable.is_deltatable(str(table_path)):
         return []
     dt = DeltaTable(str(table_path))
-    files = dt.vacuum(retention_hours=retention_hours, dry_run=dry_run)
+    files = list(dt.vacuum(retention_hours=retention_hours, dry_run=dry_run))
     logger.info("delta_vacuum", market=market, dry_run=dry_run, files=len(files))
     return files
 
@@ -159,7 +156,7 @@ def delta_table_version(market: str, lake_dir: Path | None = None) -> int | None
     table_path = delta_table_path(market, lake_dir)
     if not DeltaTable.is_deltatable(str(table_path)):
         return None
-    return DeltaTable(str(table_path)).version()
+    return int(DeltaTable(str(table_path)).version())
 
 
 def migrate_parquet_to_delta(
@@ -195,18 +192,18 @@ def migrate_parquet_to_delta(
     con = duckdb.connect(":memory:")
     glob = str(market_dir / "**" / "*.parquet")
     try:
-        df = con.execute(f"SELECT * FROM read_parquet('{glob}', hive_partitioning=1, union_by_name=true)").df()
+        df = con.execute(f"SELECT * FROM read_parquet('{glob}', hive_partitioning=1, union_by_name=true)").pl()
     except Exception as exc:
         logger.error("delta_migrate_read_failed", market=market, error=str(exc))
         return False
     finally:
         con.close()
 
-    if df.empty:
+    if df.is_empty():
         logger.warning("delta_migrate_empty", market=market)
         return False
 
-    row_count = len(df)
+    row_count = df.height
     logger.info("delta_migrate_data", market=market, rows=row_count)
 
     if dry_run:

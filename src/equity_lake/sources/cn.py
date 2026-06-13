@@ -6,12 +6,13 @@ from typing import Any
 
 import akshare as ak
 import pandas as pd
+import polars as pl
 import structlog
 
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.logging import timer
 from equity_lake.core.schemas import STANDARD_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher
+from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardize_columns
 
 logger = structlog.get_logger()
 
@@ -63,7 +64,7 @@ class CNAshareFetcher(MarketDataFetcher):
             logger.debug("Failed to fetch %s: %s", stock_code, exc)
             return None
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch China A-share data for a trading date."""
         tickers = self._get_configured_tickers("cn")
         logger.info(
@@ -74,7 +75,7 @@ class CNAshareFetcher(MarketDataFetcher):
             configured_ticker_count=len(tickers),
         )
 
-        def _fetch() -> pd.DataFrame:
+        def _fetch() -> pl.DataFrame:
             date_str = trading_date.strftime("%Y%m%d")
             try:
                 if not tickers:
@@ -83,7 +84,7 @@ class CNAshareFetcher(MarketDataFetcher):
                         date=str(trading_date),
                         message="Cannot fetch CN data without configured tickers",
                     )
-                    return pd.DataFrame()
+                    return _empty_frame()
 
                 frames: list[pd.DataFrame] = []
                 success_count = 0
@@ -146,27 +147,20 @@ class CNAshareFetcher(MarketDataFetcher):
                         date=str(trading_date),
                         message="No data returned for China A-shares",
                     )
-                    return pd.DataFrame()
+                    return _empty_frame()
 
                 frame = pd.concat(frames, ignore_index=True)
-                frame = frame.rename(
-                    columns={
-                        "开盘": "open",
-                        "最高": "high",
-                        "最低": "low",
-                        "收盘": "close",
-                        "成交量": "volume",
-                    }
+                if "adj_close" not in frame.columns and "收盘" in frame.columns:
+                    frame["adj_close"] = frame["收盘"]
+                frame = standardize_columns(
+                    frame,
+                    rename={"开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"},
+                    columns=STANDARD_COLUMNS,
                 )
-                if "adj_close" not in frame.columns:
-                    frame["adj_close"] = frame["close"]
-                available_cols = [column for column in STANDARD_COLUMNS if column in frame.columns]
-                frame = frame[available_cols]
-                frame = frame.dropna(how="all")
-                unique_tickers = int(frame["ticker"].nunique()) if "ticker" in frame else 0
+                unique_tickers = int(frame["ticker"].n_unique()) if "ticker" in frame.columns else 0
                 logger.info(
                     "fetch_cn_ashare_completed",
-                    rows=len(frame),
+                    rows=frame.height,
                     unique_tickers=unique_tickers,
                 )
                 return frame
@@ -177,7 +171,7 @@ class CNAshareFetcher(MarketDataFetcher):
                     error_type=type(exc).__name__,
                     date=str(trading_date),
                 )
-                return pd.DataFrame()
+                return _empty_frame()
 
         return self._retry_on_failure(_fetch)
 

@@ -12,12 +12,15 @@ from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
+import polars as pl
 import structlog
 import yfinance as yf
 
 from equity_lake.core.config import TickerConfig
+from equity_lake.core.polars_utils import ensure_polars
 from equity_lake.core.schemas import STANDARD_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher
+from equity_lake.core.ticker_utils import cn_to_yahoo_symbol
+from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardize_columns
 
 try:
     from equity_lake.sources.cn_efinance import CNEfinanceFetcher
@@ -33,11 +36,12 @@ class CNHybridFetcher(MarketDataFetcher):
     """Hybrid China A-share fetcher with automatic fallback.
 
     Fetch strategy (in order):
-    1. efinance (primary) - faster, more stable
-    2. akshare (fallback) - comprehensive but slower
+    1. akshare (primary, enabled by default) - comprehensive but slower
+    2. yfinance (automatic fallback when akshare returns empty)
+    3. efinance (opt-in via enable_efinance=True) - faster, more stable
 
-    If efinance fails or returns insufficient data, automatically falls back
-    to akshare to ensure data completeness.
+    If akshare returns empty data, automatically falls back to yfinance.
+    If efinance is enabled and returns sufficient data, akshare is skipped.
     """
 
     def __init__(
@@ -128,10 +132,10 @@ class CNHybridFetcher(MarketDataFetcher):
         if not self.enable_efinance and not self.enable_akshare:
             raise RuntimeError("No China data source available. Install efinance or ensure akshare is working.")
 
-    def _fetch_efinance_with_timeout(self, trading_date: date) -> pd.DataFrame:
+    def _fetch_efinance_with_timeout(self, trading_date: date) -> pl.DataFrame:
         """Run efinance with a bounded wait so fallback is not delayed indefinitely."""
         if self.efinance_fetcher is None:
-            return pd.DataFrame()
+            return _empty_frame()
 
         executor = ThreadPoolExecutor(max_workers=1)
         future = executor.submit(self.efinance_fetcher.fetch, trading_date)
@@ -150,18 +154,13 @@ class CNHybridFetcher(MarketDataFetcher):
 
     @staticmethod
     def _cn_to_yahoo_symbol(code: str) -> str:
-        """Map CN ticker code to Yahoo Finance symbol."""
-        if code.startswith(("0", "2", "3")):
-            return f"{code}.SZ"
-        if code.startswith(("4", "8")):
-            return f"{code}.BJ"
-        return f"{code}.SS"
+        return cn_to_yahoo_symbol(code)
 
-    def _fetch_yfinance_fallback(self, trading_date: date) -> pd.DataFrame:
+    def _fetch_yfinance_fallback(self, trading_date: date) -> pl.DataFrame:
         """Fetch CN data from Yahoo Finance when primary providers return empty."""
         tickers = self._get_configured_tickers("cn")
         if not tickers:
-            return pd.DataFrame()
+            return _empty_frame()
 
         yf_symbols = [self._cn_to_yahoo_symbol(ticker) for ticker in tickers]
         symbol_to_code = dict(zip(yf_symbols, tickers, strict=False))
@@ -178,7 +177,7 @@ class CNHybridFetcher(MarketDataFetcher):
             threads=True,
         )
         if data.empty:
-            return pd.DataFrame()
+            return _empty_frame()
 
         frames: list[pd.DataFrame] = []
         if len(yf_symbols) == 1:
@@ -198,24 +197,16 @@ class CNHybridFetcher(MarketDataFetcher):
                 frames.append(frame)
 
         if not frames:
-            return pd.DataFrame()
+            return _empty_frame()
 
         frame = pd.concat(frames, ignore_index=True)
-        frame = frame.rename(
-            columns={
-                "Open": "open",
-                "High": "high",
-                "Low": "low",
-                "Close": "close",
-                "Volume": "volume",
-                "Adj Close": "adj_close",
-            }
+        return standardize_columns(
+            frame,
+            rename={"Open": "open", "High": "high", "Low": "low", "Close": "close", "Volume": "volume", "Adj Close": "adj_close"},
+            columns=STANDARD_COLUMNS,
         )
-        if "adj_close" not in frame.columns and "close" in frame.columns:
-            frame["adj_close"] = frame["close"]
-        return frame
 
-    def fetch(self, trading_date: date) -> pd.DataFrame:
+    def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch China A-share data with automatic fallback.
 
         Strategy:
@@ -233,19 +224,19 @@ class CNHybridFetcher(MarketDataFetcher):
             akshare_enabled=self.enable_akshare,
         )
 
-        results: list[tuple[str, pd.DataFrame]] = []
+        results: list[tuple[str, pl.DataFrame]] = []
 
         # Try efinance first (primary source)
         if self.enable_efinance and self.efinance_fetcher:
             try:
                 logger.info("trying_efinance_source")
-                efinance_result = self._fetch_efinance_with_timeout(trading_date)
-                row_count = len(efinance_result)
+                efinance_result = ensure_polars(self._fetch_efinance_with_timeout(trading_date))
+                row_count = efinance_result.height
 
                 logger.info(
                     "efinance_result",
                     rows=row_count,
-                    unique_tickers=(efinance_result["ticker"].nunique() if "ticker" in efinance_result else 0),
+                    unique_tickers=(efinance_result["ticker"].n_unique() if "ticker" in efinance_result.columns else 0),
                 )
 
                 results.append(("efinance", efinance_result))
@@ -273,13 +264,13 @@ class CNHybridFetcher(MarketDataFetcher):
         if self.enable_akshare and self.akshare_fetcher:
             try:
                 logger.info("trying_akshare_source")
-                akshare_result = self.akshare_fetcher.fetch(trading_date)
-                row_count = len(akshare_result)
+                akshare_result = ensure_polars(self.akshare_fetcher.fetch(trading_date))
+                row_count = akshare_result.height
 
                 logger.info(
                     "akshare_result",
                     rows=row_count,
-                    unique_tickers=(akshare_result["ticker"].nunique() if "ticker" in akshare_result else 0),
+                    unique_tickers=(akshare_result["ticker"].n_unique() if "ticker" in akshare_result.columns else 0),
                 )
 
                 results.append(("akshare", akshare_result))
@@ -290,11 +281,11 @@ class CNHybridFetcher(MarketDataFetcher):
                         date=str(trading_date),
                     )
                     yfinance_result = self._fetch_yfinance_fallback(trading_date)
-                    yfinance_rows = len(yfinance_result)
+                    yfinance_rows = yfinance_result.height
                     logger.info(
                         "yfinance_fallback_result",
                         rows=yfinance_rows,
-                        unique_tickers=(yfinance_result["ticker"].nunique() if "ticker" in yfinance_result else 0),
+                        unique_tickers=(yfinance_result["ticker"].n_unique() if "ticker" in yfinance_result.columns else 0),
                     )
                     if yfinance_rows > 0:
                         results.append(("yfinance", yfinance_result))
@@ -309,21 +300,21 @@ class CNHybridFetcher(MarketDataFetcher):
         # Return best result (most rows)
         if not results:
             logger.error("all_cn_sources_failed", date=str(trading_date))
-            return pd.DataFrame()
+            return _empty_frame()
 
         # Sort by row count (descending) and return best result
-        best_source, best_result = max(results, key=lambda x: len(x[1]))
+        best_source, best_result = max(results, key=lambda x: x[1].height)
 
         logger.info(
             "fetch_cn_hybrid_completed",
             source=best_source,
-            rows=len(best_result),
+            rows=best_result.height,
             sources_tried=[source for source, _ in results],
         )
 
         return self._standardize_output(best_result)
 
-    def _standardize_output(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _standardize_output(self, df: pd.DataFrame | pl.DataFrame) -> pl.DataFrame:
         """Ensure output DataFrame has standard columns.
 
         Args:
@@ -332,14 +323,7 @@ class CNHybridFetcher(MarketDataFetcher):
         Returns:
             DataFrame with STANDARD_COLUMNS only
         """
-        if df.empty:
-            return df
-
-        available_cols = [column for column in STANDARD_COLUMNS if column in df.columns]
-        result = df[available_cols].copy()
-        result = result.dropna(how="all")
-
-        return result
+        return standardize_columns(df, columns=STANDARD_COLUMNS)
 
     def get_source_status(self) -> dict[str, bool]:
         """Get status of available data sources.

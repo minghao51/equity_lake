@@ -4,7 +4,7 @@ from contextlib import suppress
 from datetime import date, timedelta
 
 import duckdb
-import pandas as pd
+import polars as pl
 
 from equity_lake.core.paths import US_EQUITY_DIR
 from equity_lake.signals.generators.base import SignalGenerator
@@ -68,12 +68,19 @@ class BacktestSignalGenerator(SignalGenerator):
         """
 
         try:
-            df = self.con.execute(query).df()
+            df = self.con.execute(query).pl()
         except Exception:
-            # No data available
             return None
 
-        if df.empty or len(df) < lookback_days:
+        if "date" in df.columns and df["date"].dtype == pl.Utf8:
+            df = df.with_columns(
+                pl.when(pl.col("date").str.contains(" "))
+                .then(pl.col("date").str.to_datetime(strict=False).cast(pl.Date))
+                .otherwise(pl.col("date").str.to_date(strict=False))
+                .alias("date")
+            )
+
+        if df.is_empty() or df.height < lookback_days:
             return None
 
         # Check each strategy for signals
@@ -94,32 +101,24 @@ class BacktestSignalGenerator(SignalGenerator):
     def _check_strategy(
         self,
         ticker: str,
-        df: pd.DataFrame,
+        df: pl.DataFrame,
         strategy: dict,
         target_date: date,
     ) -> Signal | None:
-        """Check if a single strategy triggers a signal.
-
-        For MVP: Simple momentum strategy
-        - BUY: price > SMA by buy_threshold
-        - SELL: price < SMA by sell_threshold
-        """
+        """Check if a single strategy triggers a signal."""
         name = strategy.get("name", "unknown")
         lookback = strategy.get("lookback_days", 20)
         buy_thresh = strategy.get("buy_threshold", 0.02)
         sell_thresh = strategy.get("sell_threshold", -0.01)
 
-        # Calculate SMA
-        df = df.copy()
-        df["sma"] = df["close"].rolling(window=lookback).mean()
+        df = df.with_columns(pl.col("close").rolling_mean(window_size=lookback).alias("sma"))
 
-        # Get latest row (target date)
-        latest = df[df["date"] == target_date]
-        if latest.empty:
+        latest = df.filter(pl.col("date") == target_date)
+        if latest.is_empty():
             return None
 
-        price = latest["close"].iloc[0]
-        sma = latest["sma"].iloc[0]
+        price = latest.get_column("close").item()
+        sma = latest.get_column("sma").item()
 
         # Calculate % difference from SMA
         pct_diff = (price - sma) / sma

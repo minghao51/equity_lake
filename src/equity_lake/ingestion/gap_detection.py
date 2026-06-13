@@ -2,7 +2,7 @@
 Gap Detection Module for Financial Time Series Data
 
 This module provides utilities to detect gaps in time series data stored in
-partitioned Parquet files using DuckDB for high-performance queries.
+Delta Lake tables using DuckDB for high-performance queries.
 """
 
 from __future__ import annotations
@@ -15,16 +15,29 @@ import duckdb
 import numpy as np
 import structlog
 
+from equity_lake.core.calendar import trading_days_between
 from equity_lake.core.paths import LAKE_DIR
 
 logger = structlog.get_logger(__name__)
+
+_MARKET_DIR_MAP = {
+    "us_equity": "us_equity",
+    "cn_ashare": "cn_ashare",
+    "hk_sg_equity": "hk_sg_equity",
+    "jpx_equity": "jpx_equity",
+    "krx_equity": "krx_equity",
+}
+
+
+def _market_calendar_key(market_dir: str) -> str:
+    return _MARKET_DIR_MAP.get(market_dir, market_dir)
 
 
 class GapDetector:
     """Detect gaps in time series data using DuckDB.
 
     Uses DuckDB's generate_series to create an "ideal" date range and
-    LEFT JOIN with existing Parquet data to find missing dates.
+    LEFT JOIN with existing Delta Lake data to find missing dates.
     """
 
     def __init__(self, lake_path: Path | None = None):
@@ -37,7 +50,7 @@ class GapDetector:
         """Close the underlying DuckDB connection."""
         if hasattr(self, "con") and self.con is not None:
             self.con.close()
-            self.con = None  # type: ignore[assignment]
+            self.con = None
 
     def __enter__(self) -> GapDetector:
         return self
@@ -45,16 +58,9 @@ class GapDetector:
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    def _parquet_glob(self, market: str) -> str:
-        return str(self.lake_path / market / "**" / "*.parquet")
-
     def _scan_source(self, market: str) -> str:
-        from deltalake import DeltaTable
-
         market_path = self.lake_path / market
-        if DeltaTable.is_deltatable(str(market_path)):
-            return f"delta_scan('{market_path}')"
-        return f"read_parquet('{self._parquet_glob(market)}')"
+        return f"delta_scan('{market_path}')"
 
     def find_missing_dates(
         self,
@@ -101,13 +107,20 @@ class GapDetector:
         business_days_only: bool,
     ) -> list[tuple[str, date]]:
         scan = self._scan_source(market)
-        business_day_filter = "WHERE EXTRACT(ISODOW FROM generate_series) BETWEEN 1 AND 5" if business_days_only else ""
+        if business_days_only:
+            trading_dates = trading_days_between(market, start_date, end_date)
+            if not trading_dates:
+                return []
+            placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
+            date_filter = f"WHERE d.date IN ({placeholders})"
+        else:
+            date_filter = ""
 
         query = f"""
         WITH date_range AS (
             SELECT generate_series::DATE AS date
             FROM generate_series($1::DATE, $2::DATE, INTERVAL '1 day')
-            {business_day_filter}
+            {date_filter}
         ),
         existing_dates AS (
             SELECT DISTINCT date
@@ -121,7 +134,7 @@ class GapDetector:
         WHERE e.date IS NULL
         ORDER BY d.date
         """
-        return self.con.execute(query, [start_date, end_date, ticker]).fetchall()
+        return list(self.con.execute(query, [start_date, end_date, ticker]).fetchall())
 
     def _query_missing_all(
         self,
@@ -131,13 +144,20 @@ class GapDetector:
         business_days_only: bool,
     ) -> list[tuple[str, date]]:
         scan = self._scan_source(market)
-        business_day_filter = "WHERE EXTRACT(ISODOW FROM generate_series) BETWEEN 1 AND 5" if business_days_only else ""
+        if business_days_only:
+            trading_dates = trading_days_between(market, start_date, end_date)
+            if not trading_dates:
+                return []
+            placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
+            date_filter = f"WHERE d.date IN ({placeholders})"
+        else:
+            date_filter = ""
 
         query = f"""
         WITH date_range AS (
             SELECT generate_series::DATE AS date
             FROM generate_series($1::DATE, $2::DATE, INTERVAL '1 day')
-            {business_day_filter}
+            {date_filter}
         ),
         existing_data AS (
             SELECT DISTINCT ticker, date
@@ -154,7 +174,7 @@ class GapDetector:
         WHERE ed.date IS NULL
         ORDER BY dt.ticker, dt.date
         """
-        return self.con.execute(query, [start_date, end_date]).fetchall()
+        return list(self.con.execute(query, [start_date, end_date]).fetchall())
 
     def get_latest_date(self, market: str, ticker: str) -> date | None:
         scan = self._scan_source(market)
@@ -182,7 +202,7 @@ class GapDetector:
         if start_date is None:
             start_date = end_date - timedelta(days=90)
 
-        expected_days = self._count_business_days(start_date, end_date) if business_days_only else (end_date - start_date).days + 1
+        expected_days = self._count_trading_days(market, start_date, end_date) if business_days_only else (end_date - start_date).days + 1
 
         scan = self._scan_source(market)
         query = f"""
@@ -214,6 +234,11 @@ class GapDetector:
 
     def _count_business_days(self, start_date: date, end_date: date) -> int:
         return int(np.busday_count(start_date, end_date + timedelta(days=1)))
+
+    def _count_trading_days(self, market: str, start_date: date, end_date: date) -> int:
+        from equity_lake.core.calendar import count_trading_days
+
+        return count_trading_days(market, start_date, end_date)
 
     def get_missing_date_ranges(
         self,

@@ -1,4 +1,4 @@
-"""Statistical profiling and drift detection with an optional whylogs backend."""
+"""Statistical profiling and drift detection with pointblank-enhanced validation."""
 
 from __future__ import annotations
 
@@ -7,14 +7,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+import pointblank as pb
+import polars as pl
 import structlog
 from pydantic import BaseModel, Field
+
+from equity_lake.core.polars_utils import FrameLike, ensure_polars
 
 logger = structlog.get_logger()
 
 
-class _SimpleColumnProfile:
+class _ColumnProfile:
     def __init__(self, summary: dict[str, Any]) -> None:
         self._summary = summary
 
@@ -22,11 +25,13 @@ class _SimpleColumnProfile:
         return self._summary
 
 
-class _SimpleProfileView:
-    def __init__(self, summaries: dict[str, dict[str, Any]]) -> None:
-        self._columns = {col_name: _SimpleColumnProfile(summary) for col_name, summary in summaries.items()}
+class ProfileView:
+    """Polars-native statistical profile stored as JSON."""
 
-    def get_columns(self) -> dict[str, _SimpleColumnProfile]:
+    def __init__(self, summaries: dict[str, dict[str, Any]]) -> None:
+        self._columns = {col_name: _ColumnProfile(summary) for col_name, summary in summaries.items()}
+
+    def get_columns(self) -> dict[str, _ColumnProfile]:
         return self._columns
 
     def write(self, path: str) -> None:
@@ -34,7 +39,7 @@ class _SimpleProfileView:
         Path(path).write_text(json.dumps(payload), encoding="utf-8")
 
     @classmethod
-    def read(cls, path: str) -> _SimpleProfileView:
+    def read(cls, path: str) -> ProfileView:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls(payload)
 
@@ -50,71 +55,74 @@ class DriftReport(BaseModel):
 
 
 class DataProfiler:
-    """Statistical profiling for data quality monitoring."""
+    """Statistical profiling and drift detection for data quality monitoring.
+
+    Uses pointblank for structural validation and Polars-native statistics
+    for column-level profiling.
+    """
 
     def __init__(self, storage_path: str = "data/profiles") -> None:
         self.storage_path = Path(storage_path)
-        self._profiles: dict[str, Any] = {}
+        self._profiles: dict[str, ProfileView] = {}
 
-    def profile(self, df: pd.DataFrame, name: str, tags: dict[str, str] | None = None) -> Any:
-        """Create a statistical profile of the data."""
-        try:
-            import whylogs as why
-        except ImportError:
-            view = self._build_simple_profile(df)
-        else:
-            del tags  # whylogs integration currently ignores tags.
-            result = why.log(df)
-            view = result.view()
-
+    def profile(self, df: FrameLike, name: str, tags: dict[str, str] | None = None) -> ProfileView:
+        del tags
+        df_polars = ensure_polars(df)
+        view = self._build_profile(df_polars)
         self._profiles[name] = view
 
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        view.write(str(self.storage_path / f"{name}.bin"))
-        logger.info("Created profile", name=name, rows=len(df))
+        view.write(str(self.storage_path / f"{name}.json"))
+        logger.info("Created profile", name=name, rows=df_polars.height)
         return view
 
-    def load_profile(self, name: str) -> Any | None:
-        """Load a saved profile from disk."""
-        path = self.storage_path / f"{name}.bin"
+    def load_profile(self, name: str) -> ProfileView | None:
+        path = self.storage_path / f"{name}.json"
         if not path.exists():
             return None
+        return ProfileView.read(str(path))
 
-        try:
-            from whylogs.core import DatasetProfileView
-        except ImportError:
-            return _SimpleProfileView.read(str(path))
-        else:
-            return DatasetProfileView.read(str(path))
+    def validate_structure(self, df: FrameLike, name: str = "structural") -> tuple[bool, list[str]]:
+        """Run pointblank structural validation checks."""
+        df_polars = ensure_polars(df)
+        if df_polars.is_empty():
+            return True, []
 
-    def _build_simple_profile(self, df: pd.DataFrame) -> _SimpleProfileView:
+        validation = pb.Validate(data=df_polars, label=name).col_exists(columns=df_polars.columns[:5]).rows_complete().interrogate()
+
+        errors: list[str] = []
+        for step in validation.validation_info:
+            if not step.all_passed:
+                errors.append(f"{step.autobrief} ({step.n_failed} failed)")
+        return len(errors) == 0, errors
+
+    def _build_profile(self, df: pl.DataFrame) -> ProfileView:
         summaries: dict[str, dict[str, Any]] = {}
 
         for col_name in df.columns:
             series = df[col_name]
             total = int(len(series))
-            null_count = int(series.isna().sum())
+            null_count = int(series.null_count())
             summary: dict[str, Any] = {
                 "counts/n": total,
                 "counts/null": null_count,
-                "cardinality/est": int(series.nunique(dropna=True)),
+                "cardinality/est": int(series.n_unique()),
             }
 
-            numeric = pd.to_numeric(series, errors="coerce")
-            numeric_non_null = numeric.dropna()
-            if not numeric_non_null.empty:
-                summary["distribution/mean"] = float(numeric_non_null.mean())
-                std = numeric_non_null.std()
-                summary["distribution/stddev"] = float(std) if pd.notna(std) else 0.0
-                summary["distribution/min"] = float(numeric_non_null.min())
-                summary["distribution/max"] = float(numeric_non_null.max())
+            if series.dtype.is_numeric():
+                numeric_non_null = series.drop_nulls()
+                if len(numeric_non_null) > 0:
+                    summary["distribution/mean"] = float(numeric_non_null.mean())
+                    std = numeric_non_null.std()
+                    summary["distribution/stddev"] = float(std) if std is not None else 0.0
+                    summary["distribution/min"] = float(numeric_non_null.min())
+                    summary["distribution/max"] = float(numeric_non_null.max())
 
             summaries[col_name] = summary
 
-        return _SimpleProfileView(summaries)
+        return ProfileView(summaries)
 
-    def get_quality_metrics(self, profile: Any) -> dict[str, dict[str, Any]]:
-        """Extract data quality metrics from a profile."""
+    def get_quality_metrics(self, profile: ProfileView) -> dict[str, dict[str, Any]]:
         metrics: dict[str, dict[str, Any]] = {}
         cols = profile.get_columns()
 
@@ -147,8 +155,7 @@ class DataProfiler:
 
         return metrics
 
-    def compare(self, current: Any, baseline: Any, threshold: float = 0.1) -> DriftReport:
-        """Compare two profiles for drift detection."""
+    def compare(self, current: ProfileView, baseline: ProfileView, threshold: float = 0.1) -> DriftReport:
         cols_current = current.get_columns()
         cols_baseline = baseline.get_columns()
 

@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import date
 
 import pandas as pd
+import polars as pl
 import yfinance as yf
 
+from equity_lake.core.polars_utils import normalize_temporal_columns
 from equity_lake.loaders.base import (
     BaseDataLoader,
     LoaderMetadata,
@@ -53,10 +55,10 @@ class YFinanceLoader(BaseDataLoader):
 
         data = self._normalize(raw, symbols)
         return LoadResult(
-            success=not data.empty,
+            success=not data.is_empty(),
             data=data,
-            records_count=len(data),
-            errors=[] if not data.empty else ["No normalized records produced"],
+            records_count=data.height,
+            errors=[] if not data.is_empty() else ["No normalized records produced"],
             metadata={"symbols": symbols, "interval": interval},
         )
 
@@ -77,7 +79,7 @@ class YFinanceLoader(BaseDataLoader):
             return False
         return not result.empty
 
-    def _normalize(self, data: pd.DataFrame, symbols: list[str]) -> pd.DataFrame:
+    def _normalize(self, data: pd.DataFrame, symbols: list[str]) -> pl.DataFrame:
         records: list[dict[str, object]] = []
         if isinstance(data.columns, pd.MultiIndex):
             for symbol in symbols:
@@ -92,11 +94,11 @@ class YFinanceLoader(BaseDataLoader):
             for idx, row in data.iterrows():
                 records.append(self._build_record(symbol, idx, row))
 
-        frame = pd.DataFrame.from_records(records)
-        if frame.empty:
+        frame = pl.DataFrame(records)
+        if frame.is_empty():
             return frame
-        frame["date"] = pd.to_datetime(frame["date"])
-        return frame.dropna(subset=["close"])
+        frame = normalize_temporal_columns(frame, date_columns=("date",))
+        return frame.drop_nulls(subset=["close"])
 
     def _build_record(self, symbol: str, idx: object, row: pd.Series) -> dict[str, object]:
         row_dict = row.to_dict()

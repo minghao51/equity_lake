@@ -2,30 +2,31 @@
 
 from __future__ import annotations
 
-import pandas as pd
+import polars as pl
 
 
-def ema(series: pd.Series, span: int) -> pd.Series:
-    return series.ewm(span=span, adjust=False).mean()
+def ema(series: pl.Series, span: int) -> pl.Series:
+    return series.cast(pl.Float64).ewm_mean(span=span, adjust=False)
 
 
-def rsi(series: pd.Series, length: int = 14) -> pd.Series:
+def rsi(series: pl.Series, length: int = 14) -> pl.Series:
+    series = series.cast(pl.Float64)
     delta = series.diff()
-    gains = delta.clip(lower=0)
-    losses = -delta.clip(upper=0)
-    avg_gain = gains.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
-    avg_loss = losses.ewm(alpha=1 / length, min_periods=length, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, pd.NA)
+    gains = delta.clip(lower_bound=0)
+    losses = -delta.clip(upper_bound=0)
+    avg_gain = gains.ewm_mean(alpha=1 / length, min_samples=length, adjust=False)
+    avg_loss = losses.ewm_mean(alpha=1 / length, min_samples=length, adjust=False)
+    rs = avg_gain / avg_loss.replace(0.0, None)
     return 100 - (100 / (1 + rs))
 
 
-def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
+def macd(series: pl.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pl.DataFrame:
     fast_ema = ema(series, span=fast)
     slow_ema = ema(series, span=slow)
     macd_line = fast_ema - slow_ema
     signal_line = ema(macd_line, span=signal)
     histogram = macd_line - signal_line
-    return pd.DataFrame(
+    return pl.DataFrame(
         {
             "macd": macd_line,
             "signal": signal_line,
@@ -34,35 +35,35 @@ def macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> 
     )
 
 
-def bollinger_bands(series: pd.Series, length: int = 20, std: float = 2.0) -> pd.DataFrame:
-    middle = series.rolling(length).mean()
-    deviation = series.rolling(length).std()
+def bollinger_bands(series: pl.Series, length: int = 20, std: float = 2.0) -> pl.DataFrame:
+    series = series.cast(pl.Float64)
+    middle = series.rolling_mean(window_size=length)
+    deviation = series.rolling_std(window_size=length)
     upper = middle + std * deviation
     lower = middle - std * deviation
-    return pd.DataFrame({"upper": upper, "middle": middle, "lower": lower})
+    return pl.DataFrame({"upper": upper, "middle": middle, "lower": lower})
 
 
-def true_range(high: pd.Series, low: pd.Series, close: pd.Series) -> pd.Series:
-    prev_close = close.shift(1)
-    frame = pd.concat(
+def true_range(high: pl.Series, low: pl.Series, close: pl.Series) -> pl.Series:
+    frame = pl.DataFrame(
         [
-            high - low,
-            (high - prev_close).abs(),
-            (low - prev_close).abs(),
+            high.cast(pl.Float64) - low.cast(pl.Float64),
+            (high.cast(pl.Float64) - close.cast(pl.Float64).shift(1)).abs(),
+            (low.cast(pl.Float64) - close.cast(pl.Float64).shift(1)).abs(),
         ],
-        axis=1,
+        schema=["intraday_range", "gap_up_range", "gap_down_range"],
     )
-    return frame.max(axis=1)
+    return frame.max_horizontal()
 
 
-def atr(high: pd.Series, low: pd.Series, close: pd.Series, length: int = 14) -> pd.Series:
-    return true_range(high, low, close).rolling(length).mean()
+def atr(high: pl.Series, low: pl.Series, close: pl.Series, length: int = 14) -> pl.Series:
+    return true_range(high, low, close).rolling_mean(window_size=length)
 
 
-def roc(series: pd.Series, length: int) -> pd.Series:
-    return series.pct_change(length) * 100
+def roc(series: pl.Series, length: int) -> pl.Series:
+    return series.cast(pl.Float64).pct_change(length) * 100
 
 
-def obv(close: pd.Series, volume: pd.Series) -> pd.Series:
-    direction = close.diff().fillna(0).apply(lambda value: 1 if value > 0 else (-1 if value < 0 else 0))
-    return (direction * volume).cumsum()
+def obv(close: pl.Series, volume: pl.Series) -> pl.Series:
+    direction = close.cast(pl.Float64).diff().sign().fill_null(0.0)
+    return (direction * volume.cast(pl.Float64)).cum_sum()
