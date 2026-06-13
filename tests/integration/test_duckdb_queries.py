@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from equity_lake.storage.duckdb import EquityDataDB, QueryExamples
@@ -51,7 +51,19 @@ class TestEquityDataDB:
         sql = "SELECT COUNT(*) as count FROM us_equity"
         result = db.query(sql)
 
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
+        assert "count" in result.columns
+
+    def test_query_polars_execution(self, tmp_path, temp_partitioned_parquet):
+        """Test executing SQL query returns Polars DataFrame."""
+        db = EquityDataDB(db_path=":memory:")
+
+        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+
+        result = db.query("SELECT COUNT(*) as count FROM us_equity")
+
+        assert isinstance(result, pl.DataFrame)
         assert "count" in result.columns
 
     def test_query_error_handling(self):
@@ -60,7 +72,7 @@ class TestEquityDataDB:
 
         # Invalid SQL should return empty DataFrame
         result = db.query("INVALID SQL QUERY")
-        assert result.empty
+        assert result.is_empty()
 
 
 # =============================================================================
@@ -88,8 +100,7 @@ class TestQueryExamples:
         queries = QueryExamples(db_with_data)
         result = queries.query_1_latest_data_summary()
 
-        assert isinstance(result, pd.DataFrame)
-        # Check for expected columns
+        assert isinstance(result, pl.DataFrame)
         expected_cols = ["market", "latest_date", "num_tickers"]
         assert any(col in result.columns for col in expected_cols)
 
@@ -98,9 +109,8 @@ class TestQueryExamples:
         queries = QueryExamples(db_with_data)
         result = queries.query_2_top_volume_stocks(days=7)
 
-        assert isinstance(result, pd.DataFrame)
-        # Should have some results
-        if not result.empty:
+        assert isinstance(result, pl.DataFrame)
+        if not result.is_empty():
             assert "ticker" in result.columns
             assert "total_volume" in result.columns
 
@@ -109,8 +119,8 @@ class TestQueryExamples:
         queries = QueryExamples(db_with_data)
         result = queries.query_3_top_gainers_losers(days=7)
 
-        assert isinstance(result, pd.DataFrame)
-        if not result.empty:
+        assert isinstance(result, pl.DataFrame)
+        if not result.is_empty():
             assert "ticker" in result.columns
             assert "pct_change" in result.columns
 
@@ -119,35 +129,35 @@ class TestQueryExamples:
         queries = QueryExamples(db_with_data)
         result = queries.query_4_cross_market_comparison(ticker="AAPL")
 
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
     def test_query_5_moving_averages(self, db_with_data):
         """Test Query 5: Moving averages."""
         queries = QueryExamples(db_with_data)
         result = queries.query_5_moving_averages(ticker="AAPL", ma_days=20)
 
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
     def test_query_6_volatility_analysis(self, db_with_data):
         """Test Query 6: Volatility analysis."""
         queries = QueryExamples(db_with_data)
         result = queries.query_6_volatility_analysis(days=30)
 
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
     def test_query_7_market_summary_stats(self, db_with_data):
         """Test Query 7: Market summary statistics."""
         queries = QueryExamples(db_with_data)
         result = queries.query_7_market_summary_stats()
 
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
     def test_query_8_price_range_analysis(self, db_with_data):
         """Test Query 8: Price range analysis."""
         queries = QueryExamples(db_with_data)
         result = queries.query_8_price_range_analysis(days=30)
 
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
 
 # =============================================================================
@@ -163,27 +173,24 @@ class TestQueryEdgeCases:
         db = EquityDataDB(db_path=":memory:")
         queries = QueryExamples(db)
 
-        # Should not crash, return empty DataFrame
         result = queries.query_1_latest_data_summary()
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
     def test_invalid_ticker_query(self, db_with_data):
         """Test query with invalid ticker."""
         queries = QueryExamples(db_with_data)
         result = queries.query_4_cross_market_comparison(ticker="INVALID_TICKER_123")
 
-        # Should return empty DataFrame
-        assert isinstance(result, pd.DataFrame)
-        assert result.empty
+        assert isinstance(result, pl.DataFrame)
+        assert result.is_empty()
 
     def test_date_range_query(self, db_with_data):
         """Test query with various date ranges."""
         queries = QueryExamples(db_with_data)
 
-        # Test different day ranges
         for days in [1, 7, 30, 90, 365]:
             result = queries.query_2_top_volume_stocks(days=days)
-            assert isinstance(result, pd.DataFrame)
+            assert isinstance(result, pl.DataFrame)
 
 
 # =============================================================================
@@ -203,23 +210,20 @@ class TestQueryPerformance:
         assert isinstance(results, dict)
         assert len(results) > 0
 
-        # All benchmarks should complete
         for _name, elapsed in results.items():
-            assert isinstance(elapsed, (int, float))
+            assert isinstance(elapsed, int | float)
 
     def test_concurrent_queries(self, db_with_data):
         """Test that concurrent queries don't interfere."""
         queries = QueryExamples(db_with_data)
 
-        # Run multiple queries
         result1 = queries.query_1_latest_data_summary()
         result2 = queries.query_2_top_volume_stocks(7)
         result3 = queries.query_7_market_summary_stats()
 
-        # All should return DataFrames
-        assert isinstance(result1, pd.DataFrame)
-        assert isinstance(result2, pd.DataFrame)
-        assert isinstance(result3, pd.DataFrame)
+        assert isinstance(result1, pl.DataFrame)
+        assert isinstance(result2, pl.DataFrame)
+        assert isinstance(result3, pl.DataFrame)
 
 
 # =============================================================================
@@ -235,7 +239,7 @@ class TestDataValidation:
         queries = QueryExamples(db_with_data)
         result = queries.query_1_latest_data_summary()
 
-        if not result.empty and "latest_date" in result.columns:
+        if not result.is_empty() and "latest_date" in result.columns:
             assert result["latest_date"].dtype is not None
 
     def test_null_value_handling(self, db_with_data):
@@ -243,8 +247,7 @@ class TestDataValidation:
         queries = QueryExamples(db_with_data)
         result = queries.query_2_top_volume_stocks(days=7)
 
-        # Should handle nulls gracefully
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)
 
 
 # =============================================================================
@@ -257,31 +260,25 @@ class TestQueryIntegration:
 
     def test_full_query_workflow(self, temp_partitioned_parquet):
         """Test complete workflow from DB creation to query execution."""
-        # Create database
         db = EquityDataDB(db_path=":memory:")
 
-        # Setup views
         with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
             db._create_market_view("us_equity", temp_partitioned_parquet, "us")
             db._create_unified_view()
 
-        # Run queries
         queries = QueryExamples(db)
 
-        # Execute multiple queries
         results = {
             "summary": queries.query_1_latest_data_summary(),
             "volume": queries.query_2_top_volume_stocks(7),
             "stats": queries.query_7_market_summary_stats(),
         }
 
-        # All should succeed
         for name, result in results.items():
-            assert isinstance(result, pd.DataFrame), f"Query {name} failed"
+            assert isinstance(result, pl.DataFrame), f"Query {name} failed"
 
     def test_query_with_filters(self, db_with_data):
         """Test queries with various filters."""
-        # Custom query with filters
         sql = """
         SELECT * FROM us_equity
         WHERE volume > 500000
@@ -290,4 +287,4 @@ class TestQueryIntegration:
         """
 
         result = db_with_data.query(sql)
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, pl.DataFrame)

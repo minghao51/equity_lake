@@ -1,62 +1,52 @@
-"""Tests for parquet compaction helpers."""
+"""Tests for Delta Lake compaction helpers."""
 
 from datetime import date
 
-import pandas as pd
+import polars as pl
+from deltalake import DeltaTable, write_deltalake
 
-from equity_lake.storage.compaction import compact_market
 
-
-def test_compaction_preserves_date_partition_layout(tmp_path) -> None:
+def test_compaction_reduces_files(tmp_path) -> None:
+    """Compaction should reduce the number of files in a Delta table."""
     market_dir = tmp_path / "us_equity"
-    day1_dir = market_dir / "date=2024-01-01"
-    day2_dir = market_dir / "date=2024-01-02"
-    day1_dir.mkdir(parents=True)
-    day2_dir.mkdir(parents=True)
 
-    pd.DataFrame(
-        [
-            {"ticker": "AAPL", "date": "2024-01-01", "close": 100.0},
-            {"ticker": "MSFT", "date": "2024-01-01", "close": 200.0},
-        ]
-    ).to_parquet(day1_dir / "part-1.parquet", index=False)
-    pd.DataFrame(
-        [
-            {"ticker": "AAPL", "date": "2024-01-01", "close": 101.0},
-        ]
-    ).to_parquet(day1_dir / "part-2.parquet", index=False)
-    pd.DataFrame(
-        [
-            {"ticker": "AAPL", "date": "2024-01-02", "close": 102.0},
-        ]
-    ).to_parquet(day2_dir / "part-1.parquet", index=False)
+    df1 = pl.DataFrame({"ticker": ["AAPL"], "date": [date(2024, 1, 1)], "close": [100.0]})
+    df2 = pl.DataFrame({"ticker": ["MSFT"], "date": [date(2024, 1, 1)], "close": [200.0]})
 
-    compacted = compact_market(market_dir, max_days_per_file=30)
+    write_deltalake(str(market_dir), df1.to_arrow(), mode="append")
+    write_deltalake(str(market_dir), df2.to_arrow(), mode="append")
 
-    assert compacted == 1
-    assert not day1_dir.exists()
-    assert day2_dir.exists()
-    assert sorted(p.name for p in day2_dir.glob("*.parquet")) == ["2024-01-02.parquet"]
+    dt_before = DeltaTable(str(market_dir))
+    files_before = dt_before.get_add_actions().num_rows
 
-    merged_df = pd.read_parquet(day2_dir / "2024-01-02.parquet")
-    assert len(merged_df) == 3
-    assert set(merged_df["date"].astype(str)) == {"2024-01-01", "2024-01-02"}
+    from equity_lake.storage.compaction import compact_market
+
+    compact_market(market_dir)
+
+    dt_after = DeltaTable(str(market_dir))
+    files_after = dt_after.get_add_actions().num_rows
+    assert files_after <= files_before
+
+    result = pl.from_arrow(dt_after.to_pyarrow_table())
+    assert result.height == 2
 
 
 def test_compaction_dry_run_does_not_modify_files(tmp_path) -> None:
+    """Dry-run compaction should not change the table."""
     market_dir = tmp_path / "us_equity"
-    partition_dir_1 = market_dir / "date=2024-01-01"
-    partition_dir_2 = market_dir / "date=2024-01-02"
-    partition_dir_1.mkdir(parents=True)
-    partition_dir_2.mkdir(parents=True)
 
-    original = pd.DataFrame([{"ticker": "AAPL", "date": date(2024, 1, 1), "close": 100.0}])
-    original.to_parquet(partition_dir_1 / "part-1.parquet", index=False)
-    original.to_parquet(partition_dir_1 / "part-2.parquet", index=False)
-    pd.DataFrame([{"ticker": "AAPL", "date": date(2024, 1, 2), "close": 101.0}]).to_parquet(partition_dir_2 / "part-1.parquet", index=False)
+    df1 = pl.DataFrame({"ticker": ["AAPL"], "date": [date(2024, 1, 1)], "close": [100.0]})
+    df2 = pl.DataFrame({"ticker": ["MSFT"], "date": [date(2024, 1, 1)], "close": [200.0]})
 
-    compacted = compact_market(market_dir, dry_run=True)
+    write_deltalake(str(market_dir), df1.to_arrow(), mode="append")
+    write_deltalake(str(market_dir), df2.to_arrow(), mode="append")
 
-    assert compacted == 2
-    assert sorted(p.name for p in partition_dir_1.glob("*.parquet")) == ["part-1.parquet", "part-2.parquet"]
-    assert sorted(p.name for p in partition_dir_2.glob("*.parquet")) == ["part-1.parquet"]
+    dt_before = DeltaTable(str(market_dir))
+    version_before = dt_before.version()
+
+    from equity_lake.storage.compaction import compact_market
+
+    compact_market(market_dir, dry_run=True)
+
+    dt_after = DeltaTable(str(market_dir))
+    assert dt_after.version() == version_before

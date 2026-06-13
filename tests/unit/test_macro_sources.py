@@ -15,11 +15,11 @@ class TestYFinanceFetcher:
 
     def test_fetch_dxy_index(self):
         """Test fetching USD Index from yfinance."""
-        from equity_lake.fetch_macro import YFinanceFetcher
+        from equity_lake.sources.macro import YFinanceFetcher
 
         fetcher = YFinanceFetcher(ticker="^DXY", indicator_name="dxy")
 
-        with patch("equity_lake.fetch_macro.yf.download") as mock_download:
+        with patch("equity_lake.sources.macro.yf.download") as mock_download:
             mock_df = pd.DataFrame(
                 {
                     "Open": [102.0],
@@ -43,11 +43,11 @@ class TestYFinanceFetcher:
 
     def test_fetch_gld_etf(self):
         """Test fetching GLD ETF price from yfinance."""
-        from equity_lake.fetch_macro import YFinanceFetcher
+        from equity_lake.sources.macro import YFinanceFetcher
 
         fetcher = YFinanceFetcher(ticker="GLD", indicator_name="gld")
 
-        with patch("equity_lake.fetch_macro.yf.download") as mock_download:
+        with patch("equity_lake.sources.macro.yf.download") as mock_download:
             mock_df = pd.DataFrame(
                 {
                     "Close": [185.50],
@@ -66,11 +66,11 @@ class TestYFinanceFetcher:
 
     def test_fetch_no_data(self):
         """Test handling empty data response."""
-        from equity_lake.fetch_macro import YFinanceFetcher
+        from equity_lake.sources.macro import YFinanceFetcher
 
         fetcher = YFinanceFetcher(ticker="INVALID", indicator_name="test")
 
-        with patch("equity_lake.fetch_macro.yf.download") as mock_download:
+        with patch("equity_lake.sources.macro.yf.download") as mock_download:
             mock_download.return_value = pd.DataFrame()
 
             result = fetcher.fetch(date(2024, 12, 1))
@@ -83,9 +83,9 @@ class TestFredFetcher:
 
     def test_fetch_tips_yield(self):
         """Test fetching TIPS yield from FRED."""
-        from equity_lake.fetch_macro import FredFetcher
+        from equity_lake.sources.macro import FredFetcher
 
-        with patch("equity_lake.fetch_macro.Fred") as MockFred:
+        with patch("equity_lake.sources.macro.Fred") as MockFred:
             mock_fred_instance = Mock()
             mock_series = pd.Series([2.15], index=pd.to_datetime(["2024-12-01"]))
             mock_fred_instance.get_series.return_value = mock_series
@@ -102,9 +102,9 @@ class TestFredFetcher:
 
     def test_fetch_geopolitical_risk(self):
         """Test fetching GEPUI from FRED."""
-        from equity_lake.fetch_macro import FredFetcher
+        from equity_lake.sources.macro import FredFetcher
 
-        with patch("equity_lake.fetch_macro.Fred") as MockFred:
+        with patch("equity_lake.sources.macro.Fred") as MockFred:
             mock_fred_instance = Mock()
             mock_series = pd.Series([125.0], index=pd.to_datetime(["2024-12-01"]))
             mock_fred_instance.get_series.return_value = mock_series
@@ -128,7 +128,7 @@ class TestMacroDataPipeline:
 
     def test_pipeline_initialization(self):
         """Test pipeline initializes with correct fetchers."""
-        from equity_lake.fetch_macro import MacroDataPipeline
+        from equity_lake.sources.macro import MacroDataPipeline
 
         with patch.dict("os.environ", {"FRED_API_KEY": "test_key"}):
             pipeline = MacroDataPipeline()
@@ -140,7 +140,7 @@ class TestMacroDataPipeline:
 
     def test_pipeline_fetch_all(self):
         """Test fetching all indicators."""
-        from equity_lake.fetch_macro import MacroDataPipeline
+        from equity_lake.sources.macro import MacroDataPipeline
 
         with patch.dict("os.environ", {"FRED_API_KEY": "test_key"}):
             pipeline = MacroDataPipeline()
@@ -167,7 +167,7 @@ class TestSchemaValidation:
 
     def test_validate_macro_schema_valid(self):
         """Test schema validation with valid DataFrame."""
-        from equity_lake.fetch_macro import validate_macro_schema
+        from equity_lake.sources.macro import validate_macro_schema
 
         df = pd.DataFrame(
             {
@@ -183,7 +183,7 @@ class TestSchemaValidation:
 
     def test_validate_macro_schema_missing_columns(self):
         """Test schema validation with missing columns."""
-        from equity_lake.fetch_macro import validate_macro_schema
+        from equity_lake.sources.macro import validate_macro_schema
 
         df = pd.DataFrame(
             {
@@ -197,7 +197,7 @@ class TestSchemaValidation:
 
     def test_validate_macro_schema_empty(self):
         """Test schema validation with empty DataFrame."""
-        from equity_lake.fetch_macro import validate_macro_schema
+        from equity_lake.sources.macro import validate_macro_schema
 
         df = pd.DataFrame(columns=["date", "indicator", "value", "source", "updated_at"])
 
@@ -209,7 +209,7 @@ class TestParquetWrite:
 
     def test_write_macro_to_parquet(self, tmp_path):
         """Test writing macro data to parquet."""
-        from equity_lake.fetch_macro import write_macro_to_parquet
+        from equity_lake.sources.macro import write_macro_to_parquet
 
         df = pd.DataFrame(
             {
@@ -221,7 +221,7 @@ class TestParquetWrite:
             }
         )
 
-        with patch("equity_lake.fetch_macro.MACRO_INDICATORS_DIR", tmp_path):
+        with patch("equity_lake.sources.macro.MACRO_INDICATORS_DIR", tmp_path):
             result = write_macro_to_parquet(df, date(2024, 12, 1), dry_run=False)
 
             assert result is True
@@ -234,7 +234,7 @@ class TestIntegration:
 
     def test_fetch_dxy_integration(self):
         """Integration test for DXY fetching."""
-        from equity_lake.fetch_macro import YFinanceFetcher
+        from equity_lake.sources.macro import YFinanceFetcher
 
         fetcher = YFinanceFetcher(ticker="^DXY", indicator_name="dxy")
         result = fetcher.fetch(date.today() - timedelta(days=1))
@@ -245,7 +245,7 @@ class TestIntegration:
 
     def test_fetch_gld_integration(self):
         """Integration test for GLD fetching."""
-        from equity_lake.fetch_macro import YFinanceFetcher
+        from equity_lake.sources.macro import YFinanceFetcher
 
         fetcher = YFinanceFetcher(ticker="GLD", indicator_name="gld")
         result = fetcher.fetch(date.today() - timedelta(days=1))

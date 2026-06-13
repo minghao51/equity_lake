@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-import pandas as pd
+import polars as pl
 import pytest
 
 from equity_lake.validation import (
@@ -15,19 +15,34 @@ from equity_lake.validation import (
 )
 from equity_lake.validation.profiling import DataProfiler, DriftReport
 
+_OHLCV_SCHEMA = {
+    "ticker": pl.Utf8,
+    "date": pl.Date,
+    "open": pl.Float64,
+    "high": pl.Float64,
+    "low": pl.Float64,
+    "close": pl.Float64,
+    "volume": pl.Float64,
+}
+
 # ---------------------------------------------------------------------------
 # PriceDataSchema tests
 # ---------------------------------------------------------------------------
 
 
-def test_price_schema_valid(sample_ohlcv_data: pd.DataFrame) -> None:
+def test_price_schema_valid(sample_ohlcv_data: pl.DataFrame) -> None:
     """Valid OHLCV data passes schema validation."""
+    PriceDataSchema.validate(sample_ohlcv_data)
+
+
+def test_price_schema_valid_polars(sample_ohlcv_data: pl.DataFrame) -> None:
+    """Valid OHLCV Polars data passes schema validation."""
     PriceDataSchema.validate(sample_ohlcv_data)
 
 
 def test_price_schema_negative_price() -> None:
     """Negative close price fails validation."""
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 1)],
@@ -36,7 +51,16 @@ def test_price_schema_negative_price() -> None:
             "low": [148.0],
             "close": [-1.0],
             "volume": [1000000],
-        }
+        },
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+        },
     )
     with pytest.raises(Exception, match="close"):
         PriceDataSchema.validate(df)
@@ -44,7 +68,7 @@ def test_price_schema_negative_price() -> None:
 
 def test_price_schema_high_less_than_low() -> None:
     """high < low fails price_consistency check."""
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 1)],
@@ -53,15 +77,24 @@ def test_price_schema_high_less_than_low() -> None:
             "low": [155.0],
             "close": [152.0],
             "volume": [1000000],
-        }
+        },
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+        },
     )
-    with pytest.raises(Exception, match="price_consistency"):
+    with pytest.raises(Exception, match="expression"):
         PriceDataSchema.validate(df)
 
 
 def test_price_schema_duplicates() -> None:
-    """Duplicate ticker+date fails no_duplicates check."""
-    df = pd.DataFrame(
+    """Duplicate ticker+date fails rows_distinct check."""
+    df = pl.DataFrame(
         {
             "ticker": ["AAPL", "AAPL"],
             "date": [date(2024, 1, 1), date(2024, 1, 1)],
@@ -70,9 +103,18 @@ def test_price_schema_duplicates() -> None:
             "low": [148.0, 149.0],
             "close": [152.0, 153.0],
             "volume": [1000000, 1100000],
-        }
+        },
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+        },
     )
-    with pytest.raises(Exception, match="no_duplicates"):
+    with pytest.raises(Exception, match="distinct"):
         PriceDataSchema.validate(df)
 
 
@@ -83,13 +125,14 @@ def test_price_schema_duplicates() -> None:
 
 def test_macro_schema_valid() -> None:
     """Valid macro data passes validation."""
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             "date": [date(2024, 1, 1)],
             "indicator": ["treasury_10y"],
             "value": [4.2],
             "source": ["yfinance"],
-        }
+        },
+        schema={"date": pl.Date, "indicator": pl.Utf8, "value": pl.Float64, "source": pl.Utf8},
     )
     MacroDataSchema.validate(df)
 
@@ -101,7 +144,7 @@ def test_macro_schema_valid() -> None:
 
 def test_news_schema_valid() -> None:
     """Valid news data passes validation."""
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 1)],
@@ -111,7 +154,7 @@ def test_news_schema_valid() -> None:
             "url": ["https://example.com/1"],
             "sentiment_score": [0.5],
             "sentiment_label": ["positive"],
-        }
+        },
     )
     NewsDataSchema.validate(df)
 
@@ -121,8 +164,16 @@ def test_news_schema_valid() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pipeline_success(sample_ohlcv_data: pd.DataFrame) -> None:
+def test_pipeline_success(sample_ohlcv_data: pl.DataFrame) -> None:
     """Pipeline returns success on valid data."""
+    vp = ValidationPipeline()
+    result = vp.validate(sample_ohlcv_data, data_type="price")
+    assert result.success
+    assert result.schema_valid
+
+
+def test_pipeline_success_polars(sample_ohlcv_data: pl.DataFrame) -> None:
+    """Pipeline returns success on valid Polars data."""
     vp = ValidationPipeline()
     result = vp.validate(sample_ohlcv_data, data_type="price")
     assert result.success
@@ -131,16 +182,25 @@ def test_pipeline_success(sample_ohlcv_data: pd.DataFrame) -> None:
 
 def test_pipeline_schema_failure() -> None:
     """Pipeline returns failure on invalid data."""
-    df = pd.DataFrame(
+    df = pl.DataFrame(
         {
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 1)],
             "open": [150.0],
             "high": [155.0],
             "low": [148.0],
-            "close": [-1.0],  # invalid
+            "close": [-1.0],
             "volume": [1000000],
-        }
+        },
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+        },
     )
     vp = ValidationPipeline()
     result = vp.validate(df, data_type="price")
@@ -149,7 +209,7 @@ def test_pipeline_schema_failure() -> None:
     assert len(result.errors) > 0
 
 
-def test_pipeline_with_profiling(sample_ohlcv_data: pd.DataFrame) -> None:
+def test_pipeline_with_profiling(sample_ohlcv_data: pl.DataFrame) -> None:
     """Pipeline creates profile and returns quality metrics."""
     vp = ValidationPipeline()
     result = vp.validate(sample_ohlcv_data, data_type="price", name="test_profile")
@@ -157,26 +217,35 @@ def test_pipeline_with_profiling(sample_ohlcv_data: pd.DataFrame) -> None:
     assert "quality" in result.metrics
 
 
-def test_pipeline_drift_detection(sample_ohlcv_data: pd.DataFrame) -> None:
+def test_pipeline_drift_detection(sample_ohlcv_data: pl.DataFrame) -> None:
     """Pipeline detects drift between baseline and current data."""
     vp = ValidationPipeline()
     vp.set_baseline("test", sample_ohlcv_data)
 
-    # Create drifted data (double prices)
-    drifted = sample_ohlcv_data.copy()
-    for col in ["open", "high", "low", "close"]:
-        drifted[col] = drifted[col] * 2.0
+    drifted = sample_ohlcv_data.with_columns([pl.col(col) * 2.0 for col in ["open", "high", "low", "close"]])
 
     result = vp.validate(drifted, data_type="price", check_drift=True, name="test")
     assert result.drift_detected
 
 
-def test_validate_and_fix_deduplicates(sample_ohlcv_data: pd.DataFrame) -> None:
+def test_validate_and_fix_deduplicates(sample_ohlcv_data: pl.DataFrame) -> None:
     """validate_and_fix removes duplicate rows."""
-    dup = pd.concat([sample_ohlcv_data, sample_ohlcv_data], ignore_index=True)
+    dup = pl.concat([sample_ohlcv_data, sample_ohlcv_data], how="vertical")
     vp = ValidationPipeline()
     fixed, result = vp.validate_and_fix(dup, data_type="price")
-    assert len(fixed) == len(sample_ohlcv_data)
+    assert fixed.height == sample_ohlcv_data.height
+    assert isinstance(fixed, pl.DataFrame)
+    assert result.success
+
+
+def test_validate_and_fix_polars_preserves_polars(sample_ohlcv_data: pl.DataFrame) -> None:
+    """validate_and_fix keeps Polars outputs for Polars callers."""
+    dup = pl.concat([sample_ohlcv_data, sample_ohlcv_data], how="vertical")
+    vp = ValidationPipeline()
+    fixed, result = vp.validate_and_fix(dup, data_type="price")
+    assert isinstance(fixed, pl.DataFrame)
+    assert fixed.height == sample_ohlcv_data.height
+    assert result.success
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +267,7 @@ def test_drift_report_serialization() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_profiler_quality_metrics(sample_ohlcv_data: pd.DataFrame) -> None:
+def test_profiler_quality_metrics(sample_ohlcv_data: pl.DataFrame) -> None:
     """DataProfiler extracts quality metrics from a profile."""
     profiler = DataProfiler()
     profile = profiler.profile(sample_ohlcv_data, "test")

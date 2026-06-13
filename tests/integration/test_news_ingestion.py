@@ -9,12 +9,32 @@ import os
 from datetime import date, datetime
 from unittest.mock import patch
 
-import pandas as pd
+import polars as pl
 import pytest
+from deltalake import DeltaTable
 
 from equity_lake.core.schemas import NEWS_COLUMNS
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
 from equity_lake.sources.news import FinnhubNewsFetcher
+from equity_lake.storage.delta import delta_table_path
+
+
+def _make_news_df(n: int = 2, base_url: str = "https://example.com/") -> pl.DataFrame:
+    rows = {
+        "ticker": ["AAPL", "GOOGL"][:n],
+        "date": [date(2024, 1, 1)] * n,
+        "datetime": [datetime(2024, 1, 1, 10, 0 + i) for i in range(n)],
+        "source": ["Reuters", "Bloomberg"][:n],
+        "headline": [f"Test headline {i}" for i in range(1, n + 1)],
+        "summary": [f"Test summary {i}" for i in range(1, n + 1)],
+        "url": [f"{base_url}{i}" for i in range(1, n + 1)],
+        "category": ["general"] * n,
+        "sentiment_score": [0.5, -0.3][:n],
+        "sentiment_label": ["positive", "negative"][:n],
+        "relevance_score": [1.0, 0.9][:n],
+    }
+    return pl.DataFrame(rows)
+
 
 # =============================================================================
 # Schema Validation Tests
@@ -26,11 +46,11 @@ class TestNewsSchemaValidation:
 
     def test_valid_news_schema_passes(self):
         """Test that valid news DataFrame passes validation."""
-        df = pd.DataFrame(
+        df = pl.DataFrame(
             {
                 "ticker": ["AAPL", "GOOGL"],
                 "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
+                "datetime": [datetime(2024, 1, 1, 10, 0), datetime(2024, 1, 1, 11, 0)],
                 "source": ["Reuters", "Bloomberg"],
                 "headline": ["AAPL stock rises", "GOOGL falls"],
                 "summary": ["Strong earnings", "Weak guidance"],
@@ -48,10 +68,9 @@ class TestNewsSchemaValidation:
 
     def test_missing_columns_fails_validation(self):
         """Test that missing required columns fails validation."""
-        df = pd.DataFrame(
+        df = pl.DataFrame(
             {
                 "ticker": ["AAPL"],
-                # Missing required columns
             }
         )
 
@@ -61,44 +80,27 @@ class TestNewsSchemaValidation:
 
     def test_all_null_column_warns(self):
         """Test that all-null columns are flagged."""
-        # Create DataFrame with one ticker and null values for other columns
         data = {col: [None] for col in NEWS_COLUMNS}
         data["ticker"] = ["AAPL"]
-        df = pd.DataFrame(data)
+        df = pl.DataFrame(data)
 
-        # Should still return True (warning only, not error)
         result = validate_schema(df, "us_news")
 
         assert result is True
 
 
 # =============================================================================
-# Parquet Write Tests
+# Delta Lake Write Tests
 # =============================================================================
 
 
-class TestNewsParquetWrite:
-    """Test writing news data to partitioned Parquet."""
+class TestNewsDeltaWrite:
+    """Test writing news data to Delta Lake."""
 
-    def test_write_to_partitioned_parquet(self, tmp_path):
-        """Test writing news data to Hive-partitioned Parquet."""
-        # Patch the US_NEWS_DIR to use temp path
-        with patch("equity_lake.ingestion.writers.US_NEWS_DIR", tmp_path):
-            df = pd.DataFrame(
-                {
-                    "ticker": ["AAPL", "GOOGL"],
-                    "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-                    "source": ["Reuters", "Bloomberg"],
-                    "headline": ["Test headline 1", "Test headline 2"],
-                    "summary": ["Test summary 1", "Test summary 2"],
-                    "url": ["https://example.com/1", "https://example.com/2"],
-                    "category": ["general", "general"],
-                    "sentiment_score": [0.5, -0.3],
-                    "sentiment_label": ["positive", "negative"],
-                    "relevance_score": [1.0, 0.9],
-                }
-            )
+    def test_write_creates_delta_table(self, tmp_path):
+        """Test writing news data creates a valid Delta table."""
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+            df = _make_news_df()
 
             success = write_to_partitioned_parquet(
                 df,
@@ -109,34 +111,18 @@ class TestNewsParquetWrite:
 
             assert success is True
 
-            # Check file was created
-            partition_dir = tmp_path / "date=2024-01-01"
-            parquet_file = partition_dir / "2024-01-01.parquet"
-            assert parquet_file.exists()
+            table_path = delta_table_path("us_news", lake_dir=tmp_path)
+            assert DeltaTable.is_deltatable(str(table_path))
 
-            # Verify data can be read back
-            read_df = pd.read_parquet(parquet_file)
-            assert len(read_df) == 2
-            assert "ticker" in read_df.columns
+            dt = DeltaTable(str(table_path))
+            result = pl.from_arrow(dt.to_pyarrow_table())
+            assert result.height == 2
+            assert "ticker" in result.columns
 
     def test_dry_run_skips_write(self, tmp_path):
         """Test that dry run mode skips actual write."""
-        with patch("equity_lake.ingestion.writers.US_NEWS_DIR", tmp_path):
-            df = pd.DataFrame(
-                {
-                    "ticker": ["AAPL"],
-                    "date": [date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(["2024-01-01 10:00"]),
-                    "source": ["Reuters"],
-                    "headline": ["Test"],
-                    "summary": ["Test"],
-                    "url": ["https://example.com"],
-                    "category": ["general"],
-                    "sentiment_score": [0.5],
-                    "sentiment_label": ["positive"],
-                    "relevance_score": [1.0],
-                }
-            )
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+            df = _make_news_df(n=1)
 
             success = write_to_partitioned_parquet(
                 df,
@@ -147,69 +133,24 @@ class TestNewsParquetWrite:
 
             assert success is True
 
-            # File should NOT exist in dry run mode
-            partition_dir = tmp_path / "date=2024-01-01"
-            assert not partition_dir.exists()
+            table_path = delta_table_path("us_news", lake_dir=tmp_path)
+            assert not DeltaTable.is_deltatable(str(table_path))
 
     def test_deduplication_by_url(self, tmp_path):
-        """Test that duplicate articles (by URL) are skipped."""
-        with patch("equity_lake.ingestion.writers.US_NEWS_DIR", tmp_path):
-            df1 = pd.DataFrame(
-                {
-                    "ticker": ["AAPL", "GOOGL"],
-                    "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-                    "source": ["Reuters", "Bloomberg"],
-                    "headline": ["Test 1", "Test 2"],
-                    "summary": ["Summary 1", "Summary 2"],
-                    "url": ["https://example.com/1", "https://example.com/2"],
-                    "category": ["general", "general"],
-                    "sentiment_score": [0.5, -0.3],
-                    "sentiment_label": ["positive", "negative"],
-                    "relevance_score": [1.0, 0.9],
-                }
-            )
+        """Test that duplicate articles (by URL) are deduplicated via Delta merge."""
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+            df1 = _make_news_df()
+            write_to_partitioned_parquet(df1, "us_news", date(2024, 1, 1), dry_run=False)
 
-            # Write initial data
-            write_to_partitioned_parquet(
-                df1,
-                "us_news",
-                date(2024, 1, 1),
-                dry_run=False,
-            )
-
-            # Try to write duplicate data (same URLs)
-            df2 = pd.DataFrame(
-                {
-                    "ticker": ["AAPL", "GOOGL"],
-                    "date": [date(2024, 1, 1), date(2024, 1, 1)],
-                    "datetime": pd.to_datetime(["2024-01-01 10:00", "2024-01-01 11:00"]),
-                    "source": ["Reuters", "Bloomberg"],
-                    "headline": ["Test 1", "Test 2"],
-                    "summary": ["Summary 1", "Summary 2"],
-                    "url": ["https://example.com/1", "https://example.com/2"],
-                    "category": ["general", "general"],
-                    "sentiment_score": [0.5, -0.3],
-                    "sentiment_label": ["positive", "negative"],
-                    "relevance_score": [1.0, 0.9],
-                }
-            )
-
-            # Should skip duplicates
-            success = write_to_partitioned_parquet(
-                df2,
-                "us_news",
-                date(2024, 1, 1),
-                dry_run=False,
-            )
+            df2 = _make_news_df()
+            success = write_to_partitioned_parquet(df2, "us_news", date(2024, 1, 1), dry_run=False)
 
             assert success is True
 
-            # Verify only 2 rows (not 4)
-            partition_dir = tmp_path / "date=2024-01-01"
-            parquet_file = partition_dir / "2024-01-01.parquet"
-            read_df = pd.read_parquet(parquet_file)
-            assert len(read_df) == 2
+            table_path = delta_table_path("us_news", lake_dir=tmp_path)
+            dt = DeltaTable(str(table_path))
+            result = pl.from_arrow(dt.to_pyarrow_table())
+            assert result.height == 2
 
 
 # =============================================================================
@@ -226,19 +167,8 @@ class TestNewsIngestionE2E:
         mock_sleep,
         tmp_path,
     ):
-        """Test full flow from API fetch to Parquet write."""
-        # Create temp news directory
-        news_dir = tmp_path / "us_news"
-        news_dir.mkdir()
-
-        # Patch US_NEWS_DIR to return our temp path
-        import equity_lake.ingestion.writers as writers_module
-
-        original_dir = writers_module.US_NEWS_DIR
-        writers_module.US_NEWS_DIR = news_dir
-
-        try:
-            # Mock _fetch_news_for_ticker to return test data
+        """Test full flow from API fetch to Delta write."""
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             mock_articles = [
                 {
                     "ticker": "AAPL",
@@ -260,14 +190,12 @@ class TestNewsIngestionE2E:
                 "_fetch_news_for_ticker",
                 return_value=mock_articles,
             ):
-                # Fetch
                 fetcher = FinnhubNewsFetcher(
                     api_key="test_key",
                     tickers=["AAPL"],
                 )
                 df = fetcher.fetch(date(2024, 1, 1))
 
-                # Write
                 success = write_to_partitioned_parquet(
                     df,
                     "us_news",
@@ -276,19 +204,15 @@ class TestNewsIngestionE2E:
                 )
 
                 assert success is True
-                assert not df.empty
+                assert not df.is_empty()
 
-                # Verify file was created
-                parquet_file = news_dir / "date=2024-01-01" / "2024-01-01.parquet"
-                assert parquet_file.exists()
+                table_path = delta_table_path("us_news", lake_dir=tmp_path)
+                assert DeltaTable.is_deltatable(str(table_path))
 
-                # Verify data
-                read_df = pd.read_parquet(parquet_file)
-                assert len(read_df) >= 1
-                assert "sentiment_score" in read_df.columns
-        finally:
-            # Restore original
-            writers_module.US_NEWS_DIR = original_dir
+                dt = DeltaTable(str(table_path))
+                result = pl.from_arrow(dt.to_pyarrow_table())
+                assert result.height >= 1
+                assert "sentiment_score" in result.columns
 
 
 # =============================================================================
@@ -310,18 +234,15 @@ class TestRealFinnhubAPI:
             max_articles_per_ticker=5,
         )
 
-        # Fetch recent news (within last 2 days)
         from datetime import timedelta
 
         trading_date = date.today() - timedelta(days=2)
 
         result = fetcher.fetch(trading_date)
 
-        # Should return some data
-        assert isinstance(result, pd.DataFrame)
-        # May be empty if no news on that date
+        assert isinstance(result, pl.DataFrame)
 
-        if not result.empty:
+        if not result.is_empty():
             assert "ticker" in result.columns
             assert "headline" in result.columns
             assert "sentiment_score" in result.columns
@@ -337,27 +258,23 @@ class TestSentimentAccuracy:
 
         analyzer = SentimentAnalyzer(method="vader")
 
-        # Known positive examples
         positive_headlines = [
             "Apple beats earnings estimates by 15%",
             "Stock surges on strong revenue growth",
             "Company announces dividend increase",
         ]
 
-        # Known negative examples
         negative_headlines = [
             "Tech giant misses earnings expectations",
             "Stock plunges on weak guidance",
             "Company cuts workforce by 10%",
         ]
 
-        # Test positive headlines
         for headline in positive_headlines:
             result = analyzer.analyze(headline)
             assert result["compound"] > 0, f"Failed for: {headline}"
             assert result["label"] == "positive", f"Failed for: {headline}"
 
-        # Test negative headlines
         for headline in negative_headlines:
             result = analyzer.analyze(headline)
             assert result["compound"] < 0, f"Failed for: {headline}"

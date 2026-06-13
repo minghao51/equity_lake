@@ -11,6 +11,7 @@ from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from equity_lake.sources import (
@@ -62,10 +63,9 @@ class TestUSEquityFetcherBatching:
         fetcher = USEquityFetcher(tickers=[], batch_size=500)
         chunks = fetcher._chunked([], 500)
 
-        assert len(chunks) == 1
-        assert len(chunks[0]) == 0
+        assert len(chunks) == 0
 
-    @patch("equity_lake.sources.us.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_with_batching(self, mock_download, sample_us_tickers):
         """Test that fetch processes data in batches."""
         # Mock yfinance to return data for each batch
@@ -88,10 +88,11 @@ class TestUSEquityFetcherBatching:
 
         # Should be called 3 times for 8 tickers with batch_size=3
         assert mock_download.call_count == 3
-        assert not result.empty
+        assert isinstance(result, pl.DataFrame)
+        assert not result.is_empty()
         assert "ticker" in result.columns
 
-    @patch("equity_lake.sources.us.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_handles_partial_failures(self, mock_download, sample_us_tickers):
         """Test that fetch continues even if one batch fails."""
         call_count = [0]
@@ -121,9 +122,10 @@ class TestUSEquityFetcherBatching:
 
         # Should continue despite one batch failing
         assert mock_download.call_count == 4
-        assert not result.empty
+        assert isinstance(result, pl.DataFrame)
+        assert not result.is_empty()
 
-    @patch("equity_lake.sources.us.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_standardizes_columns(self, mock_download, sample_us_tickers):
         """Test that fetch standardizes column names."""
         mock_download.return_value = pd.DataFrame(
@@ -151,7 +153,7 @@ class TestUSEquityFetcherBatching:
         assert "ticker" in result.columns
         assert "date" in result.columns
 
-    @patch("equity_lake.sources.us.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_with_single_ticker(self, mock_download):
         """Test that fetch handles single ticker correctly."""
         mock_download.return_value = pd.DataFrame(
@@ -169,8 +171,8 @@ class TestUSEquityFetcherBatching:
         fetcher = USEquityFetcher(tickers=["AAPL"], batch_size=500)
         result = fetcher.fetch(date(2024, 1, 1))
 
-        assert not result.empty
-        assert result["ticker"].iloc[0] == "AAPL"
+        assert not result.is_empty()
+        assert result["ticker"][0] == "AAPL"
 
 
 # =============================================================================
@@ -226,9 +228,9 @@ class TestCNEfinanceFetcher:
         )
 
         assert result is not None
-        assert not result.empty
+        assert not result.is_empty()
         assert "ticker" in result.columns
-        assert result["ticker"].iloc[0] == "000001"
+        assert result["ticker"][0] == "000001"
 
     @patch("equity_lake.sources.cn_efinance.efinance")
     def test_fetch_history_batch_handles_failure(self, mock_efinance):
@@ -295,7 +297,7 @@ class TestCNEfinanceFetcher:
             fetcher = CNEfinanceFetcher(ticker_config=ticker_config)
             result = fetcher.fetch(date(2024, 1, 1))
 
-        assert result.empty
+        assert result.is_empty()
 
     @patch("equity_lake.sources.cn_efinance.efinance")
     def test_fetch_uses_configured_tickers_without_live_stock_list(self, mock_efinance):
@@ -338,7 +340,7 @@ class TestCNEfinanceFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         mock_efinance.stock.get_realtime_quotes.assert_not_called()
-        assert not result.empty
+        assert not result.is_empty()
         mock_efinance.stock.get_quote_history.assert_called_once()
         assert mock_efinance.stock.get_quote_history.call_args.kwargs["stock_codes"] == [
             "000001",
@@ -428,7 +430,7 @@ class TestCNAshareFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         mock_stock_list.assert_not_called()
-        assert not result.empty
+        assert not result.is_empty()
         assert mock_hist.call_count == 2
 
     @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
@@ -441,7 +443,7 @@ class TestCNAshareFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         mock_hist.assert_not_called()
-        assert result.empty
+        assert result.is_empty()
 
     @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
     def test_fetch_respects_stock_limit_on_configured_tickers(self, mock_hist):
@@ -556,7 +558,7 @@ class TestCNHybridFetcher:
         # Should use efinance and not call akshare
         mock_efinance_instance.fetch.assert_called_once()
         mock_akshare.return_value.fetch.assert_not_called()
-        assert not result.empty
+        assert not result.is_empty()
 
     @patch("equity_lake.sources.cn_hybrid.TickerConfig")
     @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
@@ -594,7 +596,7 @@ class TestCNHybridFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         mock_akshare.return_value.fetch.assert_not_called()
-        assert not result.empty
+        assert not result.is_empty()
 
     @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
     @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
@@ -621,7 +623,7 @@ class TestCNHybridFetcher:
         # Should try both and return akshare result
         mock_efinance_instance.fetch.assert_called_once()
         mock_akshare_instance.fetch.assert_called_once()
-        assert not result.empty
+        assert not result.is_empty()
 
     @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
     @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
@@ -654,7 +656,7 @@ class TestCNHybridFetcher:
 
         mock_timeout.assert_called_once()
         mock_akshare_instance.fetch.assert_called_once()
-        assert not result.empty
+        assert not result.is_empty()
 
     @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
     @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
@@ -691,8 +693,8 @@ class TestCNHybridFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         # Should return akshare result (more rows)
-        assert len(result) == 3
-        assert result["ticker"].nunique() == 3
+        assert result.height == 3
+        assert result["ticker"].n_unique() == 3
 
     @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
     def test_fetch_akshare_only(self, mock_akshare, sample_ohlcv_data):
@@ -709,7 +711,7 @@ class TestCNHybridFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         mock_akshare_instance.fetch.assert_called_once()
-        assert not result.empty
+        assert not result.is_empty()
 
     def test_standardize_output(self):
         """Test _standardize_output method."""
@@ -740,7 +742,7 @@ class TestCNHybridFetcher:
 
         result = fetcher._standardize_output(pd.DataFrame())
 
-        assert result.empty
+        assert result.is_empty()
 
 
 # =============================================================================
@@ -751,7 +753,7 @@ class TestCNHybridFetcher:
 class TestFetcherIntegration:
     """Integration tests for fetcher interactions."""
 
-    @patch("equity_lake.sources.us.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_us_fetcher_with_large_dataset(self, mock_download):
         """Test USEquityFetcher with large ticker list."""
         # Create mock data
@@ -777,7 +779,7 @@ class TestFetcherIntegration:
 
         # Should be called 3 times
         assert mock_download.call_count == 3
-        assert not result.empty
+        assert not result.is_empty()
 
     @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
     @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
@@ -823,7 +825,7 @@ class TestFetcherIntegration:
         successes = 0
         for _ in range(10):
             result = fetcher.fetch(date(2024, 1, 1))
-            if not result.empty:
+            if not result.is_empty():
                 successes += 1
 
         # Hybrid should have 100% success rate

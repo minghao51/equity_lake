@@ -126,13 +126,13 @@ class TestNativeCommands:
         assert "boom" in result.stdout
 
     def test_pipeline_command_exits_nonzero_on_stage_failure(self):
-        with patch("equity_lake.core.dag.execute_eod_pipeline", return_value={"features": {"success": False, "error": "boom"}}):
+        with patch("equity_lake.pipeline.execute_eod_pipeline", return_value={"features": {"success": False, "error": "boom"}}):
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
             assert result.exit_code == 1
 
     def test_pipeline_command_exits_zero_on_stage_success(self):
         with patch(
-            "equity_lake.core.dag.execute_eod_pipeline",
+            "equity_lake.pipeline.execute_eod_pipeline",
             return_value={"ingestion": {"us": True}, "features": {"success": True, "rows": 1}, "ml": {"success": True, "results": {}}},
         ):
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])

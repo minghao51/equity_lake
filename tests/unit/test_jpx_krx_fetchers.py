@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
+import polars as pl
 
 from equity_lake.sources import JPXEquityFetcher, KRXEquityFetcher
 
@@ -52,14 +53,13 @@ class TestJPXEquityFetcher:
 
     def test_get_fallback_list(self):
         """Test that fallback ticker list contains major JPX stocks."""
-        fetcher = JPXEquityFetcher(tickers=[])
-        fallback = fetcher._get_fallback_list()
+        from equity_lake.sources.jpx import _FALLBACK_TICKERS
 
-        assert "7203.T" in fallback
-        assert "6758.T" in fallback
-        assert len(fallback) == 10
+        assert "7203.T" in _FALLBACK_TICKERS
+        assert "6758.T" in _FALLBACK_TICKERS
+        assert len(_FALLBACK_TICKERS) == 10
 
-    @patch("equity_lake.sources.jpx.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_with_batching(self, mock_download):
         """Test that fetch processes data in batches."""
         mock_data = pd.DataFrame(
@@ -80,10 +80,10 @@ class TestJPXEquityFetcher:
         result = fetcher.fetch(date(2024, 1, 1))
 
         assert mock_download.call_count == 2
-        assert not result.empty
+        assert not result.is_empty()
         assert "ticker" in result.columns
 
-    @patch("equity_lake.sources.jpx.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_handles_no_data(self, mock_download):
         """Test that fetch handles empty response."""
         mock_download.return_value = pd.DataFrame()
@@ -91,9 +91,9 @@ class TestJPXEquityFetcher:
         fetcher = JPXEquityFetcher(tickers=["7203.T"], batch_size=500)
         result = fetcher.fetch(date(2024, 1, 1))
 
-        assert result.empty
+        assert result.is_empty()
 
-    @patch("equity_lake.sources.jpx.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_standardizes_columns(self, mock_download):
         """Test that fetch standardizes column names."""
         mock_download.return_value = pd.DataFrame(
@@ -120,7 +120,7 @@ class TestJPXEquityFetcher:
         assert "ticker" in result.columns
         assert "date" in result.columns
 
-    @patch("equity_lake.sources.jpx.yf.download")
+    @patch("equity_lake.sources.base.yf.download")
     def test_fetch_with_single_ticker(self, mock_download):
         """Test that fetch handles single ticker correctly."""
         mock_download.return_value = pd.DataFrame(
@@ -138,8 +138,8 @@ class TestJPXEquityFetcher:
         fetcher = JPXEquityFetcher(tickers=["7203.T"], batch_size=500)
         result = fetcher.fetch(date(2024, 1, 1))
 
-        assert not result.empty
-        assert result["ticker"].iloc[0] == "7203.T"
+        assert not result.is_empty()
+        assert result["ticker"][0] == "7203.T"
 
 
 class TestKRXEquityFetcher:
@@ -215,6 +215,6 @@ class TestKRXEquityFetcher:
             result = fetcher.fetch(date(2024, 1, 1))
 
         mock_module.DataReader.assert_called_once_with("005930", "2024-01-01", "2024-01-02")
-        assert not result.empty
-        assert not result.empty
-        assert result["ticker"].iloc[0] == "005930"
+        assert not result.is_empty()
+        assert isinstance(result, pl.DataFrame)
+        assert result["ticker"][0] == "005930"

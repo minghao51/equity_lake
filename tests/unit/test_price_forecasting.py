@@ -4,10 +4,15 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 
 from equity_lake.ml.candidates import build_candidate_frame
 from equity_lake.ml.forecasting import PriceForecaster
 from equity_lake.ml.labeling import apply_triple_barrier_labels
+
+
+def _noop_feature_loader_init(self) -> None:
+    return None
 
 
 def _make_training_frame(ticker: str, periods: int = 80) -> pd.DataFrame:
@@ -65,7 +70,7 @@ def test_train_model_writes_validation_metadata(monkeypatch, tmp_path) -> None:
     def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         return _make_training_frame(ticker)
 
-    monkeypatch.setattr(PriceForecaster, "_setup_feature_view", _noop_setup)
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
 
     forecaster = PriceForecaster(model_dir=str(tmp_path))
@@ -96,7 +101,7 @@ def test_train_model_writes_validation_metadata(monkeypatch, tmp_path) -> None:
 
 
 def test_v2_meta_label_training_frame_uses_candidate_events(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(PriceForecaster, "_setup_feature_view", lambda self: None)
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     forecaster = PriceForecaster(
         model_dir=str(tmp_path),
         model_mode="v2_meta_label",
@@ -122,10 +127,10 @@ def test_v2_meta_label_training_frame_uses_candidate_events(monkeypatch, tmp_pat
 
         training_df = forecaster._prepare_training_frame(df)
 
-        assert not training_df.empty
+        assert not training_df.is_empty()
         assert "candidate_source" in training_df.columns
         assert "meta_label" in training_df.columns
-        assert training_df["candidate_source"].eq("momentum").all()
+        assert set(training_df["candidate_source"].to_list()) == {"momentum"}
     finally:
         forecaster.close()
 
@@ -148,8 +153,8 @@ def test_candidate_generation_deduplicates_mixed_strategy_events() -> None:
         ],
     )
 
-    assert not candidates.empty
-    assert candidates["date"].is_unique
+    assert not candidates.is_empty()
+    assert candidates["date"].n_unique() == candidates.height
 
 
 def test_candidate_generation_returns_empty_when_no_candidates() -> None:
@@ -167,7 +172,7 @@ def test_candidate_generation_returns_empty_when_no_candidates() -> None:
         [{"name": "momentum", "lookback_days": 2, "buy_threshold": 0.5, "sell_threshold": -0.5}],
     )
 
-    assert candidates.empty
+    assert candidates.is_empty()
 
 
 def test_triple_barrier_uses_low_volatility_floor() -> None:
@@ -201,12 +206,12 @@ def test_triple_barrier_uses_low_volatility_floor() -> None:
         sl_mult=1.0,
     )
 
-    assert labeled.loc[0, "upper_barrier_return"] == 0.0075
-    assert labeled.loc[0, "lower_barrier_return"] == 0.005
+    assert labeled["upper_barrier_return"][0] == 0.0075
+    assert labeled["lower_barrier_return"][0] == 0.005
 
 
 def test_train_model_handles_sparse_optional_feature_columns(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(PriceForecaster, "_setup_feature_view", lambda self: None)
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
     def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         frame = _make_training_frame(ticker)
@@ -229,7 +234,7 @@ def test_train_model_handles_sparse_optional_feature_columns(monkeypatch, tmp_pa
 
 
 def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(PriceForecaster, "_setup_feature_view", lambda self: None)
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
     def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
         dates = pd.date_range("2024-01-01", periods=30, freq="B")
@@ -269,7 +274,7 @@ def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
         audit_path = tmp_path / "AAPL_xgboost_v2_meta_label_2024-02-15.training_audit.parquet"
         assert audit_path.exists()
 
-        audit_df = pd.read_parquet(audit_path)
+        audit_df = pl.read_parquet(audit_path)
         assert {
             "ticker",
             "date",
@@ -287,7 +292,7 @@ def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
 
 
 def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(PriceForecaster, "_setup_feature_view", lambda self: None)
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
     training_frame = _make_training_frame("AAPL")
 
@@ -317,5 +322,71 @@ def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatc
 
         assert prediction["ticker"] == "AAPL"
         assert prediction["model_mode"] == "v1_direction"
+    finally:
+        forecaster.close()
+
+
+def test_class_balance_recorded_in_metadata(monkeypatch, tmp_path) -> None:
+    """Imbalanced training set should record class_balance and scale_pos_weight."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    def _fake_load(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        frame = _make_training_frame(ticker, periods=120)
+        frame["next_day_return"] = [0.01 if i % 5 == 0 else -0.01 for i in range(len(frame))]
+        return frame
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.train_model("AAPL", date(2024, 1, 1), date(2024, 6, 30), max_model_age_days=0)
+        metadata = forecaster.load_training_metadata("AAPL", date(2024, 6, 30))
+        assert metadata is not None
+        assert "class_balance" in metadata
+        cb = metadata["class_balance"]
+        assert cb["scale_pos_weight"] > 1.0
+        assert cb["positive_count"] + cb["negative_count"] > 0
+    finally:
+        forecaster.close()
+
+
+def test_optimized_threshold_recorded_in_metadata(monkeypatch, tmp_path) -> None:
+    """Validation set with clear class separation should produce a non-default threshold."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    def _fake_load(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        frame = _make_training_frame(ticker, periods=120)
+        return frame
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.train_model("AAPL", date(2024, 1, 1), date(2024, 6, 30), max_model_age_days=0)
+        metadata = forecaster.load_training_metadata("AAPL", date(2024, 6, 30))
+        assert metadata is not None
+        assert "optimized_threshold" in metadata
+        assert 0.5 <= metadata["optimized_threshold"] <= 0.8
+    finally:
+        forecaster.close()
+
+
+def test_shap_feature_importance_recorded_when_shap_available(monkeypatch, tmp_path) -> None:
+    """If SHAP is installed, training metadata should include top features."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    def _fake_load(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        return _make_training_frame(ticker, periods=120)
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.train_model("AAPL", date(2024, 1, 1), date(2024, 6, 30), max_model_age_days=0)
+        metadata = forecaster.load_training_metadata("AAPL", date(2024, 6, 30))
+        assert metadata is not None
+        if metadata.get("shap_feature_importance") is not None:
+            importance = metadata["shap_feature_importance"]
+            assert isinstance(importance, dict)
+            assert all(isinstance(v, float) for v in importance.values())
+            values = list(importance.values())
+            assert values == sorted(values, reverse=True)
     finally:
         forecaster.close()

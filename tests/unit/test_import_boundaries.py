@@ -70,7 +70,6 @@ def test_domain_tree_does_not_exist() -> None:
     "module_name",
     [
         "equity_lake.run_pipeline",
-        "equity_lake.pipeline",
         "equity_lake.feature_jobs",
         "equity_lake.ml_jobs",
         "equity_lake.cli.backtest",

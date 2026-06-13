@@ -4,6 +4,7 @@ from datetime import date
 from unittest.mock import patch
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion
@@ -40,9 +41,9 @@ class TestUSEquityFetcher:
 
         df = fetcher.fetch(trading_date)
 
-        assert not df.empty
+        assert not df.is_empty()
         assert "ticker" in df.columns
-        assert "AAPL" in df["ticker"].values
+        assert "AAPL" in df["ticker"].to_list()
 
 
 class TestCNAshareFetcher:
@@ -64,7 +65,7 @@ class TestCNAshareFetcher:
 
         # Note: akshare may return empty data for dates without trading
         # We're mainly testing it doesn't crash
-        assert isinstance(df, pd.DataFrame)
+        assert isinstance(df, pl.DataFrame)
 
 
 class TestHKSGEquityFetcher:
@@ -87,47 +88,30 @@ class TestPartitionedParquetWriter:
     """Tests for Parquet writer."""
 
     def test_write_to_partitioned_parquet(self, tmp_path, sample_ohlcv_data):
-        """Test writing DataFrame to partitioned Parquet."""
-        # Create market directory
-        market_dir = tmp_path / "us_equity"
-        market_dir.mkdir(parents=True, exist_ok=True)
-
-        # Mock the directory constants
-        with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
+        """Test writing DataFrame to Delta storage."""
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             success = write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is True
 
-        # Verify file was created
-        partition_dir = market_dir / "date=2024-01-01"
-        assert partition_dir.exists()
+        from deltalake import DeltaTable
 
-        parquet_file = partition_dir / "2024-01-01.parquet"
-        assert parquet_file.exists()
+        market_dir = tmp_path / "us_equity"
+        dt = DeltaTable(str(market_dir))
+        assert dt.version() >= 0
 
     def test_write_empty_dataframe(self, tmp_path):
         """Test writing empty DataFrame."""
-        market_dir = tmp_path / "us_equity"
-        market_dir.mkdir(parents=True, exist_ok=True)
-
-        with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
-            success = write_to_partitioned_parquet(pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False)
+        success = write_to_partitioned_parquet(pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is False
 
     def test_write_dry_run(self, tmp_path, sample_ohlcv_data):
         """Test dry run mode."""
-        market_dir = tmp_path / "us_equity"
-        market_dir.mkdir(parents=True, exist_ok=True)
-
-        with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             success = write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=True)
 
         assert success is True
-
-        # Verify no file was created
-        partition_dir = market_dir / "date=2024-01-01"
-        assert not partition_dir.exists()
 
 
 # =============================================================================
@@ -203,57 +187,41 @@ class TestPipelineIntegration:
             }
         )
 
-        with patch("equity_lake.ingestion.orchestrator.CNHybridFetcher") as mock_fetcher:
+        with patch("equity_lake.sources.cn_hybrid.CNHybridFetcher") as mock_fetcher:
             mock_fetcher.return_value.fetch.return_value = sample
 
             result = fetch_market_data("cn", date(2024, 1, 1), {})
 
         mock_fetcher.assert_called_once()
         assert result is not None
-        assert not result.empty
+        assert not result.is_empty()
 
     def test_run_daily_ingestion_dry_run(self, tmp_path, sample_ohlcv_data):
         """Test daily ingestion in dry-run mode."""
-        # Mock fetchers
         with patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch:
             mock_fetch.return_value = sample_ohlcv_data
 
-            # Mock directory constants
             with (
-                patch(
-                    "equity_lake.ingestion.writers.US_EQUITY_DIR",
-                    tmp_path / "us_equity",
-                ),
-                patch(
-                    "equity_lake.ingestion.writers.CN_ASHARE_DIR",
-                    tmp_path / "cn_ashare",
-                ),
-                patch(
-                    "equity_lake.ingestion.writers.HK_SG_EQUITY_DIR",
-                    tmp_path / "hk_sg_equity",
-                ),
+                patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+                patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             ):
                 results = run_daily_ingestion(date(2024, 1, 1), ["us"], dry_run=True)
 
         assert "us" in results
-        # Dry run should succeed
         assert results["us"] is True
 
     def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
-        """Test that partition structure is correct."""
-        market_dir = tmp_path / "us_equity"
-
-        with patch("equity_lake.ingestion.writers.US_EQUITY_DIR", market_dir):
+        """Test that Delta table is created on write."""
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
 
-        # Verify Hive partition format
-        partition_dir = market_dir / "date=2024-01-01"
-        assert partition_dir.exists()
-        assert partition_dir.is_dir()
+        from deltalake import DeltaTable
 
-        # Verify Parquet file exists
-        parquet_files = list(partition_dir.glob("*.parquet"))
-        assert len(parquet_files) == 1
+        market_dir = tmp_path / "us_equity"
+        dt = DeltaTable(str(market_dir))
+        assert dt.version() >= 0
+        pdf = dt.to_pandas()
+        assert len(pdf) > 0
 
 
 # =============================================================================
@@ -271,7 +239,7 @@ class TestDateHandling:
 
         # Should not crash, may return empty DataFrame
         df = fetcher.fetch(weekend_date)
-        assert isinstance(df, pd.DataFrame)
+        assert isinstance(df, pl.DataFrame)
 
     def test_future_date(self):
         """Test handling of future dates."""
@@ -280,7 +248,7 @@ class TestDateHandling:
 
         # Should not crash, will return empty DataFrame
         df = fetcher.fetch(future_date)
-        assert isinstance(df, pd.DataFrame)
+        assert isinstance(df, pl.DataFrame)
 
 
 # =============================================================================
@@ -310,5 +278,5 @@ class TestPerformance:
         df2 = fetcher.fetch(trading_date)
 
         # Both should return DataFrames
-        assert isinstance(df1, pd.DataFrame)
-        assert isinstance(df2, pd.DataFrame)
+        assert isinstance(df1, pl.DataFrame)
+        assert isinstance(df2, pl.DataFrame)

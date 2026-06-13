@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import polars as pl
 import pytest
 
 
@@ -26,26 +27,37 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
 
 
 @pytest.fixture
-def sample_ohlcv_data() -> pd.DataFrame:
+def sample_ohlcv_data() -> pl.DataFrame:
     """Create sample OHLCV data for testing."""
-    data = {
-        "ticker": ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"],
-        "date": [date(2024, 1, 1)] * 5,
-        "open": [150.0, 380.0, 140.0, 180.0, 250.0],
-        "high": [155.0, 385.0, 145.0, 185.0, 255.0],
-        "low": [148.0, 378.0, 138.0, 178.0, 248.0],
-        "close": [152.0, 382.0, 142.0, 182.0, 252.0],
-        "volume": [1000000, 800000, 1200000, 1500000, 900000],
-        "adj_close": [152.0, 382.0, 142.0, 182.0, 252.0],
-    }
-    return pd.DataFrame(data)
+    return pl.DataFrame(
+        {
+            "ticker": ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA"],
+            "date": [date(2024, 1, 1)] * 5,
+            "open": [150.0, 380.0, 140.0, 180.0, 250.0],
+            "high": [155.0, 385.0, 145.0, 185.0, 255.0],
+            "low": [148.0, 378.0, 138.0, 178.0, 248.0],
+            "close": [152.0, 382.0, 142.0, 182.0, 252.0],
+            "volume": [1000000, 800000, 1200000, 1500000, 900000],
+            "adj_close": [152.0, 382.0, 142.0, 182.0, 252.0],
+        },
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+            "adj_close": pl.Float64,
+        },
+    )
 
 
 @pytest.fixture
-def sample_multi_day_data() -> pd.DataFrame:
+def sample_multi_day_data() -> pl.DataFrame:
     """Create sample multi-day OHLCV data."""
     tickers = ["AAPL", "MSFT", "GOOGL"]
-    dates = [date(2024, 1, i) for i in range(1, 6)]  # 5 days
+    dates = [date(2024, 1, i) for i in range(1, 6)]
 
     data = []
     for ticker in tickers:
@@ -66,7 +78,19 @@ def sample_multi_day_data() -> pd.DataFrame:
                 }
             )
 
-    return pd.DataFrame(data)
+    return pl.DataFrame(
+        data,
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+            "adj_close": pl.Float64,
+        },
+    )
 
 
 @pytest.fixture
@@ -123,17 +147,15 @@ def temp_data_dir(tmp_path: Path) -> Generator[Path, None, None]:
 
 
 @pytest.fixture
-def temp_partitioned_parquet(temp_data_dir: Path, sample_multi_day_data: pd.DataFrame) -> Path:
+def temp_partitioned_parquet(temp_data_dir: Path, sample_multi_day_data: pl.DataFrame) -> Path:
     """Create temporary Hive-partitioned Parquet files."""
     us_dir = temp_data_dir / "us_equity"
 
-    # Group by date and create partitions
-    for dt, group in sample_multi_day_data.groupby("date"):
+    for dt in sample_multi_day_data.get_column("date").unique().sort():
+        partition = sample_multi_day_data.filter(pl.col("date") == dt)
         partition_dir = us_dir / f"date={dt}"
         partition_dir.mkdir(parents=True, exist_ok=True)
-
-        parquet_file = partition_dir / f"{dt}.parquet"
-        group.to_parquet(parquet_file, index=False)
+        partition.write_parquet(partition_dir / f"{dt}.parquet")
 
     return us_dir
 

@@ -13,6 +13,7 @@ from datetime import date, datetime
 from unittest.mock import patch
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from equity_lake.sentiment import SentimentAnalyzer
@@ -85,9 +86,7 @@ class TestSentimentAnalyzer:
         assert len(result_df) == 3
         assert "compound" in result_df.columns
         assert "label" in result_df.columns
-        assert result_df.iloc[0]["label"] == "positive"
-        assert result_df.iloc[1]["label"] == "negative"
-        assert result_df.iloc[2]["label"] == "neutral"
+        assert result_df["label"].to_list() == ["positive", "negative", "neutral"]
 
     def test_finbert_not_implemented(self):
         """Test that FinBERT method raises NotImplementedError."""
@@ -232,8 +231,8 @@ class TestFinnhubNewsFetcherFetch:
 
             result = fetcher.fetch(date(2024, 1, 1))
 
-            assert isinstance(result, pd.DataFrame)
-            assert not result.empty
+            assert isinstance(result, pl.DataFrame)
+            assert not result.is_empty()
             assert "ticker" in result.columns
             assert "headline" in result.columns
 
@@ -259,7 +258,7 @@ class TestFinnhubNewsFetcherFetch:
             assert "sentiment_score" in result.columns
             assert "sentiment_label" in result.columns
             # First headline should be positive (contains "surges")
-            assert result.iloc[0]["sentiment_label"] == "positive"
+            assert result["sentiment_label"][0] == "positive"
 
     @patch("time.sleep")
     def test_fetch_with_no_tickers_returns_empty_df(
@@ -274,7 +273,7 @@ class TestFinnhubNewsFetcherFetch:
 
         result = fetcher.fetch(date(2024, 1, 1))
 
-        assert result.empty
+        assert result.is_empty()
 
     @patch("time.sleep")
     def test_fetch_limits_articles_per_ticker(
@@ -329,7 +328,7 @@ class TestFinnhubNewsFetcherFetch:
             # All articles should have relevance >= 0.8
             # (Default relevance is 1.0, so all should pass)
             # Check if result has data before accessing
-            if not result.empty:
+            if not result.is_empty():
                 assert result["relevance_score"].min() >= 0.8
 
 
@@ -410,7 +409,7 @@ class TestFinnhubNewsFetcherRetry:
 
             # Should have retried
             assert call_count[0] >= 1
-            assert isinstance(result, pd.DataFrame)
+            assert isinstance(result, pl.DataFrame)
 
     @patch("time.sleep")
     def test_continues_on_ticker_failure(
@@ -438,4 +437,4 @@ class TestFinnhubNewsFetcherRetry:
             result = fetcher.fetch(date(2024, 1, 1))
 
             # Should return empty DataFrame (both failed or one failed)
-            assert isinstance(result, pd.DataFrame)
+            assert isinstance(result, pl.DataFrame)

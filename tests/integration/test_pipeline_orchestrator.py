@@ -1,11 +1,9 @@
-"""Tests for the EOD pipeline executor (core/dag.py)."""
+"""Tests for the EOD pipeline executor (pipeline.py)."""
 
 from datetime import date
 
-import pandas as pd
-
-from equity_lake.core.dag import execute_eod_pipeline
 from equity_lake.core.dates import resolve_trading_date
+from equity_lake.pipeline import execute_eod_pipeline
 
 
 def test_execute_eod_pipeline_ingestion_stage(monkeypatch):
@@ -18,7 +16,7 @@ def test_execute_eod_pipeline_ingestion_stage(monkeypatch):
         return {"us": True, "cn": False}
 
     monkeypatch.setattr(
-        "equity_lake.core.dag.run_daily_ingestion",
+        "equity_lake.pipeline.run_daily_ingestion",
         fake_run_daily_ingestion,
     )
 
@@ -38,16 +36,18 @@ def test_execute_eod_pipeline_feature_stage(monkeypatch):
     """Feature stage should record row count on success."""
 
     def fake_run_feature_pipeline(*, tickers, output_start_date, output_end_date, compute_target):
-        return pd.DataFrame(
+        import polars as pl
+
+        return pl.DataFrame(
             {
                 "ticker": ["AAPL", "MSFT"],
-                "date": pd.to_datetime(["2024-01-02", "2024-01-02"]),
+                "date": ["2024-01-02", "2024-01-02"],
                 "rsi_14": [50.0, 60.0],
             }
         )
 
     monkeypatch.setattr(
-        "equity_lake.core.dag.run_feature_pipeline",
+        "equity_lake.pipeline.run_feature_job",
         fake_run_feature_pipeline,
     )
 
@@ -66,7 +66,7 @@ def test_execute_eod_pipeline_feature_stage(monkeypatch):
 def test_execute_eod_pipeline_ml_stage(monkeypatch):
     """ML stage should record per-ticker inference results."""
 
-    def fake_run_ml_inference(*, trading_date, tickers):
+    def fake_run_prediction_job(*, trading_date, tickers):
         return True, {
             "AAPL": {
                 "success": True,
@@ -80,8 +80,8 @@ def test_execute_eod_pipeline_ml_stage(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "equity_lake.core.dag.run_ml_inference",
-        fake_run_ml_inference,
+        "equity_lake.pipeline.run_prediction_job",
+        fake_run_prediction_job,
     )
 
     results = execute_eod_pipeline(
@@ -99,12 +99,12 @@ def test_execute_eod_pipeline_ml_stage(monkeypatch):
 def test_execute_eod_pipeline_feature_failure_skips_ml(monkeypatch):
     """ML stage should be skipped when features fail."""
 
-    def fake_run_feature_pipeline(*, tickers, output_start_date, output_end_date, compute_target):
+    def fake_run_feature_job(*, tickers, output_start_date, output_end_date, compute_target):
         raise RuntimeError("feature pipeline exploded")
 
     monkeypatch.setattr(
-        "equity_lake.core.dag.run_feature_pipeline",
-        fake_run_feature_pipeline,
+        "equity_lake.pipeline.run_feature_job",
+        fake_run_feature_job,
     )
 
     results = execute_eod_pipeline(
@@ -118,31 +118,65 @@ def test_execute_eod_pipeline_feature_failure_skips_ml(monkeypatch):
     assert results["ml"]["skipped"] is True
 
 
+def _find_clean_week() -> tuple[date, ...]:
+    """Find a Mon-Fri week where all 5 days + the previous Friday are trading days."""
+    from datetime import timedelta
+
+    from equity_lake.core.calendar import is_trading_day
+
+    d = date(2025, 1, 6)
+    while True:
+        week = [d + timedelta(days=i) for i in range(7)]
+        mon = week[0]
+        prev_fri = mon - timedelta(days=3)
+        if (
+            mon.weekday() == 0
+            and all(is_trading_day("us_equity", week[i]) for i in range(5))
+            and not any(is_trading_day("us_equity", week[i]) for i in range(5, 7))
+            and is_trading_day("us_equity", prev_fri)
+        ):
+            return prev_fri, mon, week[1], week[2], week[3], week[4]
+        d += timedelta(days=1)
+
+
 def test_resolve_trading_date_explicit() -> None:
     """Explicit date should be used as-is."""
-    resolved = resolve_trading_date("2026-04-05", days_back=1)
-    assert resolved == date(2026, 4, 5)
+    resolved = resolve_trading_date("2025-01-15", days_back=1)
+    assert resolved == date(2025, 1, 15)
 
 
 def test_resolve_trading_date_rolls_monday_to_friday() -> None:
     """Default date on Monday should map to previous Friday."""
-    resolved = resolve_trading_date(None, days_back=1, today=date(2026, 4, 6))
-    assert resolved == date(2026, 4, 3)
+    prev_fri, mon, *_ = _find_clean_week()
+    resolved = resolve_trading_date(None, days_back=1, today=mon)
+    assert resolved == prev_fri
 
 
 def test_resolve_trading_date_rolls_sunday_to_friday() -> None:
     """Default date on Sunday should map to previous Friday."""
-    resolved = resolve_trading_date(None, days_back=1, today=date(2026, 4, 5))
-    assert resolved == date(2026, 4, 3)
+    prev_fri, mon, tue, wed, thu, fri = _find_clean_week()
+    sun = fri + __import__("datetime").timedelta(days=2)
+    resolved = resolve_trading_date(None, days_back=1, today=sun)
+    assert resolved == fri
 
 
 def test_resolve_trading_date_counts_trading_days() -> None:
     """Relative dates should skip weekends when days_back > 1."""
-    resolved = resolve_trading_date(None, days_back=2, today=date(2026, 4, 6))
-    assert resolved == date(2026, 4, 2)
+    prev_fri, mon, *_ = _find_clean_week()
+    from datetime import timedelta
+
+    from equity_lake.core.calendar import is_trading_day
+
+    d = prev_fri - timedelta(days=1)
+    while not is_trading_day("us_equity", d):
+        d -= timedelta(days=1)
+    expected = d
+    resolved = resolve_trading_date(None, days_back=2, today=mon)
+    assert resolved == expected
 
 
 def test_resolve_trading_date_relative_weekday() -> None:
     """Relative weekday dates should still subtract one trading day."""
-    resolved = resolve_trading_date(None, days_back=1, today=date(2026, 4, 7))
-    assert resolved == date(2026, 4, 6)
+    _, mon, tue, *_ = _find_clean_week()
+    resolved = resolve_trading_date(None, days_back=1, today=tue)
+    assert resolved == mon

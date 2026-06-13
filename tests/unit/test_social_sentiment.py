@@ -5,6 +5,7 @@ from datetime import date
 from unittest.mock import Mock, patch
 
 import pandas as pd
+import polars as pl
 import pytest
 
 from equity_lake.core.schemas import SOCIAL_COLUMNS
@@ -111,8 +112,8 @@ class TestFinnhubSocialSentimentFetcher:
 
         result = fetcher.fetch(date(2024, 12, 1))
 
-        assert result.empty
-        assert isinstance(result, pd.DataFrame)
+        assert result.is_empty()
+        assert isinstance(result, pl.DataFrame)
 
     @patch("equity_lake.sources.sentiment.requests.get")
     def test_fetch_sequential_success(
@@ -135,11 +136,11 @@ class TestFinnhubSocialSentimentFetcher:
 
         result = fetcher.fetch(date(2024, 12, 1))
 
-        assert not result.empty
-        assert len(result) == 2  # reddit + twitter
+        assert not result.is_empty()
+        assert result.height == 2  # reddit + twitter
         assert list(result.columns) == SOCIAL_COLUMNS
-        assert result["ticker"].iloc[0] == "AAPL"
-        assert result["date"].iloc[0] == date(2024, 12, 1)
+        assert result["ticker"][0] == "AAPL"
+        assert result["date"][0] == date(2024, 12, 1)
 
     @patch("equity_lake.sources.sentiment.requests.get")
     def test_fetch_parallel_success(
@@ -162,10 +163,10 @@ class TestFinnhubSocialSentimentFetcher:
 
         result = fetcher.fetch(date(2024, 12, 1))
 
-        assert not result.empty
+        assert not result.is_empty()
         # 3 tickers * 2 sources (reddit + twitter) = 6 records
-        assert len(result) == 6
-        assert result["ticker"].nunique() == 3
+        assert result.height == 6
+        assert result["ticker"].n_unique() == 3
 
     @patch("equity_lake.sources.sentiment.requests.get")
     def test_fetch_handles_no_data(
@@ -187,7 +188,7 @@ class TestFinnhubSocialSentimentFetcher:
 
         result = fetcher.fetch(date(2024, 12, 1))
 
-        assert result.empty
+        assert result.is_empty()
 
     @patch("equity_lake.sources.sentiment.requests.get")
     def test_parse_sentiment_metric_reddit(
@@ -350,7 +351,7 @@ class TestFinnhubSocialSentimentFetcher:
         result = fetcher.fetch(date(2024, 12, 1))
 
         # Should return empty DataFrame on failure
-        assert result.empty
+        assert result.is_empty()
 
 
 class TestSchemaValidation:
