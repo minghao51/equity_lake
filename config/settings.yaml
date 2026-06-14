@@ -20,7 +20,6 @@ ingestion:
     - us_social_sentiment
     - rss_news
     - reddit_posts
-    - stocktwits_messages
   parallel: true
   max_workers: 3
   ticker_config_path: config/tickers.yaml

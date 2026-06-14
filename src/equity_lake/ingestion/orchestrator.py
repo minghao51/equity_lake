@@ -121,7 +121,7 @@ def run_daily_ingestion(
                             date,
                             ticker_config=config,
                             filters=fltrs,
-                            explicit_tickers=explicit_list if mkt == "us" else None,
+                            explicit_tickers=explicit_list if mkt in ("us", "stocktwits_messages") else None,
                         )
 
                     return fetch_func
@@ -174,7 +174,7 @@ def run_daily_ingestion(
                         config=get_project_config(),
                         ticker_config=ticker_config,
                         filters=filters,
-                        explicit_tickers=explicit_ticker_list if market == "us" else None,
+                        explicit_tickers=explicit_ticker_list if market in ("us", "stocktwits_messages") else None,
                     )
 
                 if frame_is_empty(df):

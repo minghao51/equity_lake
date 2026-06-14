@@ -10,6 +10,7 @@ from time import mktime
 from typing import Any
 
 import feedparser
+import httpx
 import polars as pl
 import structlog
 import yaml
@@ -33,7 +34,7 @@ def _load_feed_config(config_path: Path | None = None) -> list[dict[str, Any]]:
     return data.get("feeds", []) if data else []
 
 
-def _parse_published(entry: dict[str, Any]) -> datetime:
+def _parse_published(entry: dict[str, Any], fallback: datetime | None = None) -> datetime:
     published_struct = entry.get("published_parsed") or entry.get("updated_parsed")
     if published_struct:
         try:
@@ -46,7 +47,7 @@ def _parse_published(entry: dict[str, Any]) -> datetime:
             return datetime.strptime(raw, fmt).replace(tzinfo=None)
         except (ValueError, TypeError):
             continue
-    return datetime.now()
+    return fallback or datetime.now()
 
 
 def _extract_body(entry: dict[str, Any]) -> str:
@@ -111,9 +112,20 @@ class RSSNewsFetcher(MarketDataFetcher):
         feed_name = feed_cfg["name"]
         feed_url = feed_cfg["url"]
         categories = feed_cfg.get("category", [])
+        fallback_dt = datetime.combine(trading_date, datetime.min.time())
 
         def _parse() -> list[dict[str, Any]]:
-            parsed = feedparser.parse(feed_url)
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            }
+            try:
+                with httpx.Client(timeout=20, follow_redirects=True) as client:
+                    resp = client.get(feed_url, headers=headers)
+                    resp.raise_for_status()
+                    parsed = feedparser.parse(resp.content)
+            except Exception:
+                parsed = feedparser.parse(feed_url)
+
             if parsed.bozo and parsed.bozo_exception:
                 logger.warning("rss_parse_warning", feed=feed_name, error=str(parsed.bozo_exception))
 
@@ -121,7 +133,7 @@ class RSSNewsFetcher(MarketDataFetcher):
             now = datetime.now()
 
             for entry in parsed.entries:
-                published = _parse_published(entry)
+                published = _parse_published(entry, fallback=fallback_dt)
                 if published.date() < trading_date:
                     continue
 

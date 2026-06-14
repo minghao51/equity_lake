@@ -1,4 +1,9 @@
-"""StockTwits developer API fetcher for symbol-specific message streams."""
+"""StockTwits developer API fetcher for symbol-specific message streams.
+
+The StockTwits public API has restricted new developer registrations and
+heavily rate-limits unauthenticated access. This fetcher is disabled by
+default — set ``STOCKTWITS_ENABLED=true`` to attempt API calls.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +13,8 @@ import uuid
 from datetime import date, datetime
 from typing import Any
 
+import httpx
 import polars as pl
-import requests
 import structlog
 
 from equity_lake.core.schemas import BRONZE_ARTICLE_COLUMNS
@@ -23,9 +28,17 @@ STOCKTWITS_API_URL = "https://api.stocktwits.com/api/2"
 class StockTwitsFetcher(MarketDataFetcher):
     """Fetch symbol-specific message streams from StockTwits API.
 
-    Uses the free developer API tier (200 req/hour, 40 messages per call).
-    Messages already include bullish/bearish sentiment tags — this supplements
-    the LLM extraction.
+    The StockTwits API has frozen new developer registrations. This
+    fetcher checks ``STOCKTWITS_ENABLED`` env var and returns an empty
+    frame with a warning when disabled (default), preventing pipeline
+    failures.
+
+    When enabled, uses the free developer API tier (historically
+    200 req/hour, 30 messages per call). Messages already include
+    bullish/bearish sentiment tags — this supplements the LLM extraction.
+
+    Migration path: Use ``us_social_sentiment`` (Finnhub) as a
+    replacement for StockTwits social data.
     """
 
     market = "stocktwits_messages"
@@ -39,13 +52,22 @@ class StockTwitsFetcher(MarketDataFetcher):
     ):
         super().__init__(retry_attempts, retry_delay)
         self.tickers = tickers or []
-        self.messages_per_symbol = min(messages_per_symbol, 40)
+        self.messages_per_symbol = min(messages_per_symbol, 30)
         self.client_id = os.getenv("STOCKTWITS_CLIENT_ID")
-        logger.info("Initialized StockTwitsFetcher", ticker_count=len(self.tickers))
+        self.enabled = os.getenv("STOCKTWITS_ENABLED", "false").lower() in ("true", "1", "yes")
+        logger.info("Initialized StockTwitsFetcher", ticker_count=len(self.tickers), enabled=self.enabled)
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
         if not self.tickers:
             logger.warning("No tickers configured for StockTwits")
+            return _empty_frame()
+
+        if not self.enabled:
+            logger.info(
+                "StockTwits disabled (STOCKTWITS_ENABLED not set). "
+                "Use 'us_social_sentiment' (Finnhub) as alternative. "
+                "Set STOCKTWITS_ENABLED=true to enable."
+            )
             return _empty_frame()
 
         logger.info("Fetching StockTwits messages", ticker_count=len(self.tickers), trading_date=str(trading_date))
@@ -79,9 +101,10 @@ class StockTwitsFetcher(MarketDataFetcher):
             if self.client_id:
                 params["access_token"] = self.client_id
 
-            response = requests.get(url, params=params, timeout=15)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            with httpx.Client(timeout=15) as client:
+                response = client.get(url, params=params)
+                response.raise_for_status()
+                data: dict[str, Any] = response.json()
 
             messages_data = data.get("messages", [])
             results: list[dict[str, Any]] = []

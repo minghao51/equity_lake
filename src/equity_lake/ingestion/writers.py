@@ -23,9 +23,9 @@ def _dedupe_key_columns(market: str) -> list[str]:
         return ["url"]
     if market == "us_social_sentiment":
         return ["ticker", "datetime", "source"]
-    if market in ("rss_news", "reddit_posts", "stocktwits_messages"):
+    if market in ("rss_news", "reddit_posts", "stocktwits_messages", "bronze/raw_articles"):
         return ["source_url"]
-    if market == "silver/processed_articles":
+    if market in ("silver/processed_articles",):
         return ["article_id", "ticker"]
     return ["ticker", "date"]
 

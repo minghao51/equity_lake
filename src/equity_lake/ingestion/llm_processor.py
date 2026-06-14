@@ -204,7 +204,7 @@ class DeepSeekBatchProcessor:
 
         results: list[ArticleExtraction] = []
         for item in batch:
-            text = item.get("title", "")
+            text = f"{item.get('title', '')} {item.get('body', '')}"[:500]
             if analyzer:
                 result = analyzer.analyze(text)
                 raw_score: object = result.get("compound", 0.0)

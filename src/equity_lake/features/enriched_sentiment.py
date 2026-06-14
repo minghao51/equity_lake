@@ -60,8 +60,7 @@ def merge_enriched_sentiment_features(
         logger.info("Silver processed articles directory not found, skipping enriched sentiment merge")
         return _add_empty_enriched_columns(features_df)
 
-    ticker_filter = tuple(sorted(str(v) for v in features_df["ticker"].unique().to_list()))
-
+    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
     scan = duckdb_scan_for(silver_path)
 
     query = f"""
@@ -78,13 +77,13 @@ def merge_enriched_sentiment_features(
             AVG(CASE WHEN source_type IN ('reddit', 'stocktwits') THEN sentiment_score ELSE NULL END) as social_sentiment_mean,
             MAX(CASE WHEN market_relevance > 0.8 AND impact_horizon = 'short' THEN 1 ELSE 0 END) as breaking_news_flag
         FROM {scan}
-        WHERE ticker IN {ticker_filter}
-        AND date BETWEEN '{start_date}' AND '{end_date}'
+        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
+        AND date BETWEEN ? AND ?
         GROUP BY ticker, date
     """
 
     try:
-        sentiment_df = conn.execute(query).pl()
+        sentiment_df = conn.execute(query, [tickers, start_date, end_date]).pl()
     except Exception as exc:
         logger.error("enriched_sentiment_query_failed", error=str(exc))
         return _add_empty_enriched_columns(features_df)
@@ -95,31 +94,30 @@ def merge_enriched_sentiment_features(
 
     logger.info("Loaded enriched sentiment data points", rows=sentiment_df.height)
 
-    merged_df = (
-        features_df.join(sentiment_df, on=["ticker", "date"], how="left")
-        .with_columns(
-            pl.col("enriched_article_count").fill_null(0).cast(pl.Int64),
-            pl.col("enriched_sentiment_mean").fill_null(0.0),
-            pl.col("enriched_confidence_mean").fill_null(0.0),
-            pl.col("enriched_relevance_mean").fill_null(0.0),
-            pl.col("bullish_ratio").fill_null(0.0),
-            pl.col("social_volume").fill_null(0).cast(pl.Int64),
-            pl.col("social_sentiment_mean").fill_null(0.0),
-            pl.col("breaking_news_flag").fill_null(0).cast(pl.Int64),
-        )
-        .sort(["ticker", "date"])
-        .with_columns(
-            pl.col("enriched_sentiment_mean")
-            .ewm_mean(half_life=3.0, ignore_nulls=True)
-            .over("ticker")
-            .fill_null(0.0)
-            .alias("enriched_sentiment_ewma_3d"),
-            pl.col("enriched_sentiment_mean")
-            .ewm_mean(half_life=7.0, ignore_nulls=True)
-            .over("ticker")
-            .fill_null(0.0)
-            .alias("enriched_sentiment_ewma_7d"),
-        )
+    ewma_df = sentiment_df.sort(["ticker", "date"]).with_columns(
+        pl.col("enriched_sentiment_mean")
+        .ewm_mean(half_life=3.0, ignore_nulls=True)
+        .over("ticker")
+        .fill_null(0.0)
+        .alias("enriched_sentiment_ewma_3d"),
+        pl.col("enriched_sentiment_mean")
+        .ewm_mean(half_life=7.0, ignore_nulls=True)
+        .over("ticker")
+        .fill_null(0.0)
+        .alias("enriched_sentiment_ewma_7d"),
+    )
+
+    merged_df = features_df.join(ewma_df, on=["ticker", "date"], how="left").with_columns(
+        pl.col("enriched_article_count").fill_null(0).cast(pl.Int64),
+        pl.col("enriched_sentiment_mean").fill_null(0.0),
+        pl.col("enriched_sentiment_ewma_3d").fill_null(0.0),
+        pl.col("enriched_sentiment_ewma_7d").fill_null(0.0),
+        pl.col("enriched_confidence_mean").fill_null(0.0),
+        pl.col("enriched_relevance_mean").fill_null(0.0),
+        pl.col("bullish_ratio").fill_null(0.0),
+        pl.col("social_volume").fill_null(0).cast(pl.Int64),
+        pl.col("social_sentiment_mean").fill_null(0.0),
+        pl.col("breaking_news_flag").fill_null(0).cast(pl.Int64),
     )
 
     logger.info(

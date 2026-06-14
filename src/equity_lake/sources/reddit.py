@@ -1,15 +1,22 @@
-"""Reddit JSON API fetcher for financial subreddits."""
+"""Reddit JSON API fetcher for financial subreddits.
+
+Uses the public ``.json`` endpoint (10 req/min, IP-based). Includes
+inter-request delay and ``X-Ratelimit-Remaining`` header inspection to
+stay within Reddit's unauthenticated rate budget.
+"""
 
 from __future__ import annotations
 
 import json
+import os
+import time
 import uuid
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import polars as pl
-import requests
 import structlog
 import yaml
 
@@ -21,7 +28,18 @@ logger = structlog.get_logger()
 
 CONFIG_PATH = CONFIG_DIR / "social_sources.yaml"
 REDDIT_BASE_URL = "https://www.reddit.com"
-USER_AGENT = "equity-lake/1.0 (data pipeline)"
+
+
+def _build_user_agent() -> str:
+    """Build a Reddit-compliant User-Agent string.
+
+    Required format: ``<platform>:<app ID>:<version> (by u/<username>)``
+    Falls back to a generic string if env vars are missing.
+    """
+    username = os.getenv("REDDIT_USER_AGENT")
+    if username and username.startswith(("linux", "macos", "windows")):
+        return username
+    return "macos:equity-lake:1.0 (by /u/equity_lake)"
 
 
 def _load_social_config(config_path: Path | None = None) -> dict[str, Any]:
@@ -39,10 +57,16 @@ def _to_datetime(timestamp: float) -> datetime:
 
 
 class RedditFetcher(MarketDataFetcher):
-    """Fetch posts and top comments from financial subreddits via Reddit JSON API.
+    """Fetch posts from financial subreddits via Reddit JSON API.
 
-    Uses the public ``.json`` endpoint — no authentication required for
-    public subreddit data. Rate limiting is handled by tenacity retry.
+    Uses the public ``.json`` endpoint — no OAuth required for public
+    subreddit data. Rate limiting is handled via inter-request delay
+    (~7s between requests, staying within the 10 req/min budget) and
+    ``X-Ratelimit-Remaining`` header inspection.
+
+    Rate budget: 6 subreddits × 1 request each = 6 requests per run.
+    At 10 req/min unauthenticated limit, this fits comfortably with
+    inter-request pacing.
     """
 
     market = "reddit_posts"
@@ -56,6 +80,7 @@ class RedditFetcher(MarketDataFetcher):
         super().__init__(retry_attempts, retry_delay)
         config = _load_social_config(config_path)
         self.subreddits: list[dict[str, Any]] = config.get("reddit", {}).get("subreddits", [])
+        self.user_agent = _build_user_agent()
         logger.info("Initialized RedditFetcher", subreddit_count=len(self.subreddits))
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
@@ -72,6 +97,7 @@ class RedditFetcher(MarketDataFetcher):
                 all_posts.extend(posts)
             except Exception as exc:
                 logger.error("reddit_subreddit_failed", subreddit=sub_cfg.get("name"), error=str(exc))
+            time.sleep(7)
 
         if not all_posts:
             logger.warning("No Reddit posts fetched")
@@ -93,12 +119,28 @@ class RedditFetcher(MarketDataFetcher):
 
         def _fetch() -> list[dict[str, Any]]:
             url = f"{REDDIT_BASE_URL}/r/{sub_name}/hot.json"
-            headers = {"User-Agent": USER_AGENT}
+            headers = {
+                "User-Agent": self.user_agent,
+                "Accept": "application/json",
+            }
             params = {"limit": min(post_limit, 100)}
 
-            response = requests.get(url, headers=headers, params=params, timeout=15)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            with httpx.Client(timeout=15) as client:
+                response = client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data: dict[str, Any] = response.json()
+
+            remaining = response.headers.get("X-Ratelimit-Remaining")
+            if remaining is not None:
+                try:
+                    rem_float = float(remaining)
+                    if rem_float < 2:
+                        reset = response.headers.get("X-Ratelimit-Reset", "60")
+                        wait = max(float(reset), 10)
+                        logger.warning("reddit_rate_limit_low", remaining=rem_float, wait_seconds=wait)
+                        time.sleep(wait)
+                except ValueError:
+                    pass
 
             posts: list[dict[str, Any]] = []
             children = data.get("data", {}).get("children", [])
