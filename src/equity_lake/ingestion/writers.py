@@ -23,6 +23,10 @@ def _dedupe_key_columns(market: str) -> list[str]:
         return ["url"]
     if market == "us_social_sentiment":
         return ["ticker", "datetime", "source"]
+    if market in ("rss_news", "reddit_posts", "stocktwits_messages"):
+        return ["source_url"]
+    if market == "silver/processed_articles":
+        return ["article_id", "ticker"]
     return ["ticker", "date"]
 
 
@@ -83,6 +87,10 @@ def validate_schema(df: FrameLike, market: str) -> bool:
         required_cols = NEWS_COLUMNS
     elif market == "us_social_sentiment":
         required_cols = SOCIAL_COLUMNS
+    elif market in ("rss_news", "reddit_posts", "stocktwits_messages"):
+        required_cols = ["article_id", "source_type", "source_url", "title", "date"]
+    elif market in ("bronze/raw_articles", "silver/processed_articles"):
+        required_cols = ["article_id", "date"]
     else:
         required_cols = ["ticker", "date", "open", "high", "low", "close", "volume"]
 

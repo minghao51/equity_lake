@@ -46,6 +46,12 @@ dependencies = [
      "httpx>=0.28.0",
     "aiolimiter>=1.2.1",
     "exchange-calendars>=4.6",
+    "feedparser>=6.0.11",
+    "openai>=1.50.0",
+    "xgboost>=3.1.3",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.0",
+    "readability-lxml>=0.8.1",
 ]
 
 [dependency-groups]
@@ -63,12 +69,9 @@ dev = [
     "vaderSentiment>=3.3.2",
 ]
 ml = [
-    "xgboost>=3.1.3",
-    "scikit-learn>=1.8.0",
     "shap>=0.49.1",
     "seaborn>=0.13.2",
     "networkx>=3.6.1",
-    "scipy>=1.17.0",
     "statsmodels>=0.14.6",
 ]
 viz = [
@@ -243,7 +246,13 @@ module = [
      "typer.*",
      "pointblank.*",
      "streamlit.*",
-    "pyarrow.*",
+     "pyarrow.*",
+     "feedparser.*",
+     "openai.*",
+     "readability.*",
+     "shap.*",
+     "statsmodels.*",
+     "networkx.*",
 ]
 ignore_missing_imports = true
 

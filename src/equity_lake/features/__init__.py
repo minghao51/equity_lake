@@ -29,6 +29,7 @@ def run_feature_job(
     compute_target: bool = True,
     include_sentiment: bool = False,
     include_social_sentiment: bool = False,
+    include_enriched_sentiment: bool = False,
 ) -> pl.DataFrame:
     """Generate features over a warm-up window, then persist the requested range."""
     feature_engineer_cls = _load_feature_engineer()
@@ -45,6 +46,7 @@ def run_feature_job(
             compute_target=compute_target,
             include_sentiment=include_sentiment,
             include_social_sentiment=include_social_sentiment,
+            include_enriched_sentiment=include_enriched_sentiment,
         )
     finally:
         engineer.close()

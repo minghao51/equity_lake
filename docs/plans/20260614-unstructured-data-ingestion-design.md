@@ -1,7 +1,7 @@
 # Unstructured Data Ingestion Layer Design
 
 **Date:** 2026-06-14
-**Status:** Approved (brainstormed)
+**Status:** Phase 1 implemented; Phases 2-3 planned
 **Scope:** Phased enhancement of unstructured data acquisition across financial news, social media, earnings transcripts, analyst reports, and SEC filings.
 
 ---
@@ -56,6 +56,7 @@ The feature pipeline (Stage 2) only reads silver. Bronze is searchable for debug
 ### Phase 1 — Financial News RSS + Reddit + StockTwits
 
 **Categories:** A (RSS) + B (Social)
+**Status:** IMPLEMENTED
 
 Free, reliable APIs. Highest daily signal volume. RSS feeds are HTTP GET + XML parse. Reddit has a public JSON API. StockTwits has a free developer API.
 
@@ -72,22 +73,118 @@ Free, reliable APIs. Highest daily signal volume. RSS feeds are HTTP GET + XML p
 - `config/rss_feeds.yaml` — Feed URLs, categories, full_body flags
 - `config/social_sources.yaml` — Subreddits, post/comment limits, StockTwits symbols
 
+**Pipeline integration:**
+- New markets `rss_news`, `reddit_posts`, `stocktwits_messages` added to `ingestion/types.py`, routed via `ingestion/router.py`
+- `execute_eod_pipeline()` calls `process_bronze_to_silver()` after ingestion, passes `include_enriched_sentiment=True` to `run_feature_job()`
+- 10 new enriched sentiment features merged into Hamilton DAG via DuckDB aggregation
+
 ### Phase 2 — Earnings Transcripts + Analyst Ratings
 
 **Categories:** C (Transcripts) + D (Analyst)
+**Status:** PLANNED
 
-Higher structure, requires specific providers. Transcripts are quarterly cadence (lower volume, higher value).
+Higher structure, requires specific providers. Transcripts are quarterly cadence (lower volume, higher value). Analyst ratings are daily.
 
-| Source | Provider | Data |
-|--------|----------|------|
-| Earnings transcripts | Motley Fool API (free tier) or Seeking Alpha scraping | Full transcript text, quarter, fiscal year, participants |
-| Analyst ratings | MarketBeat RSS, TipRanks API, Finnhub analyst recommendation (existing API key) | Rating (buy/hold/sell), price target, analyst firm, date |
+| Source | Provider | Data | Bronze `source_type` |
+|--------|----------|------|---------------------|
+| Earnings transcripts | Motley Fool API (free tier) or Seeking Alpha scraping | Full transcript text, quarter, fiscal year, participants, Q&A sections | `transcript` |
+| Analyst ratings | MarketBeat RSS, TipRanks API, Finnhub analyst recommendation (existing API key) | Rating (buy/hold/sell), price target, analyst firm, date, action (upgrade/downgrade/initiate) | `analyst` |
+
+**New modules:**
+- `sources/transcripts.py` — `EarningsTranscriptFetcher` extends `MarketDataFetcher`
+  - Motley Fool API: `GET https://www.fool.com/services/v1/articles/...` (requires API key)
+  - Fallback: scrape Seeking Alpha transcript pages (requires `readability-lxml` for full text)
+  - Output schema: extends bronze with `quarter`, `fiscal_year`, `participants`, `qa_sections`
+  - Cadence: fetch after each earnings season (quarterly), not daily
+- `sources/analyst_ratings.py` — `AnalystRatingFetcher` extends `MarketDataFetcher`
+  - Finnhub API: `GET /stock/recommendation` (uses existing `FINNHUB_API_KEY`)
+  - TipRanks API: `GET https://api.tipranks.com/api/Data/GetAnalystRatings` (free, no auth)
+  - MarketBeat RSS: `https://www.marketbeat.com/rss/analyst_ratings.xml`
+  - Output: structured ratings data, no LLM processing needed (already structured)
+  - Could bypass bronze and write directly to a `data/lake/analyst_ratings/` Delta table
+
+**LLM processing change:**
+- Transcripts: LLM processes the full transcript for management tone analysis, forward guidance extraction, and section-level sentiment
+- Analyst ratings: No LLM needed — data is already structured. Write directly to its own Delta table.
+
+**Feature engineering additions:**
+- `analyst_consensus_score` — Weighted average of recent ratings (upgrade = +1, initiate buy = +0.5, hold = 0, downgrade = -1)
+- `price_target_mean` / `price_target_upside` — Average analyst price target vs current close
+- `rating_change_count` — Number of rating changes in past 7/30 days
+- `transcript_sentiment_score` — LLM-derived sentiment from latest earnings call
+- `guidance_sentiment` — Forward-looking sentiment extracted from transcript guidance section
+
+**Router integration:**
+- New markets: `transcripts`, `analyst_ratings`
+- `transcripts` added to `ALWAYS_REFETCH` (quarterly check, not daily)
+- `analyst_ratings` added to `ALWAYS_REFETCH` (daily, free structured data)
+
+**Estimated effort:** 2-3 days
+- Transcript fetcher with provider fallback: 1 day
+- Analyst rating fetcher (3 providers): 0.5 day
+- Feature engineering integration: 0.5-1 day
 
 ### Phase 3 — SEC EDGAR Full-Text
 
 **Category:** E (Regulatory)
+**Status:** PLANNED
 
-Most complex parsing. Extends existing `SECFilingsLoader` to extract and chunk 10-K/10-Q body text (risk factors, MD&A, financials). Requires section segmentation and large-document handling.
+Most complex parsing. Extends existing `SECFilingsLoader` (`loaders/sec_loader.py:16`) to extract and chunk 10-K/10-Q body text (risk factors, MD&A, financials). Requires section segmentation and large-document handling.
+
+**Current state:**
+- `SECFilingsLoader` fetches filing metadata (type, date, URL) and Form 4 insider transactions
+- No full-text body extraction — only metadata is stored
+
+**New modules:**
+- `sources/sec_fulltext.py` — `SECFullTextExtractor`
+  - Fetches filing HTML/XBRL from SEC EDGAR direct URLs
+  - Parses 10-K/10-Q into structured sections:
+    - Item 1A (Risk Factors) — key for LLM risk assessment
+    - Item 7 (MD&A) — management discussion, forward guidance
+    - Item 8 (Financial Statements) — structured financial data
+  - Uses `beautifulsoup4` + `lxml` for HTML parsing, `python-edgar` for XBRL
+  - Chunks sections into LLM-processable segments (~2000 tokens each)
+- `ingestion/sec_processor.py` — LLM processing for filing sections
+  - Risk factor extraction: identify top risks, sentiment per risk, change vs prior filing
+  - MD&A analysis: management tone, forward guidance, business outlook
+  - Batch processing via existing `DeepSeekBatchProcessor` (same pattern)
+
+**LLM extraction schema for SEC sections:**
+```python
+class SECSectionExtraction(BaseModel):
+    filing_id: str
+    section_type: str  # risk_factors | mda | financial_statements
+    risk_sentiment: float  # -1.0 (confident) to 1.0 (highly concerned)
+    key_risks: list[str]  # extracted risk factors
+    guidance_direction: str  # positive | negative | neutral | none
+    forward_statements: list[str]  # forward-looking statements
+    management_tone: float  # -1.0 to 1.0
+    new_vs_repeated: str  # new | repeated | modified (vs prior filing)
+```
+
+**Feature engineering additions:**
+- `sec_risk_sentiment` — Sentiment of risk factors section (quarterly, forward-filled)
+- `sec_guidance_positive` — Binary: 1 if guidance direction is positive
+- `sec_management_tone` — Tone score from MD&A
+- `sec_risk_change_flag` — 1 if new/modified risks vs prior filing
+
+**Storage:**
+- Bronze: `data/lake/bronze/raw_filings/` — Full filing text, sectioned
+- Silver: `data/lake/silver/processed_filings/` — LLM-extracted insights per section
+
+**Router integration:**
+- New market: `sec_filings_fulltext`
+- Cadence: triggered after SEC filing dates (not daily) — check EDGAR RSS feed for new filings
+
+**Estimated effort:** 3-5 days
+- Full-text extractor with section parsing: 2 days
+- SEC processor with LLM batch: 1 day
+- Feature engineering + testing: 1-2 days
+
+**New dependencies:**
+- `beautifulsoup4` + `lxml` — HTML parsing (may already be available via readability)
+- `python-edgar` — XBRL parsing for structured financials
+- `readability-lxml` — Clean text extraction from filing HTML
 
 ---
 
@@ -525,18 +622,33 @@ The existing `us_news` and `us_social_sentiment` tables stay as-is. The enriched
 | `config/rss_feeds.yaml` | RSS feed URLs, categories, full_body flags |
 | `config/social_sources.yaml` | Subreddits, post/comment limits, StockTwits settings |
 
-### New Dependencies
+### New Dependencies (Phase 1 — Implemented)
 
 | Package | Purpose |
 |---------|---------|
 | `feedparser` | RSS/Atom XML parsing |
-| `readability-lxml` | Full article body extraction from HTML (for RSS feeds with full_body: true) |
+| `openai` | `AsyncOpenAI` client for DeepSeek API |
+
+### Phase 2 Dependencies (Planned)
+
+| Package | Purpose |
+|---------|---------|
+| `readability-lxml` | Full article body extraction from HTML (for transcript scraping) |
+
+### Phase 3 Dependencies (Planned)
+
+| Package | Purpose |
+|---------|---------|
+| `beautifulsoup4` + `lxml` | HTML parsing for SEC filing sections |
+| `python-edgar` | XBRL parsing for structured financials |
+| `readability-lxml` | Clean text extraction from filing HTML |
 
 ### New Environment Variables
 
 | Variable | Purpose |
 |----------|---------|
-| `EQUITY__DEEPSEEK_API_KEY` | DeepSeek API key (via dotenvx) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (via dotenvx) |
+| `STOCKTWITS_CLIENT_ID` | StockTwits API client ID (optional — free tier works without auth) |
 
 ---
 
@@ -567,5 +679,43 @@ config/watchlist.yaml ----+   RedditFetcher     +-- Bronze Layer
                                                     +-- Hamilton DAG (.compute())
                                                     |
                                                     v
-                                              ML Prediction (Stage 3)
+                                               ML Prediction (Stage 3)
 ```
+
+---
+
+## 10. Implementation Status
+
+### Phase 1 — COMPLETE
+
+| Component | File | Status |
+|-----------|------|--------|
+| RSS fetcher | `sources/rss.py` | Done |
+| Reddit fetcher | `sources/reddit.py` | Done |
+| StockTwits fetcher | `sources/stocktwits.py` | Done |
+| LLM processor | `ingestion/llm_processor.py` | Done |
+| Bronze→silver transform | `ingestion/bronze_silver.py` | Done |
+| Feature engineering | `features/enriched_sentiment.py` | Done |
+| Router integration | `ingestion/router.py` | Done |
+| Orchestrator | `ingestion/orchestrator.py` | Done |
+| Writers (dedup) | `ingestion/writers.py` | Done |
+| Types/markets | `ingestion/types.py` | Done |
+| Schema constants | `core/schemas.py` | Done |
+| Pipeline integration | `pipeline.py` | Done |
+| Config files | `config/rss_feeds.yaml`, `config/social_sources.yaml` | Done |
+| Dependencies | `feedparser`, `openai` in `pyproject.toml` | Done |
+
+**Verification:** ruff clean, mypy clean (15 files), 282 unit tests pass.
+
+**Remaining Phase 1 tasks:**
+- Set `DEEPSEEK_API_KEY` in dotenvx
+- Add new markets to `settings.yaml` default markets list (or invoke via CLI with explicit markets)
+- Integration test with live RSS feeds + DeepSeek API
+
+### Phase 2 — PLANNED (not started)
+
+See Section 3, Phase 2 for detailed design. Estimated 2-3 days.
+
+### Phase 3 — PLANNED (not started)
+
+See Section 3, Phase 3 for detailed design. Estimated 3-5 days.

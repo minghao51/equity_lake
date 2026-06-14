@@ -95,6 +95,7 @@ class FeatureEngineer:
         include_sentiment: bool = False,
         include_social_sentiment: bool = False,
         include_macro: bool = True,
+        include_enriched_sentiment: bool = False,
         normalize_cross_sectional: bool = False,
     ) -> pl.DataFrame:
         """Generate all features for specified tickers and date range."""
@@ -157,6 +158,16 @@ class FeatureEngineer:
             )
         if include_social_sentiment:
             features_df = self.merge_social_sentiment_features(
+                features_df,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        if include_enriched_sentiment:
+            from equity_lake.features.enriched_sentiment import merge_enriched_sentiment_features
+
+            features_df = merge_enriched_sentiment_features(
+                self.conn,
                 features_df,
                 start_date=start_date,
                 end_date=end_date,

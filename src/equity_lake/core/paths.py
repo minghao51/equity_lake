@@ -26,6 +26,10 @@ KRX_EQUITY_DIR = LAKE_DIR / "krx_equity"
 MACRO_INDICATORS_DIR = LAKE_DIR / "macro_indicators"
 US_NEWS_DIR = LAKE_DIR / "us_news"
 US_SOCIAL_SENTIMENT_DIR = LAKE_DIR / "us_social_sentiment"
+BRONZE_DIR = LAKE_DIR / "bronze"
+SILVER_DIR = LAKE_DIR / "silver"
+BRONZE_RAW_ARTICLES_DIR = BRONZE_DIR / "raw_articles"
+SILVER_PROCESSED_ARTICLES_DIR = SILVER_DIR / "processed_articles"
 
 
 def ensure_dirs() -> None:
@@ -39,6 +43,8 @@ def ensure_dirs() -> None:
 
 __all__ = [
     "BASE_DIR",
+    "BRONZE_DIR",
+    "BRONZE_RAW_ARTICLES_DIR",
     "CN_ASHARE_DIR",
     "CONFIG_DIR",
     "DATA_DIR",
@@ -50,6 +56,8 @@ __all__ = [
     "MACRO_INDICATORS_DIR",
     "MODELS_DIR",
     "PROJECT_ROOT",
+    "SILVER_DIR",
+    "SILVER_PROCESSED_ARTICLES_DIR",
     "US_EQUITY_DIR",
     "US_NEWS_DIR",
     "US_SOCIAL_SENTIMENT_DIR",

@@ -162,6 +162,51 @@ def _make_sentiment_fetcher(
     )
 
 
+def _make_rss_fetcher(
+    *,
+    retry_attempts: int,
+    retry_delay: float,
+) -> MarketDataFetcher:
+    from equity_lake.sources.rss import RSSNewsFetcher
+
+    return RSSNewsFetcher(
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+    )
+
+
+def _make_reddit_fetcher(
+    *,
+    retry_attempts: int,
+    retry_delay: float,
+) -> MarketDataFetcher:
+    from equity_lake.sources.reddit import RedditFetcher
+
+    return RedditFetcher(
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+    )
+
+
+def _make_stocktwits_fetcher(
+    *,
+    retry_attempts: int,
+    retry_delay: float,
+    ticker_config: TickerConfig | None,
+    explicit_tickers: list[str] | None,
+) -> MarketDataFetcher:
+    from equity_lake.sources.stocktwits import StockTwitsFetcher
+
+    if not explicit_tickers and ticker_config:
+        explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
+
+    return StockTwitsFetcher(
+        tickers=explicit_tickers,
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+    )
+
+
 def fetch_market_data_with_config(
     market: str,
     trading_date: date,
@@ -225,6 +270,23 @@ def fetch_market_data_with_config(
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
             ticker_config=ticker_config,
+        )
+    elif market == "rss_news":
+        fetcher = _make_rss_fetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+        )
+    elif market == "reddit_posts":
+        fetcher = _make_reddit_fetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+        )
+    elif market == "stocktwits_messages":
+        fetcher = _make_stocktwits_fetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            ticker_config=ticker_config,
+            explicit_tickers=explicit_tickers,
         )
     else:
         logger.error(f"Unknown market: {market}")

@@ -62,7 +62,7 @@ def _market_has_date(market_dir: str, trading_date: date) -> bool:
 def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[str]:
     markets_needing_fetch: list[str] = []
     for market in markets:
-        if market in ("macro", "us_news", "us_social_sentiment"):
+        if market in ("macro", "us_news", "us_social_sentiment", "rss_news", "reddit_posts", "stocktwits_messages"):
             markets_needing_fetch.append(market)
             continue
         market_dir = MARKET_DIR_MAP.get(market, market)

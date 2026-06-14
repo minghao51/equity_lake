@@ -1,0 +1,41 @@
+feeds:
+  - name: reuters_business
+    url: "https://feeds.reuters.com/reuters/businessNews"
+    category: [business, macro]
+    full_body: false
+  - name: reuters_world
+    url: "https://feeds.reuters.com/reuters/worldNews"
+    category: [macro]
+    full_body: false
+  - name: marketwatch_topstories
+    url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+    category: [stock, macro]
+    full_body: false
+  - name: marketwatch_bulletins
+    url: "https://feeds.content.dowjones.io/public/rss/mw_bulletins"
+    category: [stock]
+    full_body: false
+  - name: cnbc_top_news
+    url: "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114"
+    category: [business, stock]
+    full_body: false
+  - name: seeking_alpha_market_current
+    url: "https://seekingalpha.com/market_currents.xml"
+    category: [earnings, analyst, stock]
+    full_body: false
+  - name: yahoo_finance
+    url: "https://finance.yahoo.com/news/rssindex"
+    category: [stock, macro]
+    full_body: false
+  - name: investopedia
+    url: "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline"
+    category: [education, general]
+    full_body: false
+  - name: motley_fool
+    url: "https://www.fool.com/meida//rss/foolwatch/investing/rss.aspx"
+    category: [stock, analyst]
+    full_body: false
+  - name: barrons_markets
+    url: "https://feeds.barrons.com/rss/podcasts/market-watch/"
+    category: [stock, macro]
+    full_body: false

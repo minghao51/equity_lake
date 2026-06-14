@@ -58,10 +58,44 @@ MACRO_INDICATOR_CONFIG = {
     "policy_uncertainty": {"source": "fred", "series": "USEPUINDXD"},
 }
 
+BRONZE_ARTICLE_COLUMNS = [
+    "article_id",
+    "source_type",
+    "source_name",
+    "source_url",
+    "title",
+    "body",
+    "author",
+    "published_at",
+    "fetched_at",
+    "source_metadata",
+    "date",
+]
+
+SILVER_ARTICLE_COLUMNS = [
+    "article_id",
+    "ticker",
+    "source_type",
+    "source_name",
+    "published_at",
+    "date",
+    "sentiment_score",
+    "sentiment_label",
+    "confidence",
+    "event_type",
+    "summary",
+    "impact_horizon",
+    "market_relevance",
+    "key_entities",
+    "source_metadata",
+]
+
 __all__ = [
+    "BRONZE_ARTICLE_COLUMNS",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",
     "NEWS_COLUMNS",
+    "SILVER_ARTICLE_COLUMNS",
     "SOCIAL_COLUMNS",
     "STANDARD_COLUMNS",
 ]
