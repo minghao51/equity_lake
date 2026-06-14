@@ -15,6 +15,8 @@ Market = Literal[
     "rss_news",
     "reddit_posts",
     "stocktwits_messages",
+    "us_earnings_transcripts",
+    "us_analyst_ratings",
     "bronze_raw_articles",
     "silver_processed_articles",
 ]
@@ -32,6 +34,8 @@ VALID_MARKETS: set[Market] = {
     "rss_news",
     "reddit_posts",
     "stocktwits_messages",
+    "us_earnings_transcripts",
+    "us_analyst_ratings",
     "bronze_raw_articles",
     "silver_processed_articles",
 }
@@ -49,6 +53,8 @@ MARKET_DIR_MAP: dict[str, str] = {
     "rss_news": "bronze/raw_articles",
     "reddit_posts": "bronze/raw_articles",
     "stocktwits_messages": "bronze/raw_articles",
+    "us_earnings_transcripts": "bronze/raw_articles",
+    "us_analyst_ratings": "us_analyst_ratings",
     "bronze_raw_articles": "bronze/raw_articles",
     "silver_processed_articles": "silver/processed_articles",
 }

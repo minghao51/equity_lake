@@ -30,6 +30,7 @@ BRONZE_DIR = LAKE_DIR / "bronze"
 SILVER_DIR = LAKE_DIR / "silver"
 BRONZE_RAW_ARTICLES_DIR = BRONZE_DIR / "raw_articles"
 SILVER_PROCESSED_ARTICLES_DIR = SILVER_DIR / "processed_articles"
+ANALYST_RATINGS_DIR = LAKE_DIR / "us_analyst_ratings"
 
 
 def ensure_dirs() -> None:
@@ -42,6 +43,7 @@ def ensure_dirs() -> None:
 
 
 __all__ = [
+    "ANALYST_RATINGS_DIR",
     "BASE_DIR",
     "BRONZE_DIR",
     "BRONZE_RAW_ARTICLES_DIR",

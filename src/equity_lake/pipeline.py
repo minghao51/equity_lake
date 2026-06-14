@@ -73,7 +73,7 @@ def execute_eod_pipeline(
         if not all(ingestion_results.values()):
             logger.warning("ingestion_partial_failure", results=ingestion_results)
 
-        unstructured_markets = {"rss_news", "reddit_posts", "stocktwits_messages"}
+        unstructured_markets = {"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"}
         if any(m in markets for m in unstructured_markets) and not dry_run:
             logger.info("processing_bronze_to_silver", trading_date=str(trading_date))
             try:
@@ -89,6 +89,7 @@ def execute_eod_pipeline(
 
     if not skip_features:
         use_enriched = results.get("bronze_to_silver", False)
+        use_analyst = "us_analyst_ratings" in markets
         try:
             features_df = run_feature_job(
                 tickers=tickers,
@@ -96,6 +97,7 @@ def execute_eod_pipeline(
                 output_end_date=trading_date,
                 compute_target=True,
                 include_enriched_sentiment=use_enriched,
+                include_analyst_ratings=use_analyst,
             )
             feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
             results["features"] = {"success": True, "rows": len(features_df)}
@@ -110,6 +112,7 @@ def execute_eod_pipeline(
                         output_end_date=trading_date,
                         compute_target=True,
                         include_enriched_sentiment=use_enriched,
+                        include_analyst_ratings=use_analyst,
                     )
                     feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
                     results["features"] = {"success": True, "rows": len(features_df)}

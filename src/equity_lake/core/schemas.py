@@ -90,7 +90,27 @@ SILVER_ARTICLE_COLUMNS = [
     "source_metadata",
 ]
 
+ANALYST_RATING_COLUMNS = [
+    "ticker",
+    "date",
+    "period",
+    "strong_buy",
+    "buy",
+    "hold",
+    "sell",
+    "strong_sell",
+    "consensus_score",
+    "consensus_label",
+    "price_target_mean",
+    "price_target_median",
+    "price_target_high",
+    "price_target_low",
+    "price_target_count",
+    "fetched_at",
+]
+
 __all__ = [
+    "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",

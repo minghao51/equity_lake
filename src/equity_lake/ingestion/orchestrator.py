@@ -62,7 +62,16 @@ def _market_has_date(market_dir: str, trading_date: date) -> bool:
 def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[str]:
     markets_needing_fetch: list[str] = []
     for market in markets:
-        if market in ("macro", "us_news", "us_social_sentiment", "rss_news", "reddit_posts", "stocktwits_messages"):
+        if market in (
+            "macro",
+            "us_news",
+            "us_social_sentiment",
+            "rss_news",
+            "reddit_posts",
+            "stocktwits_messages",
+            "us_earnings_transcripts",
+            "us_analyst_ratings",
+        ):
             markets_needing_fetch.append(market)
             continue
         market_dir = MARKET_DIR_MAP.get(market, market)
@@ -121,7 +130,9 @@ def run_daily_ingestion(
                             date,
                             ticker_config=config,
                             filters=fltrs,
-                            explicit_tickers=explicit_list if mkt in ("us", "stocktwits_messages") else None,
+                            explicit_tickers=(
+                                explicit_list if mkt in ("us", "stocktwits_messages", "us_earnings_transcripts", "us_analyst_ratings") else None
+                            ),
                         )
 
                     return fetch_func
@@ -174,7 +185,9 @@ def run_daily_ingestion(
                         config=get_project_config(),
                         ticker_config=ticker_config,
                         filters=filters,
-                        explicit_tickers=explicit_ticker_list if market in ("us", "stocktwits_messages") else None,
+                        explicit_tickers=(
+                            explicit_ticker_list if market in ("us", "stocktwits_messages", "us_earnings_transcripts", "us_analyst_ratings") else None
+                        ),
                     )
 
                 if frame_is_empty(df):
