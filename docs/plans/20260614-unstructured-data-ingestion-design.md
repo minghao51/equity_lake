@@ -33,7 +33,7 @@ equity pipeline → execute_eod_pipeline()
   │     └── [NEW] Unstructured ingestion track:
   │           ├── Fetch (RSS + Reddit + StockTwits)
   │           ├── Bronze layer → raw text storage
-  │           ├── LLM batch processing (DeepSeek v4-flash + instructor)
+  │           ├── LLM batch processing (DeepSeek v4-flash + AsyncOpenAI)
   │           └── Silver layer → exploded article-ticker pairs
   ├── Stage 2: run_feature_job() → Hamilton DAG
   │     └── [NEW] merge_enriched_sentiment_features() reads silver layer
@@ -64,7 +64,7 @@ Free, reliable APIs. Highest daily signal volume. RSS feeds are HTTP GET + XML p
 | `sources/rss.py` | RSS/Atom feeds (Reuters, MarketWatch, Seeking Alpha, CNBC, Yahoo Finance, Investopedia, Barron's, Motley Fool) | Article title, body, URL, published_at, author |
 | `sources/reddit.py` | Reddit JSON API (r/wallstreetbets, r/stocks, r/investing, r/stockmarket, r/ValueInvesting, r/algotrading) | Post title, body, score, upvote_ratio, top comments |
 | `sources/stocktwits.py` | StockTwits developer API (symbol streams) | Message body, built-in bullish/bearish sentiment, user, created_at |
-| `ingestion/llm_processor.py` | DeepSeek v4-flash via `instructor` | Batch structured extraction (sentiment, tickers, events, summary) |
+| `ingestion/llm_processor.py` | DeepSeek v4-flash via `AsyncOpenAI` + Pydantic + tenacity | Batch structured extraction (sentiment, tickers, events, summary) |
 | `ingestion/bronze_silver.py` | Internal | Bronze write + silver explode + ticker validation |
 | `features/enriched_sentiment.py` | Silver Delta table | Feature aggregation and Hamilton DAG merge |
 
@@ -213,8 +213,9 @@ Added to `ALWAYS_REFETCH` set in `orchestrator.py:65-67` (alongside existing `ma
 | Component | Choice | Rationale |
 |-----------|--------|-----------|
 | LLM provider | **DeepSeek v4-flash** | `deepseek-chat` deprecated 2026/07/24. v4-flash is fast, high-throughput, ~$0.14/M input tokens |
-| Client | **`AsyncOpenAI`** with DeepSeek base_url | OpenAI-compatible SDK, native async |
-| Structured output | **`instructor`** library | Pydantic-validated responses, auto-retry on validation failure, `Mode.MD_JSON` for DeepSeek |
+| Client | **`AsyncOpenAI`** with DeepSeek base_url | OpenAI-compatible SDK, native async. No extra dependency (openai already used by Finnhub) |
+| Structured output | **`response_format={'type': 'json_object'}`** + Pydantic validation | DeepSeek native JSON mode. Pydantic `model_validate_json()` for type-safe parsing. No `instructor` dependency. |
+| Retry | **tenacity** (existing) | Consistent with all other fetchers. Exponential backoff, max 3 attempts. Retries on empty content (DeepSeek known bug) and JSON parse errors. |
 | Rate limiting | **`asyncio.Semaphore(10)`** | DeepSeek uses concurrency limits (2,500 for v4-flash), not RPM — semaphore is sufficient |
 | Fallback | **VADER** (existing `sentiment/analyzer.py`) | Graceful degradation when API fails |
 
@@ -245,17 +246,24 @@ class BatchExtraction(BaseModel):
 ### Async Batch Processing
 
 ```python
-import instructor
+import json
 from openai import AsyncOpenAI
+from pydantic import ValidationError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-deepseek_client = instructor.from_provider(
-    "deepseek/deepseek-v4-flash",
-    base_url="https://api.deepseek.com",
+deepseek_client = AsyncOpenAI(
     api_key=os.environ["DEEPSEEK_API_KEY"],
-    mode=instructor.Mode.MD_JSON,
-    async_client=True,
-    max_retries=3,
+    base_url="https://api.deepseek.com",
 )
+
+SYSTEM_PROMPT = """You are a financial news analyst. Analyze the provided articles and return
+results as JSON matching this schema: {"items": [{"id": str, "mentioned_tickers": [str],
+"sentiment": {"score": float, "label": str, "confidence": float}, "event_type": str,
+"key_entities": [str], "summary": str, "impact_horizon": str, "market_relevance": float}]}"""
+
+
+class RetryableError(Exception):
+    """Raised when DeepSeek returns empty content or invalid JSON (triggers tenacity retry)."""
 
 
 class DeepSeekBatchProcessor:
@@ -263,17 +271,37 @@ class DeepSeekBatchProcessor:
         self.batch_size = batch_size
         self.semaphore = asyncio.Semaphore(max_concurrency)
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(RetryableError),
+        reraise=True,
+    )
     async def process_batch(self, batch: list[RawArticle]) -> BatchExtraction:
         async with self.semaphore:
-            result = await deepseek_client.create(
-                response_model=BatchExtraction,
+            response = await deepseek_client.chat.completions.create(
+                model="deepseek-v4-flash",
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT_WITH_SCHEMA},
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": self._format_batch(batch)},
                 ],
+                response_format={"type": "json_object"},
                 max_tokens=8192,
             )
-            return result
+
+            content = response.choices[0].message.content
+            if not content:
+                raise RetryableError("DeepSeek returned empty content")
+
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError as e:
+                raise RetryableError(f"Invalid JSON: {e}") from e
+
+            try:
+                return BatchExtraction.model_validate(parsed)
+            except ValidationError as e:
+                raise RetryableError(f"Validation failed: {e}") from e
 
     async def process_all(self, items: list[RawArticle]) -> list[ArticleExtraction]:
         batches = self._chunk(items, self.batch_size)
@@ -315,12 +343,16 @@ For ~300 items/day, this yields ~15-20 API calls total.
 | Failure handling | VADER fallback per failed batch | Graceful degradation |
 | Dedup | URL hash pre-filter | Skip already-processed articles |
 
-### Key Advantages of `instructor` over Raw JSON
+### Robustness Without `instructor`
 
-1. **Pydantic validation** — response auto-validated against schema. Invalid fields trigger auto-retry (up to 3 attempts).
-2. **Type-safe** — IDE autocomplete, mypy strict compliance.
-3. **Auto-retry on validation failure** — no manual JSON parse/retry logic.
-4. **`Mode.MD_JSON`** for DeepSeek — wraps JSON mode with markdown code fences for reliability.
+The raw approach handles all edge cases that `instructor` would abstract away:
+
+1. **Empty content** (DeepSeek known bug): `RetryableError` triggers tenacity retry
+2. **Invalid JSON**: `json.JSONDecodeError` caught and retried
+3. **Schema validation failure**: Pydantic `ValidationError` caught and retried
+4. **Persistent failure**: After 3 retries, batch falls back to VADER sentiment
+
+This keeps the dependency surface minimal while matching `instructor`'s robustness for this low-volume use case (~15-20 calls/day).
 
 ---
 
@@ -482,7 +514,7 @@ The existing `us_news` and `us_social_sentiment` tables stay as-is. The enriched
 | `sources/rss.py` | RSS/Atom feed fetcher (feedparser + tenacity) |
 | `sources/reddit.py` | Reddit JSON API fetcher (subreddit posts + comments) |
 | `sources/stocktwits.py` | StockTwits developer API fetcher |
-| `ingestion/llm_processor.py` | DeepSeek batch processing via instructor (structured extraction) |
+| `ingestion/llm_processor.py` | DeepSeek batch processing via AsyncOpenAI + Pydantic + tenacity (structured extraction) |
 | `ingestion/bronze_silver.py` | Bronze write + silver explode logic |
 | `features/enriched_sentiment.py` | Feature merge for silver-layer data into Hamilton DAG |
 
@@ -498,7 +530,6 @@ The existing `us_news` and `us_social_sentiment` tables stay as-is. The enriched
 | Package | Purpose |
 |---------|---------|
 | `feedparser` | RSS/Atom XML parsing |
-| `instructor` | Structured LLM output via Pydantic validation |
 | `readability-lxml` | Full article body extraction from HTML (for RSS feeds with full_body: true) |
 
 ### New Environment Variables
@@ -518,8 +549,8 @@ config/social_sources.yaml--+-- RSSNewsFetcher ---+
 config/watchlist.yaml ----+   RedditFetcher     +-- Bronze Layer
                               StockTwitsFetcher--+   (data/lake/bronze/raw_articles/)
                                                           |
-                                                          +-- DeepSeekBatchProcessor
-                                                          |   (instructor + AsyncOpenAI)
+                                                           +-- DeepSeekBatchProcessor
+                                                           |   (AsyncOpenAI + Pydantic + tenacity)
                                                           |
                                                           +-- Bronze to Silver Explode
                                                           |   (ticker validation, explode)
