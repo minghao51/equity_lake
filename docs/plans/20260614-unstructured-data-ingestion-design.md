@@ -81,7 +81,7 @@ Free, reliable APIs. Highest daily signal volume. RSS feeds are HTTP GET + XML p
 ### Phase 2 — Earnings Transcripts + Analyst Ratings
 
 **Categories:** C (Transcripts) + D (Analyst)
-**Status:** PLANNED
+**Status:** IMPLEMENTED
 
 Higher structure, requires specific providers. Transcripts are quarterly cadence (lower volume, higher value). Analyst ratings are daily.
 
@@ -712,9 +712,22 @@ config/watchlist.yaml ----+   RedditFetcher     +-- Bronze Layer
 - Add new markets to `settings.yaml` default markets list (or invoke via CLI with explicit markets)
 - Integration test with live RSS feeds + DeepSeek API
 
-### Phase 2 — PLANNED (not started)
+### Phase 2 — COMPLETE
 
-See Section 3, Phase 2 for detailed design. Estimated 2-3 days.
+| Component | File | Status |
+|-----------|------|--------|
+| Analyst rating fetcher | `sources/analyst_ratings.py` | Done |
+| Transcript fetcher | `sources/transcripts.py` | Done |
+| Analyst feature engineering | `features/analyst_features.py` | Done |
+| Router integration | `ingestion/router.py` | Done |
+| Orchestrator | `ingestion/orchestrator.py` | Done |
+| Writers (dedup) | `ingestion/writers.py` | Done |
+| Types/markets | `ingestion/types.py` | Done |
+| Schema constants | `core/schemas.py` | Done |
+| Pipeline integration | `pipeline.py` | Done |
+| Feature flag wiring | `features/__init__.py`, `features/engineering.py` | Done |
+
+**Verification:** ruff clean, mypy clean, 344 unit tests pass.
 
 ### Phase 3 — PLANNED (not started)
 
