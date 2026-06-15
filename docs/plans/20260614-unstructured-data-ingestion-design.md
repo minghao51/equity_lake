@@ -127,9 +127,7 @@ Higher structure, requires specific providers. Transcripts are quarterly cadence
 ### Phase 3 — SEC EDGAR Full-Text
 
 **Category:** E (Regulatory)
-**Status:** PLANNED
-
-Most complex parsing. Extends existing `SECFilingsLoader` (`loaders/sec_loader.py:16`) to extract and chunk 10-K/10-Q body text (risk factors, MD&A, financials). Requires section segmentation and large-document handling.
+**Status:** IMPLEMENTED
 
 **Current state:**
 - `SECFilingsLoader` fetches filing metadata (type, date, URL) and Form 4 insider transactions
@@ -729,6 +727,21 @@ config/watchlist.yaml ----+   RedditFetcher     +-- Bronze Layer
 
 **Verification:** ruff clean, mypy clean, 344 unit tests pass.
 
-### Phase 3 — PLANNED (not started)
+### Phase 3 — COMPLETE
 
-See Section 3, Phase 3 for detailed design. Estimated 3-5 days.
+| Component | File | Status |
+|-----------|------|--------|
+| SEC filing fetcher | `sources/sec_fulltext.py` | Done |
+| SEC LLM processor | `ingestion/sec_processor.py` | Done |
+| SEC feature engineering | `features/sec_features.py` | Done |
+| Router integration | `ingestion/router.py` | Done |
+| Orchestrator | `ingestion/orchestrator.py` | Done |
+| Writers (dedup) | `ingestion/writers.py` | Done |
+| Types/markets | `ingestion/types.py` | Done |
+| Schema constants | `core/schemas.py` | Done |
+| Pipeline integration | `pipeline.py` | Done |
+| Feature flag wiring | `features/__init__.py`, `features/engineering.py` | Done |
+
+**Verification:** ruff clean, mypy clean, 365 unit tests pass.
+
+### All 3 Phases — COMPLETE
