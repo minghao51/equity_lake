@@ -91,13 +91,14 @@ class RedditFetcher(MarketDataFetcher):
         logger.info("Fetching Reddit posts", subreddit_count=len(self.subreddits), trading_date=str(trading_date))
 
         all_posts: list[dict[str, Any]] = []
-        for sub_cfg in self.subreddits:
+        for i, sub_cfg in enumerate(self.subreddits):
             try:
                 posts = self._fetch_subreddit(sub_cfg, trading_date)
                 all_posts.extend(posts)
             except Exception as exc:
                 logger.error("reddit_subreddit_failed", subreddit=sub_cfg.get("name"), error=str(exc))
-            time.sleep(7)
+            if i < len(self.subreddits) - 1:
+                time.sleep(7)
 
         if not all_posts:
             logger.warning("No Reddit posts fetched")
@@ -125,7 +126,7 @@ class RedditFetcher(MarketDataFetcher):
             }
             params = {"limit": min(post_limit, 100)}
 
-            with httpx.Client(timeout=15) as client:
+            with httpx.Client(timeout=15, follow_redirects=True) as client:
                 response = client.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 data: dict[str, Any] = response.json()
@@ -148,7 +149,7 @@ class RedditFetcher(MarketDataFetcher):
             for child in children[:post_limit]:
                 post_data = child.get("data", {})
                 created_utc = post_data.get("created_utc", 0)
-                published = _to_datetime(created_utc) if created_utc else datetime.now()
+                published = _to_datetime(created_utc) if created_utc else datetime.now(UTC).replace(tzinfo=None)
 
                 if published.date() < trading_date:
                     continue
@@ -179,7 +180,7 @@ class RedditFetcher(MarketDataFetcher):
                         "body": f"{title}\n\n{selftext}"[:5000] if selftext else title[:5000],
                         "author": post_data.get("author", ""),
                         "published_at": published,
-                        "fetched_at": datetime.now(),
+                        "fetched_at": datetime.now(UTC).replace(tzinfo=None),
                         "source_metadata": json.dumps(metadata),
                         "date": published.date(),
                     }

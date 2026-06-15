@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
@@ -57,7 +57,7 @@ class EarningsTranscriptFetcher(MarketDataFetcher):
         if not self.api_key:
             raise ValueError("FINNHUB_API_KEY not set")
         self.tickers = tickers or []
-        self.year = year or datetime.now().year
+        self.year = year or datetime.now(UTC).year
         logger.info("Initialized EarningsTranscriptFetcher", ticker_count=len(self.tickers), year=self.year)
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
@@ -105,7 +105,7 @@ class EarningsTranscriptFetcher(MarketDataFetcher):
                 return []
 
             results: list[dict[str, Any]] = []
-            now = datetime.now()
+            now = datetime.now(UTC).replace(tzinfo=None)
 
             for transcript in data:
                 transcript_id = str(transcript.get("id", ""))
@@ -168,7 +168,7 @@ class EarningsTranscriptFetcher(MarketDataFetcher):
 def _parse_time(ts: Any, fallback: date) -> datetime:
     if isinstance(ts, int):
         try:
-            return datetime.fromtimestamp(ts)
+            return datetime.fromtimestamp(ts, tz=UTC).replace(tzinfo=None)
         except (ValueError, OSError):
             pass
     if isinstance(ts, str):

@@ -1,7 +1,8 @@
 """Feature engineering integration for SEC filing extraction data.
 
-Reads the ``silver/sec_extractions`` Delta table, aggregates per-ticker
-quarterly features (forward-filled), and left-joins into the price DataFrame.
+Reads the ``silver/sec_extractions`` Delta table and merges into the price
+DataFrame using ASOF (point-in-time) join: each price row receives the
+most recent SEC filing **on or before** that date, preventing look-ahead bias.
 """
 
 from __future__ import annotations
@@ -32,7 +33,11 @@ def merge_sec_features(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """Merge SEC filing extraction features into the feature frame.
+    """Merge SEC filing extraction features via point-in-time ASOF join.
+
+    Each price row receives the most recent SEC filing dated **on or before**
+    the price date. This prevents look-ahead bias where a future filing
+    retroactively influences earlier features.
 
     Args:
         conn: DuckDB connection (from FeatureEngineer).
@@ -41,7 +46,7 @@ def merge_sec_features(
         end_date: Query end date.
 
     Returns:
-        DataFrame with SEC filing columns added via left join.
+        DataFrame with SEC filing columns added via ASOF join.
     """
     features_df = ensure_polars(features_df)
     if features_df.is_empty():
@@ -88,20 +93,32 @@ def merge_sec_features(
 
     sec_aggregated = (
         sec_df.sort("filing_date")
-        .group_by("ticker")
+        .group_by("ticker", "filing_date")
         .agg(
-            pl.col("risk_sentiment").last().alias("sec_risk_sentiment"),
-            pl.col("management_tone").last().alias("sec_management_tone"),
+            pl.col("risk_sentiment").mean().alias("risk_sentiment"),
+            pl.col("management_tone").mean().alias("management_tone"),
             pl.col("sec_guidance_positive").max().alias("sec_guidance_positive"),
             pl.col("sec_risk_change_flag").max().alias("sec_risk_change_flag"),
         )
+        .sort(["ticker", "filing_date"])
     )
 
-    merged_df = features_df.join(sec_aggregated, on="ticker", how="left").with_columns(
-        pl.col("sec_risk_sentiment").fill_null(0.0),
-        pl.col("sec_management_tone").fill_null(0.0),
-        pl.col("sec_guidance_positive").fill_null(0).cast(pl.Int64),
-        pl.col("sec_risk_change_flag").fill_null(0).cast(pl.Int64),
+    merged_df = (
+        features_df.sort(["ticker", "date"])
+        .join_asof(
+            sec_aggregated,
+            left_on="date",
+            right_on="filing_date",
+            by="ticker",
+            strategy="backward",
+        )
+        .with_columns(
+            pl.col("risk_sentiment").fill_null(0.0).alias("sec_risk_sentiment"),
+            pl.col("management_tone").fill_null(0.0).alias("sec_management_tone"),
+            pl.col("sec_guidance_positive").fill_null(0).cast(pl.Int64),
+            pl.col("sec_risk_change_flag").fill_null(0).cast(pl.Int64),
+        )
+        .drop(["filing_date", "risk_sentiment", "management_tone"])
     )
 
     logger.info(

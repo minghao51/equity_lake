@@ -8,7 +8,7 @@ Writes directly to the ``us_analyst_ratings`` Delta table.
 from __future__ import annotations
 
 import os
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
@@ -127,7 +127,7 @@ class AnalystRatingFetcher(MarketDataFetcher):
                 "price_target_high": price_target.get("targetHigh"),
                 "price_target_low": price_target.get("targetLow"),
                 "price_target_count": price_target.get("numberOfAnalysts", 0),
-                "fetched_at": datetime.now(),
+                "fetched_at": datetime.now(UTC).replace(tzinfo=None),
             }
 
         return self._retry_on_failure(_fetch)  # type: ignore[no-any-return]

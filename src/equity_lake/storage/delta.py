@@ -104,6 +104,9 @@ def merge_delta(
         logger.info("delta_merge", market=market, rows=df_polars.height)
         return True
     except Exception as exc:
+        if "schema" in str(exc).lower() or "column" in str(exc).lower():
+            logger.warning("delta_merge_schema_mismatch", market=market, error=str(exc), hint="falling back to append with schema merge")
+            return write_delta(df_polars, market, mode="append", schema_mode="merge", lake_dir=lake_dir)
         logger.error("delta_merge_failed", market=market, error=str(exc))
         return False
 

@@ -194,25 +194,18 @@ class DeepSeekBatchProcessor:
         return "\n".join(parts)
 
     def _vader_fallback(self, batch: list[dict[str, Any]]) -> list[ArticleExtraction]:
-        try:
-            from equity_lake.sentiment.analyzer import SentimentAnalyzer
+        from equity_lake.sentiment.analyzer import SentimentAnalyzer
 
-            analyzer = SentimentAnalyzer(method="vader")
-        except ImportError:
-            logger.warning("VADER not available, returning neutral sentiment for failed batch")
-            analyzer = None
+        analyzer = SentimentAnalyzer(method="vader")
 
         results: list[ArticleExtraction] = []
         for item in batch:
             text = f"{item.get('title', '')} {item.get('body', '')}"[:500]
-            if analyzer:
-                result = analyzer.analyze(text)
-                raw_score: object = result.get("compound", 0.0)
-                raw_label: object = result.get("label", "neutral")
-                score: float = float(raw_score) if isinstance(raw_score, int | float) else 0.0
-                label: str = str(raw_label) if raw_label else "neutral"
-            else:
-                score, label = 0.0, "neutral"
+            result = analyzer.analyze(text)
+            raw_score: object = result.get("compound", 0.0)
+            raw_label: object = result.get("label", "neutral")
+            score: float = float(raw_score) if isinstance(raw_score, int | float) else 0.0
+            label: str = str(raw_label) if raw_label else "neutral"
 
             label = "bullish" if label == "positive" else ("bearish" if label == "negative" else "neutral")
 

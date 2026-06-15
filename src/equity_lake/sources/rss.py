@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from calendar import timegm
 from datetime import UTC, date, datetime
 from pathlib import Path
-from time import mktime
 from typing import Any
 
 import feedparser
@@ -38,8 +38,8 @@ def _parse_published(entry: dict[str, Any], fallback: datetime | None = None) ->
     published_struct = entry.get("published_parsed") or entry.get("updated_parsed")
     if published_struct:
         try:
-            return datetime.fromtimestamp(mktime(published_struct), tz=UTC).replace(tzinfo=None)
-        except Exception:
+            return datetime.fromtimestamp(timegm(published_struct), tz=UTC).replace(tzinfo=None)
+        except (ValueError, OverflowError, OSError):
             pass
     raw = entry.get("published") or entry.get("updated", "")
     for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S %Z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ"):
@@ -47,7 +47,7 @@ def _parse_published(entry: dict[str, Any], fallback: datetime | None = None) ->
             return datetime.strptime(raw, fmt).replace(tzinfo=None)
         except (ValueError, TypeError):
             continue
-    return fallback or datetime.now()
+    return fallback or datetime.now(UTC).replace(tzinfo=None)
 
 
 def _extract_body(entry: dict[str, Any]) -> str:
@@ -130,7 +130,7 @@ class RSSNewsFetcher(MarketDataFetcher):
                 logger.warning("rss_parse_warning", feed=feed_name, error=str(parsed.bozo_exception))
 
             articles: list[dict[str, Any]] = []
-            now = datetime.now()
+            now = datetime.now(UTC).replace(tzinfo=None)
 
             for entry in parsed.entries:
                 published = _parse_published(entry, fallback=fallback_dt)

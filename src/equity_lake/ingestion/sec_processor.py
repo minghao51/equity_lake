@@ -300,12 +300,14 @@ def process_sec_bronze_to_silver(trading_date: date) -> bool:
 
         scan = duckdb_scan_for(BRONZE_RAW_ARTICLES_DIR)
         con = duckdb.connect(":memory:")
-        con.execute("INSTALL delta; LOAD delta;")
-        bronze_df = con.execute(
-            f"SELECT * FROM {scan} WHERE date = ? AND source_type = 'sec_filing'",
-            [trading_date],
-        ).pl()
-        con.close()
+        try:
+            con.execute("INSTALL delta; LOAD delta;")
+            bronze_df = con.execute(
+                f"SELECT * FROM {scan} WHERE date = ? AND source_type = 'sec_filing'",
+                [trading_date],
+            ).pl()
+        finally:
+            con.close()
     except Exception as exc:
         logger.warning("sec_bronze_read_failed", error=str(exc))
         return False
@@ -338,7 +340,22 @@ def process_sec_bronze_to_silver(trading_date: date) -> bool:
         logger.warning("SEC LLM processing produced no silver rows")
         return False
 
+    ticker_filter = _load_known_tickers()
+    if ticker_filter:
+        silver_df = silver_df.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(ticker_filter))
+        logger.info("Filtered SEC silver by known tickers", remaining=silver_df.height, known_tickers=len(ticker_filter))
+
     return _write_sec_silver(silver_df)
+
+
+def _load_known_tickers() -> list[str]:
+    try:
+        from equity_lake.core.config import TickerConfig
+
+        config = TickerConfig()
+        return config.get_tickers_for_market("us", active_only=True)
+    except Exception:
+        return []
 
 
 def _write_sec_silver(df: pl.DataFrame) -> bool:
@@ -363,12 +380,14 @@ def _get_processed_sec_ids(trading_date: date) -> set[str]:
 
         scan = duckdb_scan_for(SEC_EXTRACTIONS_DIR)
         con = duckdb.connect(":memory:")
-        con.execute("INSTALL delta; LOAD delta;")
-        rows = con.execute(
-            f"SELECT DISTINCT article_id FROM {scan} WHERE date = ?",
-            [trading_date],
-        ).fetchall()
-        con.close()
+        try:
+            con.execute("INSTALL delta; LOAD delta;")
+            rows = con.execute(
+                f"SELECT DISTINCT article_id FROM {scan} WHERE date = ?",
+                [trading_date],
+            ).fetchall()
+        finally:
+            con.close()
         return {r[0] for r in rows}
     except Exception:
         return set()

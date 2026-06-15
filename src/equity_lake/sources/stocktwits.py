@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import httpx
@@ -101,7 +101,11 @@ class StockTwitsFetcher(MarketDataFetcher):
             if self.client_id:
                 params["access_token"] = self.client_id
 
-            with httpx.Client(timeout=15) as client:
+            headers = {
+                "User-Agent": "Equity Lake/1.0",
+                "Accept": "application/json",
+            }
+            with httpx.Client(timeout=15, follow_redirects=True, headers=headers) as client:
                 response = client.get(url, params=params)
                 response.raise_for_status()
                 data: dict[str, Any] = response.json()
@@ -141,7 +145,7 @@ class StockTwitsFetcher(MarketDataFetcher):
                         "body": body[:5000],
                         "author": user.get("username", ""),
                         "published_at": published,
-                        "fetched_at": datetime.now(),
+                        "fetched_at": datetime.now(UTC).replace(tzinfo=None),
                         "source_metadata": json.dumps(metadata),
                         "date": published.date(),
                     }
@@ -160,7 +164,7 @@ def _parse_timestamp(ts: str) -> datetime:
             return dt.replace(tzinfo=None) if dt.tzinfo else dt
         except (ValueError, TypeError):
             continue
-    return datetime.now()
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 __all__ = ["StockTwitsFetcher"]

@@ -16,7 +16,7 @@ import os
 import re
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -190,7 +190,7 @@ class SECFilingFetcher(MarketDataFetcher):
                 logger.debug("sec_filing_no_sections_found", ticker=ticker, url=doc_url)
                 return []
 
-            now = datetime.now()
+            now = datetime.now(UTC).replace(tzinfo=None)
             filing_date = filing["filing_date"]
             results: list[dict[str, Any]] = []
 
@@ -242,9 +242,11 @@ class SECFilingFetcher(MarketDataFetcher):
 
         boundaries: list[tuple[str, int]] = []
         for section_name, pattern in SECTION_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                boundaries.append((section_name, match.start()))
+            matches = list(pattern.finditer(text))
+            if not matches:
+                continue
+            best_match = matches[-1]
+            boundaries.append((section_name, best_match.start()))
 
         boundaries.sort(key=lambda x: x[1])
 
@@ -262,13 +264,11 @@ class SECFilingFetcher(MarketDataFetcher):
 
 
 def _strip_html_tags(html: str) -> str:
+    import html as html_module
+
     clean = re.sub(r"<[^>]+>", " ", html)
-    clean = re.sub(r"&nbsp;|&#160;", " ", clean)
-    clean = re.sub(r"&amp;", "&", clean)
-    clean = re.sub(r"&lt;", "<", clean)
-    clean = re.sub(r"&gt;", ">", clean)
-    clean = re.sub(r"&quot;", '"', clean)
-    clean = re.sub(r"&#\d+;", "", clean)
+    clean = html_module.unescape(clean)
+    clean = re.sub(r"\s+", " ", clean).strip()
     return clean
 
 

@@ -49,14 +49,16 @@ def read_bronze(trading_date: date | None = None, table_path: Path | None = None
 
         scan = duckdb_scan_for(path)
         con = duckdb.connect(":memory:")
-        con.execute("INSTALL delta; LOAD delta;")
-        query = f"SELECT * FROM {scan}"
-        if trading_date:
-            query = query + " WHERE date = ?"
-            df = con.execute(query, [trading_date]).pl()
-        else:
-            df = con.execute(query).pl()
-        con.close()
+        try:
+            con.execute("INSTALL delta; LOAD delta;")
+            query = f"SELECT * FROM {scan}"
+            if trading_date:
+                query = query + " WHERE date = ?"
+                df = con.execute(query, [trading_date]).pl()
+            else:
+                df = con.execute(query).pl()
+        finally:
+            con.close()
         return df
     except Exception as exc:
         logger.warning("bronze_read_failed", error=str(exc))
@@ -72,12 +74,14 @@ def _get_processed_article_ids(trading_date: date) -> set[str]:
 
         scan = duckdb_scan_for(SILVER_PROCESSED_ARTICLES_DIR)
         con = duckdb.connect(":memory:")
-        con.execute("INSTALL delta; LOAD delta;")
-        rows = con.execute(
-            f"SELECT DISTINCT article_id FROM {scan} WHERE date = ?",
-            [trading_date],
-        ).fetchall()
-        con.close()
+        try:
+            con.execute("INSTALL delta; LOAD delta;")
+            rows = con.execute(
+                f"SELECT DISTINCT article_id FROM {scan} WHERE date = ?",
+                [trading_date],
+            ).fetchall()
+        finally:
+            con.close()
         return {r[0] for r in rows}
     except Exception as exc:
         logger.debug("silver_read_skipped", error=str(exc))

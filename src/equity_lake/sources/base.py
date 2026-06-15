@@ -6,6 +6,7 @@ from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any
 
+import httpx
 import pandas as pd
 import polars as pl
 import structlog
@@ -24,6 +25,14 @@ from equity_lake.core.schemas import STANDARD_COLUMNS
 from equity_lake.sources.macro import MacroIndicatorFetcher
 
 logger = structlog.get_logger()
+
+
+class TransientError(Exception):
+    """Raised for retryable failures (network, timeout, 5xx).
+
+    Non-retryable errors (4xx, bad config) should be raised as a different
+    exception type so the tenacity decorator does not waste retries.
+    """
 
 
 def _empty_frame() -> pl.DataFrame:
@@ -90,7 +99,7 @@ class MarketDataFetcher:
         self.ticker_config = ticker_config
         self.stock_limit = stock_limit
         self._retry_decorator = retry(
-            retry=retry_if_exception_type(Exception),
+            retry=retry_if_exception_type(TransientError),
             stop=stop_after_attempt(retry_attempts),
             wait=wait_exponential(multiplier=retry_delay, min=retry_delay, max=30.0),
             before_sleep=before_sleep_log(logger, 30),  # WARNING
@@ -192,9 +201,24 @@ class MarketDataFetcher:
         *args: Any,
         **kwargs: Any,
     ) -> Any:
-        """Retry API calls with exponential backoff via tenacity."""
-        wrapped = self._retry_decorator(func)
-        return wrapped(*args, **kwargs)
+        """Retry API calls with exponential backoff via tenacity.
+
+        Only ``TransientError`` (network/timeout/5xx) triggers retries.
+        4xx errors propagate immediately without retry.
+        """
+
+        @self._retry_decorator  # type: ignore[misc]
+        def _wrapped() -> Any:
+            try:
+                return func(*args, **kwargs)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code >= 500:
+                    raise TransientError(str(exc)) from exc
+                raise
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
+                raise TransientError(str(exc)) from exc
+
+        return _wrapped()
 
 
 class YFinanceBaseFetcher(MarketDataFetcher):
@@ -300,6 +324,7 @@ class YFinanceBaseFetcher(MarketDataFetcher):
 __all__ = [
     "MacroIndicatorFetcher",
     "MarketDataFetcher",
+    "TransientError",
     "YFinanceBaseFetcher",
     "_coerce_to_polars",
     "_empty_frame",
