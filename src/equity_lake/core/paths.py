@@ -31,6 +31,7 @@ SILVER_DIR = LAKE_DIR / "silver"
 BRONZE_RAW_ARTICLES_DIR = BRONZE_DIR / "raw_articles"
 SILVER_PROCESSED_ARTICLES_DIR = SILVER_DIR / "processed_articles"
 ANALYST_RATINGS_DIR = LAKE_DIR / "us_analyst_ratings"
+SEC_EXTRACTIONS_DIR = SILVER_DIR / "sec_extractions"
 
 
 def ensure_dirs() -> None:
@@ -60,6 +61,7 @@ __all__ = [
     "PROJECT_ROOT",
     "SILVER_DIR",
     "SILVER_PROCESSED_ARTICLES_DIR",
+    "SEC_EXTRACTIONS_DIR",
     "US_EQUITY_DIR",
     "US_NEWS_DIR",
     "US_SOCIAL_SENTIMENT_DIR",

@@ -17,6 +17,7 @@ Market = Literal[
     "stocktwits_messages",
     "us_earnings_transcripts",
     "us_analyst_ratings",
+    "sec_filings_fulltext",
     "bronze_raw_articles",
     "silver_processed_articles",
 ]
@@ -36,6 +37,7 @@ VALID_MARKETS: set[Market] = {
     "stocktwits_messages",
     "us_earnings_transcripts",
     "us_analyst_ratings",
+    "sec_filings_fulltext",
     "bronze_raw_articles",
     "silver_processed_articles",
 }
@@ -55,6 +57,7 @@ MARKET_DIR_MAP: dict[str, str] = {
     "stocktwits_messages": "bronze/raw_articles",
     "us_earnings_transcripts": "bronze/raw_articles",
     "us_analyst_ratings": "us_analyst_ratings",
+    "sec_filings_fulltext": "bronze/raw_articles",
     "bronze_raw_articles": "bronze/raw_articles",
     "silver_processed_articles": "silver/processed_articles",
 }

@@ -97,6 +97,7 @@ class FeatureEngineer:
         include_macro: bool = True,
         include_enriched_sentiment: bool = False,
         include_analyst_ratings: bool = False,
+        include_sec_features: bool = False,
         normalize_cross_sectional: bool = False,
     ) -> pl.DataFrame:
         """Generate all features for specified tickers and date range."""
@@ -178,6 +179,16 @@ class FeatureEngineer:
             from equity_lake.features.analyst_features import merge_analyst_rating_features
 
             features_df = merge_analyst_rating_features(
+                self.conn,
+                features_df,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        if include_sec_features:
+            from equity_lake.features.sec_features import merge_sec_features
+
+            features_df = merge_sec_features(
                 self.conn,
                 features_df,
                 start_date=start_date,

@@ -109,12 +109,30 @@ ANALYST_RATING_COLUMNS = [
     "fetched_at",
 ]
 
+SEC_EXTRACTION_COLUMNS = [
+    "article_id",
+    "ticker",
+    "filing_type",
+    "section_type",
+    "filing_date",
+    "date",
+    "risk_sentiment",
+    "key_risks",
+    "guidance_direction",
+    "forward_statements",
+    "management_tone",
+    "new_vs_repeated",
+    "summary",
+    "fetched_at",
+]
+
 __all__ = [
     "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",
     "NEWS_COLUMNS",
+    "SEC_EXTRACTION_COLUMNS",
     "SILVER_ARTICLE_COLUMNS",
     "SOCIAL_COLUMNS",
     "STANDARD_COLUMNS",

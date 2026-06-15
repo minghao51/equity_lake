@@ -261,6 +261,25 @@ def _make_analyst_rating_fetcher(
     )
 
 
+def _make_sec_filing_fetcher(
+    *,
+    retry_attempts: int,
+    retry_delay: float,
+    ticker_config: TickerConfig | None,
+    explicit_tickers: list[str] | None,
+) -> MarketDataFetcher:
+    from equity_lake.sources.sec_fulltext import SECFilingFetcher
+
+    if not explicit_tickers and ticker_config:
+        explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
+
+    return SECFilingFetcher(
+        tickers=explicit_tickers,
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+    )
+
+
 def fetch_market_data_with_config(
     market: str,
     trading_date: date,
@@ -351,6 +370,13 @@ def fetch_market_data_with_config(
         )
     elif market == "us_analyst_ratings":
         fetcher = _make_analyst_rating_fetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            ticker_config=ticker_config,
+            explicit_tickers=explicit_tickers,
+        )
+    elif market == "sec_filings_fulltext":
+        fetcher = _make_sec_filing_fetcher(
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
             ticker_config=ticker_config,

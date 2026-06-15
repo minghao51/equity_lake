@@ -71,6 +71,7 @@ def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[st
             "stocktwits_messages",
             "us_earnings_transcripts",
             "us_analyst_ratings",
+            "sec_filings_fulltext",
         ):
             markets_needing_fetch.append(market)
             continue
@@ -131,7 +132,16 @@ def run_daily_ingestion(
                             ticker_config=config,
                             filters=fltrs,
                             explicit_tickers=(
-                                explicit_list if mkt in ("us", "stocktwits_messages", "us_earnings_transcripts", "us_analyst_ratings") else None
+                                explicit_list
+                                if mkt
+                                in (
+                                    "us",
+                                    "stocktwits_messages",
+                                    "us_earnings_transcripts",
+                                    "us_analyst_ratings",
+                                    "sec_filings_fulltext",
+                                )
+                                else None
                             ),
                         )
 
@@ -186,7 +196,16 @@ def run_daily_ingestion(
                         ticker_config=ticker_config,
                         filters=filters,
                         explicit_tickers=(
-                            explicit_ticker_list if market in ("us", "stocktwits_messages", "us_earnings_transcripts", "us_analyst_ratings") else None
+                            explicit_ticker_list
+                            if market
+                            in (
+                                "us",
+                                "stocktwits_messages",
+                                "us_earnings_transcripts",
+                                "us_analyst_ratings",
+                                "sec_filings_fulltext",
+                            )
+                            else None
                         ),
                     )
 
