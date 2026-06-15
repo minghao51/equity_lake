@@ -7,9 +7,7 @@ from unittest.mock import AsyncMock, patch
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.llm_processor import (
-    DeepSeekBatchProcessor,
-)
+from equity_lake.ingestion.llm_processor import DeepSeekBatchProcessor
 
 
 def _mock_response(content: str):
