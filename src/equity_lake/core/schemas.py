@@ -126,6 +126,32 @@ SEC_EXTRACTION_COLUMNS = [
     "fetched_at",
 ]
 
+SEC_FINANCIAL_COLUMNS = [
+    "ticker",
+    "date",
+    "filing_type",
+    "fiscal_year",
+    "fiscal_period",
+    "revenue",
+    "net_income",
+    "operating_income",
+    "total_assets",
+    "total_liabilities",
+    "stockholders_equity",
+    "total_debt",
+    "cash_and_equivalents",
+    "operating_cash_flow",
+    "capex",
+    "shares_outstanding",
+    "eps",
+    "roe",
+    "roa",
+    "debt_to_equity",
+    "net_margin",
+    "operating_margin",
+    "fetched_at",
+]
+
 __all__ = [
     "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
@@ -133,6 +159,7 @@ __all__ = [
     "MACRO_INDICATOR_CONFIG",
     "NEWS_COLUMNS",
     "SEC_EXTRACTION_COLUMNS",
+    "SEC_FINANCIAL_COLUMNS",
     "SILVER_ARTICLE_COLUMNS",
     "SOCIAL_COLUMNS",
     "STANDARD_COLUMNS",

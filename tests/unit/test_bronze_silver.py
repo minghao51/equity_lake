@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import polars as pl
 
-from equity_lake.ingestion.bronze_silver import _get_processed_article_ids, write_silver
+from equity_lake.ingestion.bronze_silver import _get_processed_ids, write_silver
 
 
 class TestWriteSilver:
@@ -41,10 +41,12 @@ class TestWriteSilver:
             assert call_args.kwargs["key_columns"] == ["article_id", "ticker"]
 
 
-class TestGetProcessedArticleIds:
+class TestGetProcessedIds:
     def test_returns_empty_set_on_error(self):
+        from pathlib import Path
+
         with patch("equity_lake.ingestion.bronze_silver.SILVER_PROCESSED_ARTICLES_DIR"):
-            result = _get_processed_article_ids(date(2026, 6, 14))
+            result = _get_processed_ids(Path("/nonexistent"), date(2026, 6, 14))
             assert result == set()
 
 
@@ -74,7 +76,7 @@ class TestProcessBronzeToSilver:
         )
         with (
             patch("equity_lake.ingestion.bronze_silver.read_bronze", return_value=bronze_df),
-            patch("equity_lake.ingestion.bronze_silver._get_processed_article_ids", return_value={"art-1", "art-2"}),
+            patch("equity_lake.ingestion.bronze_silver._get_processed_ids", return_value={"art-1", "art-2"}),
         ):
             from equity_lake.ingestion.bronze_silver import process_bronze_to_silver
 
@@ -99,9 +101,9 @@ class TestProcessBronzeToSilver:
         )
         with (
             patch("equity_lake.ingestion.bronze_silver.read_bronze", return_value=bronze_df),
-            patch("equity_lake.ingestion.bronze_silver._get_processed_article_ids", return_value={"art-1"}),
+            patch("equity_lake.ingestion.bronze_silver._get_processed_ids", return_value={"art-1"}),
             patch("equity_lake.ingestion.llm_processor.run_llm_processing") as mock_llm,
-            patch("equity_lake.ingestion.bronze_silver.write_silver", return_value=True),
+            patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True),
             patch("equity_lake.ingestion.bronze_silver._load_known_tickers", return_value=[]),
         ):
             from equity_lake.ingestion.bronze_silver import process_bronze_to_silver

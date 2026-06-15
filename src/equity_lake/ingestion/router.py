@@ -280,6 +280,25 @@ def _make_sec_filing_fetcher(
     )
 
 
+def _make_sec_financials_fetcher(
+    *,
+    retry_attempts: int,
+    retry_delay: float,
+    ticker_config: TickerConfig | None,
+    explicit_tickers: list[str] | None,
+) -> MarketDataFetcher:
+    from equity_lake.sources.sec_financials import SECFinancialsFetcher
+
+    if not explicit_tickers and ticker_config:
+        explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
+
+    return SECFinancialsFetcher(
+        tickers=explicit_tickers,
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+    )
+
+
 def fetch_market_data_with_config(
     market: str,
     trading_date: date,
@@ -377,6 +396,13 @@ def fetch_market_data_with_config(
         )
     elif market == "sec_filings_fulltext":
         fetcher = _make_sec_filing_fetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            ticker_config=ticker_config,
+            explicit_tickers=explicit_tickers,
+        )
+    elif market == "us_sec_financials":
+        fetcher = _make_sec_financials_fetcher(
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
             ticker_config=ticker_config,

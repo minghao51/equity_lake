@@ -72,6 +72,7 @@ def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[st
             "us_earnings_transcripts",
             "us_analyst_ratings",
             "sec_filings_fulltext",
+            "us_sec_financials",
         ):
             markets_needing_fetch.append(market)
             continue
@@ -140,6 +141,7 @@ def run_daily_ingestion(
                                     "us_earnings_transcripts",
                                     "us_analyst_ratings",
                                     "sec_filings_fulltext",
+                                    "us_sec_financials",
                                 )
                                 else None
                             ),
@@ -204,6 +206,7 @@ def run_daily_ingestion(
                                 "us_earnings_transcripts",
                                 "us_analyst_ratings",
                                 "sec_filings_fulltext",
+                                "us_sec_financials",
                             )
                             else None
                         ),

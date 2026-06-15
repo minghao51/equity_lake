@@ -139,7 +139,7 @@ class TestVaderFallback:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = DeepSeekBatchProcessor()
             batch = [{"article_id": "art-1", "title": "Test", "body": "Some body text"}]
-            results = proc._vader_fallback(batch)
+            results = proc._fallback(batch)
             assert len(results) == 1
             assert results[0].mentioned_tickers == []
             assert results[0].event_type == "general"

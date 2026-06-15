@@ -16,6 +16,7 @@ import json
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import structlog
@@ -346,6 +347,73 @@ class PipelineMonitor:
             # Feature store might not exist yet, which is ok
             return True
 
+    def check_unstructured_freshness(self) -> bool:
+        """Check freshness of bronze and silver unstructured tables.
+
+        Monitors ``bronze/raw_articles`` and ``silver/processed_articles``
+        for recent activity. Stale or empty tables indicate the ingestion
+        pipeline for RSS/Reddit/StockTwits/Transcripts may be failing.
+        """
+        logger.info("Checking unstructured data freshness...")
+
+        tables = [
+            ("bronze/raw_articles", LAKE_DIR / "bronze" / "raw_articles"),
+            ("silver/processed_articles", LAKE_DIR / "silver" / "processed_articles"),
+            ("silver/sec_extractions", LAKE_DIR / "silver" / "sec_extractions"),
+        ]
+
+        all_fresh = True
+        unstructured_metrics: dict[str, Any] = {}
+
+        for table_name, table_path in tables:
+            if not table_path.exists():
+                logger.debug(f"{table_name}: directory not found")
+                unstructured_metrics[table_name] = {"status": "missing"}
+                continue
+
+            try:
+                query = f"""
+                    SELECT
+                        COUNT(*) as total_rows,
+                        MAX(date) as latest_date
+                    FROM read_parquet('{table_path}/**/*.parquet', hive_partitioning=1)
+                """
+                df = self.conn.execute(query).pl()
+
+                if df.is_empty() or int(df["total_rows"][0]) == 0:
+                    self.alerts.append(f"⚠️  {table_name}: No data found")
+                    unstructured_metrics[table_name] = {"status": "empty"}
+                    all_fresh = False
+                    continue
+
+                total_rows = int(df["total_rows"][0])
+                latest_date = _date_scalar(df["latest_date"][0])
+
+                age_days = (market_now("us_equity") - latest_date).days if latest_date else 999
+
+                if age_days > self.max_age_days:
+                    self.alerts.append(f"⚠️  {table_name}: data is stale ({age_days} days old, latest: {latest_date})")
+                    all_fresh = False
+                else:
+                    logger.info(f"✅ {table_name}: {total_rows:,} rows, latest: {latest_date}")
+
+                unstructured_metrics[table_name] = {
+                    "total_rows": total_rows,
+                    "latest_date": str(latest_date) if latest_date else None,
+                    "age_days": age_days,
+                }
+
+            except Exception as e:
+                logger.debug(f"{table_name} check failed: {e}")
+                unstructured_metrics[table_name] = {"status": "error", "error": str(e)}
+
+        self.metrics["unstructured_freshness"] = {
+            **unstructured_metrics,
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+        }
+
+        return all_fresh
+
     # -------------------------------------------------------------------------
     # Run Health Check
     # -------------------------------------------------------------------------
@@ -366,6 +434,7 @@ class PipelineMonitor:
             ("Data Quality", self.check_data_quality()),
             ("Pipeline Logs", self.check_pipeline_logs()),
             ("Feature Store", self.check_feature_store()),
+            ("Unstructured Freshness", self.check_unstructured_freshness()),
         ]
 
         all_healthy = True

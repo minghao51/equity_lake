@@ -3,10 +3,14 @@
 Reads raw articles from the bronze Delta table, filters out already-processed
 ones, runs LLM batch processing, then explodes to silver article-ticker pairs
 and writes to the silver Delta table.
+
+Provides a unified :func:`process_unstructured_to_silver` that both article
+and SEC pipelines delegate to, eliminating duplicated orchestration logic.
 """
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
@@ -65,14 +69,93 @@ def read_bronze(trading_date: date | None = None, table_path: Path | None = None
         return pl.DataFrame()
 
 
-def _get_processed_article_ids(trading_date: date) -> set[str]:
-    """Return article_ids already present in silver for the given date."""
+def process_unstructured_to_silver(
+    trading_date: date,
+    *,
+    source_type_filter: str | None,
+    process_fn: Callable[[pl.DataFrame], pl.DataFrame],
+    silver_path: Path,
+    silver_table_name: str,
+    silver_key_columns: list[str],
+    log_label: str = "article",
+) -> bool:
+    """Unified bronze→silver pipeline for all unstructured sources.
+
+    Reads bronze articles (optionally filtered by ``source_type``), skips
+    already-processed rows, runs the provided ``process_fn``, filters by
+    known tickers, and writes to the silver Delta table.
+
+    Args:
+        trading_date: The trading date to process.
+        source_type_filter: If set, filter bronze to this ``source_type`` (e.g. ``"sec_filing"``).
+        process_fn: Function that takes bronze DataFrame → silver DataFrame.
+        silver_path: Directory path for the silver Delta table.
+        silver_table_name: Delta table name (e.g. ``"silver/processed_articles"``).
+        silver_key_columns: Dedup key columns for the silver merge.
+        log_label: Label for log messages.
+
+    Returns:
+        True if silver write succeeded, False otherwise.
+    """
+    bronze_df = read_bronze(trading_date)
+    if bronze_df.is_empty():
+        logger.warning(f"No bronze {log_label}s to process", trading_date=str(trading_date))
+        return False
+
+    if source_type_filter and "source_type" in bronze_df.columns:
+        bronze_df = bronze_df.filter(pl.col("source_type") == source_type_filter)
+        if bronze_df.is_empty():
+            logger.info(f"No {log_label} bronze articles for source_type={source_type_filter}")
+            return False
+
+    processed_ids = _get_processed_ids(silver_path, trading_date)
+    if processed_ids:
+        before = bronze_df.height
+        bronze_df = bronze_df.filter(~pl.col("article_id").is_in(list(processed_ids)))
+        skipped = before - bronze_df.height
+        if skipped:
+            logger.info(f"Skipping already-processed {log_label}s", skipped=skipped, remaining=bronze_df.height)
+
+    if bronze_df.is_empty():
+        logger.info(f"All bronze {log_label}s already processed", trading_date=str(trading_date))
+        return True
+
+    logger.info(f"Processing {log_label} bronze to silver", count=bronze_df.height, trading_date=str(trading_date))
+
+    try:
+        silver_df = process_fn(bronze_df)
+    except Exception as exc:
+        logger.error(f"{log_label}_processing_failed", error=str(exc))
+        return False
+
+    if silver_df.is_empty():
+        logger.warning(f"{log_label} processing produced no silver rows")
+        return False
+
+    ticker_filter = _load_known_tickers()
+    if ticker_filter and "ticker" in silver_df.columns:
+        silver_df = silver_df.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(ticker_filter))
+        logger.info(f"Filtered {log_label} silver by known tickers", remaining=silver_df.height, known_tickers=len(ticker_filter))
+
+    return _write_silver_generic(silver_df, silver_table_name, silver_key_columns)
+
+
+def _write_silver_generic(df: pl.DataFrame, table_name: str, key_columns: list[str]) -> bool:
+    """Write silver DataFrame to Delta table."""
+    if df.is_empty():
+        logger.warning("Empty DataFrame, skipping silver write")
+        return False
+    return merge_delta(df, table_name, key_columns=key_columns)
+
+
+def _get_processed_ids(silver_path: Path, trading_date: date) -> set[str]:
+    """Return article_ids already present in the given silver table for the date."""
     try:
         import duckdb
 
         from equity_lake.storage.lake_reader import duckdb_scan_for
 
-        scan = duckdb_scan_for(SILVER_PROCESSED_ARTICLES_DIR)
+        scan = duckdb_scan_for(silver_path)
         con = duckdb.connect(":memory:")
         try:
             con.execute("INSTALL delta; LOAD delta;")
@@ -91,8 +174,8 @@ def _get_processed_article_ids(trading_date: date) -> set[str]:
 def process_bronze_to_silver(trading_date: date) -> bool:
     """Process unprocessed bronze articles through LLM and write to silver.
 
-    Skips articles already present in the silver table to avoid redundant
-    DeepSeek API calls on reruns.
+    Delegates to :func:`process_unstructured_to_silver` with article-specific
+    parameters (all non-SEC source types).
 
     Args:
         trading_date: The trading date to process articles for.
@@ -100,43 +183,17 @@ def process_bronze_to_silver(trading_date: date) -> bool:
     Returns:
         True if silver write succeeded, False otherwise.
     """
-    bronze_df = read_bronze(trading_date)
-    if bronze_df.is_empty():
-        logger.warning("No bronze articles to process", trading_date=str(trading_date))
-        return False
+    from equity_lake.ingestion.llm_processor import run_llm_processing
 
-    processed_ids = _get_processed_article_ids(trading_date)
-    if processed_ids:
-        before = bronze_df.height
-        bronze_df = bronze_df.filter(~pl.col("article_id").is_in(list(processed_ids)))
-        skipped = before - bronze_df.height
-        if skipped:
-            logger.info("Skipping already-processed articles", skipped=skipped, remaining=bronze_df.height)
-
-    if bronze_df.is_empty():
-        logger.info("All bronze articles already processed", trading_date=str(trading_date))
-        return True
-
-    logger.info("Processing bronze to silver", article_count=bronze_df.height, trading_date=str(trading_date))
-
-    try:
-        from equity_lake.ingestion.llm_processor import run_llm_processing
-
-        silver_df = run_llm_processing(bronze_df)
-    except Exception as exc:
-        logger.error("llm_processing_failed", error=str(exc))
-        return False
-
-    if silver_df.is_empty():
-        logger.warning("LLM processing produced no silver rows")
-        return False
-
-    ticker_filter = _load_known_tickers()
-    if ticker_filter:
-        silver_df = silver_df.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(ticker_filter))
-        logger.info("Filtered silver by known tickers", remaining=silver_df.height, known_tickers=len(ticker_filter))
-
-    return write_silver(silver_df)
+    return process_unstructured_to_silver(
+        trading_date,
+        source_type_filter=None,
+        process_fn=run_llm_processing,
+        silver_path=SILVER_PROCESSED_ARTICLES_DIR,
+        silver_table_name="silver/processed_articles",
+        silver_key_columns=["article_id", "ticker"],
+        log_label="article",
+    )
 
 
 def _load_known_tickers() -> list[str]:
@@ -151,6 +208,7 @@ def _load_known_tickers() -> list[str]:
 
 __all__ = [
     "process_bronze_to_silver",
+    "process_unstructured_to_silver",
     "read_bronze",
     "write_silver",
 ]

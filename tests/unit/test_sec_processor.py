@@ -85,7 +85,7 @@ class TestSECProcessing:
             proc = SECSectionProcessor()
 
         batch = mock_bronze_df.to_dicts()
-        results = proc._neutral_fallback(batch)
+        results = proc._fallback(batch)
 
         assert len(results) == 1
         assert results[0].ticker == "AAPL"

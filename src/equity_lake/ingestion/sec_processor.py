@@ -2,8 +2,8 @@
 
 Uses ``AsyncOpenAI`` with DeepSeek's OpenAI-compatible API to extract
 risk sentiment, guidance direction, management tone, and key risks from
-10-K/10-Q filing sections. Same tenacity retry + VADER fallback pattern
-as ``llm_processor.py``.
+10-K/10-Q filing sections. Same tenacity retry + fallback pattern
+as ``llm_processor.py``, via shared ``BaseLLMBatchProcessor``.
 
 Process flow:
     bronze (source_type="sec_filing") → this processor → silver/sec_extractions
@@ -14,25 +14,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import os
 from datetime import date
 from typing import Any
 
 import polars as pl
 import structlog
-from openai import AsyncOpenAI
-from pydantic import BaseModel, Field, ValidationError
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from pydantic import BaseModel, Field
 
-from equity_lake.core.paths import BRONZE_RAW_ARTICLES_DIR, SEC_EXTRACTIONS_DIR
-from equity_lake.core.schemas import SEC_EXTRACTION_COLUMNS
-from equity_lake.storage.delta import merge_delta
+from equity_lake.ingestion.llm_base import BaseLLMBatchProcessor
 
 logger = structlog.get_logger()
 
@@ -96,11 +85,7 @@ class SECBatchExtraction(BaseModel):
     items: list[SECSectionExtraction]
 
 
-class SECRetryableError(Exception):
-    """Raised when DeepSeek returns empty content or invalid JSON."""
-
-
-class SECSectionProcessor:
+class SECSectionProcessor(BaseLLMBatchProcessor[SECBatchExtraction, SECSectionExtraction]):
     """Batch-process SEC filing sections via DeepSeek for structured extraction.
 
     Args:
@@ -110,6 +95,10 @@ class SECSectionProcessor:
         max_body_chars: Max input body length per section.
     """
 
+    system_prompt = SEC_SYSTEM_PROMPT
+    batch_model = SECBatchExtraction
+    log_label = "SEC"
+
     def __init__(
         self,
         batch_size: int = 5,
@@ -117,82 +106,7 @@ class SECSectionProcessor:
         model: str = "deepseek-v4-flash",
         max_body_chars: int = 5000,
     ):
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY not set")
-
-        self.client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        self.model = model
-        self.batch_size = batch_size
-        self.semaphore = asyncio.Semaphore(max_concurrency)
-        self.max_body_chars = max_body_chars
-
-        self._retry_decorator = retry(
-            retry=retry_if_exception_type(SECRetryableError),
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=2, max=30),
-            before_sleep=before_sleep_log(logger, 30),
-            reraise=True,
-        )
-
-    async def process_batch(self, batch: list[dict[str, Any]]) -> SECBatchExtraction:
-        @self._retry_decorator  # type: ignore[misc]
-        async def _call() -> SECBatchExtraction:
-            async with self.semaphore:
-                user_content = self._format_batch(batch)
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": SEC_SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
-                    response_format={"type": "json_object"},
-                    max_tokens=8192,
-                )
-
-                content = response.choices[0].message.content
-                if not content or not content.strip():
-                    raise SECRetryableError("DeepSeek returned empty content")
-
-                try:
-                    parsed = json.loads(content)
-                except json.JSONDecodeError as e:
-                    raise SECRetryableError(f"Invalid JSON: {e}") from e
-
-                try:
-                    return SECBatchExtraction.model_validate(parsed)
-                except ValidationError as e:
-                    raise SECRetryableError(f"Validation failed: {e}") from e
-
-        result: SECBatchExtraction = await _call()
-        return result
-
-    async def process_all(self, bronze_df: pl.DataFrame) -> pl.DataFrame:
-        if bronze_df.is_empty():
-            logger.warning("Empty SEC bronze DataFrame, nothing to process")
-            return pl.DataFrame()
-
-        rows = bronze_df.to_dicts()
-        batches = [rows[i : i + self.batch_size] for i in range(0, len(rows), self.batch_size)]
-
-        logger.info("SEC LLM batch processing starting", total_sections=len(rows), batch_count=len(batches))
-
-        tasks = [self.process_batch(b) for b in batches]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        extracted: list[SECSectionExtraction] = []
-        failed_count = 0
-
-        for i, result in enumerate(results):
-            if isinstance(result, BaseException):
-                failed_count += len(batches[i])
-                logger.warning("SEC LLM batch failed, using neutral fallback", error=str(result), batch_size=len(batches[i]))
-                extracted.extend(self._neutral_fallback(batches[i]))
-            else:
-                extracted.extend(result.items)
-
-        logger.info("SEC LLM processing complete", extracted=len(extracted), failed=failed_count)
-        return self._to_silver_df(extracted, bronze_df)
+        super().__init__(batch_size=batch_size, max_concurrency=max_concurrency, model=model, max_body_chars=max_body_chars)
 
     def _format_batch(self, batch: list[dict[str, Any]]) -> str:
         parts: list[str] = []
@@ -210,7 +124,7 @@ class SECSectionProcessor:
             )
         return "\n".join(parts)
 
-    def _neutral_fallback(self, batch: list[dict[str, Any]]) -> list[SECSectionExtraction]:
+    def _fallback(self, batch: list[dict[str, Any]]) -> list[SECSectionExtraction]:
         results: list[SECSectionExtraction] = []
         for item in batch:
             metadata = _parse_metadata(item.get("source_metadata"))
@@ -283,9 +197,8 @@ def run_sec_processing(bronze_df: pl.DataFrame, batch_size: int = 5) -> pl.DataF
 def process_sec_bronze_to_silver(trading_date: date) -> bool:
     """Process unprocessed SEC filing sections from bronze to silver.
 
-    Reads bronze articles with source_type="sec_filing", filters out
-    already-processed sections, runs SEC LLM processing, and writes to
-    the dedicated ``silver/sec_extractions`` Delta table.
+    Delegates to :func:`process_unstructured_to_silver` with SEC-specific
+    parameters (``source_type="sec_filing"``, dedicated silver table).
 
     Args:
         trading_date: The trading date to process sections for.
@@ -293,104 +206,18 @@ def process_sec_bronze_to_silver(trading_date: date) -> bool:
     Returns:
         True if silver write succeeded, False otherwise.
     """
-    try:
-        import duckdb
+    from equity_lake.core.paths import SEC_EXTRACTIONS_DIR
+    from equity_lake.ingestion.bronze_silver import process_unstructured_to_silver
 
-        from equity_lake.storage.lake_reader import duckdb_scan_for
-
-        scan = duckdb_scan_for(BRONZE_RAW_ARTICLES_DIR)
-        con = duckdb.connect(":memory:")
-        try:
-            con.execute("INSTALL delta; LOAD delta;")
-            bronze_df = con.execute(
-                f"SELECT * FROM {scan} WHERE date = ? AND source_type = 'sec_filing'",
-                [trading_date],
-            ).pl()
-        finally:
-            con.close()
-    except Exception as exc:
-        logger.warning("sec_bronze_read_failed", error=str(exc))
-        return False
-
-    if bronze_df.is_empty():
-        logger.info("No SEC filing sections to process", trading_date=str(trading_date))
-        return False
-
-    processed_ids = _get_processed_sec_ids(trading_date)
-    if processed_ids:
-        before = bronze_df.height
-        bronze_df = bronze_df.filter(~pl.col("article_id").is_in(list(processed_ids)))
-        skipped = before - bronze_df.height
-        if skipped:
-            logger.info("Skipping already-processed SEC sections", skipped=skipped, remaining=bronze_df.height)
-
-    if bronze_df.is_empty():
-        logger.info("All SEC sections already processed", trading_date=str(trading_date))
-        return True
-
-    logger.info("Processing SEC bronze to silver", section_count=bronze_df.height, trading_date=str(trading_date))
-
-    try:
-        silver_df = run_sec_processing(bronze_df)
-    except Exception as exc:
-        logger.error("sec_llm_processing_failed", error=str(exc))
-        return False
-
-    if silver_df.is_empty():
-        logger.warning("SEC LLM processing produced no silver rows")
-        return False
-
-    ticker_filter = _load_known_tickers()
-    if ticker_filter:
-        silver_df = silver_df.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(ticker_filter))
-        logger.info("Filtered SEC silver by known tickers", remaining=silver_df.height, known_tickers=len(ticker_filter))
-
-    return _write_sec_silver(silver_df)
-
-
-def _load_known_tickers() -> list[str]:
-    try:
-        from equity_lake.core.config import TickerConfig
-
-        config = TickerConfig()
-        return config.get_tickers_for_market("us", active_only=True)
-    except Exception:
-        return []
-
-
-def _write_sec_silver(df: pl.DataFrame) -> bool:
-    if df.is_empty():
-        logger.warning("Empty DataFrame, skipping SEC silver write")
-        return False
-
-    for col in SEC_EXTRACTION_COLUMNS:
-        if col not in df.columns:
-            df = df.with_columns(pl.lit(None).alias(col))
-
-    df = df.select(SEC_EXTRACTION_COLUMNS)
-    SEC_EXTRACTIONS_DIR.mkdir(parents=True, exist_ok=True)
-    return merge_delta(df, "silver/sec_extractions", key_columns=["article_id"])
-
-
-def _get_processed_sec_ids(trading_date: date) -> set[str]:
-    try:
-        import duckdb
-
-        from equity_lake.storage.lake_reader import duckdb_scan_for
-
-        scan = duckdb_scan_for(SEC_EXTRACTIONS_DIR)
-        con = duckdb.connect(":memory:")
-        try:
-            con.execute("INSTALL delta; LOAD delta;")
-            rows = con.execute(
-                f"SELECT DISTINCT article_id FROM {scan} WHERE date = ?",
-                [trading_date],
-            ).fetchall()
-        finally:
-            con.close()
-        return {r[0] for r in rows}
-    except Exception:
-        return set()
+    return process_unstructured_to_silver(
+        trading_date,
+        source_type_filter="sec_filing",
+        process_fn=run_sec_processing,
+        silver_path=SEC_EXTRACTIONS_DIR,
+        silver_table_name="silver/sec_extractions",
+        silver_key_columns=["article_id"],
+        log_label="SEC",
+    )
 
 
 __all__ = [

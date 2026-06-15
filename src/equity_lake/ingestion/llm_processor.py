@@ -10,20 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any
 
 import polars as pl
 import structlog
-from openai import AsyncOpenAI
-from pydantic import BaseModel, Field, ValidationError
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+from pydantic import BaseModel, Field
+
+from equity_lake.ingestion.llm_base import BaseLLMBatchProcessor, RetryableError
 
 logger = structlog.get_logger()
 
@@ -83,11 +76,7 @@ class BatchExtraction(BaseModel):
     items: list[ArticleExtraction]
 
 
-class RetryableError(Exception):
-    """Raised when DeepSeek returns empty content or invalid JSON."""
-
-
-class DeepSeekBatchProcessor:
+class DeepSeekBatchProcessor(BaseLLMBatchProcessor[BatchExtraction, ArticleExtraction]):
     """Batch-process raw bronze articles via DeepSeek for structured extraction.
 
     Articles are grouped into batches by source type. Each batch is a single
@@ -97,8 +86,12 @@ class DeepSeekBatchProcessor:
         batch_size: Number of articles per API call (default 15).
         max_concurrency: Maximum parallel API calls (default 10).
         model: DeepSeek model name (default: deepseek-v4-flash).
-        max_tokens_per_article: Max input body length in characters (default 2000).
+        max_body_chars: Max input body length in characters (default 2000).
     """
+
+    system_prompt = SYSTEM_PROMPT
+    batch_model = BatchExtraction
+    log_label = "LLM"
 
     def __init__(
         self,
@@ -107,82 +100,7 @@ class DeepSeekBatchProcessor:
         model: str = "deepseek-v4-flash",
         max_body_chars: int = 2000,
     ):
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY not set")
-
-        self.client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-        self.model = model
-        self.batch_size = batch_size
-        self.semaphore = asyncio.Semaphore(max_concurrency)
-        self.max_body_chars = max_body_chars
-
-        self._retry_decorator = retry(
-            retry=retry_if_exception_type(RetryableError),
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=2, max=30),
-            before_sleep=before_sleep_log(logger, 30),
-            reraise=True,
-        )
-
-    async def process_batch(self, batch: list[dict[str, Any]]) -> BatchExtraction:
-        @self._retry_decorator  # type: ignore[misc]
-        async def _call() -> BatchExtraction:
-            async with self.semaphore:
-                user_content = self._format_batch(batch)
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_content},
-                    ],
-                    response_format={"type": "json_object"},
-                    max_tokens=8192,
-                )
-
-                content = response.choices[0].message.content
-                if not content or not content.strip():
-                    raise RetryableError("DeepSeek returned empty content")
-
-                try:
-                    parsed = json.loads(content)
-                except json.JSONDecodeError as e:
-                    raise RetryableError(f"Invalid JSON: {e}") from e
-
-                try:
-                    return BatchExtraction.model_validate(parsed)
-                except ValidationError as e:
-                    raise RetryableError(f"Validation failed: {e}") from e
-
-        result: BatchExtraction = await _call()
-        return result
-
-    async def process_all(self, bronze_df: pl.DataFrame) -> pl.DataFrame:
-        if bronze_df.is_empty():
-            logger.warning("Empty bronze DataFrame, nothing to process")
-            return pl.DataFrame()
-
-        rows = bronze_df.to_dicts()
-        batches = [rows[i : i + self.batch_size] for i in range(0, len(rows), self.batch_size)]
-
-        logger.info("LLM batch processing starting", total_articles=len(rows), batch_count=len(batches))
-
-        tasks = [self.process_batch(b) for b in batches]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        extracted: list[ArticleExtraction] = []
-        failed_count = 0
-
-        for i, result in enumerate(results):
-            if isinstance(result, BaseException):
-                failed_count += len(batches[i])
-                logger.warning("LLM batch failed, using VADER fallback", error=str(result), batch_size=len(batches[i]))
-                extracted.extend(self._vader_fallback(batches[i]))
-            else:
-                extracted.extend(result.items)
-
-        logger.info("LLM processing complete", extracted=len(extracted), failed=failed_count)
-        return self._to_silver_df(extracted, bronze_df)
+        super().__init__(batch_size=batch_size, max_concurrency=max_concurrency, model=model, max_body_chars=max_body_chars)
 
     def _format_batch(self, batch: list[dict[str, Any]]) -> str:
         parts: list[str] = []
@@ -193,7 +111,7 @@ class DeepSeekBatchProcessor:
             )
         return "\n".join(parts)
 
-    def _vader_fallback(self, batch: list[dict[str, Any]]) -> list[ArticleExtraction]:
+    def _fallback(self, batch: list[dict[str, Any]]) -> list[ArticleExtraction]:
         from equity_lake.sentiment.analyzer import SentimentAnalyzer
 
         analyzer = SentimentAnalyzer(method="vader")
