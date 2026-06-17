@@ -68,7 +68,7 @@ def run_feature_job(
 
     from equity_lake.ingestion.writers import write_to_partitioned_parquet
 
-    write_to_partitioned_parquet(output_df, "features", output_end_date)
+    write_to_partitioned_parquet(output_df, "03_gold/features", output_end_date)
 
     return output_df
 

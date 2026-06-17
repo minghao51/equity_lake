@@ -18,15 +18,24 @@ from typing import Any, cast
 import pandas as pd
 import streamlit as st
 
-from equity_lake.core.paths import DATA_DIR, JPX_EQUITY_DIR, KRX_EQUITY_DIR, LAKE_DIR, LOGS_DIR
+from equity_lake.core.paths import (
+    CN_ASHARE_DIR,
+    DATA_DIR,
+    GOLD_FEATURES_DIR,
+    HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
+    LOGS_DIR,
+    US_EQUITY_DIR,
+)
 
 MARKET_DATASETS = {
-    "us_equity": LAKE_DIR / "us_equity",
-    "cn_ashare": LAKE_DIR / "cn_ashare",
-    "hk_sg_equity": LAKE_DIR / "hk_sg_equity",
+    "us_equity": US_EQUITY_DIR,
+    "cn_ashare": CN_ASHARE_DIR,
+    "hk_sg_equity": HK_SG_EQUITY_DIR,
     "jpx_equity": JPX_EQUITY_DIR,
     "krx_equity": KRX_EQUITY_DIR,
-    "features": LAKE_DIR / "features",
+    "features": GOLD_FEATURES_DIR,
 }
 
 

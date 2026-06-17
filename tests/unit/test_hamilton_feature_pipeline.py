@@ -22,14 +22,33 @@ def test_feature_pipeline_computes_expected_columns() -> None:
         }
     )
 
-    result = FeaturePipeline().compute(frame)
+    result = FeaturePipeline().compute_technical(frame, include_target=True)
 
     assert isinstance(result, pl.DataFrame)
     assert "rsi_14" in result.columns
     assert "macd" in result.columns
     assert "volume_ratio" in result.columns
     assert "next_day_return" in result.columns
-    assert set(result["feature_schema_version"].to_list()) == {2}
+    assert set(result["feature_schema_version"].to_list()) == {3}
+
+
+def test_feature_pipeline_excludes_target_by_default() -> None:
+    dates = pd.date_range("2024-01-01", periods=80, freq="B")
+    frame = pd.DataFrame(
+        {
+            "ticker": ["AAPL"] * len(dates),
+            "date": dates,
+            "open": range(100, 100 + len(dates)),
+            "high": range(101, 101 + len(dates)),
+            "low": range(99, 99 + len(dates)),
+            "close": range(100, 100 + len(dates)),
+            "volume": [1_000_000] * len(dates),
+        }
+    )
+
+    result = FeaturePipeline().compute_technical(frame)
+
+    assert "next_day_return" not in result.columns
 
 
 def test_feature_pipeline_accepts_mixed_date_formats() -> None:

@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import warnings
 from datetime import date, datetime
 
 import duckdb
@@ -58,11 +59,11 @@ class FeatureEngineer:
         self.conn.execute("INSTALL delta; LOAD delta;")
 
         markets = [
-            ("us", "us_equity"),
-            ("cn", "cn_ashare"),
-            ("hk_sg", "hk_sg_equity"),
-            ("jpx", "jpx_equity"),
-            ("krx", "krx_equity"),
+            ("us", "01_bronze/market_data/us_equity"),
+            ("cn", "01_bronze/market_data/cn_ashare"),
+            ("hk_sg", "01_bronze/market_data/hk_sg_equity"),
+            ("jpx", "01_bronze/market_data/jpx_equity"),
+            ("krx", "01_bronze/market_data/krx_equity"),
         ]
 
         union_parts: list[str] = []
@@ -100,7 +101,17 @@ class FeatureEngineer:
         include_sec_features: bool = False,
         normalize_cross_sectional: bool = False,
     ) -> pl.DataFrame:
-        """Generate all features for specified tickers and date range."""
+        """Generate all features for specified tickers and date range.
+
+        Two-phase execution:
+        1. Per-ticker technical indicators via Hamilton DAG (``compute_technical``)
+        2. Batch external-data enrichments via Hamilton DAG (``compute_enriched``)
+
+        Enrichments (sentiment, social, analyst, SEC, macro) are handled
+        automatically by :meth:`FeaturePipeline.compute_enriched` based on the
+        ``include_*`` flags. The legacy ``merge_*`` methods on this class are
+        deprecated and should not be called directly.
+        """
         logger.info(f"Generating features for {len(tickers)} tickers from {start_date} to {end_date}")
 
         query = """
@@ -130,6 +141,7 @@ class FeatureEngineer:
         if "date" in df.columns and df.schema["date"] != pl.Date:
             df = df.with_columns(pl.col("date").cast(pl.Date))
 
+        # Phase 1: per-ticker technical indicators
         result_dfs: list[pl.DataFrame] = []
         for ticker in tqdm(tickers, desc="Computing features"):
             ticker_df = df.filter(pl.col("ticker") == ticker)
@@ -139,9 +151,7 @@ class FeatureEngineer:
                 logger.warning(f"Skipping {ticker}: only {ticker_df.height} days of data")
                 continue
 
-            computed = self.feature_pipeline.compute(ticker_df)
-            if not compute_target and "next_day_return" in computed.columns:
-                computed = computed.drop("next_day_return")
+            computed = self.feature_pipeline.compute_technical(ticker_df, include_target=compute_target)
             result_dfs.append(computed)
 
         if not result_dfs:
@@ -152,56 +162,29 @@ class FeatureEngineer:
         critical_cols = ["close", "volume", "rsi_14", "macd"]
         features_df = features_df.filter(~pl.any_horizontal([pl.col(column).is_null() for column in critical_cols if column in features_df.columns]))
 
-        if include_sentiment:
-            features_df = self.merge_sentiment_features(
+        # Phase 2: batch external-data enrichments via DAG
+        any_enrichment = any(
+            [
+                include_sentiment,
+                include_social_sentiment,
+                include_macro,
+                include_enriched_sentiment,
+                include_analyst_ratings,
+                include_sec_features,
+            ]
+        )
+        if any_enrichment:
+            features_df = self.feature_pipeline.compute_enriched(
                 features_df,
+                duckdb_conn=self.conn,
                 start_date=start_date,
                 end_date=end_date,
-            )
-        if include_social_sentiment:
-            features_df = self.merge_social_sentiment_features(
-                features_df,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        if include_enriched_sentiment:
-            from equity_lake.features.enriched_sentiment import merge_enriched_sentiment_features
-
-            features_df = merge_enriched_sentiment_features(
-                self.conn,
-                features_df,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        if include_analyst_ratings:
-            from equity_lake.features.analyst_features import merge_analyst_rating_features
-
-            features_df = merge_analyst_rating_features(
-                self.conn,
-                features_df,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        if include_sec_features:
-            from equity_lake.features.sec_features import merge_sec_features
-
-            features_df = merge_sec_features(
-                self.conn,
-                features_df,
-                start_date=start_date,
-                end_date=end_date,
-            )
-
-        features_df = self.add_cross_modal_sentiment_features(features_df)
-
-        if include_macro:
-            features_df = self.merge_macro_features(
-                features_df,
-                start_date=start_date,
-                end_date=end_date,
+                enable_news_sentiment=include_sentiment,
+                enable_social_sentiment=include_social_sentiment,
+                enable_enriched_sentiment=include_enriched_sentiment,
+                enable_analyst_ratings=include_analyst_ratings,
+                enable_sec_features=include_sec_features,
+                enable_macro=include_macro,
             )
 
         if normalize_cross_sectional:
@@ -217,7 +200,12 @@ class FeatureEngineer:
         start_date: date,
         end_date: date,
     ) -> pl.DataFrame:
-        """Merge aggregated sentiment scores into the feature frame."""
+        """Merge aggregated sentiment scores into the feature frame.
+
+        .. deprecated::
+            Use :meth:`FeaturePipeline.compute_enriched` with ``enable_news_sentiment=True``.
+        """
+        warnings.warn("Use FeaturePipeline.compute_enriched(enable_news_sentiment=True) instead", DeprecationWarning, stacklevel=2)
         features_df = ensure_polars(features_df)
         if features_df.is_empty():
             logger.warning("Empty features DataFrame, skipping sentiment merge")
@@ -241,7 +229,7 @@ class FeatureEngineer:
                 SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count,
                 SUM(CASE WHEN sentiment_label = 'neutral' THEN 1 ELSE 0 END) as neutral_count,
                 STDDEV(sentiment_score) as sentiment_std
-            FROM {duckdb_scan_for(LAKE_DIR / "us_news")}
+            FROM {duckdb_scan_for(LAKE_DIR / "02_silver" / "news_sentiment")}
             WHERE ticker IN {ticker_filter}
             AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
@@ -292,7 +280,12 @@ class FeatureEngineer:
         start_date: date,
         end_date: date,
     ) -> pl.DataFrame:
-        """Merge aggregated social sentiment scores into the feature frame."""
+        """Merge aggregated social sentiment scores into the feature frame.
+
+        .. deprecated::
+            Use :meth:`FeaturePipeline.compute_enriched` with ``enable_social_sentiment=True``.
+        """
+        warnings.warn("Use FeaturePipeline.compute_enriched(enable_social_sentiment=True) instead", DeprecationWarning, stacklevel=2)
         features_df = ensure_polars(features_df)
         if features_df.is_empty():
             logger.warning("Empty features DataFrame, skipping social sentiment merge")
@@ -316,7 +309,7 @@ class FeatureEngineer:
                 SUM(negative_score) as social_negative_score,
                 SUM(CASE WHEN source = 'reddit' THEN mention_count ELSE 0 END) as social_reddit_mentions,
                 SUM(CASE WHEN source = 'twitter' THEN mention_count ELSE 0 END) as social_twitter_mentions
-            FROM {duckdb_scan_for(LAKE_DIR / "us_social_sentiment")}
+            FROM {duckdb_scan_for(LAKE_DIR / "02_silver" / "social_sentiment")}
             WHERE ticker IN {ticker_filter}
             AND date BETWEEN '{start_date}' AND '{end_date}'
             GROUP BY ticker, date
@@ -384,7 +377,12 @@ class FeatureEngineer:
             return features_df
 
     def add_cross_modal_sentiment_features(self, features_df: FrameLike) -> pl.DataFrame:
-        """Add minimal cross-modal sentiment features on top of merged sentiment columns."""
+        """Add minimal cross-modal sentiment features on top of merged sentiment columns.
+
+        .. deprecated::
+            Use :meth:`FeaturePipeline.compute_enriched` which includes cross-modal features.
+        """
+        warnings.warn("Use FeaturePipeline.compute_enriched() instead — cross-modal features are built-in", DeprecationWarning, stacklevel=2)
         enriched = ensure_polars(features_df)
         if enriched.is_empty():
             return enriched
@@ -427,17 +425,21 @@ class FeatureEngineer:
     ) -> pl.DataFrame:
         """Pivot macro indicators to wide format and as-of join on date.
 
+        .. deprecated::
+            Use :meth:`FeaturePipeline.compute_enriched` with ``enable_macro=True``.
+
         Macro data lives in ``MACRO_INDICATORS_DIR/date=YYYY-MM-DD/...parquet`` in
         long format ``(date, indicator, value, source, updated_at)``. We pivot to
         one column per indicator, forward-fill across the requested date range,
         and left-join onto the feature frame on date.
         """
+        warnings.warn("Use FeaturePipeline.compute_enriched(enable_macro=True) instead", DeprecationWarning, stacklevel=2)
         features_df = ensure_polars(features_df)
         if features_df.is_empty():
             logger.warning("Empty features DataFrame, skipping macro merge")
             return features_df
 
-        macro_path = LAKE_DIR / "macro_indicators"
+        macro_path = LAKE_DIR / "01_bronze" / "macro"
         if not macro_path.exists():
             logger.info("Macro indicators directory not found, skipping macro merge")
             return features_df

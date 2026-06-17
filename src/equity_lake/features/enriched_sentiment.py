@@ -7,6 +7,7 @@ left-joins into the price DataFrame. Follows the existing
 
 from __future__ import annotations
 
+import warnings
 from datetime import date
 
 import duckdb
@@ -41,6 +42,9 @@ def merge_enriched_sentiment_features(
 ) -> pl.DataFrame:
     """Merge aggregated LLM-enriched sentiment features into the feature frame.
 
+    .. deprecated::
+        Use :meth:`FeaturePipeline.compute_enriched` with ``enable_enriched_sentiment=True``.
+
     Args:
         conn: DuckDB connection (from FeatureEngineer).
         features_df: Price + technical feature DataFrame.
@@ -50,6 +54,7 @@ def merge_enriched_sentiment_features(
     Returns:
         DataFrame with enriched sentiment columns added via left join.
     """
+    warnings.warn("Use FeaturePipeline.compute_enriched(enable_enriched_sentiment=True) instead", DeprecationWarning, stacklevel=2)
     features_df = ensure_polars(features_df)
     if features_df.is_empty():
         logger.warning("Empty features DataFrame, skipping enriched sentiment merge")

@@ -2,20 +2,17 @@ from __future__ import annotations
 
 import contextlib
 from datetime import date
-from pathlib import Path
 
 import duckdb
 import polars as pl
 import structlog
 
+from equity_lake.core.paths import GOLD_FEATURES_DIR
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = PROJECT_ROOT / "data"
-LAKE_DIR = DATA_DIR / "lake"
-FEATURE_GLOB = str(LAKE_DIR / "features" / "**" / "*.parquet")
+FEATURE_GLOB = str(GOLD_FEATURES_DIR / "**" / "*.parquet")
 
 
 class FeatureLoader:
@@ -26,9 +23,8 @@ class FeatureLoader:
         self._setup_feature_view()
 
     def _setup_feature_view(self) -> None:
-        features_path = LAKE_DIR / "features"
-        if features_path.exists():
-            scan = duckdb_scan_for(features_path)
+        if GOLD_FEATURES_DIR.exists():
+            scan = duckdb_scan_for(GOLD_FEATURES_DIR)
         else:
             scan = f"read_parquet('{FEATURE_GLOB}', hive_partitioning=1, union_by_name=true)"
         self.conn.execute(

@@ -17,20 +17,31 @@ logger = structlog.get_logger()
 
 
 def _dedupe_key_columns(market: str) -> list[str]:
-    if market == "macro_indicators":
+    # Medallion paths + legacy market strings both supported
+    if market in ("01_bronze/macro", "macro", "macro_indicators"):
         return ["indicator", "date"]
-    if market == "us_news":
+    if market in ("02_silver/news_sentiment", "us_news"):
         return ["url"]
-    if market == "us_social_sentiment":
+    if market in ("02_silver/social_sentiment", "us_social_sentiment"):
         return ["ticker", "datetime", "source"]
-    if market in ("rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts", "sec_filings_fulltext", "bronze/raw_articles"):
+    if market in (
+        "01_bronze/raw_articles",
+        "bronze/raw_articles",
+        "rss_news",
+        "reddit_posts",
+        "stocktwits_messages",
+        "us_earnings_transcripts",
+        "sec_filings_fulltext",
+    ):
         return ["source_type", "source_url"]
-    if market in ("silver/processed_articles",):
+    if market in ("02_silver/processed_articles", "silver/processed_articles"):
         return ["article_id", "ticker"]
-    if market in ("us_analyst_ratings",):
+    if market in ("02_silver/analyst_ratings", "us_analyst_ratings"):
         return ["ticker", "date"]
-    if market == "us_sec_financials":
+    if market in ("02_silver/sec_financials", "us_sec_financials"):
         return ["ticker", "date", "filing_type"]
+    if market in ("04_platinum/predictions", "predictions"):
+        return ["ticker", "date"]
     return ["ticker", "date"]
 
 
@@ -40,6 +51,7 @@ def write_to_partitioned_parquet(
     trading_date: date,
     dry_run: bool = False,
     validate_quality: bool = False,
+    skip_schema_validation: bool = False,
 ) -> bool:
     """Write a DataFrame to the Delta Lake storage layer.
 
@@ -49,6 +61,7 @@ def write_to_partitioned_parquet(
         trading_date: Trading date for the partition.
         dry_run: If True, skip the actual write.
         validate_quality: If True, run pointblank validation before writing.
+        skip_schema_validation: If True, bypass column-level schema checks.
     """
     df_polars = ensure_polars(df)
 
@@ -60,10 +73,14 @@ def write_to_partitioned_parquet(
         )
         return False
 
+    if not skip_schema_validation and not validate_schema(df_polars, market):
+        logger.error("Schema validation failed, refusing to write", market=market)
+        return False
+
     if validate_quality:
         from equity_lake.validation.pipeline import ValidationPipeline
 
-        data_type = "news" if market in ("us_news", "us_social_sentiment") else "price"
+        data_type = "news" if market in ("us_news", "us_social_sentiment", "02_silver/news_sentiment", "02_silver/social_sentiment") else "price"
         vp = ValidationPipeline()
         result = vp.validate(df_polars, data_type=data_type, name=f"{market}_{trading_date}")
         if not result.success:
@@ -85,20 +102,22 @@ def write_to_partitioned_parquet(
 
 def validate_schema(df: FrameLike, market: str) -> bool:
     df_pl = ensure_polars(df)
-    if market in ("macro", "macro_indicators"):
+    if market in ("macro", "macro_indicators", "01_bronze/macro"):
         required_cols = MACRO_COLUMNS
-    elif market == "us_news":
+    elif market in ("us_news", "02_silver/news_sentiment"):
         required_cols = NEWS_COLUMNS
-    elif market == "us_social_sentiment":
+    elif market in ("us_social_sentiment", "02_silver/social_sentiment"):
         required_cols = SOCIAL_COLUMNS
     elif market in ("rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts", "sec_filings_fulltext"):
         required_cols = ["article_id", "source_type", "source_url", "title", "date"]
-    elif market == "us_analyst_ratings":
+    elif market in ("us_analyst_ratings", "02_silver/analyst_ratings"):
         required_cols = ["ticker", "date"]
-    elif market == "us_sec_financials":
+    elif market in ("us_sec_financials", "02_silver/sec_financials"):
         required_cols = ["ticker", "date", "filing_type"]
-    elif market in ("bronze/raw_articles", "silver/processed_articles"):
+    elif market in ("bronze/raw_articles", "silver/processed_articles", "01_bronze/raw_articles", "02_silver/processed_articles"):
         required_cols = ["article_id", "date"]
+    elif market in ("predictions", "04_platinum/predictions"):
+        required_cols = ["ticker", "date", "direction", "probability"]
     else:
         required_cols = ["ticker", "date", "open", "high", "low", "close", "volume"]
 

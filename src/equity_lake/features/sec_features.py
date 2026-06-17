@@ -7,6 +7,7 @@ most recent SEC filing **on or before** that date, preventing look-ahead bias.
 
 from __future__ import annotations
 
+import warnings
 from datetime import date
 
 import duckdb
@@ -39,6 +40,9 @@ def merge_sec_features(
     the price date. This prevents look-ahead bias where a future filing
     retroactively influences earlier features.
 
+    .. deprecated::
+        Use :meth:`FeaturePipeline.compute_enriched` with ``enable_sec_features=True``.
+
     Args:
         conn: DuckDB connection (from FeatureEngineer).
         features_df: Price + technical feature DataFrame.
@@ -48,6 +52,7 @@ def merge_sec_features(
     Returns:
         DataFrame with SEC filing columns added via ASOF join.
     """
+    warnings.warn("Use FeaturePipeline.compute_enriched(enable_sec_features=True) instead", DeprecationWarning, stacklevel=2)
     features_df = ensure_polars(features_df)
     if features_df.is_empty():
         logger.warning("Empty features DataFrame, skipping SEC merge")

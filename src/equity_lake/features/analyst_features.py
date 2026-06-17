@@ -6,6 +6,7 @@ daily features, and left-joins into the price DataFrame.
 
 from __future__ import annotations
 
+import warnings
 from datetime import date
 
 import duckdb
@@ -35,6 +36,9 @@ def merge_analyst_rating_features(
 ) -> pl.DataFrame:
     """Merge analyst rating features into the feature frame.
 
+    .. deprecated::
+        Use :meth:`FeaturePipeline.compute_enriched` with ``enable_analyst_ratings=True``.
+
     Args:
         conn: DuckDB connection (from FeatureEngineer).
         features_df: Price + technical feature DataFrame.
@@ -44,6 +48,7 @@ def merge_analyst_rating_features(
     Returns:
         DataFrame with analyst rating columns added via left join.
     """
+    warnings.warn("Use FeaturePipeline.compute_enriched(enable_analyst_ratings=True) instead", DeprecationWarning, stacklevel=2)
     features_df = ensure_polars(features_df)
     if features_df.is_empty():
         logger.warning("Empty features DataFrame, skipping analyst rating merge")
