@@ -38,18 +38,18 @@ class SentimentSignalGenerator(SignalGenerator):
 
     def _load_sentiment_summary(self, ticker: str, start_date: date, target_date: date) -> dict | None:
         """Load aggregated sentiment for a ticker from local news history."""
-        query = f"""
+        query = """
         SELECT
             AVG(sentiment_score) AS avg_sentiment,
             COUNT(*) AS article_count
         FROM news_data
-        WHERE ticker = '{ticker}'
-          AND date >= '{start_date}'
-          AND date <= '{target_date}'
+        WHERE ticker = ?
+          AND date >= ?
+          AND date <= ?
         """
 
         try:
-            row = self.con.execute(query).fetchone()
+            row = self.con.execute(query, [ticker, start_date, target_date]).fetchone()
         except Exception:
             return None
 

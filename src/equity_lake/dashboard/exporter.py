@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -22,6 +23,19 @@ from equity_lake.core.paths import (
     LOGS_DIR,
     US_EQUITY_DIR,
 )
+
+_REDACTED = "***REDACTED***"
+_SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key)", re.IGNORECASE)
+
+
+def _redact_secrets(obj: Any) -> Any:
+    """Recursively replace values whose key looks like a secret with REDACTED."""
+    if isinstance(obj, dict):
+        return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else _redact_secrets(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_secrets(item) for item in obj]
+    return obj
+
 
 MARKET_DATASETS = {
     "us_equity": US_EQUITY_DIR,
@@ -71,7 +85,7 @@ class DashboardExporter:
             "datasets": datasets,
             "health": self._load_health_report(),
             "updates": self._load_updates(),
-            "config": self.settings.model_dump(),
+            "config": _redact_secrets(self.settings.model_dump()),
         }
         return payload
 

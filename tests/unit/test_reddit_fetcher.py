@@ -4,6 +4,8 @@ import json
 from datetime import date
 from unittest.mock import Mock, patch
 
+import pytest
+
 from equity_lake.sources.reddit import RedditFetcher, _build_user_agent
 
 
@@ -14,10 +16,18 @@ class TestBuildUserAgent:
             assert "macos" in ua
             assert "testuser" in ua
 
-    def test_default_user_agent(self):
-        with patch.dict("os.environ", {}, clear=True):
-            ua = _build_user_agent()
-            assert "equity-lake" in ua
+    def test_missing_user_agent_raises(self):
+        with patch.dict("os.environ", {}, clear=True), pytest.raises(ValueError, match="REDDIT_USER_AGENT"):
+            _build_user_agent()
+
+    def test_invalid_platform_raises(self):
+        with patch.dict("os.environ", {"REDDIT_USER_AGENT": "web:myapp:1.0 (by u/testuser)"}), pytest.raises(ValueError, match="must start with"):
+            _build_user_agent()
+
+
+@pytest.fixture(autouse=True)
+def _set_reddit_user_agent(monkeypatch):
+    monkeypatch.setenv("REDDIT_USER_AGENT", "macos:equity-test:1.0 (by u/testuser)")
 
 
 class TestRedditFetcher:

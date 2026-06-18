@@ -34,12 +34,16 @@ def _build_user_agent() -> str:
     """Build a Reddit-compliant User-Agent string.
 
     Required format: ``<platform>:<app ID>:<version> (by u/<username>)``
-    Falls back to a generic string if env vars are missing.
+    Raises ValueError if REDDIT_USER_AGENT is unset or malformed.
     """
-    username = os.getenv("REDDIT_USER_AGENT")
-    if username and username.startswith(("linux", "macos", "windows")):
-        return username
-    return "macos:equity-lake:1.0 (by /u/equity_lake)"
+    user_agent = os.getenv("REDDIT_USER_AGENT")
+    if not user_agent:
+        raise ValueError(
+            "REDDIT_USER_AGENT environment variable is required. Set it to '<platform>:<app-id>:<version> (by u/<username>)' per Reddit API policy."
+        )
+    if not user_agent.startswith(("linux", "macos", "windows")):
+        raise ValueError(f"REDDIT_USER_AGENT must start with 'linux', 'macos', or 'windows'. Got: {user_agent!r}")
+    return user_agent
 
 
 def _load_social_config(config_path: Path | None = None) -> dict[str, Any]:

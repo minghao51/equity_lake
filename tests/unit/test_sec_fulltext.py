@@ -5,9 +5,16 @@ from datetime import date
 from unittest.mock import patch
 
 import httpx
+import pytest
 
 from equity_lake.core.schemas import BRONZE_ARTICLE_COLUMNS
 from equity_lake.sources.sec_fulltext import SECFilingFetcher
+
+
+@pytest.fixture(autouse=True)
+def _set_sec_user_agent(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "TestCompany test@example.com")
+
 
 TICKER_MAP_PAYLOAD = {
     "0": {"ticker": "AAPL", "cik_str": 320193},

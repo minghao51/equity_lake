@@ -63,7 +63,11 @@ class SECFilingFetcher(MarketDataFetcher):
     ):
         super().__init__(retry_attempts, retry_delay)
         self.tickers = tickers or []
-        self.user_agent = user_agent or os.getenv("SEC_USER_AGENT", "Equity Lake contact@example.com")
+        self.user_agent = user_agent or os.getenv("SEC_USER_AGENT", "")
+        if not self.user_agent:
+            raise ValueError(
+                "SEC_USER_AGENT environment variable is required. Set it to 'CompanyName AdminEmail@example.com' per SEC fair-access policy."
+            )
         self.lookback_days = lookback_days
         self._ticker_cik_cache: dict[str, int] = {}
         logger.info("Initialized SECFilingFetcher", ticker_count=len(self.tickers), lookback_days=lookback_days)

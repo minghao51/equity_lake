@@ -1,6 +1,13 @@
 """Tests for SEC fulltext section extraction edge cases."""
 
+import pytest
+
 from equity_lake.sources.sec_fulltext import SECFilingFetcher, _strip_html_tags
+
+
+@pytest.fixture(autouse=True)
+def _set_sec_user_agent(monkeypatch):
+    monkeypatch.setenv("SEC_USER_AGENT", "TestCompany test@example.com")
 
 
 class TestStripHtmlTags:
