@@ -82,21 +82,20 @@ class GapDetector:
                 rows = self._query_missing_single(market, ticker, start_date, end_date, business_days_only)
             else:
                 rows = self._query_missing_all(market, start_date, end_date, business_days_only)
+        except duckdb.Error:
+            logger.exception("gap_detection_query_failed", market=market, ticker=ticker)
+            raise
 
-            missing_dates: dict[str, list[date]] = {}
-            for ticker_symbol, missing_date in rows:
-                missing_dates.setdefault(ticker_symbol, []).append(missing_date)
+        missing_dates: dict[str, list[date]] = {}
+        for ticker_symbol, missing_date in rows:
+            missing_dates.setdefault(ticker_symbol, []).append(missing_date)
 
-            logger.info(
-                "Found %d missing data points across %d tickers",
-                sum(len(d) for d in missing_dates.values()),
-                len(missing_dates),
-            )
-            return missing_dates
-
-        except Exception as e:
-            logger.error("Gap detection failed: %s", e)
-            return {}
+        logger.info(
+            "Found %d missing data points across %d tickers",
+            sum(len(d) for d in missing_dates.values()),
+            len(missing_dates),
+        )
+        return missing_dates
 
     def _query_missing_single(
         self,
@@ -112,15 +111,16 @@ class GapDetector:
             if not trading_dates:
                 return []
             placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
-            date_filter = f"WHERE d.date IN ({placeholders})"
+            # Filter on the outer query (where alias `d` is in scope), NOT inside
+            # the date_range CTE — `d` is only introduced by `FROM date_range d`.
+            business_day_filter = f"AND d.date IN ({placeholders})"
         else:
-            date_filter = ""
+            business_day_filter = ""
 
         query = f"""
         WITH date_range AS (
             SELECT generate_series::DATE AS date
             FROM generate_series($1::DATE, $2::DATE, INTERVAL '1 day')
-            {date_filter}
         ),
         existing_dates AS (
             SELECT DISTINCT date
@@ -132,6 +132,7 @@ class GapDetector:
         FROM date_range d
         LEFT JOIN existing_dates e ON d.date = e.date
         WHERE e.date IS NULL
+        {business_day_filter}
         ORDER BY d.date
         """
         return list(self.con.execute(query, [start_date, end_date, ticker]).fetchall())
@@ -149,15 +150,15 @@ class GapDetector:
             if not trading_dates:
                 return []
             placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
-            date_filter = f"WHERE d.date IN ({placeholders})"
+            # Filter on the final SELECT (alias `dt`), NOT inside the date_range CTE.
+            business_day_filter = f"AND dt.date IN ({placeholders})"
         else:
-            date_filter = ""
+            business_day_filter = ""
 
         query = f"""
         WITH date_range AS (
             SELECT generate_series::DATE AS date
             FROM generate_series($1::DATE, $2::DATE, INTERVAL '1 day')
-            {date_filter}
         ),
         existing_data AS (
             SELECT DISTINCT ticker, date
@@ -172,6 +173,7 @@ class GapDetector:
         FROM date_ticker_combos dt
         LEFT JOIN existing_data ed ON dt.ticker = ed.ticker AND dt.date = ed.date
         WHERE ed.date IS NULL
+        {business_day_filter}
         ORDER BY dt.ticker, dt.date
         """
         return list(self.con.execute(query, [start_date, end_date]).fetchall())

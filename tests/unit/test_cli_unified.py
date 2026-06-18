@@ -148,6 +148,41 @@ class TestNativeCommands:
             result = runner.invoke(app, ["sentiment"])
             assert result.exit_code == 1
 
+    def test_sync_iterates_all_equity_markets(self):
+        """Regression test: sync must not hardcode us_equity only (P0).
+
+        Verifies S3Syncer is instantiated once per equity market (us, cn,
+        hk_sg, jpx, krx) with the correct medallion target_dir.
+        """
+        instances = []
+
+        class FakeSyncer:
+            def __init__(self, bucket, target_dir, workers=16, dry_run=False, tool="auto"):
+                self.bucket = bucket
+                self.target_dir = target_dir
+                instances.append(self)
+
+            def sync(self):
+                return None
+
+        with (
+            patch("equity_lake.storage.s3_sync.S3Syncer", FakeSyncer),
+            patch.dict("os.environ", {"S3_BUCKET": "s3://test-bucket"}),
+        ):
+            result = runner.invoke(app, ["sync", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert len(instances) == 5
+        synced_dirs = {str(i.target_dir) for i in instances}
+        expected = {
+            "data/lake/01_bronze/market_data/us_equity",
+            "data/lake/01_bronze/market_data/cn_ashare",
+            "data/lake/01_bronze/market_data/hk_sg_equity",
+            "data/lake/01_bronze/market_data/jpx_equity",
+            "data/lake/01_bronze/market_data/krx_equity",
+        }
+        assert synced_dirs == expected
+
     def test_forecast_train_prints_training_summary(self):
         class FakeForecaster:
             def __init__(self, model_dir=None, model_mode="v1_direction"):

@@ -252,7 +252,8 @@ def _merge_enriched_sentiment(
             MAX(CASE WHEN market_relevance > 0.8 AND impact_horizon = 'short' THEN 1 ELSE 0 END) as breaking_news_flag
         FROM {scan}
         WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND filing_date BETWEEN ? AND ?
+        AND date BETWEEN ? AND ?
+        GROUP BY ticker, date
     """
 
     try:

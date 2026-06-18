@@ -129,6 +129,7 @@ def sync(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Sync data lake to S3."""
+    from equity_lake.ingestion.types import MARKET_DIR_MAP
     from equity_lake.storage.s3_sync import S3Syncer
 
     _init_logging(verbose)
@@ -136,8 +137,25 @@ def sync(
     if not bucket_url:
         typer.secho("No S3 bucket specified. Use --bucket or set S3_BUCKET.", fg=typer.colors.RED)
         raise typer.Exit(1)
-    syncer = S3Syncer(bucket=bucket_url, target_dir=Path("data/lake/us_equity"), workers=workers, dry_run=dry_run)
-    syncer.sync()
+
+    # Equity market-data directories (Bronze layer). Each is synced separately so
+    # s5cmd can parallelize per market and partial failures don't abort the rest.
+    equity_markets = ["us", "cn", "hk_sg", "jpx", "krx"]
+    failed: list[str] = []
+    for market in equity_markets:
+        market_dir = MARKET_DIR_MAP[market]
+        typer.secho(f"Syncing {market} -> {market_dir} ...", fg=typer.colors.CYAN)
+        syncer = S3Syncer(bucket=bucket_url, target_dir=Path("data/lake") / market_dir, workers=workers, dry_run=dry_run)
+        try:
+            syncer.sync()
+        except Exception as exc:
+            typer.secho(f"  {market} FAILED: {exc}", fg=typer.colors.RED)
+            failed.append(market)
+
+    if failed:
+        typer.secho(f"\nSync complete with failures: {', '.join(failed)}", fg=typer.colors.YELLOW)
+        raise typer.Exit(1)
+    typer.secho("\nAll markets synced.", fg=typer.colors.GREEN)
 
 
 @app.command("macro")

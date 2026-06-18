@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import MagicMock
 
+import duckdb
 import polars as pl
 import pytest
+from deltalake import write_deltalake
 
 from equity_lake.features.dag.enrichments_04 import enriched_features
 
@@ -70,3 +72,53 @@ def test_enriched_features_preserves_columns(features_df: pl.DataFrame, mock_con
     )
     for col in features_df.columns:
         assert col in result.columns
+
+
+def test_merge_enriched_sentiment_populates_columns(features_df: pl.DataFrame, monkeypatch, tmp_path) -> None:
+    """Regression test for missing GROUP BY (P0).
+
+    Without ``GROUP BY ticker, date``, the aggregate query raised a DuckDB
+    error that was swallowed, leaving enriched columns zero-filled forever.
+    """
+    import contextlib
+
+    # Build a silver processed_articles Delta table with two articles for AAPL
+    # on the same date — forces the aggregate to actually group.
+    silver_dir = tmp_path / "processed_articles"
+    articles = pl.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL", "MSFT"],
+            "date": [date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 1)],
+            "filing_date": [date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 1)],
+            "sentiment_score": [0.8, 0.6, -0.3],
+            "sentiment_label": ["bullish", "bullish", "bearish"],
+            "confidence": [0.9, 0.7, 0.8],
+            "market_relevance": [0.95, 0.6, 0.5],
+            "source_type": ["news", "reddit", "news"],
+            "impact_horizon": ["short", "medium", "short"],
+        }
+    )
+    write_deltalake(str(silver_dir), articles.to_arrow(), mode="append")
+
+    # Point the module-level constant at the temp dir
+    from equity_lake.features.dag import enrichments_04
+
+    monkeypatch.setattr(enrichments_04, "SILVER_PROCESSED_ARTICLES_DIR", silver_dir)
+
+    # Real DuckDB connection with delta extension
+    conn = duckdb.connect(":memory:")
+    with contextlib.suppress(Exception):
+        conn.execute("INSTALL delta; LOAD delta;")
+
+    from equity_lake.features.dag.enrichments_04 import _merge_enriched_sentiment
+
+    result = _merge_enriched_sentiment(features_df, conn, date(2024, 1, 1), date(2024, 1, 2))
+
+    # AAPL had two bullish articles on 2024-01-01 → enriched columns must be populated
+    aapl_row = result.filter((pl.col("ticker") == "AAPL") & (pl.col("date") == date(2024, 1, 1)))
+    assert aapl_row.height == 1
+    assert aapl_row["enriched_article_count"][0] == 2
+    assert aapl_row["enriched_sentiment_mean"][0] == pytest.approx(0.7)
+    assert aapl_row["bullish_ratio"][0] == pytest.approx(1.0)
+    # social_volume counts reddit + stocktwits sources (one reddit here)
+    assert aapl_row["social_volume"][0] == 1
