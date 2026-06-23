@@ -105,12 +105,12 @@ class UpdateEngine:
             start_date, end_date = self._determine_date_range(source, symbol, strategy)
             if src.loader_name is not None:
                 loader = registry.create(src.loader_name, {})
-                result = loader.load([symbol], start_date, end_date + timedelta(days=1))
-                if not result.success or result.data is None or frame_is_empty(result.data):
-                    errors.extend(result.errors or [f"{symbol}: no data returned"])
+                load_result = loader.load([symbol], start_date, end_date + timedelta(days=1))
+                if not load_result.success or load_result.data is None or frame_is_empty(load_result.data):
+                    errors.extend(load_result.errors or [f"{symbol}: no data returned"])
                     continue
-                total_records += self._write_result_frame(source, result.data)
-                self.history.record(source, symbol, records=result.data.height)
+                total_records += self._write_result_frame(source, load_result.data)
+                self.history.record(source, symbol, records=load_result.data.height)
                 continue
 
             if src.fetcher_class is None:
@@ -129,7 +129,7 @@ class UpdateEngine:
             total_records += fetched_rows
             self.history.record(source, source if symbol == "__market__" else symbol, records=fetched_rows)
 
-        return UpdateResult(
+        update_result = UpdateResult(
             success=len(errors) == 0,
             source=source,
             records_added=total_records,
@@ -137,6 +137,8 @@ class UpdateEngine:
             errors=errors,
             next_suggested_update=(datetime.now(UTC) + timedelta(hours=24)).isoformat(),
         )
+        self.history.flush()
+        return update_result
 
     def _run_fetcher_updates(
         self,
@@ -152,6 +154,9 @@ class UpdateEngine:
         total_records = 0
         current_date = start_date
         while current_date <= end_date:
+            if current_date.weekday() >= 5:
+                current_date += timedelta(days=1)
+                continue
             frame = fetcher.fetch(current_date)
             if not frame_is_empty(frame):
                 total_records += self._write_result_frame(source, frame)

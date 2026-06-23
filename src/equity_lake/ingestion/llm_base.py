@@ -80,7 +80,7 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
         )
 
     async def process_batch(self, batch: list[dict[str, Any]]) -> BatchT:
-        @self._retry_decorator  # type: ignore[misc]
+        @self._retry_decorator
         async def _call() -> BatchT:
             async with self.semaphore:
                 user_content = self._format_batch(batch)

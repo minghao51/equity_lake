@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 import pandas as pd
@@ -12,6 +11,12 @@ import polars as pl
 import structlog
 import yfinance as yf
 from fredapi import Fred
+from tenacity import (
+    before_sleep_log,
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from equity_lake.core.config import get_project_config
 from equity_lake.core.paths import MACRO_INDICATORS_DIR
@@ -25,27 +30,26 @@ class MacroIndicatorFetcher:
         self.indicator_name = indicator_name
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
+        self._retry_decorator = retry(
+            stop=stop_after_attempt(retry_attempts),
+            wait=wait_exponential(multiplier=retry_delay, min=retry_delay, max=30.0),
+            before_sleep=before_sleep_log(logger, 30),  # WARNING
+            reraise=True,
+        )
 
     def fetch(self, trading_date: date) -> pd.DataFrame | None:
         raise NotImplementedError("Subclasses must implement fetch()")
 
     def _retry_on_failure(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> pd.DataFrame | None:
-        for attempt in range(self.retry_attempts):
-            try:
-                result = func(*args, **kwargs)
-                if result is None:
-                    return None
-                if isinstance(result, pd.DataFrame):
-                    return result
-                return None
-            except Exception as e:
-                if attempt < self.retry_attempts - 1:
-                    wait_time = self.retry_delay * (2**attempt)
-                    logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {wait_time:.1f}s...")
-                    time.sleep(wait_time)
-                else:
-                    logger.error(f"All {self.retry_attempts} attempts failed: {e}")
-        return None
+        @self._retry_decorator
+        def _wrapped() -> pd.DataFrame | None:
+            return func(*args, **kwargs)
+
+        try:
+            return _wrapped()
+        except Exception:
+            logger.error(f"All {self.retry_attempts} attempts failed for {self.indicator_name}")
+            return None
 
 
 class YFinanceFetcher(MacroIndicatorFetcher):
@@ -58,42 +62,37 @@ class YFinanceFetcher(MacroIndicatorFetcher):
             start_date = trading_date.strftime("%Y-%m-%d")
             end_date = (trading_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
-            try:
-                data = yf.download(
-                    self.ticker,
-                    start=start_date,
-                    end=end_date,
-                    progress=False,
-                )
+            data = yf.download(
+                self.ticker,
+                start=start_date,
+                end=end_date,
+                progress=False,
+            )
 
-                if data is None or data.empty:
-                    logger.warning(f"No data for {self.indicator_name} on {trading_date}")
-                    return None
-
-                if "Close" in data.columns:
-                    value = float(data["Close"].iloc[0])
-                elif "Adj Close" in data.columns:
-                    value = float(data["Adj Close"].iloc[0])
-                else:
-                    logger.warning(f"No close price found for {self.indicator_name}")
-                    return None
-
-                df = pd.DataFrame(
-                    {
-                        "date": [trading_date],
-                        "indicator": [self.indicator_name],
-                        "value": [value],
-                        "source": ["yfinance"],
-                        "updated_at": [datetime.now()],
-                    }
-                )
-
-                logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
-                return df
-
-            except Exception as e:
-                logger.error(f"Error fetching {self.indicator_name}: {e}")
+            if data is None or data.empty:
+                logger.warning(f"No data for {self.indicator_name} on {trading_date}")
                 return None
+
+            if "Close" in data.columns:
+                value = float(data["Close"].iloc[0])
+            elif "Adj Close" in data.columns:
+                value = float(data["Adj Close"].iloc[0])
+            else:
+                logger.warning(f"No close price found for {self.indicator_name}")
+                return None
+
+            df = pd.DataFrame(
+                {
+                    "date": [trading_date],
+                    "indicator": [self.indicator_name],
+                    "value": [value],
+                    "source": ["yfinance"],
+                    "updated_at": [datetime.now(UTC)],
+                }
+            )
+
+            logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
+            return df
 
         return self._retry_on_failure(_fetch)
 
@@ -113,35 +112,30 @@ class FredFetcher(MacroIndicatorFetcher):
 
     def fetch(self, trading_date: date) -> pd.DataFrame | None:
         def _fetch() -> pd.DataFrame | None:
-            try:
-                data = self.fred.get_series(
-                    self.series_id,
-                    observation_start=trading_date.strftime("%Y-%m-%d"),
-                    observation_end=trading_date.strftime("%Y-%m-%d"),
-                )
+            data = self.fred.get_series(
+                self.series_id,
+                observation_start=trading_date.strftime("%Y-%m-%d"),
+                observation_end=trading_date.strftime("%Y-%m-%d"),
+            )
 
-                if data.empty:
-                    logger.warning(f"No data for {self.indicator_name} ({self.series_id}) on {trading_date}")
-                    return None
-
-                value = float(data.iloc[0])
-
-                df = pd.DataFrame(
-                    {
-                        "date": [trading_date],
-                        "indicator": [self.indicator_name],
-                        "value": [value],
-                        "source": ["fred"],
-                        "updated_at": [datetime.now()],
-                    }
-                )
-
-                logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
-                return df
-
-            except Exception as e:
-                logger.error(f"Error fetching {self.indicator_name} from FRED: {e}")
+            if data.empty:
+                logger.warning(f"No data for {self.indicator_name} ({self.series_id}) on {trading_date}")
                 return None
+
+            value = float(data.iloc[0])
+
+            df = pd.DataFrame(
+                {
+                    "date": [trading_date],
+                    "indicator": [self.indicator_name],
+                    "value": [value],
+                    "source": ["fred"],
+                    "updated_at": [datetime.now(UTC)],
+                }
+            )
+
+            logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
+            return df
 
         return self._retry_on_failure(_fetch)
 

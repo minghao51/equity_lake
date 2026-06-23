@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 import structlog
@@ -22,6 +22,13 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_FEE_RATIO = 0.001425
 DEFAULT_TAX_RATIO = 0.003
+
+
+def _float_scalar(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class VectorBacktestEngine:
@@ -101,7 +108,7 @@ class VectorBacktestEngine:
         if self.take_profit < float("inf"):
             bt_kwargs["take_profit"] = self.take_profit
 
-        report = data_with_weights.bt.backtest_with_report(**bt_kwargs)
+        report = cast(Any, data_with_weights).bt.backtest_with_report(**bt_kwargs)
         self._report = report
 
         try:
@@ -122,7 +129,7 @@ class VectorBacktestEngine:
             start_date=self.start_date,
             end_date=self.end_date,
             initial_cash=self.initial_cash,
-            final_cash=float(equity_curve.last()) if equity_curve.len() > 0 else self.initial_cash,
+            final_cash=_float_scalar(equity_curve.last(), self.initial_cash) if equity_curve.len() > 0 else self.initial_cash,
             equity_curve=equity_curve,
             trades=trades,
             metrics=self.metrics,
@@ -156,12 +163,12 @@ class VectorBacktestEngine:
 
         row = stats.row(0, named=True)
         self.metrics = {
-            "total_return": float(row.get("total_return", 0.0)),
-            "cagr": float(row.get("cagr", 0.0)),
-            "max_drawdown": float(row.get("max_drawdown", 0.0)),
-            "volatility": float(row.get("daily_vol", 0.0)),
-            "sharpe_ratio": float(row.get("daily_sharpe", 0.0)),
-            "sortino_ratio": float(row.get("daily_sortino", 0.0)),
+            "total_return": _float_scalar(row.get("total_return", 0.0)),
+            "cagr": _float_scalar(row.get("cagr", 0.0)),
+            "max_drawdown": _float_scalar(row.get("max_drawdown", 0.0)),
+            "volatility": _float_scalar(row.get("daily_vol", 0.0)),
+            "sharpe_ratio": _float_scalar(row.get("daily_sharpe", 0.0)),
+            "sortino_ratio": _float_scalar(row.get("daily_sortino", 0.0)),
         }
 
         trades_df = report.trades
@@ -187,7 +194,7 @@ class VectorBacktestEngine:
             position = row.get("position") or 0
             ret = row.get("return") or 0
             try:
-                pnl = float(ret) * float(entry_price) * float(position) if entry_price and position else 0.0
+                pnl = _float_scalar(ret) * _float_scalar(entry_price) * _float_scalar(position) if entry_price and position else 0.0
             except (TypeError, ValueError):
                 pnl = 0.0
 
@@ -264,7 +271,7 @@ class VectorBacktestEngine:
             data_with_weights = data.join(weights_df, on=["date", "ticker"], how="left").with_columns(pl.col("weight").fill_null(0.0))
 
             try:
-                report = data_with_weights.bt.backtest_with_report(
+                report = cast(Any, data_with_weights).bt.backtest_with_report(
                     trade_at_price="close",
                     position=pl.col("weight").cast(pl.Float64),
                     symbol="ticker",
@@ -276,9 +283,9 @@ class VectorBacktestEngine:
                     continue
 
                 row = stats.row(0, named=True)
-                score = float(row.get("daily_sharpe", 0.0))
+                score = _float_scalar(row.get("daily_sharpe", 0.0))
                 if target == "total_return":
-                    score = float(row.get("total_return", 0.0))
+                    score = _float_scalar(row.get("total_return", 0.0))
 
                 if score > best_score:
                     best_score = score

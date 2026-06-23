@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
@@ -49,11 +50,12 @@ def fetch_markets_parallel(
 
         for future in as_completed(futures):
             market = futures[future]
+            start = time.monotonic()
             try:
                 data = future.result()
-                results[market] = FetchResult(market=market, data=data, success=True)
+                results[market] = FetchResult(market=market, data=data, success=True, duration_seconds=time.monotonic() - start)
             except Exception as exc:
-                results[market] = FetchResult(market=market, success=False, error=str(exc))
+                results[market] = FetchResult(market=market, success=False, error=str(exc), duration_seconds=time.monotonic() - start)
 
     return results
 

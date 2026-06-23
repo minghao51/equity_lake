@@ -1,7 +1,7 @@
 """Finnhub social sentiment fetcher for US equities."""
 
 import os
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import polars as pl
@@ -143,7 +143,12 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         }
 
         try:
-            response = requests.get(url, params=params, timeout=10)
+            response = self._retry_on_failure(
+                requests.get,
+                url,
+                params=params,
+                timeout=10,
+            )
             response.raise_for_status()
         except Exception as exc:
             logger.error("API request failed for %s: %s", ticker, exc)
@@ -221,7 +226,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
             normalized_score = (positive_score - negative_score) / total_score if total_score > 0 else 0.0
 
             # Use current time as datetime (API doesn't provide timestamp)
-            dt = datetime.now()
+            dt = datetime.now(UTC)
 
             return {
                 "ticker": ticker,

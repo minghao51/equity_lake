@@ -35,7 +35,7 @@ def test_execute_eod_pipeline_ingestion_stage(monkeypatch):
 def test_execute_eod_pipeline_feature_stage(monkeypatch):
     """Feature stage should record row count on success."""
 
-    def fake_run_feature_pipeline(*, tickers, output_start_date, output_end_date, compute_target):
+    def fake_run_feature_pipeline(*, tickers, output_start_date, output_end_date, compute_target, **kwargs):
         import polars as pl
 
         return pl.DataFrame(

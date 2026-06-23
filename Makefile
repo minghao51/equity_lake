@@ -49,7 +49,7 @@ setup:
 
 dev-setup: setup
 	@echo "🛠️  Installing all development and optional dependencies..."
-	uv sync --all-extras
+	uv sync --all-groups
 	@echo "✅ Development setup complete!"
 
 # Validation

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
+import polars as pl
 import typer
 
 from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date, app, signal_app
@@ -53,7 +54,10 @@ def forecast(
     end: Annotated[str | None, typer.Option("--end", help="End date")] = None,
     date_str: Annotated[str | None, typer.Option("--date", help="Single prediction date")] = None,
     model_dir: Annotated[str | None, typer.Option("--model-dir", help="Model directory")] = None,
-    model_mode: Annotated[str, typer.Option("--model-mode", help="v1_direction or v2_meta_label")] = "v1_direction",
+    model_mode: Annotated[
+        Literal["v1_direction", "v2_meta_label"],
+        typer.Option("--model-mode", help="v1_direction or v2_meta_label"),
+    ] = "v1_direction",
     tune: Annotated[bool, typer.Option("--tune", help="Hyperparameter tuning")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
@@ -64,7 +68,7 @@ def forecast(
     forecaster = PriceForecaster(model_dir=model_dir, model_mode=model_mode)
 
     if mode == "train":
-        start_date = date.fromisoformat(start) if start else date.today() - __import__("datetime").timedelta(days=365)
+        start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
         end_date = date.fromisoformat(end) if end else date.today()
         forecaster.train_model(ticker, start_date, end_date, tune_hyperparams=tune, validate=True)
         summary = forecaster.last_training_summary()
@@ -78,13 +82,13 @@ def forecast(
         typer.echo(json.dumps(result, indent=2, default=str))
 
     elif mode == "backtest":
-        start_date = date.fromisoformat(start) if start else date.today() - __import__("datetime").timedelta(days=365)
+        start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
         end_date = date.fromisoformat(end) if end else date.today()
         results_df = forecaster.backtest(ticker, start_date, end_date)
-        if not results_df.empty:
-            accuracy = (results_df["prediction"] == results_df["actual"]).mean()
+        if not results_df.is_empty():
+            accuracy = float(results_df.select((pl.col("prediction") == pl.col("actual")).mean()).item())
             typer.echo(f"Backtest accuracy: {accuracy:.2%} over {len(results_df)} predictions")
-            typer.echo(results_df.to_string(index=False))
+            typer.echo(str(results_df))
         else:
             typer.secho("No backtest results", fg=typer.colors.YELLOW)
 
@@ -135,7 +139,7 @@ def news(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     max_articles: Annotated[int, typer.Option("--max-articles", help="Max articles per ticker")] = 50,
-    sentiment_method: Annotated[str, typer.Option("--sentiment-method", help="vader or finbert")] = "vader",
+    sentiment_method: Annotated[Literal["vader", "finbert"], typer.Option("--sentiment-method", help="vader or finbert")] = "vader",
     min_relevance: Annotated[float, typer.Option("--min-relevance", help="Min relevance 0.0-1.0")] = 0.0,
     max_workers: Annotated[int, typer.Option("--max-workers", help="Parallel workers")] = 1,
     api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
@@ -164,7 +168,7 @@ def news(
             api_key=api_key,
             tickers=ticker_list,
             max_articles_per_ticker=max_articles,
-            sentiment_method=sentiment_method,  # type: ignore[arg-type]
+            sentiment_method=sentiment_method,
             min_relevance=min_relevance,
             max_workers=max_workers,
         )
@@ -172,7 +176,7 @@ def news(
     with timer("fetch_news"):
         df = fetcher.fetch(trading_date)
 
-    if df.empty:
+    if df.is_empty():
         typer.echo("No news articles fetched")
         return
 
@@ -226,7 +230,7 @@ def sentiment(
     with timer("fetch_sentiment"):
         df = fetcher.fetch(trading_date)
 
-    if df.empty:
+    if df.is_empty():
         typer.echo("No sentiment data fetched")
         return
 

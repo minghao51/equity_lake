@@ -123,7 +123,7 @@ class RSSNewsFetcher(MarketDataFetcher):
                     resp = client.get(feed_url, headers=headers)
                     resp.raise_for_status()
                     parsed = feedparser.parse(resp.content)
-            except Exception:
+            except (httpx.HTTPError, OSError):
                 parsed = feedparser.parse(feed_url)
 
             if parsed.bozo and parsed.bozo_exception:

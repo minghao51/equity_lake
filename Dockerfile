@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh -s -- --version 0.7.8
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
@@ -43,7 +43,14 @@ ENV PATH="/app/.venv/bin:$PATH" \
     DATA_DIR=/app/data \
     LOG_DIR=/app/logs
 
-RUN mkdir -p data/lake/us_equity data/lake/cn_ashare data/lake/hk_sg_equity logs
+RUN mkdir -p data/lake logs && \
+    useradd --create-home --uid 1000 equity && \
+    chown -R equity:equity /app
+
+USER equity
+
+HEALTHCHECK --interval=5m --timeout=10s --retries=3 \
+    CMD python -c "import equity_lake; print('ok')" || exit 1
 
 CMD ["equity", "pipeline"]
 
@@ -52,11 +59,15 @@ CMD ["equity", "pipeline"]
 # =============================================================================
 FROM production AS development
 
+USER root
+
 RUN uv sync --frozen --all-groups
 
-RUN curl -L https://github.com/peak/s5cmd/releases/latest/download/s5cmd_$(uname -s)_$(uname -m).tar.gz | \
+RUN curl -L https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_$(uname -s)_$(uname -m).tar.gz | \
     tar xz && \
     mv s5cmd /usr/local/bin/
+
+USER equity
 
 VOLUME ["/app/data", "/app/logs"]
 

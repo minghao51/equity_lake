@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import duckdb
 import polars as pl
@@ -192,7 +192,7 @@ class BacktestDataLoader:
 
         try:
             arrow_tbl = self.conn.execute(sql, [start_date, end_date]).fetch_arrow_table()
-            return pl.from_arrow(arrow_tbl)
+            return cast(pl.DataFrame, pl.from_arrow(arrow_tbl))
         except Exception as e:
             logger.error("Query failed", error=str(e))
             return pl.DataFrame()
@@ -222,7 +222,7 @@ class BacktestDataLoader:
 
         return data
 
-    @memory.cache  # type: ignore[misc]
+    @memory.cache  # type: ignore[untyped-decorator]
     def load_cached(
         self,
         tickers: tuple[str, ...],

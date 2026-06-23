@@ -155,8 +155,8 @@ class TestSchemaValidation:
         )
 
         is_valid = validate_schema(data_with_nulls, "test")
-        # Should still be valid (warning only)
-        assert is_valid is True
+        # All-null required column should now fail validation (not just warn)
+        assert is_valid is False
 
 
 # =============================================================================

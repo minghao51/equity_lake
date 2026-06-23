@@ -17,7 +17,7 @@ import re
 import time
 import uuid
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import polars as pl
@@ -43,6 +43,10 @@ MAX_SECTION_CHARS = 8000
 MAX_FILING_LOOKBACK_DAYS = 120
 
 
+def _sec_headers(user_agent: str) -> dict[str, str]:
+    return {"User-Agent": user_agent}
+
+
 class SECFilingFetcher(MarketDataFetcher):
     """Fetch and segment SEC 10-K/10-Q filings into bronze article rows.
 
@@ -63,7 +67,8 @@ class SECFilingFetcher(MarketDataFetcher):
     ):
         super().__init__(retry_attempts, retry_delay)
         self.tickers = tickers or []
-        self.user_agent = user_agent or os.getenv("SEC_USER_AGENT", "")
+        env_user_agent = os.getenv("SEC_USER_AGENT")
+        self.user_agent = user_agent if user_agent else (env_user_agent or "")
         if not self.user_agent:
             raise ValueError(
                 "SEC_USER_AGENT environment variable is required. Set it to 'CompanyName AdminEmail@example.com' per SEC fair-access policy."
@@ -108,7 +113,7 @@ class SECFilingFetcher(MarketDataFetcher):
             return
 
         def _fetch() -> dict[str, int]:
-            headers = {"User-Agent": self.user_agent}
+            headers = _sec_headers(self.user_agent)
             with httpx.Client(timeout=15) as client:
                 resp = client.get(SEC_TICKER_URL, headers=headers)
                 resp.raise_for_status()
@@ -141,7 +146,7 @@ class SECFilingFetcher(MarketDataFetcher):
     def _get_recent_filings(self, cik: int, cutoff_date: date, end_date: date) -> list[dict[str, Any]]:
         def _fetch() -> list[dict[str, Any]]:
             url = SEC_SUBMISSIONS_URL.format(cik=f"{cik:010d}")
-            headers = {"User-Agent": self.user_agent}
+            headers = _sec_headers(self.user_agent)
             with httpx.Client(timeout=15) as client:
                 resp = client.get(url, headers=headers)
                 resp.raise_for_status()
@@ -170,7 +175,7 @@ class SECFilingFetcher(MarketDataFetcher):
                 )
             return results
 
-        return self._retry_on_failure(_fetch)  # type: ignore[no-any-return]
+        return cast(list[dict[str, Any]], self._retry_on_failure(_fetch))
 
     def _download_and_extract(
         self,
@@ -183,7 +188,7 @@ class SECFilingFetcher(MarketDataFetcher):
         doc_url = SEC_ARCHIVES_URL.format(cik=cik, acc_no_dash=acc_no_dash, doc=filing["primary_doc"])
 
         def _download() -> list[dict[str, Any]]:
-            headers = {"User-Agent": self.user_agent}
+            headers = _sec_headers(self.user_agent)
             with httpx.Client(timeout=30) as client:
                 resp = client.get(doc_url, headers=headers)
                 resp.raise_for_status()
@@ -227,7 +232,7 @@ class SECFilingFetcher(MarketDataFetcher):
 
         result = self._retry_on_failure(_download)
         time.sleep(0.15)
-        return result  # type: ignore[no-any-return]
+        return cast(list[dict[str, Any]], result)
 
     def _extract_sections(self, html: str) -> list[tuple[str, str]]:
         try:

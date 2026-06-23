@@ -63,7 +63,7 @@ def optimize_threshold(y_true: np.ndarray | pl.Series, y_proba: np.ndarray | pl.
         return 0.5
     best_threshold = 0.5
     best_score = -1.0
-    for threshold in np.arange(0.50, 0.81, 0.01):
+    for threshold in np.arange(0.10, 0.91, 0.01):
         preds = (p_arr >= threshold).astype(int)
         if preds.sum() == 0:
             continue

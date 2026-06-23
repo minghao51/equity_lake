@@ -80,37 +80,29 @@ class YFinanceLoader(BaseDataLoader):
         return not result.empty
 
     def _normalize(self, data: pd.DataFrame, symbols: list[str]) -> pl.DataFrame:
-        records: list[dict[str, object]] = []
+        frames: list[pl.DataFrame] = []
         if isinstance(data.columns, pd.MultiIndex):
             for symbol in symbols:
                 try:
-                    symbol_frame = data[symbol]
+                    symbol_frame = data[symbol].reset_index()
                 except KeyError:
                     continue
-                for idx, row in symbol_frame.iterrows():
-                    records.append(self._build_record(symbol, idx, row))
+                symbol_frame = symbol_frame.rename(columns=lambda c: str(c).lower().replace("adj close", "adj_close"))
+                symbol_frame["ticker"] = symbol
+                frames.append(pl.from_pandas(symbol_frame))
         else:
-            symbol = symbols[0]
-            for idx, row in data.iterrows():
-                records.append(self._build_record(symbol, idx, row))
+            flat = data.reset_index().rename(columns=lambda c: str(c).lower().replace("adj close", "adj_close"))
+            flat["ticker"] = symbols[0]
+            frames.append(pl.from_pandas(flat))
 
-        frame = pl.DataFrame(records)
+        if not frames:
+            return pl.DataFrame()
+
+        frame = pl.concat(frames, how="diagonal_relaxed")
         if frame.is_empty():
             return frame
         frame = normalize_temporal_columns(frame, date_columns=("date",))
         return frame.drop_nulls(subset=["close"])
-
-    def _build_record(self, symbol: str, idx: object, row: pd.Series) -> dict[str, object]:
-        row_dict = row.to_dict()
-        return {
-            "ticker": symbol,
-            "date": idx.date() if hasattr(idx, "date") else idx,
-            "open": row_dict.get("Open", row_dict.get("open")),
-            "high": row_dict.get("High", row_dict.get("high")),
-            "low": row_dict.get("Low", row_dict.get("low")),
-            "close": row_dict.get("Close", row_dict.get("close")),
-            "volume": row_dict.get("Volume", row_dict.get("volume")),
-        }
 
 
 __all__ = ["YFinanceLoader"]

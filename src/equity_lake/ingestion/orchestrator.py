@@ -37,7 +37,7 @@ __all__ = [
 logger = structlog.get_logger()
 
 
-def _market_has_date(market_dir: str, trading_date: date) -> bool:
+def _market_has_date(market_dir: str, trading_date: date, con: duckdb.DuckDBPyConnection | None = None) -> bool:
     market_path = LAKE_DIR / market_dir
     if not market_path.exists():
         return False
@@ -46,13 +46,16 @@ def _market_has_date(market_dir: str, trading_date: date) -> bool:
         from deltalake import DeltaTable
 
         if DeltaTable.is_deltatable(str(market_path)):
-            con = duckdb.connect(":memory:")
+            own_connection = con is None
+            active_con = con if con is not None else duckdb.connect(":memory:")
             try:
-                con.execute("INSTALL delta; LOAD delta;")
-                row = con.execute(f"SELECT COUNT(*) FROM delta_scan('{market_path}') WHERE date = '{trading_date}'").fetchone()
+                if own_connection:
+                    active_con.execute("INSTALL delta; LOAD delta;")
+                row = active_con.execute(f"SELECT COUNT(*) FROM delta_scan('{market_path}') WHERE date = '{trading_date}'").fetchone()
                 return row is not None and row[0] > 0
             finally:
-                con.close()
+                if own_connection:
+                    active_con.close()
     except ImportError:
         pass
 
@@ -61,26 +64,34 @@ def _market_has_date(market_dir: str, trading_date: date) -> bool:
 
 def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[str]:
     markets_needing_fetch: list[str] = []
-    for market in markets:
-        if market in (
-            "macro",
-            "us_news",
-            "us_social_sentiment",
-            "rss_news",
-            "reddit_posts",
-            "stocktwits_messages",
-            "us_earnings_transcripts",
-            "us_analyst_ratings",
-            "sec_filings_fulltext",
-            "us_sec_financials",
-        ):
-            markets_needing_fetch.append(market)
-            continue
-        market_dir = MARKET_DIR_MAP.get(market, market)
-        if _market_has_date(market_dir, trading_date):
-            logger.debug("market_data_exists", market=market, date=str(trading_date))
-        else:
-            markets_needing_fetch.append(market)
+    shared_con: duckdb.DuckDBPyConnection | None = None
+    try:
+        for market in markets:
+            if market in (
+                "macro",
+                "us_news",
+                "us_social_sentiment",
+                "rss_news",
+                "reddit_posts",
+                "stocktwits_messages",
+                "us_earnings_transcripts",
+                "us_analyst_ratings",
+                "sec_filings_fulltext",
+                "us_sec_financials",
+            ):
+                markets_needing_fetch.append(market)
+                continue
+            market_dir = MARKET_DIR_MAP.get(market, market)
+            if shared_con is None:
+                shared_con = duckdb.connect(":memory:")
+                shared_con.execute("INSTALL delta; LOAD delta;")
+            if _market_has_date(market_dir, trading_date, con=shared_con):
+                logger.debug("market_data_exists", market=market, date=str(trading_date))
+            else:
+                markets_needing_fetch.append(market)
+    finally:
+        if shared_con is not None:
+            shared_con.close()
     return markets_needing_fetch
 
 

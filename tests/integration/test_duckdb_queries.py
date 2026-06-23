@@ -32,12 +32,13 @@ class TestEquityDataDB:
         """Test creating market view from Parquet files."""
         db = EquityDataDB(db_path=":memory:")
 
-        # Mock the directory constants
         with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
             db._create_market_view("us_equity", temp_partitioned_parquet, "us")
 
-        # Should not raise exception
-        assert True
+        assert "us_equity" in db.available_views
+        result = db.query("SELECT COUNT(*) as cnt FROM us_equity")
+        assert result.height == 1
+        assert result["cnt"][0] > 0
 
     def test_query_execution(self, tmp_path, temp_partitioned_parquet):
         """Test executing SQL query."""
@@ -101,8 +102,9 @@ class TestQueryExamples:
         result = queries.query_1_latest_data_summary()
 
         assert isinstance(result, pl.DataFrame)
-        expected_cols = ["market", "latest_date", "num_tickers"]
-        assert any(col in result.columns for col in expected_cols)
+        assert not result.is_empty()
+        assert "market" in result.columns
+        assert "latest_date" in result.columns
 
     def test_query_2_top_volume_stocks(self, db_with_data):
         """Test Query 2: Top volume stocks."""

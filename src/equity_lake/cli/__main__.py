@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -36,7 +37,7 @@ def dashboard_build(
     from equity_lake.dashboard.exporter import build_dashboard
 
     _init_logging(verbose)
-    build_dashboard(output_dir=output_dir)
+    build_dashboard(output_dir=Path(output_dir) if output_dir else None)
 
 
 @dashboard_app.command("serve")

@@ -217,6 +217,7 @@ exclude = ["scripts/", "tests/"]
 
 [[tool.mypy.overrides]]
 module = [
+    "exchange_calendars",
     "yfinance.*",
     "akshare.*",
     "duckdb.*",
@@ -248,12 +249,15 @@ module = [
      "pointblank.*",
      "streamlit.*",
      "pyarrow.*",
-     "feedparser.*",
-     "openai.*",
-     "readability.*",
-     "shap.*",
-     "statsmodels.*",
-     "networkx.*",
+    "feedparser.*",
+    "openai.*",
+    "readability.*",
+    "shap.*",
+    "statsmodels.*",
+    "networkx.*",
+    "exchange_calendars.*",
+    "edgar",
+    "edgar.*",
 ]
 ignore_missing_imports = true
 

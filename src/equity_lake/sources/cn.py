@@ -2,7 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import akshare as ak
 import pandas as pd
@@ -60,8 +60,8 @@ class CNAshareFetcher(MarketDataFetcher):
             stock_data["ticker"] = stock_code
             stock_data["date"] = trading_date
             return stock_data
-        except Exception as exc:
-            logger.debug("Failed to fetch %s: %s", stock_code, exc)
+        except Exception:
+            logger.debug("Failed to fetch %s", stock_code, exc_info=True)
             return None
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
@@ -164,16 +164,14 @@ class CNAshareFetcher(MarketDataFetcher):
                     unique_tickers=unique_tickers,
                 )
                 return frame
-            except Exception as exc:
-                logger.error(
+            except Exception:
+                logger.exception(
                     "fetch_cn_ashare_failed",
-                    error=str(exc),
-                    error_type=type(exc).__name__,
                     date=str(trading_date),
                 )
                 return _empty_frame()
 
-        return self._retry_on_failure(_fetch)
+        return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 
 
 __all__ = ["CNAshareFetcher"]

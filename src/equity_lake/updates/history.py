@@ -44,7 +44,11 @@ class UpdateHistory:
     def record(self, source: str, symbol: str, records: int = 0) -> None:
         new_row = pl.DataFrame([{"source": source, "symbol": symbol, "updated_at": datetime.now(UTC), "records": records}])
         self._history = new_row if self.history.is_empty() else pl.concat([self.history, new_row], how="vertical_relaxed")
-        self._history.write_parquet(self.path)
+
+    def flush(self) -> None:
+        """Persist buffered history to parquet. Call once after all record() calls."""
+        if self._history is not None:
+            self._history.write_parquet(self.path)
 
 
 __all__ = ["UpdateHistory"]

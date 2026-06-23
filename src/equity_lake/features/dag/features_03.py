@@ -37,7 +37,7 @@ _FEATURE_SAMPLE_SIZE = 100
 # ---------------------------------------------------------------------------
 
 
-@check_output(  # type: ignore[misc]
+@check_output(  # type: ignore[untyped-decorator]
     range=(0.0, 100.0),
     importance="warn",
     default_validator_candidates=[PolarsRangeValidator],
@@ -62,7 +62,7 @@ def macd_histogram(macd_frame: pl.DataFrame) -> pl.Series:
     return macd_frame["histogram"]
 
 
-@parameterize(  # type: ignore[misc]
+@parameterize(  # type: ignore[untyped-decorator]
     roc_5={"length": value(5)},
     roc_10={"length": value(10)},
     roc_20={"length": value(20)},
@@ -72,7 +72,7 @@ def roc_pct(close: pl.Series, length: int) -> pl.Series:
     return roc(close, length=length)
 
 
-@parameterize(  # type: ignore[misc]
+@parameterize(  # type: ignore[untyped-decorator]
     return_1d={"window": value(1)},
     return_5d={"window": value(5)},
     return_10d={"window": value(10)},
@@ -109,7 +109,8 @@ def bb_width(bb_upper: pl.Series, bb_lower: pl.Series, bb_middle: pl.Series) -> 
 
 
 def bb_pct(close: pl.Series, bb_upper: pl.Series, bb_lower: pl.Series) -> pl.Series:
-    return (close - bb_lower) / (bb_upper - bb_lower)
+    band_width = (bb_upper - bb_lower).replace(0.0, None)
+    return (close - bb_lower) / band_width
 
 
 def atr_14(high: pl.Series, low: pl.Series, close: pl.Series) -> pl.Series:
@@ -157,7 +158,8 @@ def obv(close: pl.Series, volume: pl.Series) -> pl.Series:
 
 
 def volume_ratio(volume: pl.Series, volume_ma_20: pl.Series) -> pl.Series:
-    return volume / volume_ma_20
+    safe_ma = volume_ma_20.replace(0.0, None)
+    return volume / safe_ma
 
 
 # ---------------------------------------------------------------------------

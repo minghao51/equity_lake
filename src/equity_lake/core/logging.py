@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
@@ -167,7 +167,7 @@ def setup_structured_logging(
             logging.getLogger().addHandler(file_handler)
             _configured_log_files.add(resolved_log_file)
 
-    return logger
+    return cast(structlog.stdlib.BoundLogger, logger)
 
 
 # =============================================================================

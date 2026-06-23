@@ -19,7 +19,7 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 import polars as pl
@@ -90,8 +90,10 @@ class EquityDataDB:
             logger.warning(f"Data directory not found: {data_dir}")
             return
 
-        scan = f"SELECT *, '{market_label}' as market FROM delta_scan('{data_dir}')"
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS {scan}"
+        from equity_lake.storage.lake_reader import duckdb_scan_for
+
+        scan_expr = duckdb_scan_for(data_dir)
+        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT *, '{market_label}' as market FROM {scan_expr}"
 
         try:
             self.con.execute(sql)
@@ -162,7 +164,7 @@ class EquityDataDB:
             available = ", ".join(self.QUERY_MAP.keys())
             logger.error(f"Unknown query: {name}. Available: {available}")
             return pl.DataFrame()
-        return getattr(examples, method_name)(**kwargs)
+        return cast(pl.DataFrame, getattr(examples, method_name)(**kwargs))
 
     def run_all_queries(self) -> dict[str, pl.DataFrame]:
         self._ensure_views()

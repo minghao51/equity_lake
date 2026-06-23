@@ -42,15 +42,21 @@ class GapDetector:
 
     def __init__(self, lake_path: Path | None = None):
         self.lake_path = lake_path or LAKE_DIR
-        self.con = duckdb.connect(":memory:")
+        self.con: duckdb.DuckDBPyConnection | None = duckdb.connect(":memory:")
         with contextlib.suppress(Exception):
-            self.con.execute("INSTALL delta; LOAD delta;")
+            if self.con is not None:
+                self.con.execute("INSTALL delta; LOAD delta;")
 
     def close(self) -> None:
         """Close the underlying DuckDB connection."""
         if hasattr(self, "con") and self.con is not None:
             self.con.close()
             self.con = None
+
+    def _connection(self) -> duckdb.DuckDBPyConnection:
+        if self.con is None:
+            raise RuntimeError("DuckDB connection is closed")
+        return self.con
 
     def __enter__(self) -> GapDetector:
         return self
@@ -135,7 +141,7 @@ class GapDetector:
         {business_day_filter}
         ORDER BY d.date
         """
-        return list(self.con.execute(query, [start_date, end_date, ticker]).fetchall())
+        return list(self._connection().execute(query, [start_date, end_date, ticker]).fetchall())
 
     def _query_missing_all(
         self,
@@ -176,7 +182,7 @@ class GapDetector:
         {business_day_filter}
         ORDER BY dt.ticker, dt.date
         """
-        return list(self.con.execute(query, [start_date, end_date]).fetchall())
+        return list(self._connection().execute(query, [start_date, end_date]).fetchall())
 
     def get_latest_date(self, market: str, ticker: str) -> date | None:
         scan = self._scan_source(market)
@@ -186,7 +192,7 @@ class GapDetector:
         WHERE ticker = $1
         """
         try:
-            result = self.con.execute(query, [ticker]).fetchone()
+            result = self._connection().execute(query, [ticker]).fetchone()
             return result[0] if result and result[0] else None
         except Exception as e:
             logger.warning("Failed to get latest date for %s: %s", ticker, e)
@@ -218,7 +224,7 @@ class GapDetector:
         """
 
         try:
-            results = self.con.execute(query, [start_date, end_date]).fetchall()
+            results = self._connection().execute(query, [start_date, end_date]).fetchall()
             stats: dict[str, dict[str, int | float]] = {}
             for ticker, actual_days in results:
                 missing_days = max(0, expected_days - actual_days)

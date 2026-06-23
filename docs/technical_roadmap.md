@@ -2270,7 +2270,7 @@ class ValidationPipeline:
 ### 5.1 Hamilton Feature Definitions
 
 ```python
-# src/equity_lake/features/hamilton_features.py
+# src/equity_lake/features/dag/features_03.py
 """
 Hamilton feature definitions for equity data.
 
@@ -2626,10 +2626,9 @@ class FeaturePipeline:
         import sys
         from pathlib import Path
 
-        # Import feature module
-        # This assumes features are in hamilton_features.py
+        # Import Hamilton DAG modules
         sys.path.insert(0, str(Path(__file__).parent))
-        import hamilton_features
+        from equity_lake.features.dag import clean_02, enrichments_04, features_03, raw_01
 
         # Create adapter for caching if enabled
         adapter = None
@@ -2640,7 +2639,7 @@ class FeaturePipeline:
                 cache_dir=str(self.cache_dir)
             )
 
-        return driver.Driver({}, hamilton_features, adapter=adapter)
+        return driver.Driver({}, raw_01, clean_02, features_03, enrichments_04, adapter=adapter)
 
     def compute(
         self,

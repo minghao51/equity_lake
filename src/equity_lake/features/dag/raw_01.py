@@ -38,7 +38,7 @@ def low(price_data: pl.DataFrame) -> pl.Series:
     return price_data["low"]
 
 
-@check_output(  # type: ignore[misc]
+@check_output(  # type: ignore[untyped-decorator]
     data_type=float,
     importance="warn",
     default_validator_candidates=[PolarsDataTypeValidator],
@@ -47,7 +47,7 @@ def close(price_data: pl.DataFrame) -> pl.Series:
     return price_data["close"].cast(pl.Float64)
 
 
-@check_output(  # type: ignore[misc]
+@check_output(  # type: ignore[untyped-decorator]
     data_type=float,
     importance="warn",
     default_validator_candidates=[PolarsDataTypeValidator],

@@ -17,6 +17,13 @@ from equity_lake.core.polars_utils import FrameLike, ensure_polars
 logger = structlog.get_logger()
 
 
+def _as_float(value: Any) -> float | None:
+    """Return a float for real numeric scalars and None otherwise."""
+    if type(value) is not bool and isinstance(value, int | float):
+        return float(value)
+    return None
+
+
 class _ColumnProfile:
     def __init__(self, summary: dict[str, Any]) -> None:
         self._summary = summary
@@ -112,11 +119,18 @@ class DataProfiler:
             if series.dtype.is_numeric():
                 numeric_non_null = series.drop_nulls()
                 if len(numeric_non_null) > 0:
-                    summary["distribution/mean"] = float(numeric_non_null.mean())
-                    std = numeric_non_null.std()
-                    summary["distribution/stddev"] = float(std) if std is not None else 0.0
-                    summary["distribution/min"] = float(numeric_non_null.min())
-                    summary["distribution/max"] = float(numeric_non_null.max())
+                    mean_value = _as_float(numeric_non_null.mean())
+                    std_value = _as_float(numeric_non_null.std())
+                    min_value = _as_float(numeric_non_null.min())
+                    max_value = _as_float(numeric_non_null.max())
+
+                    if mean_value is not None:
+                        summary["distribution/mean"] = mean_value
+                    summary["distribution/stddev"] = std_value if std_value is not None else 0.0
+                    if min_value is not None:
+                        summary["distribution/min"] = min_value
+                    if max_value is not None:
+                        summary["distribution/max"] = max_value
 
             summaries[col_name] = summary
 
@@ -169,10 +183,10 @@ class DataProfiler:
             summary_c = cols_current[col_name].to_summary_dict()
             summary_b = cols_baseline[col_name].to_summary_dict()
 
-            mean_c = summary_c.get("distribution/mean", 0)
-            mean_b = summary_b.get("distribution/mean", 0)
+            mean_c = _as_float(summary_c.get("distribution/mean"))
+            mean_b = _as_float(summary_b.get("distribution/mean"))
 
-            if mean_b and mean_c:
+            if mean_b is not None and mean_b != 0.0 and mean_c is not None:
                 pct_change = abs(mean_c - mean_b) / mean_b
                 if pct_change > threshold:
                     has_drift = True
@@ -181,5 +195,29 @@ class DataProfiler:
                         "mean_baseline": float(mean_b),
                         "pct_change": float(pct_change),
                     }
+
+            std_c = _as_float(summary_c.get("distribution/stddev"))
+            std_b = _as_float(summary_b.get("distribution/stddev"))
+            if std_b is not None and std_b != 0.0 and std_c is not None:
+                std_pct_change = abs(std_c - std_b) / std_b
+                if std_pct_change > threshold:
+                    has_drift = True
+                    drift_columns.setdefault(col_name, {})["stddev_pct_change"] = float(std_pct_change)
+
+            min_c = _as_float(summary_c.get("distribution/min"))
+            min_b = _as_float(summary_b.get("distribution/min"))
+            if min_b is not None and min_b != 0.0 and min_c is not None:
+                min_pct_change = abs(min_c - min_b) / abs(min_b)
+                if min_pct_change > threshold:
+                    has_drift = True
+                    drift_columns.setdefault(col_name, {})["min_pct_change"] = float(min_pct_change)
+
+            max_c = _as_float(summary_c.get("distribution/max"))
+            max_b = _as_float(summary_b.get("distribution/max"))
+            if max_b is not None and max_b != 0.0 and max_c is not None:
+                max_pct_change = abs(max_c - max_b) / abs(max_b)
+                if max_pct_change > threshold:
+                    has_drift = True
+                    drift_columns.setdefault(col_name, {})["max_pct_change"] = float(max_pct_change)
 
         return DriftReport(has_drift=has_drift, columns=drift_columns)

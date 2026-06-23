@@ -1,3 +1,5 @@
+from datetime import date
+
 import polars as pl
 import structlog
 
@@ -44,11 +46,16 @@ class WalkForwardValidator:
             combined_data = pl.concat([train_data, test_data]).sort(["ticker", "date"])
 
             test_dates = test_data["date"]
+            start_date = test_dates.min()
+            end_date = test_dates.max()
+            if not isinstance(start_date, date) or not isinstance(end_date, date):
+                logger.error("Fold dates are invalid", fold=i + 1)
+                continue
             engine = VectorBacktestEngine(
                 strategy=strategy,
                 tickers=tickers,
-                start_date=test_dates.min(),
-                end_date=test_dates.max(),
+                start_date=start_date,
+                end_date=end_date,
                 initial_cash=initial_cash,
                 preloaded_data=combined_data,
             )

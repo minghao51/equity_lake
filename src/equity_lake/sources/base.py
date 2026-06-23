@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pandas as pd
 import polars as pl
+import requests
 import structlog
 import yfinance as yf
 from tenacity import (
@@ -207,7 +208,7 @@ class MarketDataFetcher:
         4xx errors propagate immediately without retry.
         """
 
-        @self._retry_decorator  # type: ignore[misc]
+        @self._retry_decorator
         def _wrapped() -> Any:
             try:
                 return func(*args, **kwargs)
@@ -216,6 +217,12 @@ class MarketDataFetcher:
                     raise TransientError(str(exc)) from exc
                 raise
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
+                raise TransientError(str(exc)) from exc
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code >= 500:
+                    raise TransientError(str(exc)) from exc
+                raise
+            except (requests.ConnectionError, requests.Timeout) as exc:
                 raise TransientError(str(exc)) from exc
 
         return _wrapped()
@@ -318,7 +325,7 @@ class YFinanceBaseFetcher(MarketDataFetcher):
             logger.info("Fetched %s rows for %s unique %s tickers", frame.height, unique_tickers, self.market)
             return frame
 
-        return self._retry_on_failure(_fetch)
+        return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 
 
 __all__ = [

@@ -129,7 +129,8 @@ def validate_schema(df: FrameLike, market: str) -> bool:
     null_counts = df_pl.null_count().row(0, named=True)
     for col in required_cols:
         if col in df_pl.columns and col in null_counts and null_counts[col] == df_pl.height:
-            logger.warning("%s: Column '%s' is all null", market, col)
+            logger.error("%s: Required column '%s' is all null", market, col)
+            return False
 
     return True
 

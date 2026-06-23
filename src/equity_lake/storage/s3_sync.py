@@ -146,6 +146,7 @@ class S3Syncer:
             logger.info(f"[DRY RUN] Would run: {' '.join(cmd)}")
             return True
 
+        process: subprocess.Popen[str] | None = None
         try:
             logger.info(f"Running: {' '.join(cmd)}")
 
@@ -162,11 +163,22 @@ class S3Syncer:
                 for line in process.stdout:
                     logger.info(line.strip())
 
-            process.wait()
+            process.wait(timeout=600)
             return process.returncode == 0
 
+        except subprocess.TimeoutExpired:
+            logger.error("s5cmd sync timed out after 600s")
+            if process is not None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+            return False
         except Exception as e:
             logger.error(f"s5cmd sync failed: {e}")
+            if process is not None:
+                process.terminate()
             return False
 
     def sync_with_aws_cli(self) -> bool:
