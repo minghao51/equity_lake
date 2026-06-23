@@ -105,7 +105,6 @@ docs = [
     "mike>=2.2.0",
     "mkdocs-material>=9.7.6",
     "mkdocstrings-python>=2.0.3",
-    "mkdocs-jupyter>=0.24.0",
 ]
 
 [project.scripts]
