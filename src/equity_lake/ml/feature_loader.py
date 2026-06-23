@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from datetime import date
+from pathlib import Path
 
 import duckdb
 import polars as pl
@@ -23,10 +24,20 @@ class FeatureLoader:
         self._setup_feature_view()
 
     def _setup_feature_view(self) -> None:
-        if GOLD_FEATURES_DIR.exists():
-            scan = duckdb_scan_for(GOLD_FEATURES_DIR)
-        else:
-            scan = f"read_parquet('{FEATURE_GLOB}', hive_partitioning=1, union_by_name=true)"
+        scan = self._feature_scan()
+        if scan is None:
+            self.conn.execute(
+                """
+                CREATE OR REPLACE VIEW features_all AS
+                SELECT
+                    CAST(NULL AS VARCHAR) AS ticker,
+                    CAST(NULL AS TIMESTAMP) AS date
+                WHERE FALSE
+                """
+            )
+            logger.info("duckdb_feature_view_ready", source="empty")
+            return
+
         self.conn.execute(
             f"""
             CREATE OR REPLACE VIEW features_all AS
@@ -35,6 +46,18 @@ class FeatureLoader:
             """
         )
         logger.info("duckdb_feature_view_ready")
+
+    def _feature_scan(self) -> str | None:
+        if GOLD_FEATURES_DIR.exists():
+            parquet_files = list(GOLD_FEATURES_DIR.rglob("*.parquet"))
+            if parquet_files:
+                return duckdb_scan_for(GOLD_FEATURES_DIR)
+            return None
+
+        feature_root = Path(FEATURE_GLOB.split("**")[0])
+        if feature_root.exists() and list(feature_root.rglob("*.parquet")):
+            return f"read_parquet('{FEATURE_GLOB}', hive_partitioning=1, union_by_name=true)"
+        return None
 
     def load_features(self, ticker: str, start_date: date, end_date: date) -> pl.DataFrame:
         query = """
