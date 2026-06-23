@@ -7,7 +7,6 @@ exclude_docs: README.md
 
 theme:
   name: material
-  custom_dir: overrides
   palette:
     - media: "(prefers-color-scheme)"
       toggle:
@@ -35,17 +34,6 @@ nav:
   - Home: index.md
   - Getting Started:
       - Quickstart: getting-started/quickstart.md
-  - Notebooks:
-      - Setup & Config: notebooks/01-setup-and-config.ipynb
-      - Data Ingestion: notebooks/02-data-ingestion.ipynb
-      - Storage & Queries: notebooks/03-storage-and-queries.ipynb
-      - Hamilton Features: notebooks/04-hamilton-features.ipynb
-      - Feature Deep Dive: notebooks/05-feature-engineering-deep-dive.ipynb
-      - ML Prediction: notebooks/06-ml-prediction.ipynb
-      - Signal Scanning: notebooks/07-signal-scanning.ipynb
-      - Backtesting: notebooks/08-backtesting.ipynb
-      - Sentiment Analysis: notebooks/09-sentiment-analysis.ipynb
-      - Validation & Quality: notebooks/10-validation-and-quality.ipynb
   - User Guide:
       - CLI Reference: user-guide/20260406-cli-reference.md
       - Pipeline: user-guide/pipeline.md
@@ -60,17 +48,6 @@ nav:
 
 plugins:
   - search
-  - mkdocs-jupyter:
-      execute: false
-      theme: light
-      include: ["*.ipynb"]
-      show_input: true
-      no_prompt: false
-      allow_errors: false
-      include_source: true
-      include_requirejs: true
-      cache: true
-      cache_dir: .cache/mkdocs-jupyter
   - mkdocstrings:
       handlers:
         python:
@@ -89,12 +66,6 @@ markdown_extensions:
   - attr_list
   - toc:
       permalink: true
-
-extra_css:
-  - stylesheets/jupyter-fix.css
-
-extra_javascript:
-  - javascripts/jupyter-theme-bridge.js
 
 extra:
   version:
