@@ -8,8 +8,9 @@ under ``data/lake/<market>/``.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
+import duckdb
 import polars as pl
 import structlog
 from deltalake import DeltaTable, write_deltalake
@@ -20,6 +21,8 @@ from equity_lake.core.polars_utils import FrameLike, normalize_temporal_columns
 logger = structlog.get_logger(__name__)
 
 _DATE_COL = "date"
+WriteMode = Literal["append", "overwrite", "ignore", "error"]
+SchemaMode = Literal["merge", "overwrite"] | None
 
 
 def delta_table_path(market: str, lake_dir: Path | None = None) -> Path:
@@ -29,10 +32,10 @@ def delta_table_path(market: str, lake_dir: Path | None = None) -> Path:
 def write_delta(
     df: FrameLike,
     market: str,
-    mode: str = "append",
+    mode: WriteMode = "append",
     partition_by: list[str] | None = None,
     lake_dir: Path | None = None,
-    schema_mode: str | None = None,
+    schema_mode: SchemaMode = None,
 ) -> bool:
     """Write a DataFrame to a date-partitioned Delta table.
 
@@ -50,7 +53,7 @@ def write_delta(
     try:
         write_deltalake(
             str(table_path),
-            df_polars,
+            df_polars.to_arrow(),
             mode=mode,
             partition_by=partitions,
             schema_mode=schema_mode,
@@ -63,8 +66,8 @@ def write_delta(
             path=str(table_path),
         )
         return True
-    except Exception as exc:
-        logger.error("delta_write_failed", market=market, error=str(exc))
+    except Exception:
+        logger.exception("delta_write_failed", market=market)
         return False
 
 
@@ -104,7 +107,10 @@ def merge_delta(
         logger.info("delta_merge", market=market, rows=df_polars.height)
         return True
     except Exception as exc:
-        logger.error("delta_merge_failed", market=market, error=str(exc))
+        if "schema" in str(exc).lower() or "column" in str(exc).lower():
+            logger.warning("delta_merge_schema_mismatch", market=market, hint="falling back to append with schema merge")
+            return write_delta(df_polars, market, mode="append", schema_mode="merge", lake_dir=lake_dir)
+        logger.exception("delta_merge_failed", market=market)
         return False
 
 
@@ -117,9 +123,9 @@ def read_delta(
     table_path = delta_table_path(market, lake_dir)
     try:
         dt = DeltaTable(str(table_path), version=version) if version is not None else DeltaTable(str(table_path))
-        return pl.from_arrow(dt.to_pyarrow_table())
-    except Exception as exc:
-        logger.error("delta_read_failed", market=market, error=str(exc))
+        return cast(pl.DataFrame, pl.from_arrow(dt.to_pyarrow_table()))
+    except Exception:
+        logger.exception("delta_read_failed", market=market)
         return pl.DataFrame()
 
 
@@ -186,8 +192,6 @@ def migrate_parquet_to_delta(
         return False
 
     logger.info("delta_migrate_start", market=market, path=str(market_dir))
-
-    import duckdb
 
     con = duckdb.connect(":memory:")
     glob = str(market_dir / "**" / "*.parquet")

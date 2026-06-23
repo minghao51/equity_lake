@@ -1,0 +1,32 @@
+feeds:
+  # --- Active native RSS feeds (verified Jun 2026) ---
+  - name: cnbc_top_news
+    url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    category: [business, stock]
+  - name: cnbc_world_news
+    url: "https://www.cnbc.com/id/100727362/device/rss/rss.html"
+    category: [macro, world]
+  - name: seeking_alpha_market
+    url: "https://seekingalpha.com/feed.xml"
+    category: [earnings, analyst, stock]
+  - name: marketwatch_topstories
+    url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+    category: [stock, macro]
+  - name: barrons_markets
+    url: "https://feeds.barrons.com/rss/RSSMarketsMain.xml"
+    category: [stock, macro]
+  - name: yahoo_finance
+    url: "https://finance.yahoo.com/news/rssindex"
+    category: [stock, macro]
+  - name: motley_fool
+    url: "https://www.fool.com/feeds/index.aspx"
+    category: [stock, analyst]
+  - name: investopedia
+    url: "https://www.investopedia.com/feedbuilder/feed/getfeed?feedName=rss_headline"
+    category: [education, general]
+  - name: wsj_markets
+    url: "https://feeds.a.dj.com/rss/RSSMarketsMain.xml"
+    category: [stock, macro]
+  - name: nytimes_business
+    url: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
+    category: [business, macro]

@@ -58,17 +58,17 @@ class BacktestSignalGenerator(SignalGenerator):
         start_date = target_date - timedelta(days=lookback_days + 50)
 
         # Query price data
-        query = f"""
+        query = """
         SELECT date, close, volume
         FROM price_data
-        WHERE ticker = '{ticker}'
-          AND date >= '{start_date}'
-          AND date <= '{target_date}'
+        WHERE ticker = ?
+          AND date >= ?
+          AND date <= ?
         ORDER BY date
         """
 
         try:
-            df = self.con.execute(query).pl()
+            df = self.con.execute(query, [ticker, start_date, target_date]).pl()
         except Exception:
             return None
 

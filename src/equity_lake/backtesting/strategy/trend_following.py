@@ -174,9 +174,10 @@ class AdaptiveTrendStrategy(BaseStrategy):
         minus_dm = pl.when((down_move > up_move) & (down_move > 0)).then(down_move).otherwise(0.0)
 
         atr = tr.rolling_mean(window_size=period).over("ticker")
-        plus_di = 100 * (plus_dm.rolling_mean(window_size=period).over("ticker") / atr)
-        minus_di = 100 * (minus_dm.rolling_mean(window_size=period).over("ticker") / atr)
-        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        plus_di = pl.when(atr != 0).then(100 * (plus_dm.rolling_mean(window_size=period).over("ticker") / atr)).otherwise(0.0)
+        minus_di = pl.when(atr != 0).then(100 * (minus_dm.rolling_mean(window_size=period).over("ticker") / atr)).otherwise(0.0)
+        di_sum = plus_di + minus_di
+        dx = pl.when(di_sum != 0).then(100 * (plus_di - minus_di).abs() / di_sum).otherwise(0.0)
         return dx.rolling_mean(window_size=period).over("ticker")
 
     def generate_weights(self, data: pl.DataFrame) -> pl.DataFrame:

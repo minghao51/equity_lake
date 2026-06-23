@@ -79,14 +79,14 @@ class TestNewsSchemaValidation:
         assert result is False
 
     def test_all_null_column_warns(self):
-        """Test that all-null columns are flagged."""
+        """Test that all-null required columns fail validation."""
         data = {col: [None] for col in NEWS_COLUMNS}
         data["ticker"] = ["AAPL"]
         df = pl.DataFrame(data)
 
         result = validate_schema(df, "us_news")
 
-        assert result is True
+        assert result is False
 
 
 # =============================================================================

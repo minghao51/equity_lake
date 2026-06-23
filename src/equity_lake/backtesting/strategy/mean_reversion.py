@@ -12,8 +12,9 @@ def _rsi_expr(close: pl.Expr, period: int) -> pl.Expr:
     loss = pl.when(delta < 0).then(-delta).otherwise(0.0)
     avg_gain = gain.rolling_mean(window_size=period)
     avg_loss = loss.rolling_mean(window_size=period)
-    rs = avg_gain / avg_loss
-    return 100 - (100 / (1 + rs))
+    rs = pl.when(avg_loss != 0).then(avg_gain / avg_loss).otherwise(None)
+    rsi = 100 - (100 / (1 + rs))
+    return pl.when(rsi.is_not_null()).then(rsi).otherwise(50.0)
 
 
 class BBMeanReversionStrategy(BaseStrategy):

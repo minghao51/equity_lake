@@ -20,7 +20,7 @@ def validate_tickers(filepath: Path) -> list[str]:
         return errors
 
     try:
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
         errors.append(f"YAML parse error: {e}")
@@ -104,7 +104,7 @@ def validate_watchlist(filepath: Path) -> list[str]:
         return errors
 
     try:
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
         errors.append(f"YAML parse error: {e}")
@@ -127,7 +127,7 @@ def validate_signals(filepath: Path) -> list[str]:
         return errors
 
     try:
-        with open(filepath) as f:
+        with open(filepath, encoding="utf-8") as f:
             config = yaml.safe_load(f)
     except yaml.YAMLError as e:
         errors.append(f"YAML parse error: {e}")

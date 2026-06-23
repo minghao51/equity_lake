@@ -19,7 +19,7 @@ Usage:
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import duckdb
 import polars as pl
@@ -90,8 +90,10 @@ class EquityDataDB:
             logger.warning(f"Data directory not found: {data_dir}")
             return
 
-        scan = f"SELECT *, '{market_label}' as market FROM delta_scan('{data_dir}')"
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS {scan}"
+        from equity_lake.storage.lake_reader import duckdb_scan_for
+
+        scan_expr = duckdb_scan_for(data_dir)
+        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT *, '{market_label}' as market FROM {scan_expr}"
 
         try:
             self.con.execute(sql)
@@ -162,7 +164,7 @@ class EquityDataDB:
             available = ", ".join(self.QUERY_MAP.keys())
             logger.error(f"Unknown query: {name}. Available: {available}")
             return pl.DataFrame()
-        return getattr(examples, method_name)(**kwargs)
+        return cast(pl.DataFrame, getattr(examples, method_name)(**kwargs))
 
     def run_all_queries(self) -> dict[str, pl.DataFrame]:
         self._ensure_views()
@@ -287,7 +289,7 @@ class QueryExamples:
         """Query 4: Compare same ticker across markets (if available)."""
         logger.info(f"Running Query 4: Cross-Market Comparison for {ticker}")
 
-        sql = f"""
+        sql = """
         SELECT
             date,
             market,
@@ -295,15 +297,20 @@ class QueryExamples:
             close,
             volume
         FROM equity_all
-        WHERE ticker = '{ticker.upper()}'
+        WHERE ticker = ?
         ORDER BY market, date
         LIMIT 100
         """
 
-        return self.db.query(sql)
+        try:
+            return self.db.con.execute(sql, [ticker.upper()]).pl()
+        except Exception as e:
+            logger.error(f"Query 4 failed: {e}")
+            return pl.DataFrame()
 
     def query_5_moving_averages(self, ticker: str, ma_days: int = 20) -> pl.DataFrame:
         """Query 5: Moving averages for a stock."""
+        ma_days = int(ma_days)
         logger.info(f"Running Query 5: {ma_days}-Day Moving Average for {ticker}")
 
         sql = f"""
@@ -318,7 +325,7 @@ class QueryExamples:
                     ROWS BETWEEN {ma_days - 1} PRECEDING AND CURRENT ROW
                 ) as ma_{ma_days}
             FROM equity_all
-            WHERE ticker = '{ticker.upper()}'
+            WHERE ticker = ?
             ORDER BY date DESC
             LIMIT {ma_days * 2}
         )
@@ -333,7 +340,11 @@ class QueryExamples:
         ORDER BY date DESC
         """
 
-        return self.db.query(sql)
+        try:
+            return self.db.con.execute(sql, [ticker.upper()]).pl()
+        except Exception as e:
+            logger.error(f"Query 5 failed: {e}")
+            return pl.DataFrame()
 
     def query_6_volatility_analysis(self, days: int = 30) -> pl.DataFrame:
         """Query 6: Most volatile stocks."""

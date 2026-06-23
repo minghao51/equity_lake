@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import datetime
+from pathlib import Path
 
+import polars as pl
 import structlog
 
 from equity_lake.core.logging import setup_logging, timer
@@ -47,9 +49,8 @@ def main() -> None:
     """Run the price forecaster CLI."""
     args = parse_args()
     setup_logging(
-        name="price_forecaster",
         level="DEBUG" if args.verbose else "INFO",
-        log_file="price_forecaster.log",
+        log_file=Path("price_forecaster.log"),
     )
 
     forecaster = PriceForecaster(model_dir=args.model_dir)
@@ -81,7 +82,7 @@ def main() -> None:
             print(f"Date: {result['date']}")
             print(f"Prediction: {'UP' if result['prediction'] == 1 else 'DOWN'}")
             print(f"Probability: {result['probability']:.2%}")
-            print(f"Model: {result['model_version']}")
+            print(f"Model: {result['model_version']!s}")
         else:
             if not args.start or not args.end:
                 logger.error("--start and --end are required for backtesting")
@@ -96,10 +97,10 @@ def main() -> None:
                     end_date=end_date,
                 )
 
-            if not results.empty:
+            if not results.is_empty():
                 results_path = forecaster.model_dir / f"{args.ticker}_backtest_results.csv"
-                results.to_csv(results_path, index=False)
-                accuracy = (results["prediction"] == results["actual"]).mean()
+                results.write_csv(results_path)
+                accuracy = float(results.select((pl.col("prediction") == pl.col("actual")).mean()).item())
                 print(f"Total Predictions: {len(results)}")
                 print(f"Accuracy: {accuracy:.2%}")
                 print(f"Results saved to: {results_path}")

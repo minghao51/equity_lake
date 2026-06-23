@@ -1,7 +1,7 @@
 """Finnhub news data fetcher for US equities."""
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
 import polars as pl
@@ -234,9 +234,9 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         # Extract datetime
         datetime_str = article.get("datetime", 0)
         try:
-            dt = datetime.fromtimestamp(datetime_str) if isinstance(datetime_str, int) else datetime.fromisoformat(str(datetime_str))
+            dt = datetime.fromtimestamp(datetime_str, tz=UTC) if isinstance(datetime_str, int) else datetime.fromisoformat(str(datetime_str))
         except Exception:
-            dt = datetime.now()
+            dt = datetime.now(UTC)
 
         return {
             "ticker": ticker,

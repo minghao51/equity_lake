@@ -39,13 +39,20 @@ dependencies = [
     "typer>=0.12.0",
     "rich>=13.7.0",
     "deltalake>=0.25.0",
-     "croniter>=6.2.2",
-     "joblib>=1.5.3",
-     "pointblank>=0.8",
-     "tenacity>=9.0.0",
-     "httpx>=0.28.0",
+    "croniter>=6.2.2",
+    "joblib>=1.5.3",
+    "pointblank>=0.8",
+    "tenacity>=9.0.0",
+    "httpx>=0.28.0",
     "aiolimiter>=1.2.1",
     "exchange-calendars>=4.6",
+    "feedparser>=6.0.11",
+    "openai>=1.50.0",
+    "xgboost>=3.1.3",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.0",
+    "readability-lxml>=0.8.1",
+    "edgartools>=5.36.0",
 ]
 
 [dependency-groups]
@@ -63,12 +70,9 @@ dev = [
     "vaderSentiment>=3.3.2",
 ]
 ml = [
-    "xgboost>=3.1.3",
-    "scikit-learn>=1.8.0",
     "shap>=0.49.1",
     "seaborn>=0.13.2",
     "networkx>=3.6.1",
-    "scipy>=1.17.0",
     "statsmodels>=0.14.6",
 ]
 viz = [
@@ -213,6 +217,7 @@ exclude = ["scripts/", "tests/"]
 
 [[tool.mypy.overrides]]
 module = [
+    "exchange_calendars",
     "yfinance.*",
     "akshare.*",
     "duckdb.*",
@@ -243,7 +248,16 @@ module = [
      "typer.*",
      "pointblank.*",
      "streamlit.*",
-    "pyarrow.*",
+     "pyarrow.*",
+    "feedparser.*",
+    "openai.*",
+    "readability.*",
+    "shap.*",
+    "statsmodels.*",
+    "networkx.*",
+    "exchange_calendars.*",
+    "edgar",
+    "edgar.*",
 ]
 ignore_missing_imports = true
 

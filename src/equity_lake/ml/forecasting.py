@@ -181,11 +181,13 @@ class PriceForecaster:
             sample_weights_full = np.ones(df_clean.height, dtype=np.float64)
 
         split_idx = max(int(df_clean.height * 0.8), 1)
-        X_train = X.slice(0, split_idx)
+        embargo = max(label_horizon, 0)
+        train_end = max(split_idx - embargo, 1)
+        X_train = X.slice(0, train_end)
         X_val = X.slice(split_idx)
-        y_train = y.slice(0, split_idx)
+        y_train = y.slice(0, train_end)
         y_val = y.slice(split_idx)
-        sample_weights_train = sample_weights_full[:split_idx]
+        sample_weights_train = sample_weights_full[:train_end]
         sample_weights_val = sample_weights_full[split_idx:]
 
         validation_settings = {
@@ -566,7 +568,12 @@ class PriceForecaster:
         if len(self._loaded_models) >= self._MAX_CACHED_MODELS:
             evicted_path, _ = self._loaded_models.popitem(last=False)
             logger.debug("model_cache_evict", path=str(evicted_path))
-        self._loaded_models[model_path] = cast(xgb.XGBClassifier, joblib.load(model_path))
+        model = cast(xgb.XGBClassifier, joblib.load(model_path))
+        loaded_xgb = getattr(model, "_xgb_version", "unknown")
+        current_xgb = xgb.__version__
+        if loaded_xgb != "unknown" and loaded_xgb != current_xgb:
+            logger.warning("model_version_mismatch", loaded_xgboost=loaded_xgb, current_xgboost=current_xgb, model=str(model_path))
+        self._loaded_models[model_path] = model
         return self._loaded_models[model_path]
 
     def _save_training_metadata(
@@ -693,12 +700,12 @@ class PriceForecaster:
         scoring_matrix = scoring_frame
         for feature in trained_features:
             if feature not in scoring_matrix.columns:
-                scoring_matrix = scoring_matrix.with_columns(pl.lit(0.0).alias(feature))
+                scoring_matrix = scoring_matrix.with_columns(pl.lit(None).cast(pl.Float64).alias(feature))
         return self._prepare_training_matrix(scoring_matrix, list(trained_features))
 
     def _prepare_training_matrix(self, df: FrameLike, feature_cols: list[str]) -> pl.DataFrame:
         frame = ensure_polars(df)
-        return frame.select([pl.col(column).cast(pl.Float64, strict=False).fill_null(0.0).alias(column) for column in feature_cols])
+        return frame.select([pl.col(column).cast(pl.Float64, strict=False).alias(column) for column in feature_cols])
 
     def _check_feature_skew(self, scoring_frame: pl.DataFrame, trained_features: list[str], metadata: dict[str, Any]) -> None:
         inference_cols = set(scoring_frame.columns)

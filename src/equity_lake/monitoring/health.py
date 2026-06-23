@@ -16,6 +16,7 @@ import json
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 
 import duckdb
 import structlog
@@ -23,7 +24,16 @@ import structlog
 from equity_lake.core.calendar import is_trading_day, market_now
 from equity_lake.core.config import get_settings
 from equity_lake.core.logging import setup_logging
-from equity_lake.core.paths import LAKE_DIR, LOGS_DIR
+from equity_lake.core.paths import (
+    BRONZE_RAW_ARTICLES_DIR,
+    CN_ASHARE_DIR,
+    GOLD_FEATURES_DIR,
+    HK_SG_EQUITY_DIR,
+    LOGS_DIR,
+    SILVER_PROCESSED_ARTICLES_DIR,
+    SILVER_SEC_EXTRACTIONS_DIR,
+    US_EQUITY_DIR,
+)
 from equity_lake.monitoring.alerting import Alerter, build_alerter
 
 logger = structlog.get_logger()
@@ -102,19 +112,19 @@ class PipelineMonitor:
                 'us_equity' as market,
                 MAX(date) as latest_date,
                 COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{LAKE_DIR}/us_equity/**/*.parquet', hive_partitioning=1)
+            FROM read_parquet('{US_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
             UNION ALL
             SELECT
                 'cn_ashare' as market,
                 MAX(date) as latest_date,
                 COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{LAKE_DIR}/cn_ashare/**/*.parquet', hive_partitioning=1)
+            FROM read_parquet('{CN_ASHARE_DIR}/**/*.parquet', hive_partitioning=1)
             UNION ALL
             SELECT
                 'hk_sg_equity' as market,
                 MAX(date) as latest_date,
                 COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{LAKE_DIR}/hk_sg_equity/**/*.parquet', hive_partitioning=1)
+            FROM read_parquet('{HK_SG_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
         """
 
         try:
@@ -179,11 +189,11 @@ class PipelineMonitor:
                 SUM(CASE WHEN high IS NULL THEN 1 ELSE 0 END) as null_high,
                 SUM(CASE WHEN low IS NULL THEN 1 ELSE 0 END) as null_low
             FROM (
-                SELECT 'us_equity' as market, * FROM read_parquet('{LAKE_DIR}/us_equity/**/*.parquet', hive_partitioning=1)
+                SELECT 'us_equity' as market, * FROM read_parquet('{US_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
                 UNION ALL
-                SELECT 'cn_ashare' as market, * FROM read_parquet('{LAKE_DIR}/cn_ashare/**/*.parquet', hive_partitioning=1)
+                SELECT 'cn_ashare' as market, * FROM read_parquet('{CN_ASHARE_DIR}/**/*.parquet', hive_partitioning=1)
                 UNION ALL
-                SELECT 'hk_sg_equity' as market, * FROM read_parquet('{LAKE_DIR}/hk_sg_equity/**/*.parquet', hive_partitioning=1)
+                SELECT 'hk_sg_equity' as market, * FROM read_parquet('{HK_SG_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
             )
             WHERE date >= CURRENT_DATE - INTERVAL '7 days'
             GROUP BY market
@@ -294,7 +304,7 @@ class PipelineMonitor:
         """
         logger.info("Checking feature store...")
 
-        feature_dir = LAKE_DIR / "features"
+        feature_dir = GOLD_FEATURES_DIR
 
         if not feature_dir.exists():
             self.alerts.append("⚠️  Feature store does not exist")
@@ -346,6 +356,73 @@ class PipelineMonitor:
             # Feature store might not exist yet, which is ok
             return True
 
+    def check_unstructured_freshness(self) -> bool:
+        """Check freshness of bronze and silver unstructured tables.
+
+        Monitors ``bronze/raw_articles`` and ``silver/processed_articles``
+        for recent activity. Stale or empty tables indicate the ingestion
+        pipeline for RSS/Reddit/StockTwits/Transcripts may be failing.
+        """
+        logger.info("Checking unstructured data freshness...")
+
+        tables = [
+            ("bronze/raw_articles", BRONZE_RAW_ARTICLES_DIR),
+            ("silver/processed_articles", SILVER_PROCESSED_ARTICLES_DIR),
+            ("silver/sec_extractions", SILVER_SEC_EXTRACTIONS_DIR),
+        ]
+
+        all_fresh = True
+        unstructured_metrics: dict[str, Any] = {}
+
+        for table_name, table_path in tables:
+            if not table_path.exists():
+                logger.debug(f"{table_name}: directory not found")
+                unstructured_metrics[table_name] = {"status": "missing"}
+                continue
+
+            try:
+                query = f"""
+                    SELECT
+                        COUNT(*) as total_rows,
+                        MAX(date) as latest_date
+                    FROM read_parquet('{table_path}/**/*.parquet', hive_partitioning=1)
+                """
+                df = self.conn.execute(query).pl()
+
+                if df.is_empty() or int(df["total_rows"][0]) == 0:
+                    self.alerts.append(f"⚠️  {table_name}: No data found")
+                    unstructured_metrics[table_name] = {"status": "empty"}
+                    all_fresh = False
+                    continue
+
+                total_rows = int(df["total_rows"][0])
+                latest_date = _date_scalar(df["latest_date"][0])
+
+                age_days = (market_now("us_equity") - latest_date).days if latest_date else 999
+
+                if age_days > self.max_age_days:
+                    self.alerts.append(f"⚠️  {table_name}: data is stale ({age_days} days old, latest: {latest_date})")
+                    all_fresh = False
+                else:
+                    logger.info(f"✅ {table_name}: {total_rows:,} rows, latest: {latest_date}")
+
+                unstructured_metrics[table_name] = {
+                    "total_rows": total_rows,
+                    "latest_date": str(latest_date) if latest_date else None,
+                    "age_days": age_days,
+                }
+
+            except Exception as e:
+                logger.debug(f"{table_name} check failed: {e}")
+                unstructured_metrics[table_name] = {"status": "error", "error": str(e)}
+
+        self.metrics["unstructured_freshness"] = {
+            **unstructured_metrics,
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+        }
+
+        return all_fresh
+
     # -------------------------------------------------------------------------
     # Run Health Check
     # -------------------------------------------------------------------------
@@ -366,6 +443,7 @@ class PipelineMonitor:
             ("Data Quality", self.check_data_quality()),
             ("Pipeline Logs", self.check_pipeline_logs()),
             ("Feature Store", self.check_feature_store()),
+            ("Unstructured Freshness", self.check_unstructured_freshness()),
         ]
 
         all_healthy = True

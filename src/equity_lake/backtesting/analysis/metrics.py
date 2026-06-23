@@ -1,7 +1,16 @@
+from typing import Any
+
 import polars as pl
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+def _float_scalar(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class PerformanceMetrics:
@@ -38,15 +47,15 @@ class PerformanceMetrics:
         if equity_curve.len() < 2:
             return {}
 
-        initial_value = float(equity_curve.item(0))
-        final_value = float(equity_curve.item(-1))
+        initial_value = _float_scalar(equity_curve.item(0))
+        final_value = _float_scalar(equity_curve.item(-1))
         total_return = (final_value / initial_value) - 1
 
         n = equity_curve.len()
         years = n / 252.0
         cagr = (final_value / initial_value) ** (1 / years) - 1 if years > 0 else 0
 
-        daily_mean = float(returns.mean()) if returns.len() > 0 else 0.0
+        daily_mean = _float_scalar(returns.mean()) if returns.len() > 0 else 0.0
 
         return {
             "total_return": total_return,
@@ -65,21 +74,21 @@ class PerformanceMetrics:
 
         import numpy as np
 
-        volatility = float(returns.std() * np.sqrt(252)) if returns.len() > 1 else 0.0
+        volatility = _float_scalar(returns.std()) * float(np.sqrt(252)) if returns.len() > 1 else 0.0
 
         neg_returns = returns.filter(returns < 0)
-        downside_deviation = float(neg_returns.std() * np.sqrt(252)) if neg_returns.len() > 1 else 0.0
+        downside_deviation = _float_scalar(neg_returns.std()) * float(np.sqrt(252)) if neg_returns.len() > 1 else 0.0
 
         cummax = equity_curve.cum_max()
         drawdown = (equity_curve - cummax) / cummax
-        max_drawdown = float(drawdown.min()) if drawdown.len() > 0 else 0.0
+        max_drawdown = _float_scalar(drawdown.min()) if drawdown.len() > 0 else 0.0
 
         dd_neg = drawdown.filter(drawdown < 0)
-        avg_drawdown = float(dd_neg.mean()) if dd_neg.len() > 0 else 0.0
+        avg_drawdown = _float_scalar(dd_neg.mean()) if dd_neg.len() > 0 else 0.0
 
-        var_95 = float(returns.quantile(0.05)) if returns.len() > 0 else 0.0
+        var_95 = _float_scalar(returns.quantile(0.05)) if returns.len() > 0 else 0.0
         cvar_95_returns = returns.filter(returns <= var_95)
-        cvar_95 = float(cvar_95_returns.mean()) if cvar_95_returns.len() > 0 else 0.0
+        cvar_95 = _float_scalar(cvar_95_returns.mean()) if cvar_95_returns.len() > 0 else 0.0
 
         return {
             "volatility": volatility,
@@ -99,18 +108,18 @@ class PerformanceMetrics:
 
         import numpy as np
 
-        annual_return = float(returns.mean() * 252) if returns.len() > 0 else 0.0
-        annual_vol = float(returns.std() * np.sqrt(252)) if returns.len() > 1 else 0.0
+        annual_return = _float_scalar(returns.mean()) * 252 if returns.len() > 0 else 0.0
+        annual_vol = _float_scalar(returns.std()) * float(np.sqrt(252)) if returns.len() > 1 else 0.0
 
         sharpe_ratio = (annual_return - self.risk_free_rate) / annual_vol if annual_vol > 0 else 0.0
 
         neg_returns = returns.filter(returns < 0)
-        downside_dev = float(neg_returns.std() * np.sqrt(252)) if neg_returns.len() > 1 else 0.0
+        downside_dev = _float_scalar(neg_returns.std()) * float(np.sqrt(252)) if neg_returns.len() > 1 else 0.0
         sortino_ratio = (annual_return - self.risk_free_rate) / downside_dev if downside_dev > 0 else 0.0
 
         cumsum = returns.cum_sum()
         cummax = cumsum.cum_max()
-        max_dd = float((cumsum - cummax).min())
+        max_dd = _float_scalar((cumsum - cummax).min())
         calmar_ratio = annual_return / abs(max_dd) if max_dd != 0 else 0.0
 
         return {
@@ -132,13 +141,13 @@ class PerformanceMetrics:
             losses = pnls.filter(pnls < 0)
 
             metrics["win_rate"] = wins.len() / pnls.len() if pnls.len() > 0 else 0.0
-            metrics["avg_win"] = float(wins.mean()) if wins.len() > 0 else 0.0
-            metrics["avg_loss"] = float(losses.mean()) if losses.len() > 0 else 0.0
+            metrics["avg_win"] = _float_scalar(wins.mean()) if wins.len() > 0 else 0.0
+            metrics["avg_loss"] = _float_scalar(losses.mean()) if losses.len() > 0 else 0.0
 
-            total_profit = float(wins.sum()) if wins.len() > 0 else 0.0
-            total_loss = float(abs(losses.sum())) if losses.len() > 0 else 1.0
+            total_profit = _float_scalar(wins.sum()) if wins.len() > 0 else 0.0
+            total_loss = abs(_float_scalar(losses.sum(), -1.0)) if losses.len() > 0 else 1.0
             metrics["profit_factor"] = total_profit / total_loss if total_loss > 0 else 0.0
-            metrics["expectancy"] = float(pnls.mean())
+            metrics["expectancy"] = _float_scalar(pnls.mean())
 
         return metrics
 
@@ -188,18 +197,18 @@ class PerformanceMetrics:
             return {}
 
         metrics = {
-            "best_day": float(returns.max()),
-            "worst_day": float(returns.min()),
-            "avg_daily_range": float(returns.std() * 2) if returns.len() > 1 else 0.0,
+            "best_day": _float_scalar(returns.max()),
+            "worst_day": _float_scalar(returns.min()),
+            "avg_daily_range": _float_scalar(returns.std()) * 2 if returns.len() > 1 else 0.0,
         }
 
-        initial_value = float(equity_curve.item(0))
-        final_value = float(equity_curve.item(-1))
+        initial_value = _float_scalar(equity_curve.item(0))
+        final_value = _float_scalar(equity_curve.item(-1))
         total_return = (final_value / initial_value) - 1
 
         cummax = equity_curve.cum_max()
         drawdown = (equity_curve - cummax) / cummax
-        max_dd = abs(float(drawdown.min()))
+        max_dd = abs(_float_scalar(drawdown.min()))
         metrics["recovery_factor"] = total_return / max_dd if max_dd > 0 else 0.0
         metrics["num_trading_days"] = float(equity_curve.len())
 

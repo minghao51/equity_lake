@@ -161,7 +161,7 @@ def validate_check(
 @validate_app.command("profile")
 def validate_profile(
     path: Annotated[str, typer.Argument(help="Path to parquet file or directory")],
-    name: Annotated[str, typer.Option("--name", "-n", help="Profile name")] = ...,
+    name: Annotated[str, typer.Option("--name", "-n", help="Profile name")],
     save: Annotated[bool, typer.Option("--save", help="Save profile")] = False,
 ) -> None:
     """Profile a dataset and display quality metrics."""

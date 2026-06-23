@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -8,6 +9,13 @@ import structlog
 from equity_lake.backtesting.execution.broker import Broker, Execution
 
 logger = structlog.get_logger(__name__)
+
+
+def _float_scalar(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 @dataclass
@@ -183,14 +191,14 @@ class Portfolio:
             return 0.0
         cummax = equity_curve.cum_max()
         drawdown = (equity_curve - cummax) / cummax
-        return float(drawdown.min())
+        return _float_scalar(drawdown.min())
 
     def _calculate_sharpe_ratio(self, returns: pl.Series) -> float:
         if returns.is_empty():
             return 0.0
         risk_free_rate = 0.04
-        annual_return = float(returns.mean() * 252)
-        annual_vol = float(returns.std() * np.sqrt(252)) if returns.len() > 1 else 0.0
+        annual_return = _float_scalar(returns.mean()) * 252
+        annual_vol = _float_scalar(returns.std()) * float(np.sqrt(252)) if returns.len() > 1 else 0.0
         if annual_vol == 0:
             return 0.0
         return (annual_return - risk_free_rate) / annual_vol

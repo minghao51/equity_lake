@@ -143,7 +143,7 @@ class SECFilingsLoader(BaseDataLoader):
             response: requests.Response = self.session.get(SEC_TICKER_URL, timeout=10)
         except Exception:
             return False
-        return response.status_code == 200
+        return bool(response.status_code == 200)
 
 
 __all__ = ["SECFilingsLoader"]

@@ -1,0 +1,23 @@
+reddit:
+  subreddits:
+    - name: wallstreetbets
+      post_limit: 50
+      comment_limit: 5
+    - name: stocks
+      post_limit: 30
+      comment_limit: 5
+    - name: investing
+      post_limit: 30
+      comment_limit: 3
+    - name: stockmarket
+      post_limit: 30
+      comment_limit: 3
+    - name: ValueInvesting
+      post_limit: 20
+      comment_limit: 3
+    - name: algotrading
+      post_limit: 20
+      comment_limit: 3
+
+stocktwits:
+  messages_per_symbol: 30

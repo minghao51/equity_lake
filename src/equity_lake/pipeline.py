@@ -73,13 +73,48 @@ def execute_eod_pipeline(
         if not all(ingestion_results.values()):
             logger.warning("ingestion_partial_failure", results=ingestion_results)
 
+        unstructured_markets = {"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"}
+        sec_markets = {"sec_filings_fulltext"}
+
+        if any(m in markets for m in unstructured_markets) and not dry_run:
+            logger.info("processing_bronze_to_silver", trading_date=str(trading_date))
+            try:
+                from equity_lake.ingestion.bronze_silver import process_bronze_to_silver
+
+                silver_success = process_bronze_to_silver(trading_date)
+                results["bronze_to_silver"] = silver_success
+                if not silver_success:
+                    logger.warning("bronze_to_silver_skipped_or_failed")
+            except Exception as exc:
+                logger.error("bronze_to_silver_failed", error=str(exc))
+                results["bronze_to_silver"] = False
+
+        if any(m in markets for m in sec_markets) and not dry_run:
+            logger.info("processing_sec_bronze_to_silver", trading_date=str(trading_date))
+            try:
+                from equity_lake.ingestion.sec_processor import process_sec_bronze_to_silver
+
+                sec_success = process_sec_bronze_to_silver(trading_date)
+                results["sec_to_silver"] = sec_success
+                if not sec_success:
+                    logger.warning("sec_to_silver_skipped_or_failed")
+            except Exception as exc:
+                logger.error("sec_to_silver_failed", error=str(exc))
+                results["sec_to_silver"] = False
+
     if not skip_features:
+        use_enriched = results.get("bronze_to_silver", False)
+        use_analyst = "us_analyst_ratings" in markets
+        use_sec = results.get("sec_to_silver", False)
         try:
             features_df = run_feature_job(
                 tickers=tickers,
                 output_start_date=trading_date,
                 output_end_date=trading_date,
                 compute_target=True,
+                include_enriched_sentiment=use_enriched,
+                include_analyst_ratings=use_analyst,
+                include_sec_features=use_sec,
             )
             feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
             results["features"] = {"success": True, "rows": len(features_df)}
@@ -93,6 +128,9 @@ def execute_eod_pipeline(
                         output_start_date=trading_date,
                         output_end_date=trading_date,
                         compute_target=True,
+                        include_enriched_sentiment=use_enriched,
+                        include_analyst_ratings=use_analyst,
+                        include_sec_features=use_sec,
                     )
                     feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
                     results["features"] = {"success": True, "rows": len(features_df)}

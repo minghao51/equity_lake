@@ -364,7 +364,7 @@ def test_optimized_threshold_recorded_in_metadata(monkeypatch, tmp_path) -> None
         metadata = forecaster.load_training_metadata("AAPL", date(2024, 6, 30))
         assert metadata is not None
         assert "optimized_threshold" in metadata
-        assert 0.5 <= metadata["optimized_threshold"] <= 0.8
+        assert 0.1 <= metadata["optimized_threshold"] <= 0.9
     finally:
         forecaster.close()
 

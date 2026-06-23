@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import polars as pl
@@ -104,15 +104,22 @@ class CNEfinanceFetcher(MarketDataFetcher):
                 suppress_error=True,
             )
             if isinstance(history, pd.DataFrame):
+                if "股票代码" in history.columns and history["股票代码"].nunique() > 1:
+                    frames: list[pl.DataFrame] = []
+                    for stock_code, stock_data in history.groupby("股票代码"):
+                        standardized = self._standardize_history_frame(stock_data, str(stock_code))
+                        if standardized is not None:
+                            frames.append(standardized)
+                    return frames
                 standardized = self._standardize_history_frame(history, stock_codes[0])
                 return [standardized] if standardized is not None else []
 
-            frames: list[pl.DataFrame] = []
+            standardized_frames: list[pl.DataFrame] = []
             for stock_code, stock_data in history.items():
                 standardized = self._standardize_history_frame(stock_data, stock_code)
                 if standardized is not None:
-                    frames.append(standardized)
-            return frames
+                    standardized_frames.append(standardized)
+            return standardized_frames
 
         except Exception as exc:
             logger.warning(
@@ -197,7 +204,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
                 )
                 raise
 
-        return self._retry_on_failure(_fetch)
+        return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 
 
 __all__ = ["CNEfinanceFetcher"]

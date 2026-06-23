@@ -1,7 +1,7 @@
 """South Korea (KRX) market source adapter."""
 
 from datetime import date, timedelta
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import polars as pl
@@ -109,7 +109,7 @@ class KRXEquityFetcher(MarketDataFetcher):
             logger.info("Fetched %s rows for %s unique KRX tickers", frame.height, unique_tickers)
             return frame
 
-        return self._retry_on_failure(_fetch)
+        return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 
 
 __all__ = ["KRXEquityFetcher"]

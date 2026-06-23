@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -12,15 +13,37 @@ import duckdb
 import polars as pl
 
 from equity_lake.core.config import get_settings
-from equity_lake.core.paths import DATA_DIR, JPX_EQUITY_DIR, KRX_EQUITY_DIR, LAKE_DIR, LOGS_DIR
+from equity_lake.core.paths import (
+    CN_ASHARE_DIR,
+    DATA_DIR,
+    GOLD_FEATURES_DIR,
+    HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
+    LOGS_DIR,
+    US_EQUITY_DIR,
+)
+
+_REDACTED = "***REDACTED***"
+_SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key)", re.IGNORECASE)
+
+
+def _redact_secrets(obj: Any) -> Any:
+    """Recursively replace values whose key looks like a secret with REDACTED."""
+    if isinstance(obj, dict):
+        return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else _redact_secrets(v)) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_redact_secrets(item) for item in obj]
+    return obj
+
 
 MARKET_DATASETS = {
-    "us_equity": LAKE_DIR / "us_equity",
-    "cn_ashare": LAKE_DIR / "cn_ashare",
-    "hk_sg_equity": LAKE_DIR / "hk_sg_equity",
+    "us_equity": US_EQUITY_DIR,
+    "cn_ashare": CN_ASHARE_DIR,
+    "hk_sg_equity": HK_SG_EQUITY_DIR,
     "jpx_equity": JPX_EQUITY_DIR,
     "krx_equity": KRX_EQUITY_DIR,
-    "features": LAKE_DIR / "features",
+    "features": GOLD_FEATURES_DIR,
 }
 
 NAV_LINKS = [
@@ -62,7 +85,7 @@ class DashboardExporter:
             "datasets": datasets,
             "health": self._load_health_report(),
             "updates": self._load_updates(),
-            "config": self.settings.model_dump(),
+            "config": _redact_secrets(self.settings.model_dump()),
         }
         return payload
 

@@ -1,7 +1,16 @@
+from typing import Any
+
 import polars as pl
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+def _float_scalar(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class AttributionAnalyzer:
@@ -63,8 +72,8 @@ class AttributionAnalyzer:
             {
                 "category": ["Winners", "Losers"],
                 "count": [winners.len(), losers.len()],
-                "total_pnl": [float(winners.sum()) if winners.len() > 0 else 0.0, float(losers.sum()) if losers.len() > 0 else 0.0],
-                "avg_pnl": [float(winners.mean()) if winners.len() > 0 else 0.0, float(losers.mean()) if losers.len() > 0 else 0.0],
+                "total_pnl": [_float_scalar(winners.sum()) if winners.len() > 0 else 0.0, _float_scalar(losers.sum()) if losers.len() > 0 else 0.0],
+                "avg_pnl": [_float_scalar(winners.mean()) if winners.len() > 0 else 0.0, _float_scalar(losers.mean()) if losers.len() > 0 else 0.0],
             }
         )
 

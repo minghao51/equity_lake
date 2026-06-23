@@ -15,6 +15,12 @@ ingestion:
     - us
     - cn
     - hk_sg
+    - macro
+    - us_news
+    - us_social_sentiment
+    - rss_news
+    - reddit_posts
+    - us_analyst_ratings
   parallel: true
   max_workers: 3
   ticker_config_path: config/tickers.yaml
