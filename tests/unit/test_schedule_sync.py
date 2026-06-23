@@ -1,6 +1,6 @@
 """Tests for workflow schedule sync."""
 
-from scripts.sync_pages_schedule import replace_cron
+from equity_lake.devtools.sync_schedule import replace_cron
 
 
 def test_replace_cron_updates_first_schedule_entry() -> None:
