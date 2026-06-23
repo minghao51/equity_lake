@@ -19,7 +19,8 @@ Current system architecture and design documents:
 
 ## History
 
-Superseded notes, implementation reports, and decision records:
+Superseded notes, implementation reports, and archived scripts:
 
+- [Archived Scripts](history/README.md) — One-time migration scripts retained for audit
 - [Reports](../reports/README.md) — Operational analyses and handoff notes kept in the repo
 - Git history — superseded implementation details and older experiments that are no longer published as active docs
