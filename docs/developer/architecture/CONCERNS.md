@@ -86,9 +86,9 @@ This document tracks technical debt, bugs, security issues, performance concerns
 
 #### 1. Scripts Directory
 **Files**:
-- `scripts/ingest_daily.py` (637 lines)
-- `scripts/query_example.py` (594 lines)
-- `scripts/sync_from_s3.py` (398 lines)
+- `src/equity_lake/ingestion/` (write operations; migrated from legacy ingest script)
+- `src/equity_lake/storage/` DuckDB query layer (read operations; migrated from legacy query script)
+- `src/equity_lake/storage/s3.py` (S3 sync; migrated from legacy sync script)
 
 **Issue**: Legacy scripts being replaced by `src/` structure
 

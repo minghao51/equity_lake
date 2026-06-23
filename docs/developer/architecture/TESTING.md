@@ -809,7 +809,7 @@ def test_validator_with_null_prices():
 
 ### Test Data Generator Script
 
-**Location**: `scripts/generate_test_data.py`
+**Location**: `src/equity_lake/devtools/test_data.py`
 
 **Purpose**: Generate realistic test data for development
 
@@ -817,7 +817,7 @@ def test_validator_with_null_prices():
 ```bash
 make generate-test-data
 # or
-uv run python scripts/generate_test_data.py
+uv run equity bootstrap sample
 ```
 
 **Output**:

@@ -141,9 +141,9 @@ equity_lake/
 ### Largest Files
 1. `src/equity_lake/ingestion/orchestrator.py` - 880 lines
 2. `src/equity_lake/features/engineering.py` - 712 lines
-3. `scripts/ingest_daily.py` - 637 lines (legacy)
-4. `scripts/query_example.py` - 594 lines (legacy)
-5. `scripts/sync_from_s3.py` - 398 lines (legacy)
+3. `src/equity_lake/ingestion/` (migrated from legacy ingest script)
+4. `src/equity_lake/storage/` — DuckDB query layer (migrated from legacy query script)
+5. `src/equity_lake/storage/s3.py` (migrated from legacy sync script)
 
 ---
 

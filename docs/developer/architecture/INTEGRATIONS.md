@@ -211,8 +211,8 @@ data/lake/
 
 **Code Locations**:
 - `src/equity_lake/storage/parquet.py` (read/write utilities)
-- `scripts/ingest_daily.py` (write operations)
-- `scripts/query_example.py` (read operations)
+- `src/equity_lake/ingestion/` (write operations)
+- `src/equity_lake/storage/` DuckDB query layer (read operations)
 
 **Schema**:
 ```python
@@ -266,7 +266,7 @@ df = con.execute("""
 
 **Usage Locations**:
 - `src/equity_lake/storage/s3_sync.py` (S3 sync orchestration)
-- `scripts/sync_from_s3.py` (legacy sync script)
+- `src/equity_lake/storage/s3.py` (sync implementation)
 - `src/equity_lake/cli/sync.py` (CLI entry point)
 
 **Authentication**:
