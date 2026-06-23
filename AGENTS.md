@@ -48,6 +48,7 @@ src/equity_lake/          # Source
 └── price_forecaster.py   # Price forecast CLI
 config/                   # YAML configs (tickers.yaml, settings.yaml, signals.yaml, watchlist.yaml)
 data/lake/                # Partitioned Parquet storage (market/date= partitions)
+notebooks/                # Interactive Jupyter notebooks (01–10, standalone runnable)
 ```
 
 No `domain/` tree — top-level modules are canonical. Import boundary tests in `tests/unit/test_import_boundaries.py` enforce that `core/` does not depend on `cli/`, `dashboard/`, `sources/`, or `loaders/`.

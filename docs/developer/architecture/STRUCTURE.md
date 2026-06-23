@@ -30,11 +30,7 @@ equity_lake/
 │   ├── sync_from_s3.log    # S3 sync logs
 │   └── query.log           # Query operation logs
 │
-├── scripts/                 # Legacy scripts (being migrated to src/)
-│   ├── ingest_daily.py     # Daily EOD ingestion (637 lines)
-│   ├── sync_from_s3.py     # S3 historical sync (398 lines)
-│   ├── query_example.py    # DuckDB query examples (594 lines)
-│   └── generate_test_data.py # Test data generator
+├── (scripts/ removed — migrated to src/equity_lake/ and src/equity_lake/devtools/)
 │
 ├── src/
 │   └── equity_lake/        # Main package
@@ -736,10 +732,12 @@ docs/
 
 ### Migration Status
 
-**Legacy Scripts** (`scripts/`):
-- `ingest_daily.py` → Migrating to `src/equity_lake/cli/daily.py`
-- `sync_from_s3.py` → Migrating to `src/equity_lake/cli/sync.py`
-- `query_example.py` → Migrating to `src/equity_lake/cli/query.py`
+**Legacy Scripts** (`scripts/` — **removed**):
+- `ingest_daily.py` → Migrated to `src/equity_lake/ingestion/` and `equity ingest` CLI
+- `sync_from_s3.py` → Migrated to `src/equity_lake/storage/s3.py`
+- `query_example.py` → Migrated to `src/equity_lake/storage/` (DuckDB query layer)
+- `generate_test_data.py` → Migrated to `src/equity_lake/devtools/test_data.py` (`equity bootstrap sample`)
+- One-time migration scripts archived to `docs/developer/history/`
 
 **Modern Structure** (`src/equity_lake/`):
 - Modular package structure
@@ -747,7 +745,7 @@ docs/
 - Better separation of concerns
 - Easier to test and maintain
 
-**Timeline**: Legacy scripts still work, but new development should use `src/` structure
+**Timeline**: Migration complete. `scripts/` directory removed.
 
 ---
 
