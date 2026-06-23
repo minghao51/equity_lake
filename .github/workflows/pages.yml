@@ -38,7 +38,7 @@ jobs:
         run: uv sync --group dev
 
       - name: Check workflow schedule sync
-        run: uv run python scripts/sync_pages_schedule.py --check
+        run: uv run python -m equity_lake.devtools.sync_schedule --check
 
       - name: Run pipeline for scheduled builds
         if: github.event_name != 'push'

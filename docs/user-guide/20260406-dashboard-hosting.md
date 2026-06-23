@@ -36,8 +36,8 @@ The workflow does three important things:
 To sync or verify locally:
 
 ```bash
-uv run python scripts/sync_pages_schedule.py
-uv run python scripts/sync_pages_schedule.py --check
+uv run python -m equity_lake.devtools.sync_schedule
+uv run python -m equity_lake.devtools.sync_schedule --check
 ```
 
 ## Notes

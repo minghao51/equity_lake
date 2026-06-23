@@ -9,7 +9,7 @@ This file records how the current beta implementation maps to `docs/technical_ro
 - Unified runtime settings live in `config/settings.yaml`.
 - Environment overrides are supported through `src/equity_lake/config/settings.py`.
 - Config inspection is available through `uv run equity-config`.
-- GitHub Actions schedule drift is checked with `scripts/sync_pages_schedule.py`.
+- GitHub Actions schedule drift is checked with `uv run python -m equity_lake.devtools.sync_schedule --check`.
 
 ### Phase 2: Plugin Architecture
 

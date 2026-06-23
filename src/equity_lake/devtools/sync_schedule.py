@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 SETTINGS_PATH = ROOT / "config" / "settings.yaml"
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "pages.yml"
 CRON_PATTERN = re.compile(r'(?m)^(\s+- cron:\s*)"([^"]+)"\s*$')
