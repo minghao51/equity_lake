@@ -14,6 +14,14 @@ on:
       - "src/equity_lake/core/runtime.py"
       - "config/settings.yaml"
       - "README.md"
+  pull_request:
+    paths:
+      - ".github/workflows/pages.yml"
+      - "src/equity_lake/dashboard/**"
+      - "src/equity_lake/config/**"
+      - "src/equity_lake/core/runtime.py"
+      - "config/settings.yaml"
+      - "README.md"
 
 permissions:
   contents: read
@@ -24,15 +32,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v8
 
       - name: Install dependencies
         run: uv sync --group dev
@@ -41,21 +49,22 @@ jobs:
         run: uv run python -m equity_lake.devtools.sync_schedule --check
 
       - name: Run pipeline for scheduled builds
-        if: github.event_name != 'push'
-        run: uv run equity-pipeline --continue-on-error --save-results || true
+        if: github.event_name == 'schedule'
+        run: uv run equity pipeline --save-results || true
 
       - name: Export health report
-        run: uv run equity-monitor --output-json site/health-report.json || true
+        run: uv run equity monitor --output-json site/health-report.json || true
 
       - name: Build static dashboard
-        run: uv run equity-dashboard build --output-dir site
+        run: uv run equity dashboard build --output-dir site
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -63,4 +72,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
