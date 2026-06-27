@@ -25,6 +25,7 @@ data/*
 !data/catalog.jsonl
 logs/
 !logs/.gitkeep
+notebooks/data/
 *.duckdb
 *.duckdb.wal
 *.parquet
