@@ -25,13 +25,8 @@ import polars as pl
 import structlog
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ValidationError
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
+
+from equity_lake.core.retry import build_retry_decorator
 
 logger = structlog.get_logger()
 
@@ -71,12 +66,13 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
         self.semaphore = asyncio.Semaphore(max_concurrency)
         self.max_body_chars = max_body_chars
 
-        self._retry_decorator = retry(
-            retry=retry_if_exception_type(RetryableError),
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=2, max=30),
-            before_sleep=before_sleep_log(logger, 30),
-            reraise=True,
+        self._retry_decorator = build_retry_decorator(
+            attempts=3,
+            wait_multiplier=1,
+            wait_min=2,
+            wait_max=30,
+            retry_on=RetryableError,
+            log=logger,
         )
 
     async def process_batch(self, batch: list[dict[str, Any]]) -> BatchT:

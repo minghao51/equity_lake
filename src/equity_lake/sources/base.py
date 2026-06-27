@@ -12,16 +12,10 @@ import polars as pl
 import requests
 import structlog
 import yfinance as yf
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.polars_utils import ensure_polars, normalize_temporal_columns
+from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import STANDARD_COLUMNS
 from equity_lake.sources.macro import MacroIndicatorFetcher
 
@@ -99,12 +93,12 @@ class MarketDataFetcher:
         self.retry_delay = retry_delay
         self.ticker_config = ticker_config
         self.stock_limit = stock_limit
-        self._retry_decorator = retry(
-            retry=retry_if_exception_type(TransientError),
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=retry_delay, min=retry_delay, max=30.0),
-            before_sleep=before_sleep_log(logger, 30),  # WARNING
-            reraise=True,
+        self._retry_decorator = build_retry_decorator(
+            attempts=retry_attempts,
+            wait_multiplier=retry_delay,
+            wait_min=retry_delay,
+            retry_on=TransientError,
+            log=logger,
         )
 
     def _get_configured_tickers(self, market: str) -> list[str]:

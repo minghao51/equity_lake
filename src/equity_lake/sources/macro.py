@@ -11,15 +11,10 @@ import polars as pl
 import structlog
 import yfinance as yf
 from fredapi import Fred
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from equity_lake.core.config import get_project_config
 from equity_lake.core.paths import MACRO_INDICATORS_DIR
+from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import MACRO_COLUMNS, MACRO_INDICATOR_CONFIG
 
 logger = structlog.get_logger(__name__)
@@ -30,11 +25,11 @@ class MacroIndicatorFetcher:
         self.indicator_name = indicator_name
         self.retry_attempts = retry_attempts
         self.retry_delay = retry_delay
-        self._retry_decorator = retry(
-            stop=stop_after_attempt(retry_attempts),
-            wait=wait_exponential(multiplier=retry_delay, min=retry_delay, max=30.0),
-            before_sleep=before_sleep_log(logger, 30),  # WARNING
-            reraise=True,
+        self._retry_decorator = build_retry_decorator(
+            attempts=retry_attempts,
+            wait_multiplier=retry_delay,
+            wait_min=retry_delay,
+            log=logger,
         )
 
     def fetch(self, trading_date: date) -> pd.DataFrame | None:
@@ -295,7 +290,7 @@ def write_macro_to_parquet(
 
 
 def validate_macro_schema(df: pd.DataFrame) -> bool:
-    required_cols = ["date", "indicator", "value", "source"]
+    required_cols = MACRO_COLUMNS
     missing_cols = set(required_cols) - set(df.columns)
 
     if missing_cols:
