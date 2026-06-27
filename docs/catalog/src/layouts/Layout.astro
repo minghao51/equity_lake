@@ -1,0 +1,92 @@
+---
+export interface Props {
+  title: string;
+}
+const { title } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — Equity Lake Catalog</title>
+    <style is:global>
+      body {
+        margin: 0;
+        padding: 0;
+        background: #0f0f23;
+        color: #e0e0e0;
+        font-family: system-ui, -apple-system, sans-serif;
+      }
+      a {
+        color: #4fc3f7;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      nav {
+        background: #1a1a2e;
+        border-bottom: 1px solid #333;
+        padding: 0 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        height: 48px;
+        overflow-x: auto;
+      }
+      nav a {
+        color: #888;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 13px;
+        white-space: nowrap;
+      }
+      nav a:hover,
+      nav a.active {
+        color: #e0e0e0;
+        background: #0f0f23;
+      }
+      nav .brand {
+        font-weight: bold;
+        color: #e0e0e0;
+        margin-right: 8px;
+        font-size: 14px;
+      }
+      footer {
+        text-align: center;
+        padding: 24px;
+        font-size: 12px;
+        color: #666;
+        border-top: 1px solid #1a1a2e;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <span class="brand">Equity Lake</span>
+      <a href="/equity_lake/">Overview</a>
+      <a href="/equity_lake/lineage">Lineage</a>
+      <a href="/equity_lake/bronze">Bronze</a>
+      <a href="/equity_lake/silver">Silver</a>
+      <a href="/equity_lake/gold">Gold</a>
+      <a href="/equity_lake/platinum">Platinum</a>
+    </nav>
+
+    <main>
+      <slot />
+    </main>
+
+    <footer>
+      Generated from <code>data/catalog.jsonl</code> — <code>equity catalog-generate</code>
+    </footer>
+  </body>
+</html>

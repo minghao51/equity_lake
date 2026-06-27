@@ -1,0 +1,18 @@
+---
+import Layout from "../layouts/Layout.astro";
+import LayerStats from "../components/LayerStats";
+import { loadCatalog } from "../data/loadCatalog";
+
+const catalog = loadCatalog();
+---
+
+<Layout title="Overview">
+  <div style="padding: 24px">
+    <h1 style="margin: 0 0 8px 0">Data Catalog</h1>
+    <p style="color: #888; margin: 0 0 24px 0">
+      Version {catalog.version}
+    </p>
+  </div>
+
+  <LayerStats catalog={catalog} client:load />
+</Layout>

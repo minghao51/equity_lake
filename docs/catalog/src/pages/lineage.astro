@@ -1,0 +1,23 @@
+---
+import Layout from "../layouts/Layout.astro";
+import LineageGraph from "../components/LineageGraph";
+import { loadCatalog } from "../data/loadCatalog";
+
+const catalog = loadCatalog();
+---
+
+<Layout title="Lineage">
+  <div style="padding: 16px 24px 0 24px">
+    <h1 style="margin: 0 0 4px 0">DAG Lineage</h1>
+    <p style="color: #888; margin: 0 0 16px 0">
+      {catalog.nodes.length} nodes · {catalog.edges.length} edges
+      &mdash; colored by medallion layer
+    </p>
+  </div>
+
+  <LineageGraph
+    nodes={catalog.nodes}
+    edges={catalog.edges}
+    client:only="react"
+  />
+</Layout>

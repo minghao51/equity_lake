@@ -1,0 +1,48 @@
+name: Catalog Freshness
+
+on:
+  pull_request:
+    paths:
+      - "src/equity_lake/features/dag/**"
+      - "src/equity_lake/catalog/**"
+      - "data/catalog.jsonl"
+  push:
+    branches:
+      - main
+    paths:
+      - "src/equity_lake/features/dag/**"
+      - "src/equity_lake/catalog/**"
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Regenerate catalog
+        run: uv run equity catalog-generate
+
+      - name: Check catalog is fresh
+        run: |
+          if ! git diff --exit-code data/catalog.jsonl; then
+            echo "::error::data/catalog.jsonl is stale. Run 'uv run equity catalog-generate' and commit the result."
+            git --no-pager diff data/catalog.jsonl
+            exit 1
+          fi
+          echo "Catalog is fresh."

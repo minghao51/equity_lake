@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import polars as pl
 import structlog
+from hamilton.function_modifiers import tag
 
 from equity_lake.features.dag.schemas import OHLCVCleanModel
 
@@ -19,6 +20,7 @@ logger = structlog.get_logger()
 _SAMPLE_SIZE = 100
 
 
+@tag(layer="silver", category="transform", produces="returns")  # type: ignore[untyped-decorator]
 def returns(close: pl.Series) -> pl.Series:
     return close.pct_change()
 
@@ -59,6 +61,7 @@ def _validate_ohlcv_boundary(df: pl.DataFrame) -> pl.DataFrame:
     return df
 
 
+@tag(layer="silver", category="validation", produces="validated_ohlcv", description="Pydantic boundary validation (OHLCVCleanModel) at Bronze→Silver")  # type: ignore[untyped-decorator]
 def validated_ohlcv(
     ticker: pl.Series,
     date: pl.Series,

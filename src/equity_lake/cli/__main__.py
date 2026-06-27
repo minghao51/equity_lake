@@ -74,6 +74,7 @@ import equity_lake.cli.commands.pipeline  # noqa: E402, F401
 import equity_lake.cli.commands.intelligence  # noqa: E402, F401
 import equity_lake.cli.commands.analysis  # noqa: E402, F401
 import equity_lake.cli.commands.admin  # noqa: E402, F401
+import equity_lake.cli.commands.catalog  # noqa: E402, F401
 
 
 if __name__ == "__main__":

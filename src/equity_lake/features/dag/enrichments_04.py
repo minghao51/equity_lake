@@ -29,6 +29,7 @@ from datetime import date
 import duckdb
 import polars as pl
 import structlog
+from hamilton.function_modifiers import tag
 
 from equity_lake.core.paths import (
     BRONZE_MACRO_DIR,
@@ -43,6 +44,12 @@ from equity_lake.storage.lake_reader import duckdb_scan_for
 logger = structlog.get_logger()
 
 
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="enriched_features",
+    description="DuckDB left-join enrichment with news, social, analyst, SEC, macro data",
+)
 def enriched_features(
     features_df: pl.DataFrame,
     duckdb_conn: duckdb.DuckDBPyConnection,

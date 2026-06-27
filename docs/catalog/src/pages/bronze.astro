@@ -1,0 +1,11 @@
+---
+import Layout from "../layouts/Layout.astro";
+import DatasetTable from "../components/DatasetTable";
+import { loadCatalog } from "../data/loadCatalog";
+
+const catalog = loadCatalog();
+---
+
+<Layout title="Bronze">
+  <DatasetTable datasets={catalog.datasets} layer="bronze" client:load />
+</Layout>

@@ -18,6 +18,12 @@ repos:
         entry: uv run mypy src
         language: system
         pass_filenames: false
+      - id: catalog-regenerate
+        name: Regenerate data catalog
+        entry: uv run equity catalog-generate
+        language: system
+        files: ^src/equity_lake/(features/dag|catalog)/.*\.py$
+        pass_filenames: false
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

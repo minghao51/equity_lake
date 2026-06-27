@@ -107,6 +107,54 @@ Each stage is independently callable via the `equity` CLI. Predictions
 carry a `feature_schema_version` tag so downstream consumers can detect
 feature-set drift between training and inference.
 
+## Data Catalog
+
+A Hamilton-powered catalog (`src/equity_lake/catalog/`) generates
+`data/catalog.jsonl` from the DAG topology plus static dataset
+definitions, then renders as an interactive Astro + React Flow site.
+
+```
+catalog/
+├── models.py      # Pydantic: Catalog, DatasetEntry, NodeEntry, EdgeEntry, ColumnInfo
+├── datasets.py    # 15 static DatasetEntry definitions (Bronze/Silver/Gold/Platinum)
+├── builder.py     # Builds Hamilton driver, extracts nodes/edges from DAG tags
+└── writer.py      # JSONL serialization (one object per line)
+```
+
+### Generation Flow
+
+1. `build_catalog()` constructs a Hamilton `Driver` from the four DAG
+   modules and calls `list_available_variables()`.
+2. Each tagged node becomes a `NodeEntry` (tags supply `layer`,
+   `category`, `produces`, `validators`). Nodes without a `layer` tag
+   (Hamilton inputs like `price_data`) and internal wrappers
+   (`*_raw`, `*_data_type_validator`, `*_range_validator`) are filtered
+   out. `module` and `hamilton.*` tags are stripped from output.
+3. `what_is_upstream_of()` traces edges into `EdgeEntry` records
+   (self-references and duplicates removed).
+4. Static `DatasetEntry` records from `datasets.py` anchor each
+   medallion layer with paths, schemas, and descriptions.
+5. `write_catalog_jsonl()` emits one JSON object per line (`type`:
+   `catalog | dataset | node | edge`) for clean git diffs.
+
+### CLI & Deployment
+
+```bash
+uv run equity catalog-generate              # regenerate data/catalog.jsonl
+uv run equity catalog-generate -o /tmp.jsonl # custom output path
+```
+
+- **JSONL format** (`data/catalog.jsonl`): 15 datasets, ~45 nodes, ~72
+  edges. Git-tracked (source of truth for the frontend).
+- **Astro frontend** (`docs/catalog/`): static site built at build time
+  from `catalog.jsonl`, uses `@xyflow/react` v12 for DAG visualization.
+- **GitHub Pages**: deployed via `.github/workflows/catalog-deploy.yml`
+  (official `actions/deploy-pages`, base path `/equity_lake`).
+- **Freshness CI** (`.github/workflows/catalog-check.yml`): on PRs
+  touching `features/dag/**` or `catalog/**`, regenerates the catalog
+  and fails if `data/catalog.jsonl` would change — preventing stale
+  catalogs from merging.
+
 ## Key Design Decisions
 
 - **Polars** is the primary DataFrame engine. Pandas only at external

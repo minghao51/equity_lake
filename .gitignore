@@ -20,8 +20,9 @@ build/
 !.env.example
 
 # Data & storage
-data/
+data/*
 !data/.gitkeep
+!data/catalog.jsonl
 logs/
 !logs/.gitkeep
 *.duckdb
@@ -64,3 +65,8 @@ IMPLEMENTATION_PLAN.md
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Astro catalog frontend
+docs/catalog/node_modules/
+docs/catalog/dist/
+docs/catalog/.astro/
