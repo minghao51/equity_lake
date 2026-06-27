@@ -214,9 +214,14 @@ def migrate_parquet_to_delta(
         logger.info("delta_migrate_dry_run", market=market, rows=row_count)
         return True
 
+    # Move old Hive date= partitions aside BEFORE writing, otherwise Delta
+    # (which also partitions by date) writes into the same date= dirs and the
+    # backup step below would relocate the freshly-written Delta data files,
+    # leaving the Delta log pointing at missing files.
+    _backup_old_partitions(market_dir, keep_backup=keep_backup)
+
     success = write_delta(df, market, mode="overwrite", lake_dir=lake_dir)
     if success:
-        _backup_old_partitions(market_dir, keep_backup=keep_backup)
         logger.info("delta_migrate_done", market=market, rows=row_count)
     return success
 
