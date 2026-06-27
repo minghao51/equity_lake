@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from unittest.mock import Mock, patch
 
 import pandas as pd
+import polars as pl
 import pytest
 
 
@@ -37,9 +38,9 @@ class TestYFinanceFetcher:
             result = fetcher.fetch(date(2024, 12, 1))
 
             assert result is not None
-            assert not result.empty
-            assert "dxy" in result["indicator"].values
-            assert "yfinance" in result["source"].values
+            assert not result.is_empty()
+            assert "dxy" in result["indicator"].to_list()
+            assert "yfinance" in result["source"].to_list()
 
     def test_fetch_gld_etf(self):
         """Test fetching GLD ETF price from yfinance."""
@@ -60,9 +61,9 @@ class TestYFinanceFetcher:
             result = fetcher.fetch(date(2024, 12, 1))
 
             assert result is not None
-            assert not result.empty
-            assert result["indicator"].values[0] == "gld"
-            assert abs(result["value"].values[0] - 185.50) < 0.01
+            assert not result.is_empty()
+            assert result["indicator"][0] == "gld"
+            assert abs(result["value"][0] - 185.50) < 0.01
 
     def test_fetch_no_data(self):
         """Test handling empty data response."""
@@ -75,7 +76,7 @@ class TestYFinanceFetcher:
 
             result = fetcher.fetch(date(2024, 12, 1))
 
-            assert result is None or result.empty
+            assert result is None or result.is_empty()
 
 
 class TestFredFetcher:
@@ -96,9 +97,9 @@ class TestFredFetcher:
             result = fetcher.fetch(date(2024, 12, 1))
 
             assert result is not None
-            assert not result.empty
-            assert "tips_yield" in result["indicator"].values
-            assert abs(result["value"].values[0] - 2.15) < 0.01
+            assert not result.is_empty()
+            assert "tips_yield" in result["indicator"].to_list()
+            assert abs(result["value"][0] - 2.15) < 0.01
 
     def test_fetch_geopolitical_risk(self):
         """Test fetching GEPUI from FRED."""
@@ -119,8 +120,8 @@ class TestFredFetcher:
             result = fetcher.fetch(date(2024, 12, 1))
 
             assert result is not None
-            assert not result.empty
-            assert "geopolitical_risk" in result["indicator"].values
+            assert not result.is_empty()
+            assert "geopolitical_risk" in result["indicator"].to_list()
 
 
 class TestMacroDataPipeline:
@@ -146,7 +147,7 @@ class TestMacroDataPipeline:
             pipeline = MacroDataPipeline()
 
             with patch.object(pipeline.indicators[0], "fetch") as mock_fetch:
-                mock_df = pd.DataFrame(
+                mock_df = pl.DataFrame(
                     {
                         "date": [date(2024, 12, 1)],
                         "indicator": ["test"],
@@ -162,72 +163,6 @@ class TestMacroDataPipeline:
                 assert result is not None
 
 
-class TestSchemaValidation:
-    """Tests for schema validation."""
-
-    def test_validate_macro_schema_valid(self):
-        """Test schema validation with valid DataFrame."""
-        from equity_lake.sources.macro import validate_macro_schema
-
-        df = pd.DataFrame(
-            {
-                "date": [date(2024, 12, 1)],
-                "indicator": ["dxy"],
-                "value": [102.5],
-                "source": ["yfinance"],
-                "updated_at": ["2024-12-01 10:00:00"],
-            }
-        )
-
-        assert validate_macro_schema(df) is True
-
-    def test_validate_macro_schema_missing_columns(self):
-        """Test schema validation with missing columns."""
-        from equity_lake.sources.macro import validate_macro_schema
-
-        df = pd.DataFrame(
-            {
-                "date": [date(2024, 12, 1)],
-                "indicator": ["dxy"],
-                # Missing 'value', 'source', 'updated_at'
-            }
-        )
-
-        assert validate_macro_schema(df) is False
-
-    def test_validate_macro_schema_empty(self):
-        """Test schema validation with empty DataFrame."""
-        from equity_lake.sources.macro import validate_macro_schema
-
-        df = pd.DataFrame(columns=["date", "indicator", "value", "source", "updated_at"])
-
-        assert validate_macro_schema(df) is True
-
-
-class TestParquetWrite:
-    """Tests for parquet writing functionality."""
-
-    def test_write_macro_to_parquet(self, tmp_path):
-        """Test writing macro data to parquet."""
-        from equity_lake.sources.macro import write_macro_to_parquet
-
-        df = pd.DataFrame(
-            {
-                "date": [date(2024, 12, 1)],
-                "indicator": ["dxy"],
-                "value": [102.5],
-                "source": ["yfinance"],
-                "updated_at": ["2024-12-01 10:00:00"],
-            }
-        )
-
-        with patch("equity_lake.sources.macro.MACRO_INDICATORS_DIR", tmp_path):
-            result = write_macro_to_parquet(df, date(2024, 12, 1), dry_run=False)
-
-            assert result is True
-            assert (tmp_path / "date=2024-12-01").exists()
-
-
 @pytest.mark.integration
 class TestIntegration:
     """Integration tests (require network access)."""
@@ -239,9 +174,9 @@ class TestIntegration:
         fetcher = YFinanceFetcher(ticker="^DXY", indicator_name="dxy")
         result = fetcher.fetch(date.today() - timedelta(days=1))
 
-        if result is not None and not result.empty:
-            assert "dxy" in result["indicator"].values
-            assert 90.0 < result["value"].values[0] < 120.0
+        if result is not None and not result.is_empty():
+            assert "dxy" in result["indicator"].to_list()
+            assert 90.0 < result["value"][0] < 120.0
 
     def test_fetch_gld_integration(self):
         """Integration test for GLD fetching."""
@@ -250,9 +185,9 @@ class TestIntegration:
         fetcher = YFinanceFetcher(ticker="GLD", indicator_name="gld")
         result = fetcher.fetch(date.today() - timedelta(days=1))
 
-        if result is not None and not result.empty:
-            assert "gld" in result["indicator"].values
-            assert 100.0 < result["value"].values[0] < 500.0  # GLD has increased in price
+        if result is not None and not result.is_empty():
+            assert "gld" in result["indicator"].to_list()
+            assert 100.0 < result["value"][0] < 500.0  # GLD has increased in price
 
 
 if __name__ == "__main__":

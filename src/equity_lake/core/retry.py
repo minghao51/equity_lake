@@ -8,7 +8,7 @@ factory. Each call site preserves its original parameters exactly.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, TypeVar, cast
 
 import structlog
 from tenacity import (
@@ -19,6 +19,8 @@ from tenacity import (
     wait_exponential,
 )
 
+WrappedFn = TypeVar("WrappedFn")
+
 
 def build_retry_decorator(
     *,
@@ -28,12 +30,15 @@ def build_retry_decorator(
     wait_max: float = 30.0,
     retry_on: type[BaseException] | tuple[type[BaseException], ...] | None = None,
     log: Any = None,
-) -> Callable[..., Any]:
+) -> Callable[[WrappedFn], WrappedFn]:
     """Build a tenacity retry decorator with the project's standard shape.
 
     Standard configuration: exponential backoff capped at ``wait_max``, a
     WARNING-level (30) ``before_sleep_log``, and ``reraise=True`` so the final
     attempt's exception propagates unchanged.
+
+    The returned decorator preserves the wrapped callable's signature (matching
+    tenacity's own ``retry``), so decorated functions keep their declared types.
 
     Args:
         attempts: Maximum attempts (``stop_after_attempt``).
@@ -58,4 +63,4 @@ def build_retry_decorator(
     }
     if retry_on is not None:
         kwargs["retry"] = retry_if_exception_type(retry_on)
-    return cast("Callable[..., Any]", retry(**kwargs))
+    return cast("Callable[[WrappedFn], WrappedFn]", retry(**kwargs))

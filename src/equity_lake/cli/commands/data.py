@@ -167,7 +167,8 @@ def macro(
 ) -> None:
     """Fetch macro indicators."""
     from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.sources.macro import MacroDataPipeline, validate_macro_schema, write_macro_to_parquet
+    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.sources.macro import MacroDataPipeline
 
     _init_logging(verbose)
     trading_date = resolve_trading_date(date_str)
@@ -185,15 +186,11 @@ def macro(
 
     df = pipeline.fetch_with_fallback(trading_date)
 
-    if df.empty:
+    if df.is_empty():
         typer.secho("No macro data fetched", fg=typer.colors.YELLOW)
         raise typer.Exit(1)
 
-    if not validate_macro_schema(df):
-        typer.secho("Schema validation failed", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    success = write_macro_to_parquet(df, trading_date, dry_run=dry_run)
+    success = write_to_partitioned_parquet(df, "01_bronze/macro", trading_date, dry_run=dry_run)
 
     if success:
         typer.secho("Macro indicators fetch completed successfully", fg=typer.colors.GREEN)

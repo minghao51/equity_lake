@@ -1,4 +1,9 @@
-"""Macro source adapters — fetchers, pipeline, writers, and schema validation."""
+"""Macro source adapters — fetchers and pipeline (polars-first).
+
+Macro data (FRED, yfinance) is fetched as pandas at the external-library
+boundary and converted to polars immediately. The pipeline hands polars
+DataFrames to the canonical Delta writer in ``ingestion/writers.py``.
+"""
 
 from __future__ import annotations
 
@@ -6,18 +11,29 @@ from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
-import pandas as pd
 import polars as pl
 import structlog
 import yfinance as yf
 from fredapi import Fred
 
 from equity_lake.core.config import get_project_config
-from equity_lake.core.paths import MACRO_INDICATORS_DIR
 from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import MACRO_COLUMNS, MACRO_INDICATOR_CONFIG
 
 logger = structlog.get_logger(__name__)
+
+
+def _empty_macro_frame() -> pl.DataFrame:
+    """Return an empty DataFrame carrying the MACRO_COLUMNS schema."""
+    return pl.DataFrame(
+        schema={
+            "date": pl.Date,
+            "indicator": pl.Utf8,
+            "value": pl.Float64,
+            "source": pl.Utf8,
+            "updated_at": pl.Datetime("us", "UTC"),
+        }
+    )
 
 
 class MacroIndicatorFetcher:
@@ -32,12 +48,12 @@ class MacroIndicatorFetcher:
             log=logger,
         )
 
-    def fetch(self, trading_date: date) -> pd.DataFrame | None:
+    def fetch(self, trading_date: date) -> pl.DataFrame | None:
         raise NotImplementedError("Subclasses must implement fetch()")
 
-    def _retry_on_failure(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> pd.DataFrame | None:
+    def _retry_on_failure(self, func: Callable[..., pl.DataFrame | None], *args: Any, **kwargs: Any) -> pl.DataFrame | None:
         @self._retry_decorator
-        def _wrapped() -> pd.DataFrame | None:
+        def _wrapped() -> pl.DataFrame | None:
             return func(*args, **kwargs)
 
         try:
@@ -52,8 +68,8 @@ class YFinanceFetcher(MacroIndicatorFetcher):
         super().__init__(indicator_name, retry_attempts)
         self.ticker = ticker
 
-    def fetch(self, trading_date: date) -> pd.DataFrame | None:
-        def _fetch() -> pd.DataFrame | None:
+    def fetch(self, trading_date: date) -> pl.DataFrame | None:
+        def _fetch() -> pl.DataFrame | None:
             start_date = trading_date.strftime("%Y-%m-%d")
             end_date = (trading_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
@@ -76,7 +92,7 @@ class YFinanceFetcher(MacroIndicatorFetcher):
                 logger.warning(f"No close price found for {self.indicator_name}")
                 return None
 
-            df = pd.DataFrame(
+            df = pl.DataFrame(
                 {
                     "date": [trading_date],
                     "indicator": [self.indicator_name],
@@ -105,8 +121,8 @@ class FredFetcher(MacroIndicatorFetcher):
         self.fred_api_key = fred_api_key
         self.fred = Fred(api_key=fred_api_key)
 
-    def fetch(self, trading_date: date) -> pd.DataFrame | None:
-        def _fetch() -> pd.DataFrame | None:
+    def fetch(self, trading_date: date) -> pl.DataFrame | None:
+        def _fetch() -> pl.DataFrame | None:
             data = self.fred.get_series(
                 self.series_id,
                 observation_start=trading_date.strftime("%Y-%m-%d"),
@@ -119,7 +135,7 @@ class FredFetcher(MacroIndicatorFetcher):
 
             value = float(data.iloc[0])
 
-            df = pd.DataFrame(
+            df = pl.DataFrame(
                 {
                     "date": [trading_date],
                     "indicator": [self.indicator_name],
@@ -194,114 +210,36 @@ class MacroDataPipeline:
         logger.info(f"Initialized {len(fetchers)} macro indicator fetchers")
         return fetchers
 
-    def fetch_all(self, trading_date: date) -> pd.DataFrame:
+    def fetch_all(self, trading_date: date) -> pl.DataFrame:
         logger.info(f"Fetching macro indicators for {trading_date}")
 
-        all_data = []
+        all_data: list[pl.DataFrame] = []
 
         for fetcher in self.indicators:
             try:
                 result = fetcher.fetch(trading_date)
-                if result is not None and not result.empty:
+                if result is not None and not result.is_empty():
                     all_data.append(result)
             except Exception as e:
                 logger.error(f"Failed to fetch {fetcher.indicator_name}: {e}")
 
         if not all_data:
             logger.warning(f"No macro data fetched for {trading_date}")
-            return pd.DataFrame(columns=MACRO_COLUMNS)
+            return _empty_macro_frame()
 
-        df = pd.concat(all_data, ignore_index=True)
-
-        for col in MACRO_COLUMNS:
-            if col not in df.columns:
-                df[col] = None
-
-        df = df[MACRO_COLUMNS]
+        df = pl.concat(all_data).select(MACRO_COLUMNS)
 
         logger.info(f"Fetched {len(df)} macro indicators for {trading_date}")
         return df
 
-    def fetch_with_fallback(self, trading_date: date, fallback_date: date | None = None) -> pd.DataFrame:
+    def fetch_with_fallback(self, trading_date: date, fallback_date: date | None = None) -> pl.DataFrame:
         df = self.fetch_all(trading_date)
 
-        if df.empty and fallback_date:
+        if df.is_empty() and fallback_date:
             logger.info(f"Falling back to previous trading day: {fallback_date}")
             df = self.fetch_all(fallback_date)
 
         return df
-
-
-def write_macro_to_parquet(
-    df: pd.DataFrame,
-    trading_date: date,
-    dry_run: bool = False,
-) -> bool:
-    if df.empty:
-        logger.warning(f"Empty DataFrame for macro indicators on {trading_date}")
-        return False
-
-    MACRO_INDICATORS_DIR.mkdir(parents=True, exist_ok=True)
-
-    partition_dir = MACRO_INDICATORS_DIR / f"date={trading_date}"
-    partition_dir.mkdir(parents=True, exist_ok=True)
-    output_file = partition_dir / f"{trading_date}.parquet"
-
-    if output_file.exists():
-        logger.info(f"File exists: {output_file}. Checking for duplicates...")
-        try:
-            existing_df = pd.read_parquet(output_file)
-            existing_combos = set(existing_df.apply(lambda r: (r["indicator"],), axis=1).tolist())
-
-            duplicate_mask = df.apply(lambda r: (r["indicator"],) in existing_combos, axis=1)
-
-            duplicate_count = duplicate_mask.sum()
-            if duplicate_count > 0:
-                logger.warning(f"Found {duplicate_count} duplicate indicators, skipping...")
-                df = df[~duplicate_mask]
-
-            if df.empty:
-                logger.warning("All indicators are duplicates. Skipping write.")
-                return True
-
-        except Exception as e:
-            logger.error(f"Failed to check for duplicates: {e}")
-
-    if dry_run:
-        logger.info(f"[DRY RUN] Would write {len(df)} indicators to {output_file}")
-        return True
-
-    try:
-        df_write = df.copy()
-        if "date" in df_write.columns:
-            df_write["date"] = pd.to_datetime(df_write["date"])
-        if "updated_at" in df_write.columns:
-            df_write["updated_at"] = pd.to_datetime(df_write["updated_at"])
-
-        df_write.to_parquet(output_file, index=False, compression="snappy")
-
-        file_size = output_file.stat().st_size / 1024
-        logger.info(f"Wrote {len(df_write)} indicators to {output_file} ({file_size:.1f} KB)")
-        return True
-
-    except Exception as e:
-        logger.error(f"Failed to write Parquet file: {e}")
-        return False
-
-
-def validate_macro_schema(df: pd.DataFrame) -> bool:
-    required_cols = MACRO_COLUMNS
-    missing_cols = set(required_cols) - set(df.columns)
-
-    if missing_cols:
-        logger.error(f"Missing required columns: {missing_cols}")
-        return False
-
-    for col in required_cols:
-        if df[col].isnull().all():
-            logger.warning(f"Column '{col}' is all null")
-
-    return True
 
 
 class MacroFetcher:
@@ -311,14 +249,7 @@ class MacroFetcher:
         self._pipeline = MacroDataPipeline()
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
-        import polars as pl
-
-        from equity_lake.sources.base import _empty_frame
-
-        df_pd = self._pipeline.fetch_with_fallback(trading_date)
-        if df_pd is None or df_pd.empty:
-            return _empty_frame()
-        return pl.from_pandas(df_pd)
+        return self._pipeline.fetch_with_fallback(trading_date)
 
 
 __all__ = [
@@ -327,6 +258,4 @@ __all__ = [
     "MacroFetcher",
     "MacroIndicatorFetcher",
     "YFinanceFetcher",
-    "validate_macro_schema",
-    "write_macro_to_parquet",
 ]
