@@ -2,22 +2,14 @@
 
 from __future__ import annotations
 
-from importlib.metadata import entry_points
-
 from equity_lake.loaders.base import BaseDataLoader, LoaderMetadata
 
 
 class LoaderRegistry:
-    """Simple plugin registry backed by Python entry points."""
+    """Simple plugin registry for built-in data loaders."""
 
     def __init__(self) -> None:
         self._loaders: dict[str, type[BaseDataLoader]] = {}
-
-    def discover(self) -> None:
-        """Discover third-party loaders via entry points."""
-        for entry_point in entry_points(group="equity_lake.loaders"):
-            loader_class = entry_point.load()
-            self.register(loader_class.metadata.name, loader_class)
 
     def register(self, name: str, loader_class: type[BaseDataLoader]) -> None:
         """Register a loader class."""

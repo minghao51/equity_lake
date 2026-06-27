@@ -56,7 +56,7 @@
 4. **Partitioned Storage**: Hive-style date partitioning for efficient queries
 5. **Zero-Copy Queries**: DuckDB reads Parquet/Delta files directly without loading
 6. **Single Canonical Path**: no supported duplicate source tree or package-root shims
-7. **Composition over Inheritance**: ML pipeline decomposed into `FeatureLoader` + `trainer` utilities + `Predictor` protocol
+7. **Composition over Inheritance**: ML pipeline decomposed into `FeatureLoader` + `trainer` utilities
 
 ## Canonical Module Boundaries
 
@@ -69,7 +69,6 @@
 - `src/equity_lake/ml/forecasting.py`: public forecasting orchestrator (`PriceForecaster`)
 - `src/equity_lake/ml/feature_loader.py`: DuckDB-backed feature loading (`FeatureLoader`)
 - `src/equity_lake/ml/trainer.py`: extracted training utilities (`compute_class_weights`, `compute_shap_importance`, `optimize_threshold`)
-- `src/equity_lake/ml/protocols.py`: `Predictor` runtime-checkable protocol
 - `src/equity_lake/ml/candidates.py`, `labeling.py`, `validation.py`: ML helper modules
 
 Unsupported after the June 2026 refactor:
@@ -236,8 +235,6 @@ PriceForecaster (forecasting.py)
   └── validation.py                         — purged walk-forward validation
 ```
 
-**Protocols**: `Predictor` protocol in `protocols.py` — `@runtime_checkable` interface for any model that implements `predict(ticker, date) -> dict`.
-
 ---
 
 ### 5. Signal Generation Layer
@@ -281,13 +278,10 @@ ML validation uses purged and embargoed walk-forward splits.
 ### 3. Composition — ML Pipeline
 `PriceForecaster` composes `FeatureLoader` (DuckDB lifecycle) and delegates to `trainer.py` functions, rather than inheriting from a shared base.
 
-### 4. Protocol — Predictor
-`Predictor` protocol in `ml/protocols.py` defines `predict(ticker, date) -> dict`. Any class satisfying this interface is accepted.
-
-### 5. Transparent Storage — Lake Reader
+### 4. Transparent Storage — Lake Reader
 `duckdb_scan_for()` abstracts Delta vs. Parquet access, letting callers use a single scan expression without knowing the underlying format.
 
-### 6. Delegation — Backfill
+### 5. Delegation — Backfill
 `backfill_date_range()` delegates to `run_daily_ingestion()` per date instead of reimplementing fetch logic.
 
 ---

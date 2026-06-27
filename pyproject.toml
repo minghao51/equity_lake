@@ -110,9 +110,6 @@ docs = [
 [project.scripts]
 equity = "equity_lake.cli.__main__:app"
 
-[project.entry-points."equity_lake.loaders"]
-yfinance = "equity_lake.loaders.yfinance_loader:YFinanceLoader"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

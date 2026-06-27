@@ -1,8 +1,7 @@
 """Feature engineering integration for LLM-enriched silver-layer sentiment data.
 
 Reads the silver Delta table, aggregates per-ticker daily features, and
-left-joins into the price DataFrame. Follows the existing
-``merge_sentiment_features()`` pattern in ``features/engineering.py``.
+left-joins into the price DataFrame.
 """
 
 from __future__ import annotations

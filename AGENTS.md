@@ -26,8 +26,8 @@ src/equity_lake/          # Source
 ├── cli/                  # Typer-based CLI (`equity` command, native Typer — no passthrough)
 │   ├── __main__.py       # App entrypoint (wires sub-apps, imports command modules)
 │   ├── _app.py           # Typer app factory, logging init
-│   ├── commands/         # Command modules (data, pipeline, intelligence, analysis, admin)
-│   └── ...               # Domain-specific CLI modules (config, loader, news, sentiment, signal)
+│   ├── commands/         # Command modules (admin, analysis, catalog, data, intelligence, pipeline)
+│   └── bootstrap.py      # Sample-data bootstrap + shared CLI helpers
 ├── config/               # YAML config validators (CI/CD)
 │   └── validators.py     # tickers.yaml / watchlist.yaml / signals.yaml validators
 ├── core/                 # paths.py (dirs), logging.py (structlog), schemas.py (columns)
@@ -44,8 +44,7 @@ src/equity_lake/          # Source
 ├── storage/              # DuckDB (EquityDataDB), S3 sync, Delta Lake
 ├── updates/              # Data update engine
 ├── validation/           # pointblank-based data validation (schema contracts at ingestion)
-├── pipeline.py           # PipelineOrchestrator + stage helpers (ingestion/feature/ml)
-└── price_forecaster.py   # Price forecast CLI
+└── pipeline.py           # PipelineOrchestrator + stage helpers (ingestion/feature/ml)
 config/                   # YAML configs (tickers.yaml, settings.yaml, signals.yaml, watchlist.yaml)
 data/lake/                # Partitioned Parquet storage (market/date= partitions)
 notebooks/                # Interactive Jupyter notebooks (01–10, standalone runnable)
