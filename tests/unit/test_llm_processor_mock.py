@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import polars as pl
@@ -219,3 +220,73 @@ class TestProcessAllWithMock:
 
         assert call_count == 2
         assert df.height == 2
+
+
+def _make_fake_openai_cls(canned_content: str):
+    """Build a fake AsyncOpenAI class that records init kwargs and serves canned content."""
+
+    class _FakeCompletions:
+        async def create(self, **kwargs):
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=canned_content))])
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.init_kwargs = kwargs
+            self.chat = SimpleNamespace(completions=_FakeCompletions())
+
+    return _FakeAsyncOpenAI
+
+
+class TestAsyncOpenAIConstructionMock:
+    """Patch the AsyncOpenAI class itself to verify construction wiring + end-to-end flow."""
+
+    def test_client_constructed_with_api_key_and_deepseek_base_url(self, bronze_df):
+        canned = json.dumps(
+            {
+                "items": [
+                    {
+                        "id": "art-1",
+                        "mentioned_tickers": ["AAPL"],
+                        "sentiment": {"score": 0.7, "label": "bullish", "confidence": 0.8},
+                        "event_type": "product",
+                        "key_entities": [],
+                        "summary": "Apple up",
+                        "impact_horizon": "short",
+                        "market_relevance": 0.7,
+                    },
+                    {
+                        "id": "art-2",
+                        "mentioned_tickers": ["MSFT"],
+                        "sentiment": {"score": -0.5, "label": "bearish", "confidence": 0.6},
+                        "event_type": "general",
+                        "key_entities": [],
+                        "summary": "MSFT down",
+                        "impact_horizon": "medium",
+                        "market_relevance": 0.5,
+                    },
+                ]
+            }
+        )
+        fake_cls = _make_fake_openai_cls(canned)
+
+        with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}), patch("equity_lake.ingestion.llm_base.AsyncOpenAI", fake_cls):
+            proc = DeepSeekBatchProcessor(batch_size=15)
+            # The injected fake received the DeepSeek base_url + env API key.
+            assert proc.client.init_kwargs["base_url"] == "https://api.deepseek.com"
+            assert proc.client.init_kwargs["api_key"] == "test-key"
+
+            # End-to-end: process_all -> _to_silver_df via the mocked client.
+            df = asyncio.run(proc.process_all(bronze_df))
+
+        assert df.height == 2
+        assert set(df["ticker"].to_list()) == {"AAPL", "MSFT"}
+
+    def test_missing_api_key_raises_before_client_construction(self):
+        # Without the env var, __init__ must raise ValueError before touching AsyncOpenAI.
+        fake_cls = _make_fake_openai_cls("{}")
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch("equity_lake.ingestion.llm_base.AsyncOpenAI", fake_cls),
+            pytest.raises(ValueError, match="DEEPSEEK_API_KEY"),
+        ):
+            DeepSeekBatchProcessor()

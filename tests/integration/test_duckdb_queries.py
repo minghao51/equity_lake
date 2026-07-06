@@ -5,7 +5,8 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from equity_lake.storage.duckdb import EquityDataDB, QueryExamples
+from equity_lake.storage.duckdb import EquityDataDB
+from equity_lake.storage.examples import QueryExamples
 
 # =============================================================================
 # Test Database Connection
@@ -205,7 +206,7 @@ class TestQueryPerformance:
 
     def test_query_performance_benchmark(self, db_with_data):
         """Test query performance benchmarking."""
-        from equity_lake.storage.duckdb import benchmark_queries
+        from equity_lake.storage.examples import benchmark_queries
 
         results = benchmark_queries(db_with_data)
 

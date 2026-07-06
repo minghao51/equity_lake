@@ -11,7 +11,7 @@ from equity_lake.ingestion.router import fetch_market_data
 
 class TestFetchMarketDataUnknownMarket:
     def test_unknown_market_returns_none(self) -> None:
-        result = fetch_market_data("unknown", date(2026, 6, 2), config={})
+        result = fetch_market_data("unknown", date(2026, 6, 2))
         assert result is None
 
 
@@ -22,7 +22,7 @@ class TestFetchMarketDataMacro:
         mock_fetcher.fetch.return_value = pl.DataFrame()
         mock_fetcher_cls.return_value = mock_fetcher
 
-        result = fetch_market_data("macro", date(2026, 6, 2), config={})
+        result = fetch_market_data("macro", date(2026, 6, 2))
         assert result is None
 
     @patch("equity_lake.sources.macro.MacroFetcher")
@@ -32,7 +32,7 @@ class TestFetchMarketDataMacro:
         mock_fetcher.fetch.return_value = df
         mock_fetcher_cls.return_value = mock_fetcher
 
-        result = fetch_market_data("macro", date(2026, 6, 2), config={})
+        result = fetch_market_data("macro", date(2026, 6, 2))
         assert result is not None
         assert len(result) == 1
 
@@ -41,14 +41,14 @@ class TestFetchMarketDataNewsMissingKey:
     def test_news_raises_without_api_key(self, monkeypatch) -> None:
         monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
         with pytest.raises(OSError, match="FINNHUB_API_KEY"):
-            fetch_market_data("us_news", date(2026, 6, 2), config={})
+            fetch_market_data("us_news", date(2026, 6, 2))
 
 
 class TestFetchMarketDataSentimentMissingKey:
     def test_sentiment_raises_without_api_key(self, monkeypatch) -> None:
         monkeypatch.delenv("FINNHUB_API_KEY", raising=False)
         with pytest.raises(OSError, match="FINNHUB_API_KEY"):
-            fetch_market_data("us_social_sentiment", date(2026, 6, 2), config={})
+            fetch_market_data("us_social_sentiment", date(2026, 6, 2))
 
 
 class TestFetchMarketDataWithFetcherError:
@@ -58,5 +58,5 @@ class TestFetchMarketDataWithFetcherError:
         mock_fetcher.fetch.side_effect = RuntimeError("API down")
         mock_make.return_value = mock_fetcher
 
-        result = fetch_market_data("us", date(2026, 6, 2), config={})
+        result = fetch_market_data("us", date(2026, 6, 2))
         assert result is None

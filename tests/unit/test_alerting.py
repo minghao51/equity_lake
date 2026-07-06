@@ -19,36 +19,27 @@ class TestConsoleAlerter:
 
 
 class TestWebhookAlerter:
-    @patch("equity_lake.monitoring.alerting.httpx.Client")
-    def test_send_alert_posts_json(self, mock_client_cls) -> None:
+    def test_send_alert_posts_json(self, mock_httpx_client) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
+        mock_httpx_client.post.return_value = mock_response
 
-        mock_client = MagicMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+        with patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client):
+            alerter = WebhookAlerter(url="https://example.com/webhook")
+            alerter.send_alert(["alert1", "alert2"], severity="critical")
 
-        alerter = WebhookAlerter(url="https://example.com/webhook")
-        alerter.send_alert(["alert1", "alert2"], severity="critical")
-
-        mock_client.post.assert_called_once()
-        call_kwargs = mock_client.post.call_args
+        mock_httpx_client.post.assert_called_once()
+        call_kwargs = mock_httpx_client.post.call_args
         assert call_kwargs.kwargs["json"]["severity"] == "critical"
         assert call_kwargs.kwargs["json"]["alerts"] == ["alert1", "alert2"]
 
-    @patch("equity_lake.monitoring.alerting.httpx.Client")
-    def test_send_alert_handles_failure(self, mock_client_cls) -> None:
-        mock_client = MagicMock()
-        mock_client.post.side_effect = Exception("connection error")
-        mock_client.__enter__ = MagicMock(return_value=mock_client)
-        mock_client.__exit__ = MagicMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+    def test_send_alert_handles_failure(self, mock_httpx_client) -> None:
+        mock_httpx_client.post.side_effect = Exception("connection error")
 
-        alerter = WebhookAlerter(url="https://example.com/webhook")
-        alerter.send_alert(["alert"], severity="info")
+        with patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client):
+            alerter = WebhookAlerter(url="https://example.com/webhook")
+            alerter.send_alert(["alert"], severity="info")
 
 
 class TestCompositeAlerter:

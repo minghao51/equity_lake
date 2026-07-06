@@ -5,6 +5,7 @@ Pytest configuration and shared fixtures for Equity EOD Data Pipeline tests.
 from collections.abc import Generator
 from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pandas as pd
 import polars as pl
@@ -337,3 +338,28 @@ def create_test_parquet_file(path: Path, data: pd.DataFrame) -> None:
 def count_parquet_files(directory: Path) -> int:
     """Helper to count Parquet files in directory."""
     return len(list(directory.rglob("*.parquet")))
+
+
+# =============================================================================
+# HTTP Mocking Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def mock_httpx_client() -> MagicMock:
+    """A MagicMock that mimics an httpx.Client context manager.
+
+    Pre-wires ``__enter__`` (returns self) and ``__exit__`` (returns False) so
+    ``with httpx.Client() as c: c.get(...)`` works in tests. Set ``.get`` /
+    ``.post`` return values or side effects on the returned object, then patch
+    it into the target module, e.g.::
+
+        def test_x(mock_httpx_client):
+            mock_httpx_client.get.return_value = mock_response
+            with patch("equity_lake.sources.reddit.httpx.Client", return_value=mock_httpx_client):
+                ...
+    """
+    client = MagicMock()
+    client.__enter__ = MagicMock(return_value=client)
+    client.__exit__ = MagicMock(return_value=False)
+    return client

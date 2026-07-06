@@ -37,7 +37,7 @@ class TestRedditFetcher:
             result = fetcher.fetch(date(2026, 6, 14))
             assert result.is_empty()
 
-    def test_fetch_posts(self):
+    def test_fetch_posts(self, mock_httpx_client):
         mock_config = {
             "reddit": {
                 "subreddits": [
@@ -70,15 +70,11 @@ class TestRedditFetcher:
         mock_response.json.return_value = mock_response_data
         mock_response.headers = {}
         mock_response.raise_for_status = Mock()
-
-        mock_client = Mock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = Mock(return_value=mock_client)
-        mock_client.__exit__ = Mock(return_value=False)
+        mock_httpx_client.get.return_value = mock_response
 
         with (
             patch("equity_lake.sources.reddit._load_social_config", return_value=mock_config),
-            patch("equity_lake.sources.reddit.httpx.Client", return_value=mock_client),
+            patch("equity_lake.sources.reddit.httpx.Client", return_value=mock_httpx_client),
             patch("equity_lake.sources.reddit.time.sleep"),
         ):
             fetcher = RedditFetcher()

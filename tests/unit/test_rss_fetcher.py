@@ -46,7 +46,7 @@ class TestRSSNewsFetcher:
             result = fetcher.fetch(date(2026, 6, 14))
             assert result.is_empty()
 
-    def test_fetch_articles(self):
+    def test_fetch_articles(self, mock_httpx_client):
         mock_feeds = [{"name": "test_feed", "url": "https://example.com/rss", "category": ["stock"]}]
 
         mock_parsed = Mock()
@@ -67,20 +67,16 @@ class TestRSSNewsFetcher:
             },
         ]
 
+        mock_response = Mock()
+        mock_response.content = b"<rss/>"
+        mock_response.raise_for_status = Mock()
+        mock_httpx_client.get.return_value = mock_response
+
         with (
             patch("equity_lake.sources.rss._load_feed_config", return_value=mock_feeds),
             patch("equity_lake.sources.rss.feedparser.parse", return_value=mock_parsed),
-            patch("equity_lake.sources.rss.httpx.Client") as mock_client_cls,
+            patch("equity_lake.sources.rss.httpx.Client", return_value=mock_httpx_client),
         ):
-            mock_client = Mock()
-            mock_response = Mock()
-            mock_response.content = b"<rss/>"
-            mock_response.raise_for_status = Mock()
-            mock_client.get.return_value = mock_response
-            mock_client.__enter__ = Mock(return_value=mock_client)
-            mock_client.__exit__ = Mock(return_value=False)
-            mock_client_cls.return_value = mock_client
-
             fetcher = RSSNewsFetcher()
             result = fetcher.fetch(date(2026, 6, 14))
 

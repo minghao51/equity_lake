@@ -31,7 +31,7 @@ class TestStockTwitsFetcher:
             result = fetcher.fetch(date(2026, 6, 14))
             assert result.is_empty()
 
-    def test_fetch_messages_when_enabled(self):
+    def test_fetch_messages_when_enabled(self, mock_httpx_client):
         mock_response_data = {
             "messages": [
                 {
@@ -47,15 +47,11 @@ class TestStockTwitsFetcher:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_data
         mock_response.raise_for_status = Mock()
-
-        mock_client = Mock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = Mock(return_value=mock_client)
-        mock_client.__exit__ = Mock(return_value=False)
+        mock_httpx_client.get.return_value = mock_response
 
         with (
             patch.dict("os.environ", {"STOCKTWITS_ENABLED": "true"}),
-            patch("equity_lake.sources.stocktwits.httpx.Client", return_value=mock_client),
+            patch("equity_lake.sources.stocktwits.httpx.Client", return_value=mock_httpx_client),
         ):
             fetcher = StockTwitsFetcher(tickers=["AAPL"], messages_per_symbol=30)
             result = fetcher.fetch(date(2026, 6, 14))
@@ -64,7 +60,7 @@ class TestStockTwitsFetcher:
         assert result["source_type"][0] == "stocktwits"
         assert result["title"][0] == "$AAPL looking strong today"
 
-    def test_old_messages_filtered(self):
+    def test_old_messages_filtered(self, mock_httpx_client):
         mock_response_data = {
             "messages": [
                 {
@@ -80,15 +76,11 @@ class TestStockTwitsFetcher:
         mock_response = Mock()
         mock_response.json.return_value = mock_response_data
         mock_response.raise_for_status = Mock()
-
-        mock_client = Mock()
-        mock_client.get.return_value = mock_response
-        mock_client.__enter__ = Mock(return_value=mock_client)
-        mock_client.__exit__ = Mock(return_value=False)
+        mock_httpx_client.get.return_value = mock_response
 
         with (
             patch.dict("os.environ", {"STOCKTWITS_ENABLED": "true"}),
-            patch("equity_lake.sources.stocktwits.httpx.Client", return_value=mock_client),
+            patch("equity_lake.sources.stocktwits.httpx.Client", return_value=mock_httpx_client),
         ):
             fetcher = StockTwitsFetcher(tickers=["AAPL"])
             result = fetcher.fetch(date(2026, 6, 14))

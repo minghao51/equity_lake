@@ -78,12 +78,6 @@ class TestBootstrapSubcommands:
         assert result.exit_code == 0
 
 
-class TestLoaderSubcommands:
-    def test_loader_list_help(self):
-        result = runner.invoke(app, ["loader", "list", "--help"])
-        assert result.exit_code == 0
-
-
 class TestConfigSubcommands:
     def test_config_show_help(self):
         result = runner.invoke(app, ["config", "show", "--help"])

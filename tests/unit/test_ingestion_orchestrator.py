@@ -34,6 +34,7 @@ class TestUSEquityFetcher:
 
     @pytest.mark.slow
     @pytest.mark.integration
+    @pytest.mark.network
     def test_fetch_real_data(self):
         """Test fetching real data from yfinance (integration test)."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
@@ -56,6 +57,7 @@ class TestCNAshareFetcher:
 
     @pytest.mark.slow
     @pytest.mark.integration
+    @pytest.mark.network
     def test_fetch_real_data(self):
         """Test fetching real data from akshare (integration test)."""
         fetcher = CNAshareFetcher()
@@ -169,7 +171,7 @@ class TestPipelineIntegration:
 
     def test_fetch_market_data_invalid_market(self):
         """Test fetching with invalid market identifier."""
-        result = fetch_market_data("invalid_market", date(2024, 1, 1), {})
+        result = fetch_market_data("invalid_market", date(2024, 1, 1))
         assert result is None
 
     def test_fetch_market_data_cn_uses_hybrid_fetcher(self):
@@ -190,7 +192,7 @@ class TestPipelineIntegration:
         with patch("equity_lake.sources.cn_hybrid.CNHybridFetcher") as mock_fetcher:
             mock_fetcher.return_value.fetch.return_value = sample
 
-            result = fetch_market_data("cn", date(2024, 1, 1), {})
+            result = fetch_market_data("cn", date(2024, 1, 1))
 
         mock_fetcher.assert_called_once()
         assert result is not None
@@ -232,6 +234,7 @@ class TestPipelineIntegration:
 class TestDateHandling:
     """Tests for date handling and edge cases."""
 
+    @pytest.mark.network
     def test_weekend_date(self):
         """Test handling of weekend dates."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
@@ -241,6 +244,7 @@ class TestDateHandling:
         df = fetcher.fetch(weekend_date)
         assert isinstance(df, pl.DataFrame)
 
+    @pytest.mark.network
     def test_future_date(self):
         """Test handling of future dates."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
@@ -268,6 +272,7 @@ class TestPerformance:
         # Should initialize without issues
         assert len(fetcher.tickers) == 100
 
+    @pytest.mark.network
     def test_concurrent_fetches(self):
         """Test that multiple fetches don't interfere."""
         fetcher = USEquityFetcher(tickers=["AAPL"])

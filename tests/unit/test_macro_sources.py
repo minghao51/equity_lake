@@ -139,6 +139,8 @@ class TestMacroDataPipeline:
             assert "YFinanceFetcher" in indicator_names
             assert "FredFetcher" in indicator_names
 
+    @pytest.mark.integration
+    @pytest.mark.network
     def test_pipeline_fetch_all(self):
         """Test fetching all indicators."""
         from equity_lake.sources.macro import MacroDataPipeline
