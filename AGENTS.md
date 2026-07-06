@@ -91,7 +91,7 @@ uv run ruff format .                     # Format
 
 New core dependencies (added for resilience/performance):
 - `tenacity` — retry/backoff for all API fetchers
-- `httpx` + `aiolimiter` — async HTTP for concurrent API ingestion
+- `httpx` — async HTTP for concurrent API ingestion
 - `polars` — primary dataframe engine across the ingestion, validation, feature, and ML pipeline. Pandas only at external-library boundaries (yfinance, akshare, efinance).
 - `exchange-calendars` — trading-day calendar validation
 - `pytest-xdist` — parallel test execution
