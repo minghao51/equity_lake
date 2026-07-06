@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal, cast
 
 import structlog
 import yaml
@@ -20,8 +20,7 @@ from pydantic_settings import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_DIR = PROJECT_ROOT / "config"
-DATA_DIR = PROJECT_ROOT / "data"
-LOGS_DIR = PROJECT_ROOT / "logs"
+DEFAULT_TICKERS_PATH = CONFIG_DIR / "tickers.yaml"
 
 
 class TickerMetadata(BaseModel):
@@ -217,20 +216,14 @@ class TickerConfigRoot(BaseModel):
         market: str | None = None,
         active_only: bool = True,
     ) -> list[str]:
-        tag_normalized = tag.lower().strip()
-        result: list[str] = []
+        # Matching logic lives on MarketConfig (the owner of ``tickers``); this is
+        # a thin market-routing aggregator. Same shape for the selectors below.
         markets_to_search = [market] if market else self.get_markets()
-
+        result: list[str] = []
         for market_name in markets_to_search:
             market_info = self.get_market_info(market_name)
-            if not market_info:
-                continue
-            for ticker in market_info.tickers:
-                if active_only and not ticker.active:
-                    continue
-                if tag_normalized in [item.lower() for item in ticker.tags]:
-                    result.append(ticker.symbol)
-
+            if market_info:
+                result.extend(market_info.get_tickers_by_tag(tag, active_only=active_only))
         return result
 
     def get_tickers_by_sector(
@@ -239,20 +232,12 @@ class TickerConfigRoot(BaseModel):
         market: str | None = None,
         active_only: bool = True,
     ) -> list[str]:
-        result: list[str] = []
-        sector_normalized = sector.lower().strip()
         markets_to_search = [market] if market else self.get_markets()
-
+        result: list[str] = []
         for market_name in markets_to_search:
             market_info = self.get_market_info(market_name)
-            if not market_info:
-                continue
-            for ticker in market_info.tickers:
-                if active_only and not ticker.active:
-                    continue
-                if ticker.sector.lower() == sector_normalized:
-                    result.append(ticker.symbol)
-
+            if market_info:
+                result.extend(market_info.get_tickers_by_sector(sector, active_only=active_only))
         return result
 
     def get_tickers_by_exchange(
@@ -261,20 +246,12 @@ class TickerConfigRoot(BaseModel):
         market: str | None = None,
         active_only: bool = True,
     ) -> list[str]:
-        result: list[str] = []
-        exchange_normalized = exchange.upper().strip()
         markets_to_search = [market] if market else self.get_markets()
-
+        result: list[str] = []
         for market_name in markets_to_search:
             market_info = self.get_market_info(market_name)
-            if not market_info:
-                continue
-            for ticker in market_info.tickers:
-                if active_only and not ticker.active:
-                    continue
-                if ticker.exchange.upper() == exchange_normalized:
-                    result.append(ticker.symbol)
-
+            if market_info:
+                result.extend(market_info.get_tickers_by_exchange(exchange, active_only=active_only))
         return result
 
     def get_tickers_by_tags(
@@ -284,24 +261,12 @@ class TickerConfigRoot(BaseModel):
         market: str | None = None,
         active_only: bool = True,
     ) -> list[str]:
-        tags_normalized = [tag.lower().strip() for tag in tags]
-        result: list[str] = []
         markets_to_search = [market] if market else self.get_markets()
-
+        result: list[str] = []
         for market_name in markets_to_search:
             market_info = self.get_market_info(market_name)
-            if not market_info:
-                continue
-            for ticker in market_info.tickers:
-                if active_only and not ticker.active:
-                    continue
-                ticker_tags = [tag.lower() for tag in ticker.tags]
-                if match_all:
-                    if all(tag in ticker_tags for tag in tags_normalized):
-                        result.append(ticker.symbol)
-                elif any(tag in ticker_tags for tag in tags_normalized):
-                    result.append(ticker.symbol)
-
+            if market_info:
+                result.extend(market_info.get_tickers_by_tags(tags, match_all=match_all, active_only=active_only))
         return result
 
     def get_groups(self) -> list[str]:
@@ -438,6 +403,29 @@ class TickerConfigRoot(BaseModel):
 
         return {"errors": errors, "warnings": warnings}
 
+    @staticmethod
+    def _load_yaml_data(config_path: Path) -> dict[str, Any]:
+        """Read a tickers YAML file; return ``{}`` for a missing/empty path."""
+        if not config_path.exists():
+            logger.warning("Config file not found: %s. Using empty configuration.", config_path)
+            return {}
+        with config_path.open("r", encoding="utf-8") as file_obj:
+            data = cast("dict[str, Any] | None", yaml.safe_load(file_obj))
+        if not data:
+            logger.warning("Empty config file: %s", config_path)
+            return {}
+        return data
+
+    @classmethod
+    def from_yaml(cls, config_path: str | Path | None = None) -> TickerConfigRoot:
+        """Load a ``TickerConfigRoot`` from a YAML file (defaults to the repo config)."""
+        path = Path(config_path) if config_path is not None else DEFAULT_TICKERS_PATH
+        data = cls._load_yaml_data(path)
+        instance = cls(**data)
+        active = sum(len([t for t in m.tickers if t.active]) for m in instance.markets.values())
+        logger.info("Loaded ticker config from %s: %s tickers across %s markets", path, active, len(instance.markets))
+        return instance
+
 
 class ProjectSettings(BaseModel):
     name: str = "equity-lake"
@@ -459,6 +447,8 @@ class IngestionSettings(BaseModel):
     max_workers: int = 3
     ticker_config_path: str = "config/tickers.yaml"
     cn_fallback_threshold: float = 0.3
+    retry_attempts: int = 3
+    retry_delay: float = 1.0
 
 
 class ScheduleSettings(BaseModel):
@@ -561,222 +551,36 @@ def load_settings(config_path: str | None = None) -> Settings:
 
 def clear_settings_cache() -> None:
     get_settings.cache_clear()
+    get_ticker_config.cache_clear()
 
 
-def get_project_config() -> dict[str, str | int | float | bool]:
-    settings = get_settings()
-    return {
-        "db_path": settings.storage.db_path,
-        "log_level": "INFO",
-        "log_dir": str(LOGS_DIR),
-        "data_dir": str(DATA_DIR),
-        "markets": ",".join(settings.ingestion.default_markets),
-        "dev_mode": settings.project.environment == "development",
-        "use_test_data": settings.project.environment == "testing",
-        "retry_attempts": 3,
-        "retry_delay": 1.0,
-    }
+@lru_cache(maxsize=1)
+def get_ticker_config() -> TickerConfigRoot:
+    """Return the cached ticker config loaded from the default path (mirrors get_settings)."""
+    return TickerConfigRoot.from_yaml()
 
 
 logger = structlog.get_logger()
 
 
-class TickerConfig:
-    DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "tickers.yaml"
+class TickerConfig(TickerConfigRoot):
+    """Backwards-compatible YAML loader.
 
-    def __init__(self, config_path: str | Path | None = None) -> None:
-        self.config_path = Path(config_path) if config_path is not None else self.DEFAULT_CONFIG_PATH
-        self._config: TickerConfigRoot | None = None
-        self._load_config()
+    ``TickerConfig(config_path=...)`` reads a YAML file and behaves as a
+    ``TickerConfigRoot`` — all selectors are inherited, eliminating the former
+    pass-through wrapper. New code should prefer ``TickerConfigRoot.from_yaml()``
+    or the cached ``get_ticker_config()``.
+    """
 
-    def _load_config(self) -> None:
-        if not self.config_path.exists():
-            logger.warning(
-                "Config file not found: %s. Using empty configuration.",
-                self.config_path,
-            )
-            self._config = TickerConfigRoot()
-            return
+    DEFAULT_CONFIG_PATH: ClassVar[Path] = DEFAULT_TICKERS_PATH
+    config_path: Path | None = Field(default=None)
 
-        try:
-            with self.config_path.open("r", encoding="utf-8") as file_obj:
-                data = yaml.safe_load(file_obj)
-
-            if not data:
-                logger.warning("Empty config file: %s", self.config_path)
-                self._config = TickerConfigRoot()
-                return
-
-            self._config = TickerConfigRoot(**data)
-            logger.info(
-                "Loaded ticker config from %s: %s tickers across %s markets",
-                self.config_path,
-                self._get_total_ticker_count(),
-                len(self._config.markets),
-            )
-        except Exception:
-            logger.exception("Failed to load ticker config from %s", self.config_path)
-            raise
-
-    def _get_total_ticker_count(self) -> int:
-        if not self._config:
-            return 0
-        return sum(len([ticker for ticker in market.tickers if ticker.active]) for market in self._config.markets.values())
-
-    def get_markets(self) -> list[str]:
-        if not self._config:
-            return []
-        return self._config.get_markets()
-
-    def get_market_info(self, market: str) -> MarketConfig | None:
-        if not self._config:
-            return None
-        return self._config.get_market_info(market)
-
-    def get_market_currency(self, market: str) -> str:
-        if not self._config:
-            return "USD"
-        return self._config.get_market_currency(market)
-
-    def get_tickers_for_market(
-        self,
-        market: str,
-        active_only: bool = True,
-        min_priority: int | None = None,
-    ) -> list[str]:
-        market_info = self.get_market_info(market)
-        if not market_info:
-            logger.warning("Market not found: %s", market)
-        if not self._config:
-            return []
-        return self._config.get_tickers_for_market(
-            market,
-            active_only=active_only,
-            min_priority=min_priority,
-        )
-
-    def get_ticker_metadata(
-        self,
-        symbol: str,
-        market: str | None = None,
-    ) -> TickerMetadata | None:
-        if not self._config:
-            return None
-        return self._config.get_ticker_metadata(symbol, market=market)
-
-    def get_all_tickers(self, active_only: bool = True) -> dict[str, list[str]]:
-        if not self._config:
-            return {}
-        return self._config.get_all_tickers(active_only=active_only)
-
-    def get_tickers_by_tag(
-        self,
-        tag: str,
-        market: str | None = None,
-        active_only: bool = True,
-    ) -> list[str]:
-        if not self._config:
-            return []
-        return self._config.get_tickers_by_tag(
-            tag,
-            market=market,
-            active_only=active_only,
-        )
-
-    def get_tickers_by_sector(
-        self,
-        sector: str,
-        market: str | None = None,
-        active_only: bool = True,
-    ) -> list[str]:
-        if not self._config:
-            return []
-        return self._config.get_tickers_by_sector(
-            sector,
-            market=market,
-            active_only=active_only,
-        )
-
-    def get_tickers_by_exchange(
-        self,
-        exchange: str,
-        market: str | None = None,
-        active_only: bool = True,
-    ) -> list[str]:
-        if not self._config:
-            return []
-        return self._config.get_tickers_by_exchange(
-            exchange,
-            market=market,
-            active_only=active_only,
-        )
-
-    def get_tickers_by_tags(
-        self,
-        tags: list[str],
-        match_all: bool = False,
-        market: str | None = None,
-        active_only: bool = True,
-    ) -> list[str]:
-        if not self._config:
-            return []
-        return self._config.get_tickers_by_tags(
-            tags,
-            match_all=match_all,
-            market=market,
-            active_only=active_only,
-        )
-
-    def get_groups(self) -> list[str]:
-        if not self._config:
-            return []
-        return self._config.get_groups()
-
-    def get_group_info(self, group_name: str) -> GroupConfig | None:
-        if not self._config:
-            return None
-        return self._config.get_group_info(group_name)
-
-    def get_tickers_by_group(
-        self,
-        group_name: str,
-        active_only: bool = True,
-    ) -> list[str]:
-        group_info = self.get_group_info(group_name)
-        if not group_info:
-            logger.warning("Group not found: %s", group_name)
-        if not self._config:
-            return []
-        return self._config.get_tickers_by_group(group_name, active_only=active_only)
-
-    def validate_ticker_format(self, symbol: str, market: str) -> bool:
-        if not self._config:
-            return True
-        return self._config.validate_ticker_format(symbol, market)
-
-    def validate_config(self) -> dict[str, list[str]]:
-        if not self._config:
-            return {"errors": ["No configuration loaded"], "warnings": []}
-        return self._config.validate_config()
-
-    def list_tickers(
-        self,
-        market: str | None = None,
-        active_only: bool = True,
-        include_metadata: bool = False,
-    ) -> list[str] | dict[str, list[str]] | dict[str, dict[str, Any]]:
-        if not self._config:
-            return {}
-        return self._config.list_tickers(
-            market=market,
-            active_only=active_only,
-            include_metadata=include_metadata,
-        )
-
-    def get_stats(self) -> dict[str, Any]:
-        if not self._config:
-            return {}
-        return self._config.get_stats()
+    def __init__(self, config_path: str | Path | None = None, **kwargs: Any) -> None:
+        if not kwargs:
+            path = Path(config_path) if config_path is not None else DEFAULT_TICKERS_PATH
+            kwargs = TickerConfigRoot._load_yaml_data(path)
+        super().__init__(**kwargs)
+        self.config_path = Path(config_path) if config_path is not None else DEFAULT_TICKERS_PATH
 
     @classmethod
     def from_path(cls, config_path: str | Path) -> TickerConfig:
@@ -813,8 +617,8 @@ __all__ = [
     "ValidationConfig",
     "clear_settings_cache",
     "get_default_config",
-    "get_project_config",
     "get_settings",
+    "get_ticker_config",
     "load_settings",
     "load_tickers_for_market",
 ]

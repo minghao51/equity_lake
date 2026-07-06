@@ -1,8 +1,9 @@
 """Market-to-fetcher routing.
 
-Maps market identifiers to their concrete fetcher classes and provides the
-high-level ``fetch_market_data`` / ``fetch_market_data_with_config`` entry
-points used by the ingestion pipeline.
+Maps market identifiers to their concrete fetcher factories via a single
+declarative ``MARKET_REGISTRY`` and provides the high-level
+``fetch_market_data`` / ``fetch_market_data_with_config`` entry points used by
+the ingestion pipeline.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from typing import Any
 import polars as pl
 import structlog
 
-from equity_lake.core.config import TickerConfig, get_project_config
+from equity_lake.core.config import TickerConfig, get_settings
 from equity_lake.core.polars_utils import ensure_polars, frame_is_empty
 from equity_lake.ingestion.writers import validate_schema
 from equity_lake.sources.base import MarketDataFetcher
@@ -46,6 +47,7 @@ def _make_cn_fetcher(
     retry_delay: float,
     ticker_config: TickerConfig | None,
     filters: dict | None,
+    explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.cn_hybrid import CNHybridFetcher
 
@@ -63,6 +65,7 @@ def _make_hk_sg_fetcher(
     retry_delay: float,
     ticker_config: TickerConfig | None,
     filters: dict | None,
+    explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.hk_sg import HKSGEquityFetcher
 
@@ -80,6 +83,7 @@ def _make_jpx_fetcher(
     retry_delay: float,
     ticker_config: TickerConfig | None,
     filters: dict | None,
+    explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.jpx import JPXEquityFetcher
 
@@ -97,6 +101,7 @@ def _make_krx_fetcher(
     retry_delay: float,
     ticker_config: TickerConfig | None,
     filters: dict | None,
+    explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.krx import KRXEquityFetcher
 
@@ -108,11 +113,29 @@ def _make_krx_fetcher(
     )
 
 
+def _make_macro_fetcher(
+    *,
+    retry_attempts: int,
+    retry_delay: float,
+    ticker_config: TickerConfig | None,
+    filters: dict | None,
+    explicit_tickers: list[str] | None,
+) -> Any:
+    from equity_lake.sources.macro import MacroFetcher
+
+    return MacroFetcher(
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+        ticker_config=ticker_config,
+    )
+
+
 def _make_news_fetcher(
     *,
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     import os
@@ -141,6 +164,7 @@ def _make_sentiment_fetcher(
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     import os
@@ -166,6 +190,9 @@ def _make_rss_fetcher(
     *,
     retry_attempts: int,
     retry_delay: float,
+    ticker_config: TickerConfig | None,
+    filters: dict | None,
+    explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.rss import RSSNewsFetcher
 
@@ -179,6 +206,9 @@ def _make_reddit_fetcher(
     *,
     retry_attempts: int,
     retry_delay: float,
+    ticker_config: TickerConfig | None,
+    filters: dict | None,
+    explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.reddit import RedditFetcher
 
@@ -193,6 +223,7 @@ def _make_stocktwits_fetcher(
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.stocktwits import StockTwitsFetcher
@@ -212,6 +243,7 @@ def _make_transcript_fetcher(
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     import os
@@ -239,6 +271,7 @@ def _make_analyst_rating_fetcher(
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     import os
@@ -266,6 +299,7 @@ def _make_sec_filing_fetcher(
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.sec_fulltext import SECFilingFetcher
@@ -285,6 +319,7 @@ def _make_sec_financials_fetcher(
     retry_attempts: int,
     retry_delay: float,
     ticker_config: TickerConfig | None,
+    filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
     from equity_lake.sources.sec_financials import SECFinancialsFetcher
@@ -299,20 +334,49 @@ def _make_sec_financials_fetcher(
     )
 
 
+# Single source of truth: market identifier -> fetcher factory name.
+# Factories are resolved by name at call time (via ``globals()``) so they remain
+# patchable in tests (e.g. ``patch("...router._make_us_fetcher")``).
+MARKET_REGISTRY: dict[str, str] = {
+    "us": "_make_us_fetcher",
+    "cn": "_make_cn_fetcher",
+    "hk_sg": "_make_hk_sg_fetcher",
+    "jpx": "_make_jpx_fetcher",
+    "krx": "_make_krx_fetcher",
+    "macro": "_make_macro_fetcher",
+    "us_news": "_make_news_fetcher",
+    "us_social_sentiment": "_make_sentiment_fetcher",
+    "rss_news": "_make_rss_fetcher",
+    "reddit_posts": "_make_reddit_fetcher",
+    "stocktwits_messages": "_make_stocktwits_fetcher",
+    "us_earnings_transcripts": "_make_transcript_fetcher",
+    "us_analyst_ratings": "_make_analyst_rating_fetcher",
+    "sec_filings_fulltext": "_make_sec_filing_fetcher",
+    "us_sec_financials": "_make_sec_financials_fetcher",
+}
+
+
 def fetch_market_data_with_config(
     market: str,
     trading_date: date,
-    project_config: dict | None = None,
+    *,
+    retry_attempts: int | None = None,
+    retry_delay: float | None = None,
     ticker_config: TickerConfig | None = None,
     filters: dict | None = None,
     explicit_tickers: list[str] | None = None,
 ) -> pl.DataFrame | None:
-    """Fetch data for a specific market with config support.
+    """Fetch data for a specific market.
+
+    Retry defaults are resolved from ``Settings.ingestion`` (env/YAML-configurable
+    via ``EQUITY_INGESTION__RETRY_ATTEMPTS`` / ``EQUITY_INGESTION__RETRY_DELAY``)
+    when not supplied explicitly.
 
     Args:
-        market: Market identifier ('us', 'cn', 'hk_sg')
+        market: Market identifier (e.g. 'us', 'cn', 'macro', 'us_news')
         trading_date: Date to fetch
-        project_config: Runtime configuration dictionary
+        retry_attempts: Override the configured retry attempt count
+        retry_delay: Override the configured retry backoff base
         ticker_config: TickerConfig instance
         filters: Filter dictionary for config-based selection
         explicit_tickers: Explicit ticker list (overrides config)
@@ -320,97 +384,27 @@ def fetch_market_data_with_config(
     Returns:
         DataFrame with fetched data or None
     """
-    runtime_config = project_config or get_project_config()
-    retry_attempts: int = int(runtime_config.get("retry_attempts", 3))
-    retry_delay: float = float(runtime_config.get("retry_delay", 1.0))
+    ingestion = get_settings().ingestion
+    if retry_attempts is None:
+        retry_attempts = ingestion.retry_attempts
+    if retry_delay is None:
+        retry_delay = ingestion.retry_delay
 
-    common_kwargs: dict[str, Any] = {
-        "retry_attempts": retry_attempts,
-        "retry_delay": retry_delay,
-        "ticker_config": ticker_config,
-        "filters": filters,
-    }
-
-    if market == "us":
-        fetcher: Any = _make_us_fetcher(**common_kwargs, explicit_tickers=explicit_tickers)
-    elif market == "cn":
-        fetcher = _make_cn_fetcher(**common_kwargs)
-    elif market == "hk_sg":
-        fetcher = _make_hk_sg_fetcher(**common_kwargs)
-    elif market == "jpx":
-        fetcher = _make_jpx_fetcher(**common_kwargs)
-    elif market == "krx":
-        fetcher = _make_krx_fetcher(**common_kwargs)
-    elif market == "us_news":
-        fetcher = _make_news_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    elif market == "us_social_sentiment":
-        fetcher = _make_sentiment_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    elif market == "macro":
-        from equity_lake.sources.macro import MacroFetcher
-
-        fetcher = MacroFetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-        )
-    elif market == "rss_news":
-        fetcher = _make_rss_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-        )
-    elif market == "reddit_posts":
-        fetcher = _make_reddit_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-        )
-    elif market == "stocktwits_messages":
-        fetcher = _make_stocktwits_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    elif market == "us_earnings_transcripts":
-        fetcher = _make_transcript_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    elif market == "us_analyst_ratings":
-        fetcher = _make_analyst_rating_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    elif market == "sec_filings_fulltext":
-        fetcher = _make_sec_filing_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    elif market == "us_sec_financials":
-        fetcher = _make_sec_financials_fetcher(
-            retry_attempts=retry_attempts,
-            retry_delay=retry_delay,
-            ticker_config=ticker_config,
-            explicit_tickers=explicit_tickers,
-        )
-    else:
-        logger.error(f"Unknown market: {market}")
+    factory_name = MARKET_REGISTRY.get(market)
+    if factory_name is None:
+        logger.error("Unknown market: %s", market)
         return None
+
+    # Factory construction is intentionally OUTSIDE the try/except so that
+    # configuration errors (e.g. missing API keys) propagate to the caller.
+    factory = globals()[factory_name]
+    fetcher: Any = factory(
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
+        ticker_config=ticker_config,
+        filters=filters,
+        explicit_tickers=explicit_tickers,
+    )
 
     try:
         df = ensure_polars(fetcher.fetch(trading_date))
@@ -418,35 +412,25 @@ def fetch_market_data_with_config(
             return df
         return None
     except Exception as e:
-        logger.error(f"Failed to fetch {market} data: {e}")
+        logger.error("Failed to fetch %s data: %s", market, e)
         return None
 
 
 def fetch_market_data(
     market: str,
     trading_date: date,
-    config: dict,
     ticker_config: TickerConfig | None = None,
     filters: dict | None = None,
     explicit_tickers: list[str] | None = None,
+    retry_attempts: int | None = None,
+    retry_delay: float | None = None,
 ) -> pl.DataFrame | None:
-    """Fetch data for a specific market.
-
-    Args:
-        market: Market identifier ('us', 'cn', 'hk_sg')
-        trading_date: Date to fetch
-        config: Configuration dictionary
-        ticker_config: TickerConfig instance
-        filters: Filter dictionary for config-based selection
-        explicit_tickers: Explicit ticker list (overrides config)
-
-    Returns:
-        DataFrame with fetched data or None
-    """
+    """Fetch data for a specific market (thin wrapper over the config-aware entry point)."""
     return fetch_market_data_with_config(
         market=market,
         trading_date=trading_date,
-        project_config=config,
+        retry_attempts=retry_attempts,
+        retry_delay=retry_delay,
         ticker_config=ticker_config,
         filters=filters,
         explicit_tickers=explicit_tickers,

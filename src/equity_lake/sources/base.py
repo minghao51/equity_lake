@@ -190,6 +190,25 @@ class MarketDataFetcher:
         """Fetch data for a specific date."""
         raise NotImplementedError("Subclasses must implement fetch()")
 
+    def fetch_range(self, start_date: date, end_date: date) -> pl.DataFrame:
+        """Fetch data across the inclusive range ``[start_date, end_date]``.
+
+        Default implementation loops :meth:`fetch` per trading day (skipping
+        weekends). Subclasses backed by a range-friendly API (e.g. yfinance)
+        should override this for a single efficient request.
+        """
+        frames: list[pl.DataFrame] = []
+        current = start_date
+        while current <= end_date:
+            if current.weekday() < 5:
+                frame = self.fetch(current)
+                if not frame.is_empty():
+                    frames.append(frame)
+            current += timedelta(days=1)
+        if not frames:
+            return _empty_frame()
+        return pl.concat(frames, how="diagonal_relaxed")
+
     def _retry_on_failure(
         self,
         func: Callable[..., Any],
@@ -291,12 +310,16 @@ class YFinanceBaseFetcher(MarketDataFetcher):
     def _get_column_rename(self) -> dict[str, str]:
         return {"adj close": "adj_close", "datetime": "date", "index": "date"}
 
-    def fetch(self, trading_date: date) -> pl.DataFrame:
-        logger.info("Fetching %s data for %s (%s tickers)", self.market, trading_date, len(self.tickers))
+    def fetch_range(self, start_date: date, end_date: date) -> pl.DataFrame:
+        """Fetch yfinance data across ``[start_date, end_date]`` in a single range request.
+
+        yfinance's ``end`` is exclusive, so ``end_date + 1 day`` is requested.
+        """
+        logger.info("Fetching %s data for %s..%s (%s tickers)", self.market, start_date, end_date, len(self.tickers))
 
         def _fetch() -> pl.DataFrame:
-            start_date = trading_date.strftime("%Y-%m-%d")
-            end_date = (trading_date + timedelta(days=1)).strftime("%Y-%m-%d")
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = (end_date + timedelta(days=1)).strftime("%Y-%m-%d")
 
             all_frames: list[pd.DataFrame] = []
             batches = self._chunked(self.tickers, self.batch_size)
@@ -305,12 +328,12 @@ class YFinanceBaseFetcher(MarketDataFetcher):
             logger.info("Downloading in %s batches (batch_size=%s)", total_batches, self.batch_size)
 
             for batch_idx, batch in enumerate(batches, 1):
-                frames = self._download_batch(batch, start_date, end_date)
+                frames = self._download_batch(batch, start_str, end_str)
                 all_frames.extend(frames)
                 logger.debug("Batch %s/%s: %s cumulative frames", batch_idx, total_batches, len(all_frames))
 
             if not all_frames:
-                logger.warning("No data returned for %s on %s", self.market, trading_date)
+                logger.warning("No data returned for %s (%s..%s)", self.market, start_str, end_str)
                 return _empty_frame()
 
             frame = pd.concat(all_frames, ignore_index=True)
@@ -320,6 +343,10 @@ class YFinanceBaseFetcher(MarketDataFetcher):
             return frame
 
         return cast(pl.DataFrame, self._retry_on_failure(_fetch))
+
+    def fetch(self, trading_date: date) -> pl.DataFrame:
+        """Fetch a single trading day (delegates to :meth:`fetch_range`)."""
+        return self.fetch_range(trading_date, trading_date)
 
 
 __all__ = [

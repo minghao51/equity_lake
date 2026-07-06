@@ -13,7 +13,7 @@ from typing import Any
 import duckdb
 import structlog
 
-from equity_lake.core.config import TickerConfig, get_project_config
+from equity_lake.core.config import TickerConfig
 from equity_lake.core.logging import correlation_context, timer
 from equity_lake.core.paths import LAKE_DIR
 from equity_lake.core.polars_utils import frame_is_empty
@@ -205,7 +205,6 @@ def run_daily_ingestion(
                     df = fetch_market_data(
                         market,
                         trading_date,
-                        config=get_project_config(),
                         ticker_config=ticker_config,
                         filters=filters,
                         explicit_tickers=(

@@ -235,8 +235,9 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         datetime_str = article.get("datetime", 0)
         try:
             dt = datetime.fromtimestamp(datetime_str, tz=UTC) if isinstance(datetime_str, int) else datetime.fromisoformat(str(datetime_str))
-        except Exception:
-            dt = datetime.now(UTC)
+        except (ValueError, TypeError, OverflowError) as exc:
+            logger.warning("Dropping article for %s with unparseable timestamp %r: %s", ticker, datetime_str, exc)
+            return None
 
         return {
             "ticker": ticker,

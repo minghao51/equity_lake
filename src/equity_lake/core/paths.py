@@ -72,9 +72,14 @@ GOLD_FEATURES_DIR = GOLD_DIR / "features"
 PLATINUM_PREDICTIONS_DIR = PLATINUM_DIR / "predictions"
 
 # ---------------------------------------------------------------------------
+# Auxiliary tables (outside the medallion lake) — signal history bookkeeping
+# ---------------------------------------------------------------------------
+SIGNALS_DIR = DATA_DIR / "signals"
+UPDATE_HISTORY_DIR = DATA_DIR / "update_history"
+
+# ---------------------------------------------------------------------------
 # Backward-compatible aliases (deprecated — use medallion constants above)
 # ---------------------------------------------------------------------------
-MACRO_INDICATORS_DIR = BRONZE_MACRO_DIR
 US_NEWS_DIR = SILVER_NEWS_SENTIMENT_DIR
 US_SOCIAL_SENTIMENT_DIR = SILVER_SOCIAL_SENTIMENT_DIR
 ANALYST_RATINGS_DIR = SILVER_ANALYST_RATINGS_DIR
@@ -108,13 +113,13 @@ __all__ = [
     "KRX_EQUITY_DIR",
     "LAKE_DIR",
     "LOGS_DIR",
-    "MACRO_INDICATORS_DIR",
     "MODELS_DIR",
     "PLATINUM_DIR",
     "PLATINUM_PREDICTIONS_DIR",
     "PROJECT_ROOT",
     "SEC_EXTRACTIONS_DIR",
     "SEC_FINANCIALS_DIR",
+    "SIGNALS_DIR",
     "SILVER_ANALYST_RATINGS_DIR",
     "SILVER_DIR",
     "SILVER_NEWS_SENTIMENT_DIR",
@@ -122,6 +127,7 @@ __all__ = [
     "SILVER_SEC_EXTRACTIONS_DIR",
     "SILVER_SEC_FINANCIALS_DIR",
     "SILVER_SOCIAL_SENTIMENT_DIR",
+    "UPDATE_HISTORY_DIR",
     "US_EQUITY_DIR",
     "US_NEWS_DIR",
     "US_SOCIAL_SENTIMENT_DIR",

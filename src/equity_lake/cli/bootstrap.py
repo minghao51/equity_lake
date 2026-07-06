@@ -56,10 +56,13 @@ def _try_load_real_data(
     try:
         import duckdb
 
+        from equity_lake.storage.lake_reader import duckdb_scan_for
+
         conn = duckdb.connect(":memory:")
+        # duckdb_scan_for auto-detects Delta vs hive-parquet, matching the real lake layout.
         query = f"""
             SELECT *
-            FROM read_parquet('{lake_dir}/**/*.parquet', hive_partitioning=1)
+            FROM {duckdb_scan_for(lake_dir)}
             WHERE ticker = ?
               AND date >= ?
               AND date <= ?
@@ -273,30 +276,16 @@ def cmd_sample(
 
         combined_data = pd.concat(frames, ignore_index=True)
 
-    # Write hive-partitioned parquet
-    logger.info("Writing hive-partitioned parquet to %s", out)
+    # Write Delta tables (one per market) via the canonical writer.
+    from equity_lake.storage.delta import write_delta
+
+    logger.info("Writing Delta tables to %s", out)
 
     for market, ticker_list in tickers_used.items():
         market_data = combined_data[combined_data["ticker"].isin(ticker_list)]
         if market_data.empty:
             continue
-
-        market_dir = out / market
-        market_dir.mkdir(parents=True, exist_ok=True)
-
-        trading_days = sorted(market_data["date"].unique())
-        for trading_date in trading_days:
-            date_str = str(trading_date)
-            partition_dir = market_dir / f"date={date_str}"
-            partition_dir.mkdir(parents=True, exist_ok=True)
-            parquet_path = partition_dir / f"{date_str}.parquet"
-
-            if parquet_path.exists():
-                continue
-
-            day_data = market_data[market_data["date"] == trading_date].copy()
-            day_data["date"] = pd.to_datetime(day_data["date"])
-            day_data.to_parquet(parquet_path, index=False, compression="snappy")
+        write_delta(market_data, market, mode="overwrite", lake_dir=out)
 
     # Summary
     total_rows = len(combined_data)
@@ -315,4 +304,4 @@ def cmd_sample(
     logger.info("Next steps:")
     logger.info("  equity signal scan --watchlist config/watchlist.yaml")
     logger.info("  equity backtest --strategy sma_crossover --tickers AAPL,MSFT --start-date ... --end-date ...")
-    logger.info("  equity query --sql 'SELECT * FROM read_parquet(\"%s/**/*.parquet\") LIMIT 10'", out)
+    logger.info("  equity query --sql 'SELECT * FROM delta_scan(\"%s/us_equity\") LIMIT 10'", out)

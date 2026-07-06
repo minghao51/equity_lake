@@ -76,23 +76,6 @@ def backfill(
     typer.echo(f"Backfill complete: {total} dates processed across {market_list}")
 
 
-@app.command("update")
-def update(
-    date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
-    markets: Annotated[str | None, typer.Option("--markets", "-m", help="Comma-separated markets")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate")] = False,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
-) -> None:
-    """Smart incremental data updates."""
-    from equity_lake.updates.engine import UpdateEngine
-
-    _init_logging(verbose)
-    trading_date = _resolve_date(date_str)
-    market_list = _parse_comma_list(markets)
-    engine_inst = UpdateEngine()
-    engine_inst.run(trading_date=trading_date, markets=market_list or [], dry_run=dry_run)  # type: ignore[attr-defined]
-
-
 @app.command("auto-backfill")
 def auto_backfill(
     days_back: Annotated[int, typer.Option("--days-back", help="Days to scan for gaps")] = 90,

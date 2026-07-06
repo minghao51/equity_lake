@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 import polars as pl
 import structlog
 import yfinance as yf
 from fredapi import Fred
 
-from equity_lake.core.config import get_project_config
+from equity_lake.core.config import get_settings
 from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import MACRO_COLUMNS, MACRO_INDICATOR_CONFIG
 
@@ -152,8 +152,13 @@ class FredFetcher(MacroIndicatorFetcher):
 
 
 class MacroDataPipeline:
-    def __init__(self, config: dict | None = None):
-        self.config = config or get_project_config()
+    def __init__(self, retry_attempts: int | None = None, retry_delay: float | None = None):
+        if retry_attempts is None or retry_delay is None:
+            ingestion = get_settings().ingestion
+            retry_attempts = ingestion.retry_attempts if retry_attempts is None else retry_attempts
+            retry_delay = ingestion.retry_delay if retry_delay is None else retry_delay
+        self.retry_attempts = retry_attempts
+        self.retry_delay = retry_delay
         self.fred_api_key = self._get_fred_api_key()
         self.indicators = self._initialize_fetchers()
 
@@ -183,7 +188,7 @@ class MacroDataPipeline:
                     fetcher = YFinanceFetcher(
                         ticker=ticker,
                         indicator_name=indicator_name,
-                        retry_attempts=cast(int, self.config.get("retry_attempts", 3)),
+                        retry_attempts=self.retry_attempts,
                     )
                     fetchers.append(fetcher)
 
@@ -197,7 +202,7 @@ class MacroDataPipeline:
                         series_id=series_id,
                         indicator_name=indicator_name,
                         fred_api_key=self.fred_api_key,
-                        retry_attempts=cast(int, self.config.get("retry_attempts", 3)),
+                        retry_attempts=self.retry_attempts,
                     )
                     fetchers.append(fred_fetcher)
 
@@ -245,8 +250,8 @@ class MacroDataPipeline:
 class MacroFetcher:
     market = "macro"
 
-    def __init__(self, **kwargs: Any):
-        self._pipeline = MacroDataPipeline()
+    def __init__(self, retry_attempts: int | None = None, retry_delay: float | None = None, **kwargs: Any):
+        self._pipeline = MacroDataPipeline(retry_attempts=retry_attempts, retry_delay=retry_delay)
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
         return self._pipeline.fetch_with_fallback(trading_date)

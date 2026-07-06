@@ -87,34 +87,4 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         )
 
 
-class TimeSeriesMomentumStrategy(BaseStrategy):
-    def __init__(self, params: dict[str, object] | None = None):
-        default_params = {
-            "lookback_days": 126,
-            "volatility_target": 0.15,
-            "volatility_window": 20,
-        }
-        merged_params = {**default_params, **(params or {})}
-        super().__init__(merged_params)
-
-    def initialize(self, data: pl.DataFrame) -> None:
-        self._data = data
-        logger.info(
-            "TimeSeriesMomentumStrategy initialized",
-            num_tickers=data["ticker"].n_unique(),
-        )
-
-    def generate_weights(self, data: pl.DataFrame) -> pl.DataFrame:
-        lookback = self.get_param("lookback_days")
-
-        return (
-            data.with_columns(pl.col("close").pct_change(n=lookback).over("ticker").alias("past_return"))
-            .with_columns(pl.when(pl.col("past_return") > 0).then(1.0).otherwise(0.0).alias("weight"))
-            .select("date", "ticker", "weight")
-        )
-
-
-__all__ = [
-    "CrossSectionalMomentumStrategy",
-    "TimeSeriesMomentumStrategy",
-]
+__all__ = ["CrossSectionalMomentumStrategy"]

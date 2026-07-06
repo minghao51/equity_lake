@@ -15,7 +15,6 @@ from equity_lake.cli._app import (
     bootstrap_app,
     config_app,
     dashboard_app,
-    loader_app,
     signal_app,
     validate_app,
 )
@@ -23,7 +22,6 @@ from equity_lake.cli._app import (
 app.add_typer(signal_app, name="signal")
 app.add_typer(dashboard_app, name="dashboard")
 app.add_typer(bootstrap_app, name="bootstrap")
-app.add_typer(loader_app, name="loader")
 app.add_typer(config_app, name="config")
 app.add_typer(validate_app, name="validate")
 

@@ -16,7 +16,6 @@ app = typer.Typer(
 signal_app = typer.Typer(help="Signal scanning for equity watchlists")
 dashboard_app = typer.Typer(help="Dashboard build and serve")
 bootstrap_app = typer.Typer(help="Data bootstrapping and sample generation")
-loader_app = typer.Typer(help="Manage data loaders")
 config_app = typer.Typer(help="Configuration management")
 validate_app = typer.Typer(help="Data quality validation and profiling")
 

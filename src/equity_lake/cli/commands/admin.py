@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 import typer
 
-from equity_lake.cli._app import bootstrap_app, config_app, loader_app, validate_app
+from equity_lake.cli._app import bootstrap_app, config_app, validate_app
 
 
 @config_app.command("show")
@@ -244,55 +244,3 @@ def bootstrap_sample(
         seed=seed,
         verbose=verbose,
     )
-
-
-@loader_app.command("list")
-def loader_list() -> None:
-    """List available data loaders."""
-    from rich.console import Console
-    from rich.table import Table
-
-    from equity_lake.loaders import registry
-
-    console = Console()
-    table = Table(title="Available Loaders")
-    table.add_column("Name", style="cyan")
-    table.add_column("Markets")
-    table.add_column("Data Types")
-    table.add_column("Auth")
-
-    for loader in sorted(registry.list(), key=lambda item: item.name):
-        table.add_row(
-            loader.name,
-            ", ".join(loader.supported_markets) or "-",
-            ", ".join(loader.data_types) or "-",
-            "yes" if loader.requires_auth else "no",
-        )
-
-    console.print(table)
-
-
-@loader_app.command("show")
-def loader_show(
-    name: Annotated[str, typer.Argument(help="Loader name")],
-) -> None:
-    """Show loader metadata."""
-    from equity_lake.loaders import registry
-
-    loader = registry.get(name)
-    typer.echo(loader.metadata.model_dump_json(indent=2))
-
-
-@loader_app.command("test")
-def loader_test(
-    name: Annotated[str, typer.Argument(help="Loader name")],
-) -> None:
-    """Test loader connection."""
-    from equity_lake.loaders import registry
-
-    loader = registry.create(name, {})
-    if loader.validate_connection():
-        typer.secho(f"Loader '{name}' connection OK", fg=typer.colors.GREEN)
-    else:
-        typer.secho(f"Loader '{name}' connection FAILED", fg=typer.colors.RED)
-        raise typer.Exit(1)

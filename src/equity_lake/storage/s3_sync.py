@@ -17,17 +17,12 @@ Usage:
     uv run equity sync --workers 32 --dry-run
 """
 
-import argparse
 import logging
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Final
-
-from equity_lake.core.config import get_project_config
-from equity_lake.core.logging import setup_logging
-from equity_lake.core.paths import US_EQUITY_DIR
 
 # Logger configuration
 logger = logging.getLogger(__name__)
@@ -301,124 +296,3 @@ class S3Syncer:
             return False
 
         return True
-
-
-# =============================================================================
-# CLI Interface
-# =============================================================================
-
-
-def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Sync historical equity data from S3",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Sync from default bucket
-  uv run equity sync
-
-  # Sync from custom bucket
-  uv run equity sync --bucket s3://my-bucket/us_equity/
-
-  # Use s5cmd with 32 workers
-  uv run equity sync --tool s5cmd --workers 32
-
-  # Dry run (test without downloading)
-  uv run equity sync --dry-run
-
-  # Sync to custom directory
-  uv run equity sync --target /path/to/data
-        """,
-    )
-
-    parser.add_argument(
-        "--bucket",
-        type=str,
-        help="S3 bucket path (e.g., s3://my-bucket/us_equity/)",
-    )
-
-    parser.add_argument(
-        "--target",
-        type=Path,
-        default=US_EQUITY_DIR,
-        help=f"Local target directory (default: {US_EQUITY_DIR})",
-    )
-
-    parser.add_argument(
-        "--workers",
-        "-w",
-        type=int,
-        default=16,
-        help="Number of parallel workers (default: 16)",
-    )
-
-    parser.add_argument(
-        "--tool",
-        "-t",
-        type=str,
-        choices=["auto", "s5cmd", "aws"],
-        default="auto",
-        help="Sync tool to use (default: auto)",
-    )
-
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Test without downloading files",
-    )
-
-    parser.add_argument(
-        "--verbose",
-        "-v",
-        action="store_true",
-        help="Enable verbose logging",
-    )
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Main entry point."""
-    args = parse_arguments()
-
-    # Setup logging
-    log_level = "DEBUG" if args.verbose else "INFO"
-    logger = setup_logging(level=log_level, log_file=Path("sync_from_s3.log"))
-
-    # Get S3 bucket from args or environment
-    bucket = args.bucket
-    if not bucket:
-        config = get_project_config()
-        bucket = config.get("s3_bucket", "")
-
-    if not bucket:
-        logger.error("No S3 bucket specified. Use --bucket or set S3_BUCKET environment variable")
-        logger.error("\nPublic buckets with US equity data:")
-        logger.error("  (Add your bucket URL here)")
-        sys.exit(1)
-
-    # Initialize syncer
-    syncer = S3Syncer(
-        bucket=bucket,
-        target_dir=args.target,
-        workers=args.workers,
-        dry_run=args.dry_run,
-        tool=args.tool,
-    )
-
-    # Execute sync
-    try:
-        success = syncer.sync()
-        sys.exit(0 if success else 1)
-
-    except KeyboardInterrupt:
-        logger.info("\n⚠️  Sync interrupted by user")
-        sys.exit(130)
-    except Exception as e:
-        logger.error(f"Sync failed: {e}", exc_info=True)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
