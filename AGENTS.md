@@ -56,12 +56,40 @@ No `domain/` tree — top-level modules are canonical. Import boundary tests in 
 
 - **CLI:** Unified `equity` command via Typer. All commands are native Typer — no legacy passthrough.
 - **Config:** Single `Settings(BaseSettings)` class with `YamlConfigSettingsSource`. Env prefix `EQUITY_`, nested delimiter `__`. Priority: init > env vars > .env > YAML.
-- **Storage:** Hive-partitioned Parquet files. DuckDB for analytical queries. S3 sync via Cloudflare R2.
+- **Storage:** Numbered medallion Delta tables with Parquet data files. DuckDB for analytical queries. S3 sync via Cloudflare R2.
 - **Logging:** structlog with JSON output and correlation IDs. Use `structlog.get_logger()`. Call `setup_structured_logging()` in CLI entry points.
 - **Markets:** us_equity, cn_ashare, hk_sg_equity, jpx_equity, krx_equity. Directory constants in `core/paths.py`, mapped via `MARKET_DIR_MAP` in `ingestion/types.py`.
 - **Retry:** All source fetchers use `tenacity` for retry/backoff (exponential, max 3 attempts). Do not hand-roll retry loops.
 - **Validation:** pointblank schemas enforced at ingestion write boundaries via `validation/pipeline.py`.
 - **Backtesting:** `VectorBacktestEngine` (polars-backtest) is default. Requires `uv sync --extra backtesting`.
+
+## Operational guardrails
+
+The numbered medallion layout is canonical: `data/lake/01_bronze/`,
+`02_silver/`, `03_gold/`, and `04_platinum/`. Runtime ingestion writes
+date-partitioned Delta tables with Parquet data files. `data/catalog.jsonl` is a
+generated artifact; edit catalog definitions and run `uv run equity
+catalog-generate`, never edit the JSONL directly.
+
+Dry-run means no persistence, backfill, LLM processing, feature output, or ML
+inference. Network tests must be explicitly marked and are not part of the
+default fast suite. Missing feature history requires
+`--allow-history-backfill`, with scoped markets and tickers.
+
+### Change matrix
+
+| Change type | Required accompanying work |
+|---|---|
+| New source | Router, type/map, schema/validation, config, tests, source docs, catalog |
+| Schema change | Schema constants, validators, catalog, reader compatibility, migration note |
+| DAG feature change | Hamilton tags, catalog regeneration, feature tests |
+| Storage change | Writer, reader, health checks, idempotency tests, architecture docs |
+| CLI change | Help text, CLI test, user guide |
+| Pipeline-stage change | Failure contract, orchestration test, data-flow update |
+
+Canonical architecture pages and MkDocs navigation are intentional exceptions
+to the date-prefixed Markdown rule. New plans, audits, and handoffs remain
+`YYYYMMDD-*.md`.
 
 ## 6. Commands
 

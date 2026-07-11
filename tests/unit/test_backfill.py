@@ -87,3 +87,13 @@ class TestBackfillDateRange:
             dry_run=True,
         )
         assert _mock_ingestion.call_args.kwargs["dry_run"] is True
+
+    def test_explicit_tickers_forwarded(self, _mock_ingestion) -> None:
+        _mock_ingestion.return_value = {"us": True}
+        backfill_date_range(
+            start_date=date(2024, 1, 2),
+            end_date=date(2024, 1, 2),
+            markets=["us"],
+            explicit_tickers=["AAPL"],
+        )
+        assert _mock_ingestion.call_args.kwargs["explicit_tickers"] == ["AAPL"]

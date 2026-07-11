@@ -47,7 +47,7 @@ Feature generation is exposed through the pipeline helpers and feature jobs.
 The feature stage writes into:
 
 ```text
-data/lake/features/
+data/lake/03_gold/features/
 ```
 
 The public orchestration helper is:
@@ -80,13 +80,13 @@ config/tickers.yaml
 equity ingest / run_daily_ingestion
         |
         v
-data/lake/{us_equity,cn_ashare,hk_sg_equity}/
+data/lake/01_bronze/market_data/{us_equity,cn_ashare,hk_sg_equity}/
         |
         v
 run_feature_pipeline
         |
         v
-data/lake/features/
+data/lake/03_gold/features/
         |
         v
 run_ml_inference / equity forecast
@@ -117,7 +117,7 @@ If you want to work with the current ML stack:
 
 1. install ML extras with `uv sync --extra ml`
 2. run `uv run equity pipeline --dry-run --verbose`
-3. inspect generated artifacts under `data/lake/features/` and `logs/`
+3. inspect generated artifacts under `data/lake/03_gold/features/` and `logs/`
 4. use `uv run equity query` or notebooks for analysis
 
 ## Related Docs

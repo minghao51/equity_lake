@@ -6,8 +6,8 @@ This guide covers the current operational pipeline exposed by the unified `equit
 
 The daily workflow has three core stages:
 
-1. `equity ingest` fetches market data and writes Hive-partitioned Parquet
-2. the feature stage builds derived datasets under `data/lake/features/`
+1. `equity ingest` fetches market data and writes date-partitioned Delta tables with Parquet data files
+2. the feature stage builds derived datasets under `data/lake/03_gold/features/`
 3. the ML stage runs inference for the requested tickers
 
 The main command is:
@@ -71,6 +71,7 @@ dotenvx run -- uv run equity query --date 2026-06-06
 - `--skip-features`
 - `--skip-ml`
 - `--dry-run`
+- `--allow-history-backfill`
 - `--verbose`
 - `--save-results`
 
@@ -117,19 +118,20 @@ Common settings overrides include:
 
 Important runtime directories:
 
-- `data/lake/us_equity/`
-- `data/lake/cn_ashare/`
-- `data/lake/hk_sg_equity/`
-- `data/lake/jpx_equity/`
-- `data/lake/krx_equity/`
-- `data/lake/features/`
+- `data/lake/01_bronze/market_data/us_equity/`
+- `data/lake/01_bronze/market_data/cn_ashare/`
+- `data/lake/01_bronze/market_data/hk_sg_equity/`
+- `data/lake/01_bronze/market_data/jpx_equity/`
+- `data/lake/01_bronze/market_data/krx_equity/`
+- `data/lake/03_gold/features/`
 - `data/models/`
 - `logs/`
 
 Market data is stored as:
 
 ```text
-data/lake/<market>/date=YYYY-MM-DD/*.parquet
+data/lake/<layer>/<dataset>/_delta_log/
+data/lake/<layer>/<dataset>/date=YYYY-MM-DD/*.parquet
 ```
 
 ## Typical Operating Flows

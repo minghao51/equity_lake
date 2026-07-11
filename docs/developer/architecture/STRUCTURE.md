@@ -540,7 +540,7 @@ def temp_data_dir(tmp_path):
 
 **Location**: Inside partition directory
 ```
-data/lake/us_equity/date=2024-12-01/2024-12-01.parquet
+data/lake/01_bronze/market_data/us_equity/date=2024-12-01/2024-12-01.parquet
 ```
 
 ---

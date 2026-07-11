@@ -13,6 +13,10 @@ compatibility: opencode
 
 Hamilton-powered medallion catalog: `equity catalog-generate` → `data/catalog.jsonl` → Astro site → GitHub Pages.
 
+Canonical storage and pipeline policy are documented in
+`docs/developer/architecture/data-flow.md` and
+`docs/developer/architecture/pipeline-contracts.md`.
+
 ## When to Use
 
 - Adding a new data source (market, news, alternative data)

@@ -1,6 +1,6 @@
 # Architecture
 
-**Last Updated**: 2026-06-13
+**Last Updated**: 2026-07-11
 **Project**: Equity EOD Data Pipeline
 
 ## Current Canonical Architecture
@@ -31,10 +31,10 @@
                             ▼
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │                              Storage Layer                                            │
-│                  Hive-Partitioned Parquet / Delta Lake                                │
-│  data/lake/{market}/date=YYYY-MM-DD/*.parquet                                        │
-│  data/lake/macro_indicators/{indicator}/date=YYYY-MM-DD/*.parquet                    │
-│  data/lake/features/**/*.parquet                                                     │
+│                  Numbered Medallion Delta Tables                                     │
+│  data/lake/01_bronze/<dataset>/date=YYYY-MM-DD/*.parquet                            │
+│  data/lake/02_silver/<dataset>/date=YYYY-MM-DD/*.parquet                            │
+│  data/lake/03_gold/features/ and 04_platinum/predictions/                            │
 └───────────────────────────┬──────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -52,8 +52,8 @@
 
 1. **Local-First**: After initial S3 bootstrap, all operations run locally
 2. **Idempotent**: Safe to re-run any operation without side effects
-3. **Graceful Degradation**: Continue processing if one market/source fails
-4. **Partitioned Storage**: Hive-style date partitioning for efficient queries
+3. **Failure Isolation**: Optional enrichments may degrade; required price failures block dependent outputs
+4. **Partitioned Storage**: Numbered medallion Delta tables partitioned by date
 5. **Zero-Copy Queries**: DuckDB reads Parquet/Delta files directly without loading
 6. **Single Canonical Path**: no supported duplicate source tree or package-root shims
 7. **Composition over Inheritance**: ML pipeline decomposed into `FeatureLoader` + `trainer` utilities
@@ -165,8 +165,11 @@ CLI Request → Orchestrator → Router → sources/* → Validation → writers
 #### S3 Sync Module (`s3_sync.py`)
 One-time bootstrap of US historical data from S3. Auto-detects sync tool (s5cmd > AWS CLI > boto3).
 
-#### Parquet Storage
-Hive-style date partitioning: `data/lake/{market}/date=YYYY-MM-DD/*.parquet`. Snappy compression. Standardized OHLCV schema across all markets.
+#### Delta Storage
+Runtime tables live under numbered medallion paths such as
+`data/lake/01_bronze/market_data/us_equity/`. They are Delta tables
+partitioned by `date`; their data files are Parquet and use the standardized
+OHLCV schema.
 
 #### DuckDB Module (`duckdb.py`)
 ```python

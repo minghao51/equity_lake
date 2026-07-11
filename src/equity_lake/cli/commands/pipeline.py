@@ -8,12 +8,15 @@ from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date
 
 
 def _pipeline_succeeded(results: dict[str, object]) -> bool:
-    """Return True when every returned stage reports success."""
-    for stage_result in results.values():
-        if isinstance(stage_result, dict) and stage_result.get("success") is False:
-            return False
-        if isinstance(stage_result, dict) and "success" not in stage_result and any(value is False for value in stage_result.values()):
-            return False
+    """Return False only for required stage failures."""
+    for stage_name, stage_result in results.items():
+        if not isinstance(stage_result, dict) or stage_result.get("success") is not False:
+            continue
+        if stage_name in {"bronze_to_silver", "sec_to_silver"}:
+            continue
+        if stage_name == "ml" and stage_result.get("reason") == "feature stage failed":
+            continue
+        return False
     return True
 
 
@@ -27,6 +30,7 @@ def pipeline(
     skip_features: Annotated[bool, typer.Option("--skip-features", help="Skip Stage 2")] = False,
     skip_ml: Annotated[bool, typer.Option("--skip-ml", help="Skip Stage 3")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate")] = False,
+    allow_history_backfill: Annotated[bool, typer.Option("--allow-history-backfill", help="Authorize a 120-day feature-history recovery")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
     save_results: Annotated[bool, typer.Option("--save-results", help="Save JSON results")] = False,
 ) -> None:
@@ -50,6 +54,7 @@ def pipeline(
         skip_features=skip_features,
         skip_ml=skip_ml,
         explicit_tickers=ticker_list,
+        allow_history_backfill=allow_history_backfill,
     )
 
     if save_results:

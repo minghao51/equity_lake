@@ -44,6 +44,9 @@ dotenvx run -- uv run equity pipeline --verbose
   active by default.
 - `config/settings.yaml` is the default app config. `EQUITY_*` values in
   `.env` override it.
+- The dry-run pipeline performs no writes, backfills, feature generation, or
+  inference. Missing feature history requires the explicit
+  `--allow-history-backfill` option.
 
 ## Next Reading
 

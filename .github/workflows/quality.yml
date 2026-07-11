@@ -61,8 +61,36 @@ jobs:
       - name: Pytest
         run: uv run pytest -q -m "not integration"
 
-      - name: Security audit
-        run: uv run pip-audit || true
+      - name: Security audit (advisory policy)
+        continue-on-error: true
+        run: uv run pip-audit --skip-editable
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+
+      - name: Install documentation dependencies
+        run: uv sync --group dev --group docs
+
+      - name: Markdown lint
+        run: uv run pymarkdown --disable-rules MD013,MD033,MD041 scan docs/developer/architecture/data-flow.md docs/developer/architecture/pipeline-contracts.md docs/user-guide/ingestion.md
+
+      - name: MkDocs build
+        run: uv run mkdocs build
+
+      - name: Internal link validation
+        run: uv run mkdocs build --site-dir /tmp/equity-lake-site
 
   cli-smoke:
     runs-on: ubuntu-latest

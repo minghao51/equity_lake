@@ -1,7 +1,8 @@
 """Writer helpers for ingestion.
 
 All writes go through the Delta Lake storage layer (ACID transactions,
-merge/upsert, time-travel).
+merge/upsert, time-travel). The historical function name is retained for
+callers; it does not create standalone Parquet files.
 """
 
 from datetime import date
@@ -53,11 +54,11 @@ def write_to_partitioned_parquet(
     validate_quality: bool = False,
     skip_schema_validation: bool = False,
 ) -> bool:
-    """Write a DataFrame to the Delta Lake storage layer.
+    """Upsert a DataFrame into a date-partitioned Delta table.
 
     Args:
         df: Data to write.
-        market: Market name (e.g. ``"us_equity"``, ``"us_news"``).
+        market: Dataset path or routable market identifier.
         trading_date: Trading date for the partition.
         dry_run: If True, skip the actual write.
         validate_quality: If True, run pointblank validation before writing.
@@ -91,7 +92,7 @@ def write_to_partitioned_parquet(
                 logger.warning("Quality warning", market=market, warning=w)
 
     if dry_run:
-        logger.info("[DRY RUN] Would write %s rows to Delta table %s", len(df_polars), market)
+        logger.info("[DRY RUN] Would upsert %s rows to Delta table %s", len(df_polars), market)
         return True
 
     from equity_lake.storage.delta import merge_delta

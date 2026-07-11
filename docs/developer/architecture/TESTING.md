@@ -380,7 +380,7 @@ def test_path_resolution():
     with patch('pathlib.Path.exists') as mock_exists:
         mock_exists.return_value = True
 
-        path = Path('data/lake/us_equity')
+        path = Path('data/lake/01_bronze/market_data/us_equity')
         assert path.exists()
 
         mock_exists.assert_called_once()
@@ -874,7 +874,7 @@ import time
 def test_query_performance():
     """Test query performance with large dataset."""
     # Setup: Load large dataset
-    df = pd.read_parquet('data/lake/us_equity/date=*/*.parquet')
+    df = pd.read_parquet('data/lake/01_bronze/market_data/us_equity/date=*/*.parquet')
 
     # Benchmark query
     start_time = time.time()

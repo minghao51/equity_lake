@@ -132,6 +132,66 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
             assert result.exit_code == 0
 
+    def test_pipeline_command_exits_zero_for_dry_run(self):
+        with patch(
+            "equity_lake.pipeline.execute_eod_pipeline",
+            return_value={
+                "ingestion": {"success": True, "skipped": True, "reason": "dry_run"},
+                "features": {"success": True, "skipped": True, "reason": "dry_run"},
+                "ml": {"success": True, "skipped": True, "reason": "dry_run"},
+            },
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--dry-run"])
+        assert result.exit_code == 0
+
+    def test_pipeline_command_exits_zero_for_optional_degradation(self):
+        with patch(
+            "equity_lake.pipeline.execute_eod_pipeline",
+            return_value={
+                "ingestion": {"success": True, "partial": True, "optional_failures": ["us_news"]},
+                "features": {"success": True, "rows": 1},
+                "ml": {"success": True, "results": {}},
+            },
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
+        assert result.exit_code == 0
+
+    def test_pipeline_command_exits_zero_for_bronze_to_silver_failure(self):
+        with patch(
+            "equity_lake.pipeline.execute_eod_pipeline",
+            return_value={
+                "bronze_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                "features": {"success": True, "rows": 1},
+                "ml": {"success": True, "results": {}},
+            },
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
+        assert result.exit_code == 0
+
+    def test_pipeline_command_exits_zero_for_sec_to_silver_failure(self):
+        with patch(
+            "equity_lake.pipeline.execute_eod_pipeline",
+            return_value={
+                "sec_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                "features": {"success": True, "rows": 1},
+                "ml": {"success": True, "results": {}},
+            },
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
+        assert result.exit_code == 0
+
+    def test_pipeline_command_ml_skip_reason_does_not_independently_fail(self):
+        """An ml stage skipped because features failed must not independently trigger non-zero."""
+        with patch(
+            "equity_lake.pipeline.execute_eod_pipeline",
+            return_value={
+                "features": {"success": True, "rows": 1},
+                "ml": {"success": False, "skipped": True, "reason": "feature stage failed"},
+            },
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
+        assert result.exit_code == 0
+
     def test_news_command_requires_api_key(self):
         with patch.dict("os.environ", {}, clear=True):
             result = runner.invoke(app, ["news"])

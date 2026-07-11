@@ -2,7 +2,7 @@
 
 Thin wrapper around ``deltalake`` providing write, read, and maintenance
 operations.  All market tables are date-partitioned Delta tables stored
-under ``data/lake/<market>/``.
+under ``data/lake/<medallion-layer>/<dataset>/``.
 """
 
 from __future__ import annotations

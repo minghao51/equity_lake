@@ -152,16 +152,16 @@ con = duckdb.connect(':memory:')
 # Query Parquet files directly
 df = con.execute("""
     SELECT ticker, close, volume
-    FROM 'data/lake/us_equity/date=*.parquet'
+    FROM 'data/lake/01_bronze/market_data/us_equity/date=*/*.parquet'
     WHERE date >= '2024-01-01'
 """).df()
 
 # Create unified view
 con.execute("""
     CREATE OR REPLACE VIEW equity_all AS
-    SELECT *, 'us' as market FROM 'data/lake/us_equity/date=*/*.parquet'
+    SELECT *, 'us' as market FROM 'data/lake/01_bronze/market_data/us_equity/date=*/*.parquet'
     UNION ALL
-    SELECT *, 'cn' as market FROM 'data/lake/cn_ashare/date=*/*.parquet'
+    SELECT *, 'cn' as market FROM 'data/lake/01_bronze/market_data/cn_ashare/date=*/*.parquet'
 """)
 ```
 
@@ -237,7 +237,7 @@ import pyarrow.parquet as pq
 table = pa.Table.from_pandas(df)
 pq.write_table(
     table,
-    f'data/lake/us_equity/date={date}/{date}.parquet',
+    f'data/lake/01_bronze/market_data/us_equity/date={date}/{date}.parquet',
     compression='snappy'
 )
 ```
@@ -247,11 +247,11 @@ pq.write_table(
 import pandas as pd
 
 # Read single file
-df = pd.read_parquet('data/lake/us_equity/date=2024-12-01/2024-12-01.parquet')
+df = pd.read_parquet('data/lake/01_bronze/market_data/us_equity/date=2024-12-01/2024-12-01.parquet')
 
 # Read multiple partitions with DuckDB
 df = con.execute("""
-    SELECT * FROM 'data/lake/us_equity/date=*/*.parquet'
+    SELECT * FROM 'data/lake/01_bronze/market_data/us_equity/date=*/*.parquet'
     WHERE date >= '2024-12-01'
 """).df()
 ```
@@ -287,12 +287,12 @@ AWS_PROFILE = os.getenv('AWS_PROFILE', 'default')
 **Implementation**:
 - **Tool 1**: s5cmd (preferred, high-performance)
   ```bash
-  s5cmd cp --workers 32 s3://bucket/us_equity/* data/lake/us_equity/
+  s5cmd cp --workers 32 s3://bucket/us_equity/* data/lake/01_bronze/market_data/us_equity/
   ```
 
 - **Tool 2**: AWS CLI (fallback)
   ```bash
-  aws s3 sync s3://bucket/us_equity/ data/lake/us_equity/
+  aws s3 sync s3://bucket/us_equity/ data/lake/01_bronze/market_data/us_equity/
   ```
 
 - **Tool 3**: boto3 (Python SDK)

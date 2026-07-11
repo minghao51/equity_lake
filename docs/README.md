@@ -11,10 +11,12 @@ drafts belong in `developer/history/`.
 
 - New users: [Getting Started](getting-started/quickstart.md)
 - Operators: [Pipeline Usage](user-guide/pipeline.md) — commands, config, scheduling
+- Ingestion details: [Ingestion](user-guide/ingestion.md) — sources, destinations, retries, and recovery
 - Environment and credentials: [API Keys And Credentials](20260406-api-keys.md)
 - CLI operators: [CLI Reference](user-guide/20260406-cli-reference.md)
 - Static hosting: [Dashboard Hosting](user-guide/20260406-dashboard-hosting.md)
 - Contributors: [Project Structure](developer-guide/project-structure.md)
+- Architecture: [Data Flow](developer/architecture/data-flow.md) and [Pipeline Contracts](developer/architecture/pipeline-contracts.md)
 - Strategy users: [Backtesting Guide](user-guide/backtesting.md)
 
 ## Sections

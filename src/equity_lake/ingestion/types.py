@@ -19,8 +19,6 @@ Market = Literal[
     "us_analyst_ratings",
     "sec_filings_fulltext",
     "us_sec_financials",
-    "bronze_raw_articles",
-    "silver_processed_articles",
 ]
 
 # Valid market set for validation
@@ -40,8 +38,6 @@ VALID_MARKETS: set[Market] = {
     "us_analyst_ratings",
     "sec_filings_fulltext",
     "us_sec_financials",
-    "bronze_raw_articles",
-    "silver_processed_articles",
 }
 
 # Market to directory mapping (medallion paths)
@@ -59,14 +55,11 @@ MARKET_DIR_MAP: dict[str, str] = {
     "stocktwits_messages": "01_bronze/raw_articles",
     "us_earnings_transcripts": "01_bronze/raw_articles",
     "sec_filings_fulltext": "01_bronze/raw_articles",
-    "bronze_raw_articles": "01_bronze/raw_articles",
     # Silver — structured
     "us_news": "02_silver/news_sentiment",
     "us_social_sentiment": "02_silver/social_sentiment",
     "us_analyst_ratings": "02_silver/analyst_ratings",
     "us_sec_financials": "02_silver/sec_financials",
-    # Silver — unstructured
-    "silver_processed_articles": "02_silver/processed_articles",
     # Gold
     "features": "03_gold/features",
     # Platinum

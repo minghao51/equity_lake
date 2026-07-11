@@ -33,6 +33,7 @@ def backfill_date_range(
     markets: list[str] | None = None,
     ticker_config: TickerConfig | None = None,
     dry_run: bool = False,
+    explicit_tickers: list[str] | None = None,
 ) -> int:
     from equity_lake.ingestion.orchestrator import run_daily_ingestion
 
@@ -49,6 +50,7 @@ def backfill_date_range(
                     markets=[market],
                     dry_run=dry_run,
                     ticker_config=ticker_config,
+                    explicit_tickers=explicit_tickers,
                     skip_existing=True,
                     parallel=False,
                 )

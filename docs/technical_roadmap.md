@@ -2793,7 +2793,7 @@ date_entity = Entity(
 
 # Define data source (Parquet files)
 price_source = FileSource(
-    path="data/lake/us_equity/**/*.parquet",
+    path="data/lake/01_bronze/market_data/us_equity/**/*.parquet",
     event_timestamp_column="date",
     file_format="parquet"
 )

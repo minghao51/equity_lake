@@ -13,10 +13,10 @@ Local-first equity data pipeline for bootstrapping historical data, appending da
 
 ```mermaid
 flowchart LR
-    S3["S3 historical parquet<br/>bootstrap"] --> Lake["Local lake<br/>data/lake/*"]
+    S3["S3 historical parquet<br/>bootstrap"] --> Lake["Local lake<br/>data/lake/01_bronze..04_platinum"]
     APIs["Market data APIs<br/>yfinance, akshare, others"] --> Ingest["equity ingest"]
     Ingest --> Lake
-    Lake --> Query["equity query<br/>DuckDB on Parquet"]
+    Lake --> Query["equity query<br/>DuckDB on Delta/Parquet"]
     Lake --> Features["Feature engineering"]
     Features --> ML["ML inference"]
     ML --> Signals["Signal scan / backtesting"]

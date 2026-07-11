@@ -63,6 +63,7 @@ dev = [
     "mypy>=1.11.0",
     "pre-commit>=3.6.0",
     "pymarkdownlnt>=0.9.25",
+    "pip-audit>=2.9.0",
     "jupyter>=1.0.0",
     "ipykernel>=6.29.0",
     "vaderSentiment>=3.3.2",

@@ -210,7 +210,7 @@ def process_data(data: List[OHLCVData]) -> pd.DataFrame:
 **Examples**:
 ```python
 STANDARD_COLUMNS = ['ticker', 'date', 'open', 'high', 'low', 'close', 'volume']
-US_EQUITY_DIR = Path('data/lake/us_equity')
+US_EQUITY_DIR = Path('data/lake/01_bronze/market_data/us_equity')
 MAX_RETRIES = 3
 DEFAULT_TIMEOUT = 30
 ```
@@ -242,7 +242,7 @@ DEFAULT_TIMEOUT = 30
 ```python
 trading_date = date(2024, 12, 1)
 market_data = fetcher.fetch(trading_date)
-partition_dir = f"data/lake/{market}/date={trading_date}/"
+partition_dir = f"data/lake/01_bronze/market_data/{market}/date={trading_date}/"
 ```
 
 **Descriptive Names**:
@@ -250,12 +250,12 @@ partition_dir = f"data/lake/{market}/date={trading_date}/"
 # Good
 trading_date = date.today()
 market_fetcher = USEquityFetcher()
-partition_path = Path(f"data/lake/{market}/date={date}/")
+partition_path = Path(f"data/lake/01_bronze/market_data/{market}/date={date}/")
 
 # Bad
 d = date.today()
 f = USEquityFetcher()
-p = Path(f"data/lake/{m}/date={d}/")
+p = Path(f"data/lake/01_bronze/market_data/{m}/date={d}/")
 ```
 
 ---
