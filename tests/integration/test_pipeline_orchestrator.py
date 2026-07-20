@@ -182,6 +182,33 @@ def test_optional_ingestion_failure_keeps_core_features_eligible(monkeypatch):
     assert results["features"]["success"] is True
 
 
+def test_idempotent_rerun_does_not_block_features(monkeypatch):
+    """Regression test (P0): an idempotent rerun (all markets already present)
+    must not classify required price markets as failures.
+
+    Previously ``run_daily_ingestion`` dropped already-present markets from its
+    result dict, so ``execute_eod_pipeline`` saw them as missing and blocked the
+    feature/ML stages with ``required price source failed``.
+    """
+    import polars as pl
+
+    # Simulates the post-P0-#2 behavior: every requested market is reported as success,
+    # including ones that were skipped because the partition already existed.
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": True, "cn": True})
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: pl.DataFrame({"ticker": ["AAPL"]}))
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us", "cn"],
+        tickers=["AAPL"],
+        skip_ml=True,
+    )
+
+    assert results["ingestion"]["success"] is True
+    assert results["ingestion"]["required_failures"] == []
+    assert results["features"]["success"] is True
+
+
 def test_bronze_to_silver_failure_only_disables_article_enrichment(monkeypatch):
     """Core features remain eligible when optional article processing fails."""
 

@@ -212,6 +212,35 @@ class TestPipelineIntegration:
         assert "us" in results
         assert results["us"] is True
 
+    def test_skip_existing_marks_already_present_as_success(self, tmp_path, sample_ohlcv_data):
+        """Regression test (P0): an idempotent rerun must not drop already-present markets.
+
+        Previously ``_filter_markets_with_gaps`` dropped already-present markets
+        entirely from the results dict, so the pipeline classified them as
+        required-price failures on the next run.
+        """
+        # ``us`` already has the date -> skipped as already-present.
+        # ``cn`` is missing -> fetched (we return sample data so the write succeeds).
+
+        def has_date(market_dir, trading_date, con=None):
+            return market_dir.endswith("us_equity")
+
+        with (
+            patch("equity_lake.ingestion.orchestrator._market_has_date", side_effect=has_date),
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(
+                date(2024, 1, 1),
+                ["us", "cn"],
+                dry_run=True,
+                parallel=False,
+            )
+
+        assert results["us"] is True  # already-present, not re-fetched
+        assert results["cn"] is True  # newly fetched
+
     def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
         """Test that Delta table is created on write."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):

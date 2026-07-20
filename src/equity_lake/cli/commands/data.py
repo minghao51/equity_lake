@@ -10,6 +10,37 @@ import typer
 from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date, app
 
 
+def _resolve_dataset_paths(markets: list[str]) -> list[str]:
+    """Resolve delta-maintenance dataset identifiers to canonical medallion paths.
+
+    Accepts short names (``us``), long table names (``us_equity``), or full
+    medallion paths (``01_bronze/market_data/us_equity``) and returns the
+    canonical path used by the Delta writer. Runtime data lives under the
+    numbered medallion layout; without this resolution the delta-* commands
+    would silently target ``data/lake/<name>`` (a nonexistent table).
+    """
+    from equity_lake.ingestion.types import MARKET_DIR_MAP
+
+    # Reverse lookup: long table name suffix (e.g. ``us_equity``) -> short key.
+    long_to_short: dict[str, str] = {}
+    for short_key, medallion_path in MARKET_DIR_MAP.items():
+        long_name = medallion_path.rsplit("/", 1)[-1]
+        long_to_short[long_name] = short_key
+
+    resolved: list[str] = []
+    for market in markets:
+        if market in MARKET_DIR_MAP:
+            resolved.append(MARKET_DIR_MAP[market])
+        elif market in long_to_short:
+            resolved.append(MARKET_DIR_MAP[long_to_short[market]])
+        else:
+            # Already a medallion path (e.g. ``01_bronze/market_data/us_equity``)
+            # or an unknown identifier — pass it through so the storage layer can
+            # report a missing/unknown table rather than silently mis-targeting.
+            resolved.append(market)
+    return resolved
+
+
 @app.command("ingest")
 def ingest(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date YYYY-MM-DD")] = None,
@@ -19,15 +50,16 @@ def ingest(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Ingest daily equity market data."""
+    from equity_lake.core.config import get_settings
     from equity_lake.ingestion.orchestrator import run_daily_ingestion
 
     _init_logging(verbose)
     trading_date = _resolve_date(date_str)
-    market_list = _parse_comma_list(markets)
+    market_list = _parse_comma_list(markets) or list(get_settings().ingestion.default_markets)
     ticker_list = _parse_comma_list(tickers)
     run_daily_ingestion(
         trading_date=trading_date,
-        markets=market_list or [],
+        markets=market_list,
         dry_run=dry_run,
         parallel=True,
         explicit_tickers=ticker_list,
@@ -106,12 +138,30 @@ def auto_backfill(
 
 @app.command("sync")
 def sync(
-    bucket: Annotated[str | None, typer.Option("--bucket", "-b", help="S3 bucket URL")] = None,
+    bucket: Annotated[
+        str | None,
+        typer.Option(
+            "--bucket",
+            "-b",
+            help=(
+                "S3 bucket root URL (e.g. s3://my-bucket). The remote tree must "
+                "mirror the local numbered medallion layout WITHOUT a data/lake/ "
+                "prefix — each market is pulled from "
+                "<bucket>/01_bronze/market_data/<market_dir>."
+            ),
+        ),
+    ] = None,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Download workers")] = 16,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Sync data lake to S3."""
+    """Sync data lake to S3.
+
+    The remote bucket mirrors the local numbered medallion layout. Each equity
+    market is synced separately from ``<bucket>/<medallion_path>`` to its
+    canonical local directory, so s5cmd can parallelize per market and partial
+    failures don't abort the rest.
+    """
     from equity_lake.ingestion.types import MARKET_DIR_MAP
     from equity_lake.storage.s3_sync import S3Syncer
 
@@ -121,14 +171,18 @@ def sync(
         typer.secho("No S3 bucket specified. Use --bucket or set S3_BUCKET.", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    # Equity market-data directories (Bronze layer). Each is synced separately so
-    # s5cmd can parallelize per market and partial failures don't abort the rest.
+    bucket_root = bucket_url.rstrip("/")
+    # Equity market-data directories (Bronze layer).
     equity_markets = ["us", "cn", "hk_sg", "jpx", "krx"]
     failed: list[str] = []
     for market in equity_markets:
         market_dir = MARKET_DIR_MAP[market]
-        typer.secho(f"Syncing {market} -> {market_dir} ...", fg=typer.colors.CYAN)
-        syncer = S3Syncer(bucket=bucket_url, target_dir=Path("data/lake") / market_dir, workers=workers, dry_run=dry_run)
+        # Derive the per-market remote source from the canonical medallion path
+        # so each market pulls its own tree, not the same bucket root repeatedly.
+        source_url = f"{bucket_root}/{market_dir}"
+        target_dir = Path("data/lake") / market_dir
+        typer.secho(f"Syncing {market}: {source_url} -> {target_dir} ...", fg=typer.colors.CYAN)
+        syncer = S3Syncer(bucket=source_url, target_dir=target_dir, workers=workers, dry_run=dry_run)
         try:
             syncer.sync()
         except Exception as exc:
@@ -193,8 +247,8 @@ def delta_vacuum(
     from equity_lake.storage.delta import vacuum_delta
 
     _init_logging(verbose)
-    market_list = [m.strip() for m in markets.split(",")]
-    for market in market_list:
+    dataset_paths = _resolve_dataset_paths([m.strip() for m in markets.split(",")])
+    for market in dataset_paths:
         files = vacuum_delta(market, retention_hours=retention_hours, dry_run=dry_run)
         label = "would remove" if dry_run else "removed"
         typer.echo(f"  {market}: {label} {len(files)} stale files")
@@ -211,8 +265,8 @@ def delta_compact(
     from equity_lake.storage.delta import compact_delta
 
     _init_logging(verbose)
-    market_list = [m.strip() for m in markets.split(",")]
-    for market in market_list:
+    dataset_paths = _resolve_dataset_paths([m.strip() for m in markets.split(",")])
+    for market in dataset_paths:
         metrics = compact_delta(market)
         if metrics:
             typer.echo(f"  {market}: added={metrics.get('numFilesAdded', 0)} removed={metrics.get('numFilesRemoved', 0)}")
@@ -233,8 +287,8 @@ def delta_migrate(
     from equity_lake.storage.delta import migrate_parquet_to_delta
 
     _init_logging(verbose)
-    market_list = [m.strip() for m in markets.split(",")]
-    for market in market_list:
+    dataset_paths = _resolve_dataset_paths([m.strip() for m in markets.split(",")])
+    for market in dataset_paths:
         ok = migrate_parquet_to_delta(market, dry_run=dry_run)
         status = "OK" if ok else "SKIPPED/FAILED"
         typer.echo(f"  {market}: {status}")

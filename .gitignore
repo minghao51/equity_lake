@@ -60,6 +60,7 @@ Thumbs.db
 # Local tooling
 .claude/
 .context/
+.zcode/
 todo_audit.json
 AUDIT_*.md
 IMPLEMENTATION_PLAN.md

@@ -62,8 +62,15 @@ def _market_has_date(market_dir: str, trading_date: date, con: duckdb.DuckDBPyCo
     return False
 
 
-def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[str]:
+def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> tuple[list[str], set[str]]:
+    """Split *markets* into those needing a fetch and those already present.
+
+    Returns ``(markets_needing_fetch, already_present)``. Enrichment markets that
+    are not checked for existing partitions are always placed in
+    ``markets_needing_fetch``.
+    """
     markets_needing_fetch: list[str] = []
+    already_present: set[str] = set()
     shared_con: duckdb.DuckDBPyConnection | None = None
     try:
         for market in markets:
@@ -87,12 +94,13 @@ def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> list[st
                 shared_con.execute("INSTALL delta; LOAD delta;")
             if _market_has_date(market_dir, trading_date, con=shared_con):
                 logger.debug("market_data_exists", market=market, date=str(trading_date))
+                already_present.add(market)
             else:
                 markets_needing_fetch.append(market)
     finally:
         if shared_con is not None:
             shared_con.close()
-    return markets_needing_fetch
+    return markets_needing_fetch, already_present
 
 
 def _write_market(df: Any, market: str, trading_date: date, dry_run: bool) -> bool:
@@ -119,10 +127,13 @@ def run_daily_ingestion(
         explicit_ticker_list = [t.strip() for t in explicit_tickers.split(",")]
 
     if skip_existing:
-        markets_to_fetch = _filter_markets_with_gaps(markets, trading_date)
-        skipped = set(markets) - set(markets_to_fetch)
-        if skipped:
-            logger.info("skip_existing_data", trading_date=str(trading_date), skipped=sorted(skipped))
+        markets_to_fetch, already_present = _filter_markets_with_gaps(markets, trading_date)
+        if already_present:
+            # Idempotent reruns must surface already-written partitions as success
+            # so downstream feature/ML stages are not blocked by a missing result key.
+            logger.info("skip_existing_data", trading_date=str(trading_date), skipped=sorted(already_present))
+            for market in already_present:
+                results[market] = True
         markets = markets_to_fetch
 
     if not markets:

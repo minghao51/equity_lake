@@ -95,6 +95,27 @@ class TestNativeCommands:
             assert result.exit_code == 0
             mock_ingest.assert_called_once()
 
+    def test_ingest_resolves_default_markets_when_omitted(self):
+        """Regression test (P0): ingest without --markets must fall back to settings defaults.
+
+        Previously the CLI passed ``markets=[]`` which made ``run_daily_ingestion``
+        log ``all_markets_up_to_date`` and return ``{}`` — a silent no-op reported
+        as success.
+        """
+        from equity_lake.core.config import get_settings
+
+        expected = list(get_settings().ingestion.default_markets)
+        assert expected, "settings.ingestion.default_markets must be non-empty for this test to be meaningful"
+
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value={}) as mock_ingest:
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--dry-run"])
+
+        assert result.exit_code == 0
+        mock_ingest.assert_called_once()
+        markets_passed = mock_ingest.call_args.kwargs["markets"]
+        assert markets_passed == expected
+        assert len(markets_passed) > 0
+
     def test_config_show_outputs_settings(self):
         with patch("equity_lake.core.config.load_settings") as mock_load:
             mock_settings = MagicMock()
@@ -203,10 +224,12 @@ class TestNativeCommands:
             assert result.exit_code == 1
 
     def test_sync_iterates_all_equity_markets(self):
-        """Regression test: sync must not hardcode us_equity only (P0).
+        """Regression test (P0): sync must pull a distinct remote path per market.
 
         Verifies S3Syncer is instantiated once per equity market (us, cn,
-        hk_sg, jpx, krx) with the correct medallion target_dir.
+        hk_sg, jpx, krx), each with a per-market source URL that mirrors the
+        canonical local medallion target_dir. Previously every market received
+        the same bucket root, replicating one remote tree into every local dir.
         """
         instances = []
 
@@ -227,15 +250,68 @@ class TestNativeCommands:
 
         assert result.exit_code == 0
         assert len(instances) == 5
-        synced_dirs = {str(i.target_dir) for i in instances}
-        expected = {
+
+        expected_dirs = {
             "data/lake/01_bronze/market_data/us_equity",
             "data/lake/01_bronze/market_data/cn_ashare",
             "data/lake/01_bronze/market_data/hk_sg_equity",
             "data/lake/01_bronze/market_data/jpx_equity",
             "data/lake/01_bronze/market_data/krx_equity",
         }
-        assert synced_dirs == expected
+        synced_dirs = {str(i.target_dir) for i in instances}
+        assert synced_dirs == expected_dirs
+
+        # Each market's remote source must mirror its local target's medallion
+        # suffix (the part under data/lake/), and every source must be distinct.
+        synced_sources = {i.bucket for i in instances}
+        assert len(synced_sources) == 5  # no single bucket root reused
+        for instance in instances:
+            medallion_suffix = str(instance.target_dir).removeprefix("data/lake/")
+            assert instance.bucket == f"s3://test-bucket/{medallion_suffix}"
+
+    def test_delta_vacuum_resolves_canonical_medallion_paths(self):
+        """Regression test (P0): delta-vacuum must resolve dataset ids to canonical paths.
+
+        Without resolution, ``vacuum_delta("us_equity")`` targeted
+        ``data/lake/us_equity`` while runtime data lives at
+        ``data/lake/01_bronze/market_data/us_equity``.
+        """
+        with patch("equity_lake.storage.delta.vacuum_delta", return_value=[]) as mock_vacuum:
+            result = runner.invoke(app, ["delta-vacuum", "--markets", "us", "--dry-run"])
+
+        assert result.exit_code == 0
+        mock_vacuum.assert_called_once_with(
+            "01_bronze/market_data/us_equity",
+            retention_hours=168,
+            dry_run=True,
+        )
+
+    def test_delta_compact_resolves_canonical_medallion_paths(self):
+        """Regression test (P0): delta-compact must resolve dataset ids to canonical paths."""
+        with patch("equity_lake.storage.delta.compact_delta", return_value={}) as mock_compact:
+            result = runner.invoke(app, ["delta-compact", "--markets", "us_equity"])
+
+        assert result.exit_code == 0
+        mock_compact.assert_called_once_with("01_bronze/market_data/us_equity")
+
+    def test_delta_migrate_resolves_canonical_medallion_paths(self):
+        """Regression test (P0): delta-migrate must resolve dataset ids to canonical paths."""
+        with patch("equity_lake.storage.delta.migrate_parquet_to_delta", return_value=True) as mock_migrate:
+            result = runner.invoke(app, ["delta-migrate", "--markets", "us", "--dry-run"])
+
+        assert result.exit_code == 0
+        mock_migrate.assert_called_once_with("01_bronze/market_data/us_equity", dry_run=True)
+
+    def test_delta_command_accepts_full_medallion_path(self):
+        """Full medallion paths pass through unchanged (no double-resolution)."""
+        with patch("equity_lake.storage.delta.compact_delta", return_value={}) as mock_compact:
+            result = runner.invoke(
+                app,
+                ["delta-compact", "--markets", "01_bronze/market_data/us_equity"],
+            )
+
+        assert result.exit_code == 0
+        mock_compact.assert_called_once_with("01_bronze/market_data/us_equity")
 
     def test_forecast_train_prints_training_summary(self):
         class FakeForecaster:
