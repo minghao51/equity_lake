@@ -8,7 +8,6 @@ historical records for the Equity Lake project.
 Current system architecture and design documents:
 
 - [Architecture Overview](architecture/ARCHITECTURE.md)
-- [System Structure](architecture/STRUCTURE.md) (stale — see [Project Structure](../developer-guide/project-structure.md) for current layout)
 - [Tech Stack](architecture/STACK.md)
 - [Conventions](architecture/CONVENTIONS.md)
 - [Testing Strategy](architecture/TESTING.md)

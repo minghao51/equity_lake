@@ -107,21 +107,33 @@ Key commands:
 - `equity backtest`
 - `equity dashboard build`
 - `equity dashboard serve`
-- `equity config`
-- `equity loader`
 
 ## Data Layout
 
-The local lake uses Hive-style partitions:
+The local lake follows a numbered medallion architecture with Hive-style date partitions:
 
 ```text
 data/lake/
-├── us_equity/date=YYYY-MM-DD/*.parquet
-├── cn_ashare/date=YYYY-MM-DD/*.parquet
-├── hk_sg_equity/date=YYYY-MM-DD/*.parquet
-├── jpx_equity/date=YYYY-MM-DD/*.parquet
-├── krx_equity/date=YYYY-MM-DD/*.parquet
-└── features/
+├── 01_bronze/
+│   ├── market_data/
+│   │   ├── us_equity/date=YYYY-MM-DD/*.parquet
+│   │   ├── cn_ashare/date=YYYY-MM-DD/*.parquet
+│   │   ├── hk_sg_equity/date=YYYY-MM-DD/*.parquet
+│   │   ├── jpx_equity/date=YYYY-MM-DD/*.parquet
+│   │   └── krx_equity/date=YYYY-MM-DD/*.parquet
+│   ├── macro/
+│   └── raw_articles/
+├── 02_silver/
+│   ├── news_sentiment/
+│   ├── social_sentiment/
+│   ├── analyst_ratings/
+│   ├── processed_articles/
+│   ├── sec_extractions/
+│   └── sec_financials/
+├── 03_gold/
+│   └── features/
+└── 04_platinum/
+    └── predictions/
 ```
 
 DuckDB queries run directly on these Parquet files.

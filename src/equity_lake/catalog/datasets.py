@@ -54,7 +54,7 @@ _DTYPE_MAP: dict[str, str] = {
     "section_type": "string",
     "fiscal_period": "string",
     "period": "string",
-    "risk_sentiment": "string",
+    "risk_sentiment": "float64",
     "key_risks": "string",
     "guidance_direction": "string",
     "forward_statements": "string",

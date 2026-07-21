@@ -43,6 +43,30 @@ def _patch_market_clock(reference_date: date):
 
 
 # =============================================================================
+# price-market registry coverage
+# =============================================================================
+
+
+class TestPriceMarketRegistry:
+    def test_registry_covers_all_required_price_markets(self) -> None:
+        # Monitoring must cover every market classified as a required price
+        # market. Hardcoding three would silently drop JPX/KRX freshness/quality.
+        from equity_lake.ingestion.types import REQUIRED_PRICE_MARKETS
+
+        # The registry key suffix mirrors the bronze directory name (us -> us_equity).
+        expected = {
+            "us": "us_equity",
+            "cn": "cn_ashare",
+            "hk_sg": "hk_sg_equity",
+            "jpx": "jpx_equity",
+            "krx": "krx_equity",
+        }
+        from equity_lake.monitoring.health import _PRICE_MARKET_PATH_ATTRS
+
+        assert set(_PRICE_MARKET_PATH_ATTRS) == {expected[m] for m in REQUIRED_PRICE_MARKETS}
+
+
+# =============================================================================
 # _date_scalar helper
 # =============================================================================
 
@@ -196,11 +220,13 @@ class TestCheckDataFreshness:
             patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "us"),
             patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "cn"),
             patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "hk_sg"),
+            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "jpx"),
+            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "krx"),
         ]
 
     def test_fresh_data_is_healthy(self, tmp_path) -> None:
         ref = date(2024, 1, 10)
-        for sub in ("us", "cn", "hk_sg"):
+        for sub in ("us", "cn", "hk_sg", "jpx", "krx"):
             _write_parquet_partition(tmp_path / sub, date(2024, 1, 9), [_ohlcv_row()], schema=self._OHLCV_SCHEMA)
         now_patch, td_patch = _patch_market_clock(ref)
         patches = self._patch_dirs(tmp_path) + [now_patch, td_patch]
@@ -216,7 +242,7 @@ class TestCheckDataFreshness:
 
     def test_stale_data_is_unhealthy(self, tmp_path) -> None:
         ref = date(2024, 1, 10)
-        for sub in ("us", "cn", "hk_sg"):
+        for sub in ("us", "cn", "hk_sg", "jpx", "krx"):
             _write_parquet_partition(tmp_path / sub, date(2024, 1, 1), [_ohlcv_row()], schema=self._OHLCV_SCHEMA)
         now_patch, td_patch = _patch_market_clock(ref)
         patches = self._patch_dirs(tmp_path) + [now_patch, td_patch]
@@ -225,7 +251,7 @@ class TestCheckDataFreshness:
         try:
             m = PipelineMonitor(max_age_days=2)
             assert m.check_data_freshness() is False
-            assert len(m.alerts) == 3  # one per market
+            assert len(m.alerts) == 5  # one per market
         finally:
             for p in patches:
                 p.stop()
@@ -264,11 +290,13 @@ class TestCheckDataQuality:
             patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "us"),
             patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "cn"),
             patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "hk_sg"),
+            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "jpx"),
+            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "krx"),
         ]
 
     def test_clean_data_is_healthy(self, tmp_path) -> None:
         recent = date.today()
-        for sub in ("us", "cn", "hk_sg"):
+        for sub in ("us", "cn", "hk_sg", "jpx", "krx"):
             _write_parquet_partition(tmp_path / sub, recent, [_ohlcv_row(), _ohlcv_row("MSFT")], schema=self._OHLCV_SCHEMA)
         for p in self._patch_dirs(tmp_path):
             p.start()
@@ -284,15 +312,15 @@ class TestCheckDataQuality:
         recent = date.today()
         # 6 of 10 rows have null close -> 60% >> 5% threshold.
         rows = [_ohlcv_row(f"T{i}") for i in range(4)] + [_ohlcv_row(f"T{i}", close=None) for i in range(6)]
-        for sub in ("us", "cn", "hk_sg"):
+        for sub in ("us", "cn", "hk_sg", "jpx", "krx"):
             _write_parquet_partition(tmp_path / sub, recent, rows, schema=self._OHLCV_SCHEMA)
         for p in self._patch_dirs(tmp_path):
             p.start()
         try:
             m = PipelineMonitor(null_threshold_pct=5.0)
             assert m.check_data_quality() is False
-            # Each of the 3 markets contributes a null-close alert.
-            assert sum(1 for a in m.alerts if "null close" in a) == 3
+            # Each of the 5 markets contributes a null-close alert.
+            assert sum(1 for a in m.alerts if "null close" in a) == 5
         finally:
             for p in self._patch_dirs(tmp_path):
                 p.stop()
@@ -388,6 +416,8 @@ class TestRunHealthCheck:
             patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "absent_us"),
             patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "absent_cn"),
             patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "absent_hk"),
+            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
+            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
             patch(f"{HEALTH_PATHS}.GOLD_FEATURES_DIR", tmp_path / "absent_gold"),
             patch(f"{HEALTH_PATHS}.LOGS_DIR", tmp_path / "absent_logs"),
             patch(f"{HEALTH_PATHS}.BRONZE_RAW_ARTICLES_DIR", tmp_path / "absent_bronze"),

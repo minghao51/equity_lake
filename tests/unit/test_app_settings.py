@@ -22,8 +22,8 @@ def test_load_settings_from_yaml(tmp_path: Path) -> None:
         """
 project:
   name: test-lake
-storage:
-  data_dir: runtime-data
+ingestion:
+  retry_attempts: 5
 schedule:
   cron: "0 6 * * 1-5"
 """.strip(),
@@ -33,7 +33,7 @@ schedule:
     settings = load_settings(settings_file)
 
     assert settings.project.name == "test-lake"
-    assert settings.storage.data_dir == "runtime-data"
+    assert settings.ingestion.retry_attempts == 5
     assert settings.schedule.cron == "0 6 * * 1-5"
 
 

@@ -7,6 +7,7 @@ Sends alerts on issues. Driven via the ``equity monitor`` Typer command.
 """
 
 import json
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -15,11 +16,17 @@ import duckdb
 import structlog
 
 from equity_lake.core.calendar import is_trading_day, market_now
-from equity_lake.core.paths import (
+
+# Price-market path constants are resolved reflectively by _price_market_paths()
+# (via getattr on this module) so runtime patches are honoured; they are not
+# referenced by name in the query f-strings.
+from equity_lake.core.paths import (  # noqa: F401
     BRONZE_RAW_ARTICLES_DIR,
     CN_ASHARE_DIR,
     GOLD_FEATURES_DIR,
     HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
     LOGS_DIR,
     SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
@@ -33,7 +40,33 @@ _MARKET_DISPLAY = {
     "us_equity": "US Equity",
     "cn_ashare": "China A-Share",
     "hk_sg_equity": "HK/SG Equity",
+    "jpx_equity": "JPX Equity",
+    "krx_equity": "KRX Equity",
 }
+
+# Price-market registry: bronze directory name -> module attribute holding its
+# Path constant. Iterating this drives both the freshness and quality checks, so
+# every market classified as a required price market is monitored automatically.
+# Attribute names (not captured Path objects) so runtime patches of the
+# module-level constants — e.g. tests pointing them at tmp dirs — are honoured.
+_PRICE_MARKET_PATH_ATTRS: dict[str, str] = {
+    "us_equity": "US_EQUITY_DIR",
+    "cn_ashare": "CN_ASHARE_DIR",
+    "hk_sg_equity": "HK_SG_EQUITY_DIR",
+    "jpx_equity": "JPX_EQUITY_DIR",
+    "krx_equity": "KRX_EQUITY_DIR",
+}
+
+
+def _price_market_paths() -> dict[str, Path]:
+    """Resolve price-market -> bronze parquet path at call time.
+
+    Reads the module-level ``*_EQUITY_DIR`` / ``*_ASHARE_DIR`` constants fresh on
+    each call (via ``getattr``) so runtime patches are honoured, matching the
+    previous inline-f-string behaviour.
+    """
+    module = sys.modules[__name__]
+    return {market: getattr(module, attr) for market, attr in _PRICE_MARKET_PATH_ATTRS.items()}
 
 
 def _date_scalar(value: object) -> date | None:
@@ -98,25 +131,18 @@ class PipelineMonitor:
         """
         logger.info("Checking data freshness...")
 
-        query = f"""
+        market_arms = " UNION ALL ".join(
+            f"""
             SELECT
-                'us_equity' as market,
+                '{market}' as market,
                 MAX(date) as latest_date,
                 COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{US_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
-            UNION ALL
-            SELECT
-                'cn_ashare' as market,
-                MAX(date) as latest_date,
-                COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{CN_ASHARE_DIR}/**/*.parquet', hive_partitioning=1)
-            UNION ALL
-            SELECT
-                'hk_sg_equity' as market,
-                MAX(date) as latest_date,
-                COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{HK_SG_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
-        """
+            FROM read_parquet('{path}/**/*.parquet', hive_partitioning=1)
+            """
+            for market, path in _price_market_paths().items()
+        )
+
+        query = f"SELECT market, latest_date, date_count FROM ({market_arms})"
 
         try:
             df = self.conn.execute(query).pl()
@@ -170,6 +196,11 @@ class PipelineMonitor:
         """
         logger.info("Checking data quality...")
 
+        market_selects = " UNION ALL ".join(
+            f"SELECT '{market}' as market, * FROM read_parquet('{path}/**/*.parquet', hive_partitioning=1)"
+            for market, path in _price_market_paths().items()
+        )
+
         query = f"""
             SELECT
                 market,
@@ -179,13 +210,7 @@ class PipelineMonitor:
                 SUM(CASE WHEN open IS NULL THEN 1 ELSE 0 END) as null_open,
                 SUM(CASE WHEN high IS NULL THEN 1 ELSE 0 END) as null_high,
                 SUM(CASE WHEN low IS NULL THEN 1 ELSE 0 END) as null_low
-            FROM (
-                SELECT 'us_equity' as market, * FROM read_parquet('{US_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
-                UNION ALL
-                SELECT 'cn_ashare' as market, * FROM read_parquet('{CN_ASHARE_DIR}/**/*.parquet', hive_partitioning=1)
-                UNION ALL
-                SELECT 'hk_sg_equity' as market, * FROM read_parquet('{HK_SG_EQUITY_DIR}/**/*.parquet', hive_partitioning=1)
-            )
+            FROM ({market_selects})
             WHERE date >= CURRENT_DATE - INTERVAL '7 days'
             GROUP BY market
         """

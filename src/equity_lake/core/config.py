@@ -433,20 +433,9 @@ class ProjectSettings(BaseModel):
     environment: Literal["development", "production", "testing"] = "development"
 
 
-class StorageSettings(BaseModel):
-    data_dir: str = "data"
-    lake_dir: str = "data/lake"
-    logs_dir: str = "logs"
-    models_dir: str = "data/models"
-    db_path: str = "equity_data.duckdb"
-
-
 class IngestionSettings(BaseModel):
     default_markets: list[str] = Field(default_factory=lambda: ["us", "cn", "hk_sg"])
-    parallel: bool = True
-    max_workers: int = 3
     ticker_config_path: str = "config/tickers.yaml"
-    cn_fallback_threshold: float = 0.3
     retry_attempts: int = 3
     retry_delay: float = 1.0
 
@@ -479,7 +468,6 @@ class MonitoringSettings(BaseModel):
 
 class Settings(BaseSettings):
     project: ProjectSettings = Field(default_factory=ProjectSettings)
-    storage: StorageSettings = Field(default_factory=StorageSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
@@ -610,7 +598,6 @@ __all__ = [
     "ProjectSettings",
     "ScheduleSettings",
     "Settings",
-    "StorageSettings",
     "TickerConfig",
     "TickerConfigRoot",
     "TickerMetadata",

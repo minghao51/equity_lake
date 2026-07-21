@@ -53,7 +53,7 @@ data/lake/03_gold/features/
 The public orchestration helper is:
 
 ```python
-from equity_lake.pipelines.features import run_feature_pipeline
+from equity_lake.features import run_feature_job
 ```
 
 ### ML Inference
@@ -62,7 +62,7 @@ The ML layer currently centers on price-forecast inference and related jobs.
 The public orchestration helper is:
 
 ```python
-from equity_lake.pipelines.ml import run_ml_inference
+from equity_lake.ml import run_prediction_job
 ```
 
 The main user-facing wrapper is:

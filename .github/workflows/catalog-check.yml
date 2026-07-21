@@ -5,6 +5,9 @@ on:
     paths:
       - "src/equity_lake/features/dag/**"
       - "src/equity_lake/catalog/**"
+      - "src/equity_lake/core/schemas.py"
+      - "src/equity_lake/core/paths.py"
+      - "src/equity_lake/ingestion/writers.py"
       - "data/catalog.jsonl"
   push:
     branches:
@@ -12,6 +15,9 @@ on:
     paths:
       - "src/equity_lake/features/dag/**"
       - "src/equity_lake/catalog/**"
+      - "src/equity_lake/core/schemas.py"
+      - "src/equity_lake/core/paths.py"
+      - "src/equity_lake/ingestion/writers.py"
 
 permissions:
   contents: read
