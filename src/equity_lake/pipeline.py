@@ -11,6 +11,12 @@ from equity_lake.core.config import TickerConfig, get_settings
 from equity_lake.features import run_feature_job
 from equity_lake.ingestion.backfill import backfill_date_range
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
+from equity_lake.ingestion.types import (
+    OPTIONAL_ENRICHMENT_MARKETS,
+    REQUIRED_PRICE_MARKETS,
+    SourceOutcome,
+    SourceStatus,
+)
 from equity_lake.ml import run_prediction_job
 
 logger = structlog.get_logger()
@@ -35,19 +41,9 @@ def _backfill_feature_history(
     )
 
 
-_REQUIRED_PRICE_MARKETS = {"us", "cn", "hk_sg", "jpx", "krx"}
-_OPTIONAL_ENRICHMENT_MARKETS = {
-    "macro",
-    "us_news",
-    "us_social_sentiment",
-    "rss_news",
-    "reddit_posts",
-    "stocktwits_messages",
-    "us_earnings_transcripts",
-    "us_analyst_ratings",
-    "sec_filings_fulltext",
-    "us_sec_financials",
-}
+def _market_succeeded(results: dict[str, SourceOutcome], market: str) -> bool:
+    """Treat a missing key as FAILED (the historical ``.get(m, False)`` semantics)."""
+    return results.get(market, SourceOutcome(SourceStatus.FAILED)).succeeded
 
 
 def _stage(success: bool, *, skipped: bool = False, reason: str | None = None, **extra: Any) -> dict[str, Any]:
@@ -87,7 +83,7 @@ def execute_eod_pipeline(
 
     logger.info("pipeline_started", date=str(trading_date), markets=markets, tickers=len(tickers), dry_run=dry_run)
 
-    ingestion_market_results: dict[str, bool] = {}
+    ingestion_market_results: dict[str, SourceOutcome] = {}
     if dry_run:
         results["ingestion"] = _stage(True, skipped=True, reason="dry_run", markets={})
     elif skip_ingestion:
@@ -104,19 +100,20 @@ def execute_eod_pipeline(
             skip_existing=True,
         )
         ingestion_market_results = ingestion_results
-        required_failures = sorted(market for market in markets if market in _REQUIRED_PRICE_MARKETS and not ingestion_results.get(market, False))
-        optional_failures = sorted(
-            market for market in markets if market in _OPTIONAL_ENRICHMENT_MARKETS and not ingestion_results.get(market, False)
-        )
+        required_failures = sorted(m for m in markets if m in REQUIRED_PRICE_MARKETS and not _market_succeeded(ingestion_results, m))
+        optional_failures = sorted(m for m in markets if m in OPTIONAL_ENRICHMENT_MARKETS and not _market_succeeded(ingestion_results, m))
+        # Publish per-market status as a JSON-friendly {"market": "written"} map so
+        # operators can distinguish skips/writes/failures in the pipeline payload.
+        markets_payload = {m: outcome.status.value for m, outcome in ingestion_results.items()}
         results["ingestion"] = _stage(
             not required_failures,
-            markets=ingestion_results,
+            markets=markets_payload,
             required_failures=required_failures,
             optional_failures=optional_failures,
             partial=bool(optional_failures),
         )
-        if not all(ingestion_results.values()):
-            logger.warning("ingestion_partial_failure", results=ingestion_results)
+        if not all(o.succeeded for o in ingestion_results.values()):
+            logger.warning("ingestion_partial_failure", results=markets_payload)
 
         unstructured_markets = {"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"}
         sec_markets = {"sec_filings_fulltext"}
@@ -153,10 +150,10 @@ def execute_eod_pipeline(
         results["features"] = _stage(True, skipped=True, reason="skip_features")
     elif (
         not skip_ingestion
-        and any(m in _REQUIRED_PRICE_MARKETS for m in markets)
-        and any(not ingestion_market_results.get(m, False) for m in markets if m in _REQUIRED_PRICE_MARKETS)
+        and any(m in REQUIRED_PRICE_MARKETS for m in markets)
+        and any(not _market_succeeded(ingestion_market_results, m) for m in markets if m in REQUIRED_PRICE_MARKETS)
     ):
-        failed_markets = sorted(m for m in markets if m in _REQUIRED_PRICE_MARKETS and not ingestion_market_results.get(m, False))
+        failed_markets = sorted(m for m in markets if m in REQUIRED_PRICE_MARKETS and not _market_succeeded(ingestion_market_results, m))
         results["features"] = _stage(
             False,
             reason="required price source failed",
@@ -191,7 +188,7 @@ def execute_eod_pipeline(
                     )
                     logger.error("feature_history_backfill_not_authorized", markets=markets, tickers=tickers)
                 else:
-                    price_markets = sorted(m for m in markets if m in _REQUIRED_PRICE_MARKETS)
+                    price_markets = sorted(m for m in markets if m in REQUIRED_PRICE_MARKETS)
                     start_date = trading_date - timedelta(days=120)
                     logger.warning(
                         "feature_history_backfill_authorized",

@@ -8,6 +8,10 @@ from unittest.mock import patch
 import pytest
 
 from equity_lake.ingestion.backfill import backfill_date_range
+from equity_lake.ingestion.types import SourceOutcome, SourceStatus
+
+_WRITTEN = SourceOutcome(SourceStatus.WRITTEN)
+_FAILED = SourceOutcome(SourceStatus.FAILED)
 
 
 @pytest.fixture
@@ -28,7 +32,7 @@ class TestBackfillDateRange:
         _mock_ingestion.assert_not_called()
 
     def test_single_day_single_market_success(self, _mock_ingestion) -> None:
-        _mock_ingestion.return_value = {"us": True}
+        _mock_ingestion.return_value = {"us": _WRITTEN}
         total = backfill_date_range(
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 2),
@@ -44,7 +48,7 @@ class TestBackfillDateRange:
 
     def test_multi_day_multi_market_call_count(self, _mock_ingestion) -> None:
         # run_daily_ingestion returns a dict keyed by the requested market.
-        _mock_ingestion.side_effect = lambda trading_date, markets, **kwargs: {markets[0]: True}
+        _mock_ingestion.side_effect = lambda trading_date, markets, **kwargs: {markets[0]: _WRITTEN}
         total = backfill_date_range(
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 3),
@@ -57,7 +61,7 @@ class TestBackfillDateRange:
     def test_partial_failure_counts_successes_only(self, _mock_ingestion) -> None:
         # us succeeds, cn returns False (skipped/not fetched).
         def side_effect(trading_date, markets, **kwargs):
-            return {markets[0]: True} if markets[0] == "us" else {markets[0]: False}
+            return {markets[0]: _WRITTEN} if markets[0] == "us" else {markets[0]: _FAILED}
 
         _mock_ingestion.side_effect = side_effect
         total = backfill_date_range(
@@ -69,7 +73,7 @@ class TestBackfillDateRange:
 
     def test_exception_is_caught_and_loop_continues(self, _mock_ingestion) -> None:
         # Day 1 raises (caught), day 2 succeeds -> loop must continue past the error.
-        _mock_ingestion.side_effect = [RuntimeError("network down"), {"us": True}]
+        _mock_ingestion.side_effect = [RuntimeError("network down"), {"us": _WRITTEN}]
         total = backfill_date_range(
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 3),
@@ -79,7 +83,7 @@ class TestBackfillDateRange:
         assert total == 1  # only day 2 counted
 
     def test_dry_run_forwarded(self, _mock_ingestion) -> None:
-        _mock_ingestion.return_value = {"us": True}
+        _mock_ingestion.return_value = {"us": _WRITTEN}
         backfill_date_range(
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 2),
@@ -89,7 +93,7 @@ class TestBackfillDateRange:
         assert _mock_ingestion.call_args.kwargs["dry_run"] is True
 
     def test_explicit_tickers_forwarded(self, _mock_ingestion) -> None:
-        _mock_ingestion.return_value = {"us": True}
+        _mock_ingestion.return_value = {"us": _WRITTEN}
         backfill_date_range(
             start_date=date(2024, 1, 2),
             end_date=date(2024, 1, 2),
