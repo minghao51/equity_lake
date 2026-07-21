@@ -3,17 +3,10 @@
 Pipeline Health Monitoring
 
 Monitors pipeline health, data freshness, and data quality.
-Sends alerts on issues.
-
-Usage:
-    uv run equity-monitor
-    uv run equity-monitor --max-age-days 1 --alert-threshold 5
-    uv run equity-monitor --output-json health_report.json
+Sends alerts on issues. Driven via the ``equity monitor`` Typer command.
 """
 
-import argparse
 import json
-import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -22,8 +15,6 @@ import duckdb
 import structlog
 
 from equity_lake.core.calendar import is_trading_day, market_now
-from equity_lake.core.config import get_settings
-from equity_lake.core.logging import setup_logging
 from equity_lake.core.paths import (
     BRONZE_RAW_ARTICLES_DIR,
     CN_ASHARE_DIR,
@@ -484,69 +475,3 @@ class PipelineMonitor:
             json.dump(report, f, indent=2, default=str)
 
         logger.info(f"Health report saved to {output_file}")
-
-
-# =============================================================================
-# CLI Interface
-# =============================================================================
-
-
-def parse_arguments() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Pipeline Health Monitoring")
-
-    parser.add_argument(
-        "--max-age-days",
-        type=int,
-        default=None,
-        help="Maximum allowed data age in days (default: from settings)",
-    )
-
-    parser.add_argument(
-        "--null-threshold-pct",
-        type=float,
-        default=None,
-        help="Max acceptable null percentage (default: from settings)",
-    )
-
-    parser.add_argument("--output-json", type=str, help="Save health report to JSON file")
-
-    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-
-    return parser.parse_args()
-
-
-def main() -> None:
-    """Main entry point."""
-    args = parse_arguments()
-
-    # Resolve settings-backed defaults only when actually running
-    settings = get_settings()
-    if args.max_age_days is None:
-        args.max_age_days = settings.monitoring.max_age_days
-    if args.null_threshold_pct is None:
-        args.null_threshold_pct = settings.monitoring.null_threshold_pct
-
-    # Setup logging
-    log_level = "DEBUG" if args.verbose else "INFO"
-    setup_logging(level=log_level, log_file=Path("monitor_pipeline.log"))
-
-    # Run health check
-    monitor = PipelineMonitor(
-        max_age_days=args.max_age_days,
-        null_threshold_pct=args.null_threshold_pct,
-        verbose=args.verbose,
-    )
-
-    healthy = monitor.run_health_check()
-
-    # Save report if requested
-    if args.output_json:
-        monitor.save_report(Path(args.output_json))
-
-    # Exit with appropriate code
-    sys.exit(0 if healthy else 1)
-
-
-if __name__ == "__main__":
-    main()

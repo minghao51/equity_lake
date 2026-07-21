@@ -17,7 +17,6 @@ def backtest_cmd(
     start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
-    walk_forward: Annotated[bool, typer.Option("--walk-forward", help="Walk-forward validation")] = False,
     output: Annotated[str | None, typer.Option("--output", "-o", help="Output JSON")] = None,
 ) -> None:
     """Backtest trading strategies."""
@@ -55,7 +54,6 @@ def backtest_cmd(
 def query(
     query_name: Annotated[str | None, typer.Option("--query", "-q", help="Named query")] = None,
     db_path: Annotated[str, typer.Option("--db", help="DuckDB path")] = "equity_data.duckdb",
-    date_str: Annotated[str | None, typer.Option("--date", help="Date filter")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Query the data lake via DuckDB."""
@@ -83,20 +81,26 @@ def query(
 
 @app.command("monitor")
 def monitor(
-    max_age_days: Annotated[int | None, typer.Option("--max-age-days", help="Max data age")] = None,
-    null_threshold: Annotated[float | None, typer.Option("--null-threshold", help="Null % threshold")] = None,
-    output_json: Annotated[str | None, typer.Option("--output-json", help="Save report")] = None,
+    max_age_days: Annotated[int | None, typer.Option("--max-age-days", help="Max data age (default: from settings)")] = None,
+    null_threshold: Annotated[float | None, typer.Option("--null-threshold", help="Null % threshold (default: from settings)")] = None,
+    output_json: Annotated[str | None, typer.Option("--output-json", help="Save full report (alerts + metrics + timestamp)")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Monitor pipeline health and data quality."""
+    from equity_lake.core.config import get_settings
     from equity_lake.monitoring.health import PipelineMonitor
 
     _init_logging(verbose)
+    # Resolve settings-backed defaults only when the CLI flag is omitted — matches
+    # the legacy argparse main()'s deferred-settings behavior.
+    settings = get_settings()
     monitor_inst = PipelineMonitor(
-        max_age_days=max_age_days or 2,
-        null_threshold_pct=null_threshold or 5.0,
+        max_age_days=max_age_days if max_age_days is not None else settings.monitoring.max_age_days,
+        null_threshold_pct=null_threshold if null_threshold is not None else settings.monitoring.null_threshold_pct,
         verbose=verbose,
     )
-    report = {"healthy": monitor_inst.run_health_check()}
+    monitor_inst.run_health_check()
     if output_json:
-        Path(output_json).write_text(json.dumps(report, indent=2, default=str))
+        # save_report serializes {alerts, metrics, timestamp} — the full report,
+        # parity with the legacy argparse entrypoint.
+        monitor_inst.save_report(Path(output_json))

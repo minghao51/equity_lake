@@ -109,7 +109,6 @@ Key commands:
 - `equity dashboard serve`
 - `equity config`
 - `equity loader`
-- `equity update`
 
 ## Data Layout
 

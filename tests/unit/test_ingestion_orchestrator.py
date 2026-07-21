@@ -9,7 +9,7 @@ import pytest
 
 from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion
 from equity_lake.ingestion.types import SourceStatus
-from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.ingestion.writers import upsert_dataset, validate_schema
 from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher
 
 # =============================================================================
@@ -90,10 +90,10 @@ class TestHKSGEquityFetcher:
 class TestPartitionedParquetWriter:
     """Tests for Parquet writer."""
 
-    def test_write_to_partitioned_parquet(self, tmp_path, sample_ohlcv_data):
+    def test_upsert_dataset(self, tmp_path, sample_ohlcv_data):
         """Test writing DataFrame to Delta storage."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
-            success = write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
+            success = upsert_dataset(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is True
 
@@ -105,14 +105,14 @@ class TestPartitionedParquetWriter:
 
     def test_write_empty_dataframe(self, tmp_path):
         """Test writing empty DataFrame."""
-        success = write_to_partitioned_parquet(pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False)
+        success = upsert_dataset(pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is False
 
     def test_write_dry_run(self, tmp_path, sample_ohlcv_data):
         """Test dry run mode."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
-            success = write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=True)
+            success = upsert_dataset(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=True)
 
         assert success is True
 
@@ -287,7 +287,7 @@ class TestPipelineIntegration:
     def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
         """Test that Delta table is created on write."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
-            write_to_partitioned_parquet(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
+            upsert_dataset(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
 
         from deltalake import DeltaTable
 

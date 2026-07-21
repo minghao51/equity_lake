@@ -10,7 +10,6 @@ SQL. The demo ``QueryExamples`` / ``benchmark_queries`` live in
 Usage:
     uv run equity query
     uv run equity query --query top_gainers
-    uv run equity query --date 2024-12-01
 """
 
 import logging

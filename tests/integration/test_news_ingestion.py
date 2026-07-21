@@ -14,7 +14,7 @@ import pytest
 from deltalake import DeltaTable
 
 from equity_lake.core.schemas import NEWS_COLUMNS
-from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+from equity_lake.ingestion.writers import upsert_dataset, validate_schema
 from equity_lake.sources.news import FinnhubNewsFetcher
 from equity_lake.storage.delta import delta_table_path
 
@@ -102,7 +102,7 @@ class TestNewsDeltaWrite:
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             df = _make_news_df()
 
-            success = write_to_partitioned_parquet(
+            success = upsert_dataset(
                 df,
                 "us_news",
                 date(2024, 1, 1),
@@ -124,7 +124,7 @@ class TestNewsDeltaWrite:
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             df = _make_news_df(n=1)
 
-            success = write_to_partitioned_parquet(
+            success = upsert_dataset(
                 df,
                 "us_news",
                 date(2024, 1, 1),
@@ -140,10 +140,10 @@ class TestNewsDeltaWrite:
         """Test that duplicate articles (by URL) are deduplicated via Delta merge."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             df1 = _make_news_df()
-            write_to_partitioned_parquet(df1, "us_news", date(2024, 1, 1), dry_run=False)
+            upsert_dataset(df1, "us_news", date(2024, 1, 1), dry_run=False)
 
             df2 = _make_news_df()
-            success = write_to_partitioned_parquet(df2, "us_news", date(2024, 1, 1), dry_run=False)
+            success = upsert_dataset(df2, "us_news", date(2024, 1, 1), dry_run=False)
 
             assert success is True
 
@@ -196,7 +196,7 @@ class TestNewsIngestionE2E:
                 )
                 df = fetcher.fetch(date(2024, 1, 1))
 
-                success = write_to_partitioned_parquet(
+                success = upsert_dataset(
                     df,
                     "us_news",
                     date(2024, 1, 1),

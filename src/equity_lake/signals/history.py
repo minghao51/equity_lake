@@ -75,8 +75,3 @@ def load_signals(target_date: date) -> list[Signal]:
         )
 
     return signals
-
-
-# Backwards-compatible aliases for the previous Parquet-based API.
-save_signals_to_parquet = save_signals
-load_signals_from_parquet = load_signals

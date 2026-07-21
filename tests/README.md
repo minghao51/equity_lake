@@ -17,7 +17,7 @@ Tests are auto-marked by directory: `unit/` → `@pytest.mark.unit`, `integratio
 
 ## Current Coverage Areas
 
-- `tests/unit/`: fetchers, ingestion orchestrator, macro sources, ML jobs, news, sentiment, signals, formatters, settings, validation, update engine, feature pipeline
+- `tests/unit/`: fetchers, ingestion orchestrator, macro sources, ML jobs, news, sentiment, signals, formatters, settings, validation, feature pipeline
 - `tests/integration/`: DuckDB queries, news ingestion, pipeline orchestration, dashboard exporter, signal integration
 
 ## Common Commands

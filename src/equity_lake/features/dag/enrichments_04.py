@@ -1,9 +1,10 @@
 """Gold layer: external data enrichment joins.
 
-All external data merges (sentiment, analyst, SEC, macro) are consolidated
-into a single ``enriched_features`` DAG node.  The node receives the
-technically-computed feature frame plus a DuckDB connection and boolean
-flags, then applies enabled enrichments sequentially.
+Each external data merge (news, social, enriched sentiment, analyst, SEC, macro)
+is its own ``@tag``'d Hamilton node, chained sequentially so that the catalog
+shows real per-enrichment lineage and each step is independently selectable /
+cacheable. The chain terminates at ``enriched_features``, the public request
+target.
 
 Enrichment flag defaults
 ------------------------
@@ -17,9 +18,12 @@ All other enrichments (``enable_news_sentiment``, ``enable_social_sentiment``,
 silver-layer tables that may not exist for all deployments. Callers opt in
 via the ``include_*`` parameters on ``FeatureEngineer.generate_features()``.
 
-This replaces the imperative merge calls that lived in
-``FeatureEngineer.generate_features()`` and standalone modules
-(``enriched_sentiment.py``, ``analyst_features.py``, ``sec_features.py``).
+Chain topology
+--------------
+``features_df`` → ``news_sentiment_enriched`` → ``social_sentiment_enriched``
+→ ``enriched_sentiment_merged`` → ``analyst_ratings_enriched``
+→ ``sec_extractions_enriched`` → ``cross_modal_features`` → ``macro_enriched``
+→ ``enriched_features`` (terminal passthrough preserving the public name).
 """
 
 from __future__ import annotations
@@ -44,50 +48,150 @@ from equity_lake.storage.lake_reader import duckdb_scan_for
 logger = structlog.get_logger()
 
 
+# ---------------------------------------------------------------------------
+# Public DAG nodes (linear enrichment chain)
+# ---------------------------------------------------------------------------
+
+
 @tag(  # type: ignore[untyped-decorator]
     layer="gold",
     category="enrichment",
-    produces="enriched_features",
-    description="DuckDB left-join enrichment with news, social, analyst, SEC, macro data",
+    produces="news_sentiment_enriched",
+    description="Left-join aggregated Finnhub news sentiment + EWMA onto features",
 )
-def enriched_features(
+def news_sentiment_enriched(
     features_df: pl.DataFrame,
     duckdb_conn: duckdb.DuckDBPyConnection,
     start_date: date,
     end_date: date,
     enable_news_sentiment: bool = False,
+) -> pl.DataFrame:
+    """Merge aggregated news sentiment onto the feature frame (opt-in)."""
+    if not enable_news_sentiment or features_df.is_empty():
+        return features_df
+    return _merge_news_sentiment(features_df, duckdb_conn, start_date, end_date)
+
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="social_sentiment_enriched",
+    description="Left-join aggregated social sentiment scores + momentum onto features",
+)
+def social_sentiment_enriched(
+    news_sentiment_enriched: pl.DataFrame,
+    duckdb_conn: duckdb.DuckDBPyConnection,
+    start_date: date,
+    end_date: date,
     enable_social_sentiment: bool = False,
+) -> pl.DataFrame:
+    """Merge aggregated social sentiment scores (opt-in)."""
+    if not enable_social_sentiment or news_sentiment_enriched.is_empty():
+        return news_sentiment_enriched
+    return _merge_social_sentiment(news_sentiment_enriched, duckdb_conn, start_date, end_date)
+
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="enriched_sentiment_merged",
+    description="Left-join LLM-enriched article-ticker sentiment from silver layer",
+)
+def enriched_sentiment_merged(
+    social_sentiment_enriched: pl.DataFrame,
+    duckdb_conn: duckdb.DuckDBPyConnection,
+    start_date: date,
+    end_date: date,
     enable_enriched_sentiment: bool = False,
+) -> pl.DataFrame:
+    """Merge LLM-enriched article-ticker sentiment (opt-in)."""
+    if not enable_enriched_sentiment or social_sentiment_enriched.is_empty():
+        return social_sentiment_enriched
+    return _merge_enriched_sentiment(social_sentiment_enriched, duckdb_conn, start_date, end_date)
+
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="analyst_ratings_enriched",
+    description="Left-join analyst consensus + price targets with EWMA and upside",
+)
+def analyst_ratings_enriched(
+    enriched_sentiment_merged: pl.DataFrame,
+    duckdb_conn: duckdb.DuckDBPyConnection,
+    start_date: date,
+    end_date: date,
     enable_analyst_ratings: bool = False,
+) -> pl.DataFrame:
+    """Merge analyst consensus + price targets (opt-in)."""
+    if not enable_analyst_ratings or enriched_sentiment_merged.is_empty():
+        return enriched_sentiment_merged
+    return _merge_analyst_ratings(enriched_sentiment_merged, duckdb_conn, start_date, end_date)
+
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="sec_extractions_enriched",
+    description="ASOF-join SEC filing extractions (point-in-time risk/tone/guidance)",
+)
+def sec_extractions_enriched(
+    analyst_ratings_enriched: pl.DataFrame,
+    duckdb_conn: duckdb.DuckDBPyConnection,
+    start_date: date,
+    end_date: date,
     enable_sec_features: bool = False,
+) -> pl.DataFrame:
+    """ASOF-join SEC filing extractions (opt-in)."""
+    if not enable_sec_features or analyst_ratings_enriched.is_empty():
+        return analyst_ratings_enriched
+    return _merge_sec_extractions(analyst_ratings_enriched, duckdb_conn, start_date, end_date)
+
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="cross_modal_features",
+    description="Derive cross-modal sentiment interaction features (always runs)",
+)
+def cross_modal_features(sec_extractions_enriched: pl.DataFrame) -> pl.DataFrame:
+    """Derive cross-modal sentiment features from any prior enrichment columns."""
+    return _add_cross_modal(sec_extractions_enriched)
+
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="macro_enriched",
+    description="Pivot macro indicators wide and forward-fill onto features (opt-out)",
+)
+def macro_enriched(
+    cross_modal_features: pl.DataFrame,
+    duckdb_conn: duckdb.DuckDBPyConnection,
+    start_date: date,
+    end_date: date,
     enable_macro: bool = True,
 ) -> pl.DataFrame:
-    """Apply all enabled external data enrichments sequentially.
+    """Pivot macro indicators wide and join onto features (opt-out)."""
+    if not enable_macro or cross_modal_features.is_empty():
+        return cross_modal_features
+    return _merge_macro(cross_modal_features, duckdb_conn, start_date, end_date)
 
-    Each enrichment is a left join (or ASOF join for SEC) onto the feature
-    frame.  Disabled enrichments are skipped entirely.
+
+@tag(  # type: ignore[untyped-decorator]
+    layer="gold",
+    category="enrichment",
+    produces="enriched_features",
+    description="Terminal enriched feature frame assembling all enabled enrichments",
+)
+def enriched_features(macro_enriched: pl.DataFrame) -> pl.DataFrame:
+    """Terminal node returning the fully enriched feature frame.
+
+    Preserved as a named terminal so the request list ``["enriched_features"]``
+    and downstream catalog/tests can target a stable public name regardless of
+    how many enrichment nodes are enabled upstream.
     """
-    result = features_df
-    if result.is_empty():
-        return result
-
-    if enable_news_sentiment:
-        result = _merge_news_sentiment(result, duckdb_conn, start_date, end_date)
-    if enable_social_sentiment:
-        result = _merge_social_sentiment(result, duckdb_conn, start_date, end_date)
-    if enable_enriched_sentiment:
-        result = _merge_enriched_sentiment(result, duckdb_conn, start_date, end_date)
-    if enable_analyst_ratings:
-        result = _merge_analyst_ratings(result, duckdb_conn, start_date, end_date)
-    if enable_sec_features:
-        result = _merge_sec_extractions(result, duckdb_conn, start_date, end_date)
-
-    result = _add_cross_modal(result)
-
-    if enable_macro:
-        result = _merge_macro(result, duckdb_conn, start_date, end_date)
-
-    return result
+    return macro_enriched
 
 
 # ---------------------------------------------------------------------------

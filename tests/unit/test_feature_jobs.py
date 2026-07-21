@@ -36,7 +36,7 @@ def _patch_engineer(monkeypatch, frame: pl.DataFrame) -> None:
 def test_run_feature_job_raises_when_write_returns_false(monkeypatch):
     """Regression test (P0): a ``False`` feature-write result must fail the job.
 
-    Previously ``run_feature_job`` discarded the ``write_to_partitioned_parquet``
+    Previously ``run_feature_job`` discarded the ``upsert_dataset``
     return value, so the pipeline could report success with unwritten features.
     """
     today = date(2024, 1, 2)
@@ -44,7 +44,7 @@ def test_run_feature_job_raises_when_write_returns_false(monkeypatch):
 
     with (
         patch(
-            "equity_lake.ingestion.writers.write_to_partitioned_parquet",
+            "equity_lake.ingestion.writers.upsert_dataset",
             return_value=False,
         ) as mock_write,
         pytest.raises(RuntimeError, match="Feature write to 03_gold/features failed"),
@@ -64,7 +64,7 @@ def test_run_feature_job_succeeds_when_write_returns_true(monkeypatch):
     _patch_engineer(monkeypatch, _fake_output_window(today))
 
     with patch(
-        "equity_lake.ingestion.writers.write_to_partitioned_parquet",
+        "equity_lake.ingestion.writers.upsert_dataset",
         return_value=True,
     ):
         result = run_feature_job(

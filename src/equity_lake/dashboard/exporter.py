@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import re
 from datetime import UTC, datetime
@@ -501,33 +500,4 @@ def build_dashboard(output_dir: Path | None = None) -> Path:
     return DashboardExporter(output_dir=output_dir).write()
 
 
-def parse_arguments() -> argparse.Namespace:
-    """Parse dashboard CLI arguments."""
-    parser = argparse.ArgumentParser(description="Build the static Equity Lake dashboard")
-    parser.add_argument(
-        "command",
-        nargs="?",
-        default="build",
-        choices=["build"],
-        help="Dashboard command to run",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Directory where static dashboard files should be written",
-    )
-    return parser.parse_args()
-
-
-def main() -> None:
-    """CLI entrypoint."""
-    args = parse_arguments()
-    if args.command == "build":
-        build_dashboard(output_dir=args.output_dir)
-
-
-__all__ = ["DashboardExporter", "build_dashboard", "main", "parse_arguments"]
-
-
-if __name__ == "__main__":
-    main()
+__all__ = ["DashboardExporter", "build_dashboard"]
