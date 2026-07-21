@@ -8,6 +8,7 @@ import polars as pl
 import pytest
 
 from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion
+from equity_lake.ingestion.types import SourceStatus
 from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
 from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher
 
@@ -210,7 +211,8 @@ class TestPipelineIntegration:
                 results = run_daily_ingestion(date(2024, 1, 1), ["us"], dry_run=True)
 
         assert "us" in results
-        assert results["us"] is True
+        assert results["us"].succeeded is True
+        assert results["us"].status is SourceStatus.WRITTEN  # dry-run fetch path
 
     def test_skip_existing_marks_already_present_as_success(self, tmp_path, sample_ohlcv_data):
         """Regression test (P0): an idempotent rerun must not drop already-present markets.
@@ -218,6 +220,10 @@ class TestPipelineIntegration:
         Previously ``_filter_markets_with_gaps`` dropped already-present markets
         entirely from the results dict, so the pipeline classified them as
         required-price failures on the next run.
+
+        With the SourceOutcome refactor, the test also asserts the skipped vs
+        written distinction is observable — the original motivation for the
+        structured outcome.
         """
         # ``us`` already has the date -> skipped as already-present.
         # ``cn`` is missing -> fetched (we return sample data so the write succeeds).
@@ -227,6 +233,8 @@ class TestPipelineIntegration:
 
         with (
             patch("equity_lake.ingestion.orchestrator._market_has_date", side_effect=has_date),
+            # Bypass the read-back validator (no real partition on disk in this test).
+            patch("equity_lake.ingestion.orchestrator._partition_is_valid", return_value=True),
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
@@ -238,8 +246,43 @@ class TestPipelineIntegration:
                 parallel=False,
             )
 
-        assert results["us"] is True  # already-present, not re-fetched
-        assert results["cn"] is True  # newly fetched
+        assert results["us"].succeeded is True  # already-present, not re-fetched
+        assert results["us"].status is SourceStatus.SKIPPED_EXISTING
+        assert results["cn"].succeeded is True  # newly fetched
+        assert results["cn"].status is SourceStatus.WRITTEN
+
+    def test_corrupt_partition_not_treated_as_present(self, tmp_path, sample_ohlcv_data):
+        """A partition that exists but fails schema validation must be re-fetched.
+
+        Regression guard for the partition-validity check: previously any
+        ``COUNT(*) > 0`` was treated as "present", so a corrupt or all-null-key
+        partition would be trusted as ``SKIPPED_EXISTING`` success. With the
+        read-back validator, an invalid partition falls through to re-fetch.
+        """
+        # ``us`` exists (has_date True) but is corrupt (validate_schema False).
+        # ``cn`` is missing entirely -> fetched.
+
+        def has_date(market_dir, trading_date, con=None):
+            return market_dir.endswith("us_equity")
+
+        with (
+            patch("equity_lake.ingestion.orchestrator._market_has_date", side_effect=has_date),
+            patch("equity_lake.ingestion.orchestrator._partition_is_valid", return_value=False),
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(
+                date(2024, 1, 1),
+                ["us", "cn"],
+                dry_run=True,
+                parallel=False,
+            )
+
+        # Both markets were re-fetched (not skipped), both report WRITTEN.
+        assert "us" not in {m for m in results if results[m].status is SourceStatus.SKIPPED_EXISTING}
+        assert results["us"].status is SourceStatus.WRITTEN
+        assert results["cn"].status is SourceStatus.WRITTEN
 
     def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
         """Test that Delta table is created on write."""

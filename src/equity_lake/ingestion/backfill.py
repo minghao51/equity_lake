@@ -36,6 +36,7 @@ def backfill_date_range(
     explicit_tickers: list[str] | None = None,
 ) -> int:
     from equity_lake.ingestion.orchestrator import run_daily_ingestion
+    from equity_lake.ingestion.types import SourceOutcome, SourceStatus
 
     if markets is None:
         markets = DEFAULT_MARKETS
@@ -54,7 +55,7 @@ def backfill_date_range(
                     skip_existing=True,
                     parallel=False,
                 )
-                if result.get(market, False):
+                if result.get(market, SourceOutcome(SourceStatus.FAILED)).succeeded:
                     logger.info("backfill_ok", date=str(current), market=market)
                     total_dates += 1
                 else:

@@ -14,7 +14,7 @@ import structlog
 from equity_lake.core.config import TickerConfig
 from equity_lake.ingestion.gap_detection import GapDetector
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
-from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS
+from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS, SourceOutcome, SourceStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -105,7 +105,7 @@ def find_and_fill_gaps(
                         skip_existing=False,
                         parallel=False,
                     )
-                    if day_results.get(market, False):
+                    if day_results.get(market, SourceOutcome(SourceStatus.FAILED)).succeeded:
                         filled += 1
                     else:
                         logger.warning(
