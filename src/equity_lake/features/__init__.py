@@ -68,7 +68,11 @@ def run_feature_job(
 
     from equity_lake.ingestion.writers import write_to_partitioned_parquet
 
-    write_to_partitioned_parquet(output_df, "03_gold/features", output_end_date)
+    write_ok = write_to_partitioned_parquet(output_df, "03_gold/features", output_end_date)
+    if not write_ok:
+        # Surface persistence failure so the pipeline records a failed features
+        # stage instead of reporting success with unwritten data.
+        raise RuntimeError("Feature write to 03_gold/features failed")
 
     return output_df
 

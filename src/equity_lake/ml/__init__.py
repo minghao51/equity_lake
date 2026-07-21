@@ -91,14 +91,21 @@ def run_prediction_job(
                 logger.error("predictions_validation_failed", rows=len(prediction_rows), date=str(trading_date))
                 all_success = False
                 return all_success, ticker_results
-            merge_delta(
+            # Surface persistence failure so the pipeline records a failed ML
+            # stage instead of reporting success with unwritten predictions.
+            persisted = merge_delta(
                 predictions_df,
                 market="04_platinum/predictions",
                 key_columns=["ticker", "date"],
             )
-            logger.info("predictions_persisted", rows=len(prediction_rows), date=str(trading_date))
+            if not persisted:
+                logger.error("predictions_persist_failed", rows=len(prediction_rows), date=str(trading_date))
+                all_success = False
+            else:
+                logger.info("predictions_persisted", rows=len(prediction_rows), date=str(trading_date))
         except Exception as exc:
-            logger.warning("predictions_persist_failed", error=str(exc))
+            logger.error("predictions_persist_failed", error=str(exc))
+            all_success = False
 
     return all_success, ticker_results
 
