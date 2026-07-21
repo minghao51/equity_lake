@@ -11,7 +11,7 @@ from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.generators.meta_label import MetaLabelSignalGenerator
 from equity_lake.signals.generators.ml import MLPredictionSignalGenerator
 from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
-from equity_lake.signals.history import save_signals_to_parquet
+from equity_lake.signals.history import save_signals
 from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 
 
@@ -51,7 +51,7 @@ class SignalScanner:
 
     def _should_scan_sequentially(self) -> bool:
         """Avoid concurrent ML scans because the forecaster stack is not thread-safe."""
-        return any(isinstance(generator, (MLPredictionSignalGenerator, MetaLabelSignalGenerator)) for generator in self.generators)
+        return any(isinstance(generator, MLPredictionSignalGenerator | MetaLabelSignalGenerator) for generator in self.generators)
 
     def scan(self, target_date: date | None = None) -> list[Signal]:
         """Scan all tickers and return aggregated signals.
@@ -137,4 +137,4 @@ class SignalScanner:
             return
 
         target_date = signals[0].date
-        save_signals_to_parquet(signals, target_date)
+        save_signals(signals, target_date)

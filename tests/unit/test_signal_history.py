@@ -8,8 +8,8 @@ from pathlib import Path
 import pytest
 
 from equity_lake.signals.history import (
-    load_signals_from_parquet,
-    save_signals_to_parquet,
+    load_signals,
+    save_signals,
 )
 from equity_lake.signals.models import Signal
 
@@ -48,9 +48,9 @@ def _make_signal(ticker: str = "AAPL", signal_type: str = "backtest", confidence
 def test_save_and_load_signals(temp_signals_dir):
     """Saved signals round-trip through the Delta-backed history."""
     test_date = date(2024, 12, 1)
-    save_signals_to_parquet([_make_signal()], test_date)
+    save_signals([_make_signal()], test_date)
 
-    loaded = load_signals_from_parquet(test_date)
+    loaded = load_signals(test_date)
     assert len(loaded) == 1
     assert loaded[0].ticker == "AAPL"
     assert loaded[0].action == "BUY"
@@ -60,11 +60,11 @@ def test_save_and_load_signals(temp_signals_dir):
 def test_merge_dedups_on_key(temp_signals_dir):
     """Re-saving the same (ticker, date, signal_type) upserts instead of duplicating."""
     test_date = date(2024, 12, 1)
-    save_signals_to_parquet([_make_signal(confidence=75.0)], test_date)
+    save_signals([_make_signal(confidence=75.0)], test_date)
     # Re-save with an updated confidence — should update, not append.
-    save_signals_to_parquet([_make_signal(confidence=90.0)], test_date)
+    save_signals([_make_signal(confidence=90.0)], test_date)
 
-    loaded = load_signals_from_parquet(test_date)
+    loaded = load_signals(test_date)
     assert len(loaded) == 1
     assert loaded[0].confidence == 90.0
 
@@ -72,14 +72,14 @@ def test_merge_dedups_on_key(temp_signals_dir):
 def test_distinct_keys_coexist(temp_signals_dir):
     """Different signal_type for the same ticker/date are kept as separate rows."""
     test_date = date(2024, 12, 1)
-    save_signals_to_parquet([_make_signal("AAPL", "backtest"), _make_signal("AAPL", "ml")], test_date)
+    save_signals([_make_signal("AAPL", "backtest"), _make_signal("AAPL", "ml")], test_date)
 
-    loaded = load_signals_from_parquet(test_date)
+    loaded = load_signals(test_date)
     assert len(loaded) == 2
     assert {s.signal_type for s in loaded} == {"backtest", "ml"}
 
 
 def test_load_empty_history(temp_signals_dir):
     """Loading when no history exists returns an empty list."""
-    loaded = load_signals_from_parquet(date(2024, 12, 1))
+    loaded = load_signals(date(2024, 12, 1))
     assert len(loaded) == 0

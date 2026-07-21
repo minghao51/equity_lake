@@ -9,7 +9,7 @@ import polars as pl
 from equity_lake.ingestion import writers
 
 
-def test_write_to_partitioned_parquet_merges_existing_rows(tmp_path) -> None:
+def test_upsert_dataset_merges_existing_rows(tmp_path) -> None:
     """A second write to the same partition should preserve older non-duplicate rows."""
     trading_date = date(2026, 6, 2)
     existing = pd.DataFrame(
@@ -24,8 +24,8 @@ def test_write_to_partitioned_parquet_merges_existing_rows(tmp_path) -> None:
     )
 
     with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
-        assert writers.write_to_partitioned_parquet(existing, "us_equity", trading_date)
-        assert writers.write_to_partitioned_parquet(incoming, "us_equity", trading_date)
+        assert writers.upsert_dataset(existing, "us_equity", trading_date)
+        assert writers.upsert_dataset(incoming, "us_equity", trading_date)
 
     from deltalake import DeltaTable
 
@@ -35,7 +35,7 @@ def test_write_to_partitioned_parquet_merges_existing_rows(tmp_path) -> None:
     assert set(merged["ticker"]) == {"AAPL", "MSFT"}
 
 
-def test_write_to_partitioned_parquet_replaces_duplicate_rows(tmp_path) -> None:
+def test_upsert_dataset_replaces_duplicate_rows(tmp_path) -> None:
     """Incoming duplicate keys should overwrite older rows instead of duplicating them."""
     trading_date = date(2026, 6, 2)
     existing = pd.DataFrame(
@@ -50,8 +50,8 @@ def test_write_to_partitioned_parquet_replaces_duplicate_rows(tmp_path) -> None:
     )
 
     with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
-        writers.write_to_partitioned_parquet(existing, "us_equity", trading_date)
-        writers.write_to_partitioned_parquet(incoming, "us_equity", trading_date)
+        writers.upsert_dataset(existing, "us_equity", trading_date)
+        writers.upsert_dataset(incoming, "us_equity", trading_date)
 
     from deltalake import DeltaTable
 
@@ -63,7 +63,7 @@ def test_write_to_partitioned_parquet_replaces_duplicate_rows(tmp_path) -> None:
     assert float(merged.iloc[0]["close"]) == 20
 
 
-def test_write_to_partitioned_parquet_accepts_polars(tmp_path) -> None:
+def test_upsert_dataset_accepts_polars(tmp_path) -> None:
     """Polars inputs should round-trip through Delta writes."""
     trading_date = date(2026, 6, 2)
     incoming = pl.DataFrame(
@@ -73,7 +73,7 @@ def test_write_to_partitioned_parquet_accepts_polars(tmp_path) -> None:
     )
 
     with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
-        assert writers.write_to_partitioned_parquet(incoming, "us_equity", trading_date)
+        assert writers.upsert_dataset(incoming, "us_equity", trading_date)
 
     from deltalake import DeltaTable
 

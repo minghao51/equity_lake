@@ -42,7 +42,6 @@ src/equity_lake/          # Source
 ├── signals/              # Signal generators
 ├── sources/              # Market data fetchers (us, cn, hk_sg, jpx, krx, news, sentiment, macro)
 ├── storage/              # DuckDB (EquityDataDB), S3 sync, Delta Lake
-├── updates/              # Data update engine
 ├── validation/           # pointblank-based data validation (schema contracts at ingestion)
 └── pipeline.py           # PipelineOrchestrator + stage helpers (ingestion/feature/ml)
 config/                   # YAML configs (tickers.yaml, settings.yaml, signals.yaml, watchlist.yaml)

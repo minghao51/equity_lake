@@ -48,9 +48,9 @@ def test_signal_history_roundtrip():
         scanner.save_history(signals)
 
         # Verify history exists
-        from equity_lake.signals.history import load_signals_from_parquet
+        from equity_lake.signals.history import load_signals
 
-        loaded = load_signals_from_parquet(target_date)
+        loaded = load_signals(target_date)
 
         assert len(loaded) > 0
         assert loaded[0].ticker == signals[0].ticker

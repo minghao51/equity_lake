@@ -9,8 +9,47 @@ import duckdb
 import polars as pl
 import pytest
 from deltalake import write_deltalake
+from hamilton import base, driver
+from hamilton.plugins import h_polars
 
-from equity_lake.features.dag.enrichments_04 import enriched_features
+from equity_lake.features.dag import enrichments_04
+
+
+def _build_driver() -> driver.Driver:
+    """Build a Hamilton driver over the enrichment chain only."""
+    adapter = base.SimplePythonGraphAdapter(h_polars.PolarsDataFrameResult())
+    return driver.Builder().with_modules(enrichments_04).with_adapter(adapter).build()
+
+
+def _run_enriched(
+    features_df: pl.DataFrame,
+    conn: MagicMock | duckdb.DuckDBPyConnection,
+    *,
+    enable_news_sentiment: bool = False,
+    enable_social_sentiment: bool = False,
+    enable_enriched_sentiment: bool = False,
+    enable_analyst_ratings: bool = False,
+    enable_sec_features: bool = False,
+    enable_macro: bool = True,
+) -> pl.DataFrame:
+    """Execute the full enrichment chain via the driver (mirrors FeaturePipeline.compute_enriched)."""
+    dr = _build_driver()
+    result = dr.execute(
+        ["enriched_features"],
+        inputs={
+            "features_df": features_df,
+            "duckdb_conn": conn,
+            "start_date": date(2024, 1, 1),
+            "end_date": date(2024, 1, 31),
+            "enable_news_sentiment": enable_news_sentiment,
+            "enable_social_sentiment": enable_social_sentiment,
+            "enable_enriched_sentiment": enable_enriched_sentiment,
+            "enable_analyst_ratings": enable_analyst_ratings,
+            "enable_sec_features": enable_sec_features,
+            "enable_macro": enable_macro,
+        },
+    )
+    return result if isinstance(result, pl.DataFrame) else pl.DataFrame(result)
 
 
 @pytest.fixture
@@ -30,28 +69,22 @@ def features_df() -> pl.DataFrame:
 
 @pytest.fixture
 def mock_conn() -> MagicMock:
-    conn = MagicMock(spec=["execute"])
+    # spec=duckdb.DuckDBPyConnection so Hamilton's input-type validation accepts the mock.
+    conn = MagicMock(spec=duckdb.DuckDBPyConnection)
     conn.execute.return_value.pl.return_value = pl.DataFrame()
     return conn
 
 
 def test_enriched_features_empty_df(mock_conn: MagicMock) -> None:
-    result = enriched_features(
-        pl.DataFrame(),
-        mock_conn,
-        date(2024, 1, 1),
-        date(2024, 1, 31),
-    )
+    result = _run_enriched(pl.DataFrame(), mock_conn)
     assert result.is_empty()
 
 
 def test_enriched_features_no_enrichments(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
     """With all enrichments disabled, cross_modal still runs but adds nothing."""
-    result = enriched_features(
+    result = _run_enriched(
         features_df,
         mock_conn,
-        date(2024, 1, 1),
-        date(2024, 1, 31),
         enable_news_sentiment=False,
         enable_social_sentiment=False,
         enable_enriched_sentiment=False,
@@ -63,13 +96,7 @@ def test_enriched_features_no_enrichments(features_df: pl.DataFrame, mock_conn: 
 
 
 def test_enriched_features_preserves_columns(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
-    result = enriched_features(
-        features_df,
-        mock_conn,
-        date(2024, 1, 1),
-        date(2024, 1, 31),
-        enable_macro=False,
-    )
+    result = _run_enriched(features_df, mock_conn, enable_macro=False)
     for col in features_df.columns:
         assert col in result.columns
 
@@ -101,8 +128,6 @@ def test_merge_enriched_sentiment_populates_columns(features_df: pl.DataFrame, m
     write_deltalake(str(silver_dir), articles.to_arrow(), mode="append")
 
     # Point the module-level constant at the temp dir
-    from equity_lake.features.dag import enrichments_04
-
     monkeypatch.setattr(enrichments_04, "SILVER_PROCESSED_ARTICLES_DIR", silver_dir)
 
     # Real DuckDB connection with delta extension
@@ -122,3 +147,20 @@ def test_merge_enriched_sentiment_populates_columns(features_df: pl.DataFrame, m
     assert aapl_row["bullish_ratio"][0] == pytest.approx(1.0)
     # social_volume counts reddit + stocktwits sources (one reddit here)
     assert aapl_row["social_volume"][0] == 1
+
+
+def test_enrichment_chain_nodes_exposed() -> None:
+    """All 8 enrichment nodes are registered in the DAG (regression for the single-node collapse)."""
+    dr = _build_driver()
+    node_names = {n.name if hasattr(n, "name") else str(n) for n in dr.list_available_variables()}
+    for expected in [
+        "news_sentiment_enriched",
+        "social_sentiment_enriched",
+        "enriched_sentiment_merged",
+        "analyst_ratings_enriched",
+        "sec_extractions_enriched",
+        "cross_modal_features",
+        "macro_enriched",
+        "enriched_features",
+    ]:
+        assert expected in node_names, f"{expected} node missing from enrichment chain"

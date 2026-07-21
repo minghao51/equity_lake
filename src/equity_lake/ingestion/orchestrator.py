@@ -26,7 +26,7 @@ from equity_lake.ingestion.router import (
     fetch_market_data_with_config,
 )
 from equity_lake.ingestion.types import MARKET_DIR_MAP, OPTIONAL_ENRICHMENT_MARKETS, SourceOutcome, SourceStatus
-from equity_lake.ingestion.writers import write_to_partitioned_parquet
+from equity_lake.ingestion.writers import upsert_dataset
 
 __all__ = [
     "fetch_market_data",
@@ -129,7 +129,7 @@ def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> tuple[l
 def _write_market(df: Any, market: str, trading_date: date, dry_run: bool) -> bool:
     market_dir = MARKET_DIR_MAP.get(market, market)
     with timer(f"write_{market}_parquet", market=market):
-        return write_to_partitioned_parquet(df, market_dir, trading_date, dry_run=dry_run)
+        return upsert_dataset(df, market_dir, trading_date, dry_run=dry_run)
 
 
 def run_daily_ingestion(

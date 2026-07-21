@@ -44,16 +44,6 @@ Built-in loaders now include:
 - `sec_filings`
 - `options_flow`
 
-## Smart Updates
-
-```bash
-dotenvx run -- uv run equity update --markets us
-dotenvx run -- uv run equity update --markets us,cn --date 2026-06-06
-dotenvx run -- uv run equity update --markets hk_sg --dry-run
-```
-
-This command runs the shipped incremental update engine over the selected markets.
-
 ## Existing Pipeline Commands
 
 ```bash

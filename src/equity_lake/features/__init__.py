@@ -66,9 +66,9 @@ def run_feature_job(
     if output_df.is_empty():
         raise ValueError("No features generated for the requested output window")
 
-    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset
 
-    write_ok = write_to_partitioned_parquet(output_df, "03_gold/features", output_end_date)
+    write_ok = upsert_dataset(output_df, "03_gold/features", output_end_date)
     if not write_ok:
         # Surface persistence failure so the pipeline records a failed features
         # stage instead of reporting success with unwritten data.

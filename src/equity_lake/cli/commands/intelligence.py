@@ -150,7 +150,7 @@ def news(
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
     from equity_lake.core.paths import US_NEWS_DIR
-    from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset, validate_schema
     from equity_lake.sources.news import FinnhubNewsFetcher
 
     _init_logging(verbose)
@@ -185,7 +185,7 @@ def news(
         raise typer.Exit(1)
 
     with timer("write_parquet"):
-        success = write_to_partitioned_parquet(df, "us_news", trading_date, dry_run=dry_run)
+        success = upsert_dataset(df, "us_news", trading_date, dry_run=dry_run)
 
     if success:
         typer.secho("News ingestion complete", fg=typer.colors.GREEN)
@@ -207,7 +207,7 @@ def sentiment(
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
     from equity_lake.core.paths import US_SOCIAL_SENTIMENT_DIR
-    from equity_lake.ingestion.writers import validate_schema, write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset, validate_schema
     from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
     _init_logging(verbose)
@@ -239,7 +239,7 @@ def sentiment(
         raise typer.Exit(1)
 
     with timer("write_parquet"):
-        success = write_to_partitioned_parquet(df, "us_social_sentiment", trading_date, dry_run=dry_run)
+        success = upsert_dataset(df, "us_social_sentiment", trading_date, dry_run=dry_run)
 
     if success:
         typer.secho("Sentiment ingestion complete", fg=typer.colors.GREEN)
@@ -262,7 +262,7 @@ def sec_filings(
 
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
-    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset
     from equity_lake.sources.sec_fulltext import SECFilingFetcher
 
     trading_date = resolve_trading_date(date_str)
@@ -280,7 +280,7 @@ def sec_filings(
 
     if not dry_run:
         with timer("write_bronze"):
-            write_to_partitioned_parquet(df, "bronze/raw_articles", trading_date)
+            upsert_dataset(df, "bronze/raw_articles", trading_date)
 
     if process_silver and not dry_run:
         typer.echo("Processing SEC bronze to silver...")
@@ -314,7 +314,7 @@ def transcripts(
 
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
-    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset
     from equity_lake.sources.transcripts import EarningsTranscriptFetcher
 
     trading_date = resolve_trading_date(date_str)
@@ -332,7 +332,7 @@ def transcripts(
 
     if not dry_run:
         with timer("write_bronze"):
-            write_to_partitioned_parquet(df, "bronze/raw_articles", trading_date)
+            upsert_dataset(df, "bronze/raw_articles", trading_date)
 
     typer.secho("Transcript ingestion complete", fg=typer.colors.GREEN)
 
@@ -354,7 +354,7 @@ def ratings(
 
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
-    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset
     from equity_lake.sources.analyst_ratings import AnalystRatingFetcher
 
     trading_date = resolve_trading_date(date_str)
@@ -372,7 +372,7 @@ def ratings(
 
     if not dry_run:
         with timer("write_ratings"):
-            write_to_partitioned_parquet(df, "us_analyst_ratings", trading_date)
+            upsert_dataset(df, "us_analyst_ratings", trading_date)
 
     typer.secho("Analyst ratings ingestion complete", fg=typer.colors.GREEN)
 
@@ -390,7 +390,7 @@ def sec_financials(
 
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
-    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset
     from equity_lake.sources.sec_financials import SECFinancialsFetcher
 
     trading_date = resolve_trading_date(date_str)
@@ -408,6 +408,6 @@ def sec_financials(
 
     if not dry_run:
         with timer("write_financials"):
-            write_to_partitioned_parquet(df, "us_sec_financials", trading_date)
+            upsert_dataset(df, "us_sec_financials", trading_date)
 
     typer.secho("SEC financials ingestion complete", fg=typer.colors.GREEN)

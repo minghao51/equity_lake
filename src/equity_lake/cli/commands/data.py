@@ -204,7 +204,7 @@ def macro(
 ) -> None:
     """Fetch macro indicators."""
     from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.ingestion.writers import write_to_partitioned_parquet
+    from equity_lake.ingestion.writers import upsert_dataset
     from equity_lake.sources.macro import MacroDataPipeline
 
     _init_logging(verbose)
@@ -227,7 +227,7 @@ def macro(
         typer.secho("No macro data fetched", fg=typer.colors.YELLOW)
         raise typer.Exit(1)
 
-    success = write_to_partitioned_parquet(df, "01_bronze/macro", trading_date, dry_run=dry_run)
+    success = upsert_dataset(df, "01_bronze/macro", trading_date, dry_run=dry_run)
 
     if success:
         typer.secho("Macro indicators fetch completed successfully", fg=typer.colors.GREEN)
