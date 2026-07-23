@@ -35,7 +35,6 @@ src/equity_lake/          # Source
 ├── devtools/             # Test data generators
 ├── features/             # Feature engineering (Hamilton-based); run_feature_job lives in __init__.py
 ├── ingestion/            # Data ingestion pipeline (orchestrator, writers, backfill)
-├── loaders/              # Plugin-based data loaders (SEC, Reddit, options flow, yfinance)
 ├── ml/                   # ML inference; run_prediction_job lives in __init__.py
 ├── monitoring/           # Pipeline health checks
 ├── sentiment/            # Sentiment analysis
@@ -49,7 +48,7 @@ data/lake/                # Partitioned Parquet storage (market/date= partitions
 notebooks/                # Interactive Jupyter notebooks (01–10, standalone runnable)
 ```
 
-No `domain/` tree — top-level modules are canonical. Import boundary tests in `tests/unit/test_import_boundaries.py` enforce that `core/` does not depend on `cli/`, `dashboard/`, `sources/`, or `loaders/`.
+No `domain/` tree — top-level modules are canonical. Import boundary tests in `tests/unit/test_import_boundaries.py` enforce that `core/` does not depend on `cli/`, `dashboard/`, or `sources/`.
 
 ## 5. Key Patterns
 

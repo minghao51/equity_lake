@@ -62,7 +62,7 @@
 
 - `src/equity_lake/sources/`: all market and external-data source adapters (including `macro.py`)
 - `src/equity_lake/ingestion/`: authoritative ingestion runtime (`orchestrator.py`, `router.py`, `backfill.py`, `writers.py`, `parallel.py`)
-- `src/equity_lake/storage/`: persistence layer (`duckdb.py`, `delta.py`, `s3_sync.py`, `compaction.py`, `lake_reader.py`)
+- `src/equity_lake/storage/`: persistence layer (`duckdb.py`, `delta.py`, `s3_sync.py`, `lake_reader.py`)
 - `src/equity_lake/core/config.py`: canonical settings and ticker-config module
 - `src/equity_lake/core/ticker_utils.py`: shared ticker symbol conversion utilities
 - `src/equity_lake/core/paths.py`: directory constants and market-to-path mappings

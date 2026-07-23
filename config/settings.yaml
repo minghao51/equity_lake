@@ -3,13 +3,6 @@ project:
   version: 0.1.0
   environment: development
 
-storage:
-  data_dir: data
-  lake_dir: data/lake
-  logs_dir: logs
-  models_dir: data/models
-  db_path: equity_data.duckdb
-
 ingestion:
   default_markets:
     - us
@@ -21,10 +14,7 @@ ingestion:
     - rss_news
     - reddit_posts
     - us_analyst_ratings
-  parallel: true
-  max_workers: 3
   ticker_config_path: config/tickers.yaml
-  cn_fallback_threshold: 0.3
 
 schedule:
   enabled: true
