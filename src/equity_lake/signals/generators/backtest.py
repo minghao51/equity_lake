@@ -1,6 +1,5 @@
 """Backtest strategy signal generator."""
 
-from contextlib import suppress
 from datetime import date, timedelta
 
 import duckdb
@@ -9,6 +8,7 @@ import polars as pl
 from equity_lake.core.paths import US_EQUITY_DIR
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
+from equity_lake.storage.lake_reader import duckdb_scan_for
 
 
 class BacktestSignalGenerator(SignalGenerator):
@@ -28,13 +28,11 @@ class BacktestSignalGenerator(SignalGenerator):
 
     def _setup_views(self) -> None:
         """Create DuckDB views for querying price data."""
-        us_pattern = f"{US_EQUITY_DIR}/date=*/*.parquet"
         sql = f"""
         CREATE OR REPLACE VIEW price_data AS
-        SELECT * FROM read_parquet('{us_pattern}', hive_partitioning=1)
+        SELECT * FROM {duckdb_scan_for(US_EQUITY_DIR)}
         """
-        with suppress(Exception):
-            self.con.execute(sql)
+        self.con.execute(sql)
 
     def generate(self, ticker: str, target_date: date) -> Signal | None:
         """Generate signal based on backtest strategy conditions.

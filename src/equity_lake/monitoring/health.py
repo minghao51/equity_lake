@@ -33,6 +33,7 @@ from equity_lake.core.paths import (  # noqa: F401
     US_EQUITY_DIR,
 )
 from equity_lake.monitoring.alerting import Alerter, build_alerter
+from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger()
 
@@ -137,7 +138,7 @@ class PipelineMonitor:
                 '{market}' as market,
                 MAX(date) as latest_date,
                 COUNT(DISTINCT date) as date_count
-            FROM read_parquet('{path}/**/*.parquet', hive_partitioning=1)
+            FROM {duckdb_scan_for(path)}
             """
             for market, path in _price_market_paths().items()
         )
@@ -197,8 +198,7 @@ class PipelineMonitor:
         logger.info("Checking data quality...")
 
         market_selects = " UNION ALL ".join(
-            f"SELECT '{market}' as market, * FROM read_parquet('{path}/**/*.parquet', hive_partitioning=1)"
-            for market, path in _price_market_paths().items()
+            f"SELECT '{market}' as market, * FROM {duckdb_scan_for(path)}" for market, path in _price_market_paths().items()
         )
 
         query = f"""
@@ -332,7 +332,7 @@ class PipelineMonitor:
                 COUNT(*) as total_rows,
                 COUNT(DISTINCT ticker) as unique_tickers,
                 MAX(date) as latest_date
-            FROM read_parquet('{feature_dir}/**/*.parquet', hive_partitioning=1)
+            FROM {duckdb_scan_for(feature_dir)}
             WHERE date >= CURRENT_DATE - INTERVAL '7 days'
         """
 
@@ -401,7 +401,7 @@ class PipelineMonitor:
                     SELECT
                         COUNT(*) as total_rows,
                         MAX(date) as latest_date
-                    FROM read_parquet('{table_path}/**/*.parquet', hive_partitioning=1)
+                    FROM {duckdb_scan_for(table_path)}
                 """
                 df = self.conn.execute(query).pl()
 
