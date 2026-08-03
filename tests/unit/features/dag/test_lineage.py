@@ -38,7 +38,6 @@ def test_bronze_to_gold_dependency_chain() -> None:
     assert {"close", "volume", "high", "low"}.issubset(node_names), "Bronze nodes missing"
     assert {"returns", "validated_ohlcv"}.issubset(node_names), "Silver nodes missing"
     assert {"rsi_14", "macd", "bb_upper", "atr_14"}.issubset(node_names), "Gold nodes missing"
-    assert "validated_features" in node_names, "Gold boundary node missing"
 
 
 def test_enrichment_node_exists() -> None:

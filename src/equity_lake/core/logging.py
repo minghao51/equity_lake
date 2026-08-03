@@ -13,7 +13,6 @@ import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from functools import wraps
 from pathlib import Path
 from typing import Any, cast
 
@@ -170,76 +169,6 @@ def setup_structured_logging(
     return cast(structlog.stdlib.BoundLogger, logger)
 
 
-# =============================================================================
-# Timing Metrics Decorator
-# =============================================================================
-
-
-def timed(logger: structlog.stdlib.BoundLogger | None = None, **log_kwargs: Any):  # type: ignore[no-untyped-def]
-    """
-    Decorator to automatically log function execution time.
-
-    Args:
-        logger: Structlog logger instance (uses new logger if None)
-        **log_kwargs: Additional context to log with timing info
-
-    Example:
-        >>> @timed()
-        >>> def fetch_data(ticker: str):
-        >>>     # ... fetch logic
-        >>>     return data
-        >>>
-        >>> # Output: {"event": "fetch_data_completed", "duration_seconds": 1.23, "ticker": "AAPL"}
-
-    Example with custom logger:
-        >>> logger = setup_structured_logging()
-        >>> @timed(logger, market="us")
-        >>> def fetch_market_data(date: str):
-        >>>     return data
-    """
-
-    def decorator(func: Any) -> Any:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            _logger = logger or structlog.get_logger()
-            func_name = func.__name__
-
-            start_time = time.time()
-            _logger.debug(f"{func_name}_started", function=func_name, **log_kwargs)
-
-            try:
-                result = func(*args, **kwargs)
-                duration = time.time() - start_time
-
-                _logger.info(
-                    f"{func_name}_completed",
-                    function=func_name,
-                    duration_seconds=round(duration, 3),
-                    status="success",
-                    **log_kwargs,
-                )
-
-                return result
-
-            except Exception as e:
-                duration = time.time() - start_time
-
-                _logger.error(
-                    f"{func_name}_failed",
-                    function=func_name,
-                    duration_seconds=round(duration, 3),
-                    status="error",
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    **log_kwargs,
-                )
-                raise
-
-        return wrapper
-
-    return decorator
-
-
 @contextmanager
 def timer(
     operation_name: str,
@@ -283,7 +212,6 @@ setup_logging = setup_structured_logging
 __all__ = [
     "setup_logging",
     "setup_structured_logging",
-    "timed",
     "timer",
     "correlation_context",
     "get_correlation_id",

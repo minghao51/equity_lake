@@ -6,13 +6,10 @@ backtest:
       lookback_days: 20
       buy_threshold: 0.02
       sell_threshold: -0.01
-  min_win_rate: 0.55
 
 # News sentiment signals
 sentiment:
   enabled: true
-  sources:
-    - "yahoo"
   buy_threshold: 0.5
   sell_threshold: -0.3
   min_articles: 3
@@ -32,7 +29,3 @@ ml:
   sl_mult: 1.0
   embargo_days: 1
   meta_label_threshold: 0.55
-
-aggregation:
-  agreement_boost: 10
-  unanimous_boost: 20

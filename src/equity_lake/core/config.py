@@ -498,9 +498,6 @@ class Settings(BaseSettings):
         )
 
 
-AppSettings = Settings
-
-
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
@@ -589,7 +586,6 @@ def load_tickers_for_market(
 
 
 __all__ = [
-    "AppSettings",
     "DashboardSettings",
     "GroupConfig",
     "IngestionSettings",

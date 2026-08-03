@@ -1,15 +1,11 @@
 """Writer helpers for ingestion.
 
 All writes go through the Delta Lake storage layer (ACID transactions,
-merge/upsert, time-travel). The canonical writer is ``upsert_dataset``; the
-historical ``write_to_partitioned_parquet`` name is retained as a bare alias
-and does not create standalone Parquet files.
+merge/upsert, time-travel). The canonical writer is ``upsert_dataset``.
 """
 
 from datetime import date
-from typing import Any
 
-import polars as pl
 import structlog
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
@@ -52,7 +48,6 @@ def upsert_dataset(
     market: str,
     trading_date: date,
     dry_run: bool = False,
-    validate_quality: bool = False,
     skip_schema_validation: bool = False,
 ) -> bool:
     """Upsert a DataFrame into a date-partitioned Delta table.
@@ -62,7 +57,6 @@ def upsert_dataset(
         market: Dataset path or routable market identifier.
         trading_date: Trading date for the partition.
         dry_run: If True, skip the actual write.
-        validate_quality: If True, run pointblank validation before writing.
         skip_schema_validation: If True, bypass column-level schema checks.
     """
     df_polars = ensure_polars(df)
@@ -78,19 +72,6 @@ def upsert_dataset(
     if not skip_schema_validation and not validate_schema(df_polars, market):
         logger.error("Schema validation failed, refusing to write", market=market)
         return False
-
-    if validate_quality:
-        from equity_lake.validation.pipeline import ValidationPipeline
-
-        data_type = "news" if market in ("us_news", "us_social_sentiment", "02_silver/news_sentiment", "02_silver/social_sentiment") else "price"
-        vp = ValidationPipeline()
-        result = vp.validate(df_polars, data_type=data_type, name=f"{market}_{trading_date}")
-        if not result.success:
-            logger.error("Quality validation failed", market=market, errors=result.errors)
-            return False
-        if result.warnings:
-            for w in result.warnings:
-                logger.warning("Quality warning", market=market, warning=w)
 
     if dry_run:
         logger.info("[DRY RUN] Would upsert %s rows to Delta table %s", len(df_polars), market)
@@ -137,67 +118,7 @@ def validate_schema(df: FrameLike, market: str) -> bool:
     return True
 
 
-def validate_news_data_quality(df: FrameLike) -> dict[str, Any]:
-    """
-    Validate news data quality and return quality metrics.
-
-    Args:
-        df: News DataFrame to validate
-
-    Returns:
-        Dictionary with quality metrics.
-    """
-    df_pl = ensure_polars(df)
-    metrics: dict[str, Any] = {
-        "total_rows": df_pl.height,
-        "missing_headlines": 0,
-        "missing_urls": 0,
-        "invalid_dates": 0,
-        "duplicate_urls": 0,
-        "sentiment_distribution": {},
-        "date_range": None,
-    }
-
-    if df_pl.is_empty():
-        logger.warning("Empty DataFrame provided for quality validation")
-        return metrics
-
-    if "headline" in df_pl.columns:
-        metrics["missing_headlines"] = df_pl.select(pl.col("headline").null_count()).item()
-
-    if "url" in df_pl.columns:
-        metrics["missing_urls"] = df_pl.select(pl.col("url").null_count()).item()
-        metrics["duplicate_urls"] = df_pl.select(pl.col("url").is_duplicated().sum()).item()
-
-    if "date" in df_pl.columns:
-        metrics["date_range"] = {
-            "min": str(df_pl.select(pl.col("date").min()).item()),
-            "max": str(df_pl.select(pl.col("date").max()).item()),
-        }
-
-    if "sentiment_label" in df_pl.columns:
-        counts = df_pl.group_by("sentiment_label").agg(pl.len().alias("count")).rows(named=True)
-        metrics["sentiment_distribution"] = {row["sentiment_label"]: row["count"] for row in counts}
-
-    logger.info(
-        "News data quality: %s rows, %s missing headlines, %s missing URLs, %s duplicate URLs",
-        metrics["total_rows"],
-        metrics["missing_headlines"],
-        metrics["missing_urls"],
-        metrics["duplicate_urls"],
-    )
-
-    return metrics
-
-
 __all__ = [
     "validate_schema",
-    "validate_news_data_quality",
     "upsert_dataset",
 ]
-
-# Backwards-compatible alias for the previous Parquet-based API name. The
-# function performs a Delta upsert; the historical name is retained for
-# callers that have not yet migrated. Matches the bare-alias pattern in
-# ``signals/history.py``.
-write_to_partitioned_parquet = upsert_dataset

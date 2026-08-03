@@ -1,6 +1,6 @@
 """Gold layer: external data enrichment joins.
 
-Each external data merge (news, social, enriched sentiment, analyst, SEC, macro)
+Each external data merge (enriched sentiment, analyst, SEC, macro)
 is its own ``@tag``'d Hamilton node, chained sequentially so that the catalog
 shows real per-enrichment lineage and each step is independently selectable /
 cacheable. The chain terminates at ``enriched_features``, the public request
@@ -12,16 +12,15 @@ Enrichment flag defaults
 treasury yields, DXY) are cheap to load from a single compact table and
 provide broad market context for every prediction.
 
-All other enrichments (``enable_news_sentiment``, ``enable_social_sentiment``,
-``enable_enriched_sentiment``, ``enable_analyst_ratings``,
-``enable_sec_features``) default to **False** because they require specific
-silver-layer tables that may not exist for all deployments. Callers opt in
-via the ``include_*`` parameters on ``FeatureEngineer.generate_features()``.
+All other enrichments (``enable_enriched_sentiment``,
+``enable_analyst_ratings``, ``enable_sec_features``) default to **False**
+because they require specific silver-layer tables that may not exist for all
+deployments. Callers opt in via the ``include_*`` parameters on
+``FeatureEngineer.generate_features()``.
 
 Chain topology
 --------------
-``features_df`` → ``news_sentiment_enriched`` → ``social_sentiment_enriched``
-→ ``enriched_sentiment_merged`` → ``analyst_ratings_enriched``
+``features_df`` → ``enriched_sentiment_merged`` → ``analyst_ratings_enriched``
 → ``sec_extractions_enriched`` → ``cross_modal_features`` → ``macro_enriched``
 → ``enriched_features`` (terminal passthrough preserving the public name).
 """
@@ -38,10 +37,8 @@ from hamilton.function_modifiers import tag
 from equity_lake.core.paths import (
     BRONZE_MACRO_DIR,
     SILVER_ANALYST_RATINGS_DIR,
-    SILVER_NEWS_SENTIMENT_DIR,
     SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
-    SILVER_SOCIAL_SENTIMENT_DIR,
 )
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
@@ -56,58 +53,20 @@ logger = structlog.get_logger()
 @tag(  # type: ignore[untyped-decorator]
     layer="gold",
     category="enrichment",
-    produces="news_sentiment_enriched",
-    description="Left-join aggregated Finnhub news sentiment + EWMA onto features",
-)
-def news_sentiment_enriched(
-    features_df: pl.DataFrame,
-    duckdb_conn: duckdb.DuckDBPyConnection,
-    start_date: date,
-    end_date: date,
-    enable_news_sentiment: bool = False,
-) -> pl.DataFrame:
-    """Merge aggregated news sentiment onto the feature frame (opt-in)."""
-    if not enable_news_sentiment or features_df.is_empty():
-        return features_df
-    return _merge_news_sentiment(features_df, duckdb_conn, start_date, end_date)
-
-
-@tag(  # type: ignore[untyped-decorator]
-    layer="gold",
-    category="enrichment",
-    produces="social_sentiment_enriched",
-    description="Left-join aggregated social sentiment scores + momentum onto features",
-)
-def social_sentiment_enriched(
-    news_sentiment_enriched: pl.DataFrame,
-    duckdb_conn: duckdb.DuckDBPyConnection,
-    start_date: date,
-    end_date: date,
-    enable_social_sentiment: bool = False,
-) -> pl.DataFrame:
-    """Merge aggregated social sentiment scores (opt-in)."""
-    if not enable_social_sentiment or news_sentiment_enriched.is_empty():
-        return news_sentiment_enriched
-    return _merge_social_sentiment(news_sentiment_enriched, duckdb_conn, start_date, end_date)
-
-
-@tag(  # type: ignore[untyped-decorator]
-    layer="gold",
-    category="enrichment",
     produces="enriched_sentiment_merged",
     description="Left-join LLM-enriched article-ticker sentiment from silver layer",
 )
 def enriched_sentiment_merged(
-    social_sentiment_enriched: pl.DataFrame,
+    features_df: pl.DataFrame,
     duckdb_conn: duckdb.DuckDBPyConnection,
     start_date: date,
     end_date: date,
     enable_enriched_sentiment: bool = False,
 ) -> pl.DataFrame:
     """Merge LLM-enriched article-ticker sentiment (opt-in)."""
-    if not enable_enriched_sentiment or social_sentiment_enriched.is_empty():
-        return social_sentiment_enriched
-    return _merge_enriched_sentiment(social_sentiment_enriched, duckdb_conn, start_date, end_date)
+    if not enable_enriched_sentiment or features_df.is_empty():
+        return features_df
+    return _merge_enriched_sentiment(features_df, duckdb_conn, start_date, end_date)
 
 
 @tag(  # type: ignore[untyped-decorator]
@@ -197,141 +156,6 @@ def enriched_features(macro_enriched: pl.DataFrame) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 # Private enrichment functions (migrated from FeatureEngineer + standalone modules)
 # ---------------------------------------------------------------------------
-
-
-def _merge_news_sentiment(
-    features_df: pl.DataFrame,
-    conn: duckdb.DuckDBPyConnection,
-    start_date: date,
-    end_date: date,
-) -> pl.DataFrame:
-    """Merge aggregated Finnhub news sentiment onto feature frame."""
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-
-    sentiment_query = f"""
-        SELECT
-            ticker,
-            date,
-            AVG(sentiment_score) as avg_daily_sentiment,
-            COUNT(*) as news_count,
-            SUM(CASE WHEN sentiment_label = 'positive' THEN 1 ELSE 0 END) as positive_count,
-            SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count,
-            SUM(CASE WHEN sentiment_label = 'neutral' THEN 1 ELSE 0 END) as neutral_count,
-            STDDEV(sentiment_score) as sentiment_std
-        FROM {duckdb_scan_for(SILVER_NEWS_SENTIMENT_DIR)}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-        GROUP BY ticker, date
-    """
-
-    try:
-        sentiment_df = conn.execute(sentiment_query, [tickers, start_date, end_date]).pl()
-        if sentiment_df.is_empty():
-            return features_df.with_columns(
-                pl.lit(0.0).alias("avg_daily_sentiment"),
-                pl.lit(0).alias("news_count"),
-                pl.lit(0).alias("positive_count"),
-                pl.lit(0).alias("negative_count"),
-                pl.lit(0).alias("neutral_count"),
-                pl.lit(0.0).alias("sentiment_std"),
-            )
-
-        merged_df = features_df.join(sentiment_df, on=["ticker", "date"], how="left").with_columns(
-            pl.col("avg_daily_sentiment").fill_null(0.0),
-            pl.col("news_count").fill_null(0).cast(pl.Int64),
-            pl.col("positive_count").fill_null(0).cast(pl.Int64),
-            pl.col("negative_count").fill_null(0).cast(pl.Int64),
-            pl.col("neutral_count").fill_null(0).cast(pl.Int64),
-            pl.col("sentiment_std").fill_null(0.0),
-        )
-        merged_df = merged_df.sort(["ticker", "date"]).with_columns(
-            pl.col("avg_daily_sentiment").ewm_mean(half_life=3.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_3d"),
-            pl.col("avg_daily_sentiment").ewm_mean(half_life=7.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_7d"),
-            pl.col("avg_daily_sentiment").ewm_mean(half_life=30.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_30d"),
-        )
-        return merged_df
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("news_sentiment_merge_failed", error_type=type(exc).__name__, error=str(exc))
-        return features_df
-
-
-def _merge_social_sentiment(
-    features_df: pl.DataFrame,
-    conn: duckdb.DuckDBPyConnection,
-    start_date: date,
-    end_date: date,
-) -> pl.DataFrame:
-    """Merge aggregated social sentiment scores."""
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-
-    sentiment_query = f"""
-        SELECT
-            ticker,
-            date,
-            SUM(mention_count) as social_mention_count,
-            AVG(score) as social_sentiment_score,
-            SUM(positive_score) as social_positive_score,
-            SUM(negative_score) as social_negative_score,
-            SUM(CASE WHEN source = 'reddit' THEN mention_count ELSE 0 END) as social_reddit_mentions,
-            SUM(CASE WHEN source = 'twitter' THEN mention_count ELSE 0 END) as social_twitter_mentions
-        FROM {duckdb_scan_for(SILVER_SOCIAL_SENTIMENT_DIR)}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-        GROUP BY ticker, date
-    """
-
-    try:
-        sentiment_df = conn.execute(sentiment_query, [tickers, start_date, end_date]).pl()
-        if sentiment_df.is_empty():
-            return features_df.with_columns(
-                pl.lit(0).alias("social_mention_count"),
-                pl.lit(0.0).alias("social_sentiment_score"),
-                pl.lit(0.0).alias("social_positive_score"),
-                pl.lit(0.0).alias("social_negative_score"),
-                pl.lit(0).alias("social_reddit_mentions"),
-                pl.lit(0).alias("social_twitter_mentions"),
-                pl.lit(0.0).alias("social_momentum"),
-                pl.lit(0.0).alias("social_sentiment_momentum"),
-                pl.lit(0.0).alias("social_sentiment_ewma_3d"),
-                pl.lit(0.0).alias("social_sentiment_ewma_7d"),
-                pl.lit(0.0).alias("social_sentiment_ewma_30d"),
-            )
-
-        merged_df = (
-            features_df.join(sentiment_df, on=["ticker", "date"], how="left")
-            .with_columns(
-                pl.col("social_mention_count").fill_null(0).cast(pl.Int64),
-                pl.col("social_sentiment_score").fill_null(0.0),
-                pl.col("social_positive_score").fill_null(0.0),
-                pl.col("social_negative_score").fill_null(0.0),
-                pl.col("social_reddit_mentions").fill_null(0).cast(pl.Int64),
-                pl.col("social_twitter_mentions").fill_null(0).cast(pl.Int64),
-            )
-            .sort(["ticker", "date"])
-            .with_columns(
-                pl.col("social_mention_count").cast(pl.Float64).pct_change(5).over("ticker").fill_null(0.0).alias("social_momentum"),
-                pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum"),
-                pl.col("social_sentiment_score")
-                .ewm_mean(half_life=3.0, ignore_nulls=True)
-                .over("ticker")
-                .fill_null(0.0)
-                .alias("social_sentiment_ewma_3d"),
-                pl.col("social_sentiment_score")
-                .ewm_mean(half_life=7.0, ignore_nulls=True)
-                .over("ticker")
-                .fill_null(0.0)
-                .alias("social_sentiment_ewma_7d"),
-                pl.col("social_sentiment_score")
-                .ewm_mean(half_life=30.0, ignore_nulls=True)
-                .over("ticker")
-                .fill_null(0.0)
-                .alias("social_sentiment_ewma_30d"),
-            )
-        )
-        return merged_df
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("social_sentiment_merge_failed", error_type=type(exc).__name__, error=str(exc))
-        return features_df
 
 
 def _merge_enriched_sentiment(
@@ -541,39 +365,14 @@ def _merge_sec_extractions(
 
 
 def _add_cross_modal(features_df: pl.DataFrame) -> pl.DataFrame:
-    """Derived cross-modal sentiment features."""
-    if features_df.is_empty():
-        return features_df
+    """Derived cross-modal sentiment features.
 
-    enriched = features_df.sort(["ticker", "date"])
-    log_volume = (pl.col("volume").cast(pl.Float64).clip(lower_bound=0) + 1).log()
-    expressions: list[pl.Expr] = []
-
-    if "avg_daily_sentiment" in enriched.columns:
-        expressions.extend(
-            [
-                (pl.col("avg_daily_sentiment").fill_null(0.0) * log_volume).alias("sentiment_x_log_volume"),
-                pl.col("avg_daily_sentiment").diff(5).over("ticker").fill_null(0.0).alias("news_sentiment_momentum_5d"),
-            ]
-        )
-
-    if "social_sentiment_score" in enriched.columns:
-        expressions.extend(
-            [
-                (pl.col("social_sentiment_score").fill_null(0.0) * log_volume).alias("social_sentiment_x_log_volume"),
-                pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum_5d"),
-            ]
-        )
-
-    if {"avg_daily_sentiment", "social_sentiment_score"}.issubset(enriched.columns):
-        expressions.append(
-            (pl.col("avg_daily_sentiment").fill_null(0.0) - pl.col("social_sentiment_score").fill_null(0.0)).alias("news_social_sentiment_gap")
-        )
-
-    if {"news_count", "social_mention_count"}.issubset(enriched.columns):
-        expressions.append((pl.col("news_count").fill_null(0) - pl.col("social_mention_count").fill_null(0)).alias("news_social_mentions_gap"))
-
-    return enriched.with_columns(expressions) if expressions else enriched
+    Currently a passthrough: the prior news/social-sentiment cross-modal
+    derivatives were removed together with their source merge nodes. Kept as a
+    named chain node so the enrichment topology and the ``cross_modal_features``
+    catalog entry remain stable; future cross-modal derivations belong here.
+    """
+    return features_df
 
 
 def _merge_macro(

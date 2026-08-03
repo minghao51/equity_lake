@@ -20,7 +20,6 @@ class BacktestSignalGenerator(SignalGenerator):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.min_win_rate = config.get("min_win_rate", 0.55)
         self.strategies = config.get("strategies", [])
 
         # Connect to DuckDB for historical data

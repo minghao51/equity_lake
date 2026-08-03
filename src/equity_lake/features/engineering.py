@@ -92,8 +92,6 @@ class FeatureEngineer:
         start_date: date,
         end_date: date,
         compute_target: bool = True,
-        include_sentiment: bool = False,
-        include_social_sentiment: bool = False,
         include_macro: bool = True,
         include_enriched_sentiment: bool = False,
         include_analyst_ratings: bool = False,
@@ -164,8 +162,6 @@ class FeatureEngineer:
         # Phase 2: batch external-data enrichments via DAG
         any_enrichment = any(
             [
-                include_sentiment,
-                include_social_sentiment,
                 include_macro,
                 include_enriched_sentiment,
                 include_analyst_ratings,
@@ -178,8 +174,6 @@ class FeatureEngineer:
                 duckdb_conn=self.conn,
                 start_date=start_date,
                 end_date=end_date,
-                enable_news_sentiment=include_sentiment,
-                enable_social_sentiment=include_social_sentiment,
                 enable_enriched_sentiment=include_enriched_sentiment,
                 enable_analyst_ratings=include_analyst_ratings,
                 enable_sec_features=include_sec_features,

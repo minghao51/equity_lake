@@ -15,7 +15,6 @@ import structlog
 from hamilton.function_modifiers import check_output, parameterize, tag, value
 
 from equity_lake.features.dag.polars_validators import PolarsRangeValidator
-from equity_lake.features.dag.schemas import FeatureModel
 from equity_lake.features.indicators import (
     atr,
     bollinger_bands,
@@ -30,7 +29,6 @@ from equity_lake.features.indicators import (
 )
 
 logger = structlog.get_logger()
-_FEATURE_SAMPLE_SIZE = 100
 
 # ---------------------------------------------------------------------------
 # Momentum indicators
@@ -224,62 +222,6 @@ def trading_day_of_month(ticker: pl.Series, date: pl.Series) -> pl.Series:
         )
         .sort("row_nr")["trading_day_of_month"]
     )
-
-
-# ---------------------------------------------------------------------------
-# Gold boundary validation
-# ---------------------------------------------------------------------------
-
-
-@tag(layer="gold", category="validation", produces="validated_features", description="Pydantic FeatureModel boundary validation at Silver→Gold")  # type: ignore[untyped-decorator]
-def validated_features(
-    ticker: pl.Series,
-    date: pl.Series,
-    close: pl.Series,
-    rsi_14: pl.Series,
-    macd: pl.Series,
-    volume: pl.Series,
-) -> pl.DataFrame:
-    """Assemble key features into a DataFrame at the Gold→Platinum boundary.
-
-    Samples rows and validates each against :class:`FeatureModel` for
-    row-level schema enforcement (complementary to ``@check_output``).
-    """
-    df = pl.DataFrame(
-        {
-            "ticker": ticker,
-            "date": date,
-            "close": close,
-            "rsi_14": rsi_14,
-            "macd": macd,
-            "volume": volume,
-        }
-    )
-    if df.is_empty():
-        return df
-
-    sample = df.sample(n=min(_FEATURE_SAMPLE_SIZE, df.height), seed=42)
-    valid_count = 0
-    for idx in range(sample.height):
-        row = sample.row(idx, named=True)
-        try:
-            FeatureModel(**row)
-            valid_count += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "feature_boundary_validation_failed",
-                ticker=row.get("ticker"),
-                error=str(exc),
-            )
-
-    if valid_count < sample.height:
-        logger.warning(
-            "feature_boundary_validation_summary",
-            valid=valid_count,
-            sampled=sample.height,
-        )
-
-    return df
 
 
 # ---------------------------------------------------------------------------

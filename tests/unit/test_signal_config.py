@@ -23,7 +23,6 @@ def test_load_signal_config():
     assert config.sentiment["enabled"] is True
     assert config.ml["enabled"] is True
     assert config.ml["mode"] == "v1_direction"
-    assert config.backtest["min_win_rate"] == 0.55
 
 
 def test_load_watchlist_missing_file():

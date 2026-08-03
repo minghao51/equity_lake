@@ -29,13 +29,12 @@ class TestSentimentAnalyzer:
 
     def test_initialize_vader_analyzer(self):
         """Test VADER analyzer initialization."""
-        analyzer = SentimentAnalyzer(method="vader")
-        assert analyzer.method == "vader"
+        analyzer = SentimentAnalyzer()
         assert analyzer.analyzer is not None
 
     def test_analyze_positive_text(self):
         """Test sentiment analysis for positive text."""
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
         result = analyzer.analyze("AAPL stock surges on strong earnings beat")
 
         assert result["label"] == "positive"
@@ -43,7 +42,7 @@ class TestSentimentAnalyzer:
 
     def test_analyze_negative_text(self):
         """Test sentiment analysis for negative text."""
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
         result = analyzer.analyze("Terrible revenue miss causes stock to plummet")
 
         assert result["label"] == "negative"
@@ -51,14 +50,14 @@ class TestSentimentAnalyzer:
 
     def test_analyze_neutral_text(self):
         """Test sentiment analysis for neutral text."""
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
         result = analyzer.analyze("Stock price unchanged in today's trading")
 
         assert result["label"] == "neutral"
 
     def test_analyze_empty_text(self):
         """Test sentiment analysis for empty text."""
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
         result = analyzer.analyze("")
 
         assert result["label"] == "neutral"
@@ -66,7 +65,7 @@ class TestSentimentAnalyzer:
 
     def test_analyze_none_text(self):
         """Test sentiment analysis for None input."""
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
         result = analyzer.analyze(None)
 
         assert result["label"] == "neutral"
@@ -74,7 +73,7 @@ class TestSentimentAnalyzer:
 
     def test_analyze_batch_texts(self):
         """Test batch sentiment analysis."""
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
         texts = [
             "Great earnings report",
             "Terrible revenue miss",
@@ -87,11 +86,6 @@ class TestSentimentAnalyzer:
         assert "compound" in result_df.columns
         assert "label" in result_df.columns
         assert result_df["label"].to_list() == ["positive", "negative", "neutral"]
-
-    def test_finbert_not_implemented(self):
-        """Test that FinBERT method raises NotImplementedError."""
-        with pytest.raises(NotImplementedError):
-            SentimentAnalyzer(method="finbert")
 
 
 class TestAnalyzeSentimentScores:
@@ -144,7 +138,6 @@ class TestFinnhubNewsFetcherInit:
         assert fetcher.api_key == "test_key"
         assert fetcher.tickers == ["AAPL", "GOOGL"]
         assert fetcher.max_articles_per_ticker == 50
-        assert fetcher.sentiment_method == "vader"
 
     def test_initialization_without_api_key_raises_error(self):
         """Test that missing API key raises ValueError."""
@@ -167,7 +160,6 @@ class TestFinnhubNewsFetcherInit:
             api_key="test_key",
             tickers=["AAPL"],
             max_articles_per_ticker=100,
-            sentiment_method="vader",
             min_relevance=0.5,
         )
 
