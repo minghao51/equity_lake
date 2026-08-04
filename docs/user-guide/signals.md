@@ -25,7 +25,6 @@ Edit `config/signals.yaml` to adjust thresholds:
 ```yaml
 backtest:
   enabled: true
-  min_win_rate: 0.55
 
 sentiment:
   enabled: true
