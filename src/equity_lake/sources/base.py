@@ -34,16 +34,6 @@ def _empty_frame() -> pl.DataFrame:
     return pl.DataFrame()
 
 
-def _coerce_to_polars(result: Any) -> pl.DataFrame:
-    if result is None:
-        return _empty_frame()
-    if isinstance(result, pd.DataFrame | pl.DataFrame):
-        return ensure_polars(result)
-    if isinstance(result, pd.Series):
-        return pl.from_pandas(result.to_frame().T)
-    return _empty_frame()
-
-
 def standardize_columns(
     frame: pd.DataFrame | pl.DataFrame,
     *,
@@ -354,7 +344,6 @@ __all__ = [
     "MarketDataFetcher",
     "TransientError",
     "YFinanceBaseFetcher",
-    "_coerce_to_polars",
     "_empty_frame",
     "standardize_columns",
 ]

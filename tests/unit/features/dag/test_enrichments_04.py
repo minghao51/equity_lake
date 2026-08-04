@@ -25,8 +25,6 @@ def _run_enriched(
     features_df: pl.DataFrame,
     conn: MagicMock | duckdb.DuckDBPyConnection,
     *,
-    enable_news_sentiment: bool = False,
-    enable_social_sentiment: bool = False,
     enable_enriched_sentiment: bool = False,
     enable_analyst_ratings: bool = False,
     enable_sec_features: bool = False,
@@ -41,8 +39,6 @@ def _run_enriched(
             "duckdb_conn": conn,
             "start_date": date(2024, 1, 1),
             "end_date": date(2024, 1, 31),
-            "enable_news_sentiment": enable_news_sentiment,
-            "enable_social_sentiment": enable_social_sentiment,
             "enable_enriched_sentiment": enable_enriched_sentiment,
             "enable_analyst_ratings": enable_analyst_ratings,
             "enable_sec_features": enable_sec_features,
@@ -85,8 +81,6 @@ def test_enriched_features_no_enrichments(features_df: pl.DataFrame, mock_conn: 
     result = _run_enriched(
         features_df,
         mock_conn,
-        enable_news_sentiment=False,
-        enable_social_sentiment=False,
         enable_enriched_sentiment=False,
         enable_analyst_ratings=False,
         enable_sec_features=False,
@@ -150,12 +144,10 @@ def test_merge_enriched_sentiment_populates_columns(features_df: pl.DataFrame, m
 
 
 def test_enrichment_chain_nodes_exposed() -> None:
-    """All 8 enrichment nodes are registered in the DAG (regression for the single-node collapse)."""
+    """All enrichment nodes are registered in the DAG (regression for the single-node collapse)."""
     dr = _build_driver()
     node_names = {n.name if hasattr(n, "name") else str(n) for n in dr.list_available_variables()}
     for expected in [
-        "news_sentiment_enriched",
-        "social_sentiment_enriched",
         "enriched_sentiment_merged",
         "analyst_ratings_enriched",
         "sec_extractions_enriched",

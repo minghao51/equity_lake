@@ -114,7 +114,7 @@ class DeepSeekBatchProcessor(BaseLLMBatchProcessor[BatchExtraction, ArticleExtra
     def _fallback(self, batch: list[dict[str, Any]]) -> list[ArticleExtraction]:
         from equity_lake.sentiment.analyzer import SentimentAnalyzer
 
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
 
         results: list[ArticleExtraction] = []
         for item in batch:

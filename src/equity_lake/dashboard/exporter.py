@@ -6,21 +6,17 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import duckdb
-import polars as pl
 
 from equity_lake.core.config import get_settings
-from equity_lake.core.paths import (
-    CN_ASHARE_DIR,
-    DATA_DIR,
-    GOLD_FEATURES_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
-    LOGS_DIR,
-    US_EQUITY_DIR,
+from equity_lake.core.paths import DATA_DIR, LOGS_DIR
+from equity_lake.dashboard._queries import (
+    MARKET_DATASETS,
+    load_health_report,
+    load_update_history,
+    summarize_dataset,
 )
 
 _REDACTED = "***REDACTED***"
@@ -35,15 +31,6 @@ def _redact_secrets(obj: Any) -> Any:
         return [_redact_secrets(item) for item in obj]
     return obj
 
-
-MARKET_DATASETS = {
-    "us_equity": US_EQUITY_DIR,
-    "cn_ashare": CN_ASHARE_DIR,
-    "hk_sg_equity": HK_SG_EQUITY_DIR,
-    "jpx_equity": JPX_EQUITY_DIR,
-    "krx_equity": KRX_EQUITY_DIR,
-    "features": GOLD_FEATURES_DIR,
-}
 
 NAV_LINKS = [
     ("Overview", "index.html"),
@@ -65,7 +52,7 @@ class DashboardExporter:
 
     def build_payload(self) -> dict[str, Any]:
         """Build dashboard data from local artifacts."""
-        datasets = [self._summarize_dataset(name, path) for name, path in MARKET_DATASETS.items()]
+        datasets = [summarize_dataset(self.connection, name, path) for name, path in MARKET_DATASETS.items()]
         available_datasets = [dataset for dataset in datasets if dataset["available"]]
         last_updated = max(
             (dataset["latest_date"] for dataset in available_datasets if dataset["latest_date"]),
@@ -82,7 +69,7 @@ class DashboardExporter:
             },
             "schedule": self.settings.schedule.model_dump(),
             "datasets": datasets,
-            "health": self._load_health_report(),
+            "health": load_health_report([self.output_dir]),
             "updates": self._load_updates(),
             "config": _redact_secrets(self.settings.model_dump()),
         }
@@ -109,73 +96,8 @@ class DashboardExporter:
 
         return self.output_dir / "index.html"
 
-    def _summarize_dataset(self, name: str, dataset_dir: Path) -> dict[str, Any]:
-        if not dataset_dir.exists():
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(dataset_dir),
-            }
-
-        query = f"""
-            SELECT
-                COUNT(*) AS rows,
-                COUNT(DISTINCT ticker) AS symbols,
-                CAST(MAX(date) AS VARCHAR) AS latest_date
-            FROM read_parquet('{dataset_dir}/**/*.parquet', hive_partitioning=1)
-        """
-
-        try:
-            row = self.connection.execute(query).fetchone()
-        except Exception:
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(dataset_dir),
-            }
-
-        if row is None:
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(dataset_dir),
-            }
-
-        return {
-            "name": name,
-            "available": True,
-            "rows": int(row[0] or 0),
-            "symbols": int(row[1] or 0),
-            "latest_date": row[2],
-            "path": str(dataset_dir),
-        }
-
-    def _load_health_report(self) -> dict[str, Any] | None:
-        health_path = self.output_dir / "health-report.json"
-        if not health_path.exists():
-            return None
-        try:
-            return cast(dict[str, Any], json.loads(health_path.read_text(encoding="utf-8")))
-        except json.JSONDecodeError:
-            return {"alerts": ["Health report could not be parsed."], "metrics": {}}
-
     def _load_updates(self) -> dict[str, Any]:
-        update_history_path = DATA_DIR / "update_history.parquet"
-        update_rows: list[dict[str, Any]] = []
-        if update_history_path.exists():
-            frame = pl.read_parquet(update_history_path)
-            if not frame.is_empty():
-                recent = frame.sort("updated_at", descending=True).head(20)
-                update_rows = recent.to_dicts()
+        update_rows = load_update_history(DATA_DIR / "update_history.parquet", limit=20)
 
         pipeline_results = []
         for result_path in sorted(LOGS_DIR.glob("pipeline_results_*.json"), reverse=True)[:10]:

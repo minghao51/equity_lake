@@ -256,7 +256,7 @@ class TestSentimentAccuracy:
         """Test sentiment analyzer on real financial headlines."""
         from equity_lake.sentiment import SentimentAnalyzer
 
-        analyzer = SentimentAnalyzer(method="vader")
+        analyzer = SentimentAnalyzer()
 
         positive_headlines = [
             "Apple beats earnings estimates by 15%",

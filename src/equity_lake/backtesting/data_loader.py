@@ -16,6 +16,7 @@ from equity_lake.core.paths import (
     LOGS_DIR,
     US_EQUITY_DIR,
 )
+from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger(__name__)
 
@@ -49,8 +50,6 @@ class BacktestDataLoader:
         )
 
     def _setup_views(self) -> None:
-        from deltalake import DeltaTable
-
         logger.debug("Setting up market views...")
         self.conn.execute("INSTALL delta; LOAD delta;")
 
@@ -65,10 +64,7 @@ class BacktestDataLoader:
 
             view_name = f"backtest_{market_label}"
 
-            if DeltaTable.is_deltatable(str(data_dir)):
-                scan_from = f"delta_scan('{data_dir}')"
-            else:
-                scan_from = f"read_parquet('{data_dir / 'date=*/*.parquet'}', hive_partitioning=1)"
+            scan_from = duckdb_scan_for(data_dir)
 
             sql = f"""
             CREATE OR REPLACE VIEW {view_name} AS

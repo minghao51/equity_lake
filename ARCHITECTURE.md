@@ -83,8 +83,8 @@ with identical names, so downstream consumers are unaffected.
   and `volume` in `raw_01.py`; `validated_ohlcv` node in `clean_02.py`
   applies Pydantic schema validation and filters invalid rows
 - **Silver→Gold**: `@check_output(data_in_range=(0, 100))` on `rsi_14`
-  in `features_03.py`; `validated_features` node enforces Pydantic
-  schema on the final feature frame
+  in `features_03.py` enforces per-node value-range contracts on the
+  technical-indicator outputs
 - **Write boundaries**: `validate_schema()` in `ingestion/writers.py`
   enforces pointblank schema contracts before partitioned Parquet writes
 - **Platinum**: `validate_predictions()` uses pointblank to enforce

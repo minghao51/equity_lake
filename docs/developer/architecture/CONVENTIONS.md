@@ -190,7 +190,7 @@ def process_data(data: List[OHLCVData]) -> pd.DataFrame:
 
 **Examples**:
 - `fetch_market_data()` ✓
-- `write_to_partitioned_parquet()` ✓
+- `upsert_dataset()` ✓
 - `validate_schema()` ✓
 - `_retry_on_failure()` ✓ (private)
 - `fetchMarketData()` ✗
@@ -670,7 +670,7 @@ import structlog
 # 3. Local
 from equity_lake.core.constants import STANDARD_COLUMNS
 from equity_lake.sources.base import MarketDataFetcher
-from equity_lake.storage.parquet import write_to_partitioned_parquet
+from equity_lake.ingestion.writers import upsert_dataset
 ```
 
 ---

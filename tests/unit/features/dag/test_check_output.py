@@ -49,17 +49,6 @@ def test_rsi_stays_in_valid_range() -> None:
         assert rsi_values.max() <= 100.0
 
 
-def test_validated_features_boundary_node_works() -> None:
-    """validated_features Gold boundary node assembles correctly."""
-    pipeline = FeaturePipeline()
-    result = pipeline.compute_technical(
-        _sample_price_df(),
-        features=["ticker", "date", "close", "rsi_14", "macd", "volume", "validated_features"],
-    )
-    assert isinstance(result, pl.DataFrame)
-    assert "rsi_14" in result.columns
-
-
 def test_dq_warnings_are_not_errors() -> None:
     """Hamilton DQ validators at 'warn' importance don't raise exceptions."""
     with warnings.catch_warnings():

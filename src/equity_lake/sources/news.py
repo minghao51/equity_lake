@@ -2,7 +2,7 @@
 
 import os
 from datetime import UTC, date, datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 import polars as pl
 import requests
@@ -31,7 +31,6 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         api_key: Finnhub API key (from FINNHUB_API_KEY env var)
         tickers: List of ticker symbols to fetch
         max_articles_per_ticker: Maximum articles to fetch per ticker (default: 50)
-        sentiment_method: Sentiment analysis method ("vader" or "finbert")
         min_relevance: Minimum relevance score (0.0 to 1.0)
     """
 
@@ -44,7 +43,6 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         max_articles_per_ticker: int = 50,
         retry_attempts: int = 3,
         retry_delay: float = 1.0,
-        sentiment_method: Literal["vader", "finbert"] = "vader",
         min_relevance: float = 0.0,
         max_workers: int = 1,
     ):
@@ -57,7 +55,6 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             max_articles_per_ticker: Maximum articles per ticker
             retry_attempts: Number of retry attempts
             retry_delay: Base delay between retries
-            sentiment_method: Sentiment analysis method
             min_relevance: Minimum relevance threshold
             max_workers: Maximum parallel workers (default: 1, sequential)
         """
@@ -69,13 +66,12 @@ class FinnhubNewsFetcher(MarketDataFetcher):
 
         self.tickers = tickers or []
         self.max_articles_per_ticker = max_articles_per_ticker
-        self.sentiment_method = sentiment_method
         self.min_relevance = min_relevance
         self.max_workers = max_workers
 
         # Initialize sentiment analyzer
         try:
-            self.sentiment_analyzer = SentimentAnalyzer(method=sentiment_method)
+            self.sentiment_analyzer = SentimentAnalyzer()
         except ImportError as e:
             logger.warning(
                 "Sentiment analyzer not available: %s. Proceeding without sentiment.",
@@ -87,7 +83,6 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             "Initialized FinnhubNewsFetcher",
             tickers_count=len(self.tickers),
             max_articles=max_articles_per_ticker,
-            sentiment_method=sentiment_method,
             max_workers=max_workers,
         )
 

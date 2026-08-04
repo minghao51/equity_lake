@@ -66,7 +66,6 @@ class SignalConfig:
     backtest: dict[str, Any]
     sentiment: dict[str, Any]
     ml: dict[str, Any]
-    aggregation: dict[str, Any] | None = None
 
     def is_generator_enabled(self, generator_name: str) -> bool:
         """Check if a signal generator is enabled."""

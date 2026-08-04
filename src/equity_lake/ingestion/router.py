@@ -155,7 +155,6 @@ def _make_news_fetcher(
         api_key=api_key,
         tickers=explicit_tickers,
         max_articles_per_ticker=50,
-        sentiment_method="vader",
     )
 
 
