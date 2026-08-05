@@ -1,5 +1,12 @@
 # Equity Lake - Technical Roadmap
 
+> ⚠️ **Superseded.** This document is historical/aspirational and is no longer the
+> active plan — it predates the Typer CLI migration and cites a "v0.4.0" that
+> does not match `pyproject.toml` (0.1.0). The current roadmap, implementation
+> map, and phase handoffs live in
+> [`docs/plans/20260804-portfolio-roadmap.md`](plans/20260804-portfolio-roadmap.md)
+> and [`docs/plans/20260804-portfolio-implementation-map.md`](plans/20260804-portfolio-implementation-map.md).
+
 ## Executive Summary
 
 **Equity Lake** is a mature, local-first equity EOD data pipeline that has evolved into a comprehensive financial data platform. Currently at **v0.4.0**, the project already implements S3 bootstrap, multi-market daily ingestion (US, CN, HK, SG), DuckDB querying, ML pipelines, backtesting, and signal generation. This roadmap focuses on enhancing the platform's **configurability**, **extensibility**, and **data management** capabilities to become the definitive one-stop solution for free financial data ingestion.

@@ -216,7 +216,7 @@ DEFAULT_TIMEOUT = 30
 ```
 
 **Locations**:
-- Centralized in `src/equity_lake/core/constants.py`
+- Centralized in `src/equity_lake/core/schemas.py` (column constants) and module-level for others
 - Or at module level for module-specific constants
 
 ---
@@ -717,7 +717,7 @@ from .base import MarketDataFetcher
 
 ### Centralized Constants
 
-**Location**: `src/equity_lake/core/constants.py`
+**Location**: `src/equity_lake/core/schemas.py`
 
 **Examples**:
 ```python
@@ -751,7 +751,7 @@ BASE_DELAY = 1.0
 
 ### Path Utilities
 
-**Location**: `src/equity_lake/core/runtime.py`
+**Location**: `src/equity_lake/core/paths.py`
 
 **Examples**:
 ```python

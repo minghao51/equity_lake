@@ -35,7 +35,7 @@ def write_silver(df: pl.DataFrame) -> bool:
 
     df = df.select(SILVER_ARTICLE_COLUMNS)
     SILVER_PROCESSED_ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
-    return merge_delta(df, "silver/processed_articles", key_columns=["article_id", "ticker"])
+    return merge_delta(df, "02_silver/processed_articles", key_columns=["article_id", "ticker"])
 
 
 def read_bronze(trading_date: date | None = None, table_path: Path | None = None) -> pl.DataFrame:
@@ -90,7 +90,7 @@ def process_unstructured_to_silver(
         source_type_filter: If set, filter bronze to this ``source_type`` (e.g. ``"sec_filing"``).
         process_fn: Function that takes bronze DataFrame → silver DataFrame.
         silver_path: Directory path for the silver Delta table.
-        silver_table_name: Delta table name (e.g. ``"silver/processed_articles"``).
+        silver_table_name: Delta table name (e.g. ``"02_silver/processed_articles"``).
         silver_key_columns: Dedup key columns for the silver merge.
         log_label: Label for log messages.
 
@@ -190,7 +190,7 @@ def process_bronze_to_silver(trading_date: date) -> bool:
         source_type_filter=None,
         process_fn=run_llm_processing,
         silver_path=SILVER_PROCESSED_ARTICLES_DIR,
-        silver_table_name="silver/processed_articles",
+        silver_table_name="02_silver/processed_articles",
         silver_key_columns=["article_id", "ticker"],
         log_label="article",
     )

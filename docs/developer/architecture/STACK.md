@@ -6,7 +6,7 @@
 ## Language & Runtime
 
 ### Python
-- **Version**: 3.11+ (specified in `.python-version`)
+- **Version**: 3.12+ (specified in `.python-version`)
 - **Package Manager**: uv (ultra-fast Python package manager written in Rust)
 - **Virtual Environment**: uv-managed `.venv`
 
@@ -162,7 +162,7 @@ pip install -e .
 - **uv Lock File**: `.uv.lock` for reproducible builds
 
 ### Compatibility
-- **Python**: 3.11+ required
+- **Python**: 3.12+ required
 - **Platform**: macOS, Linux (WSL supported)
 - **Architecture**: x86_64, arm64 (Apple Silicon)
 
@@ -239,5 +239,5 @@ make test
 ---
 
 **Total Dependencies**: 20+ production packages, 10+ dev packages
-**Python Version**: 3.11+ (tested on 3.12)
+**Python Version**: 3.12+ (tested on 3.12)
 **Package Manager**: uv (primary), pip (fallback)

@@ -214,7 +214,7 @@ def process_sec_bronze_to_silver(trading_date: date) -> bool:
         source_type_filter="sec_filing",
         process_fn=run_sec_processing,
         silver_path=SEC_EXTRACTIONS_DIR,
-        silver_table_name="silver/sec_extractions",
+        silver_table_name="02_silver/sec_extractions",
         silver_key_columns=["article_id"],
         log_label="SEC",
     )

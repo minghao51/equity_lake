@@ -39,6 +39,8 @@ class TestWriteSilver:
             assert result is True
             call_args = mock_merge.call_args
             assert call_args.kwargs["key_columns"] == ["article_id", "ticker"]
+            # Regression (20260804 hygiene): silver writes must land under 02_silver/, not silver/
+            assert call_args.args[1] == "02_silver/processed_articles"
 
 
 class TestGetProcessedIds:

@@ -49,7 +49,7 @@ class TestSourceFiltering:
                 source_type_filter="sec_filing",
                 process_fn=capture_process_fn,
                 silver_path=pl.DataFrame(),  # not used due to mocks
-                silver_table_name="silver/sec_extractions",
+                silver_table_name="02_silver/sec_extractions",
                 silver_key_columns=["article_id"],
                 log_label="SEC",
             )
@@ -77,7 +77,7 @@ class TestSourceFiltering:
                 source_type_filter=None,
                 process_fn=capture_process_fn,
                 silver_path=pl.DataFrame(),
-                silver_table_name="silver/processed_articles",
+                silver_table_name="02_silver/processed_articles",
                 silver_key_columns=["article_id", "ticker"],
                 log_label="article",
             )
@@ -107,7 +107,7 @@ class TestTickerFiltering:
                 source_type_filter=None,
                 process_fn=lambda df: process_result,
                 silver_path=pl.DataFrame(),
-                silver_table_name="silver/processed_articles",
+                silver_table_name="02_silver/processed_articles",
                 silver_key_columns=["article_id", "ticker"],
             )
 
@@ -128,7 +128,7 @@ class TestProcessingFailure:
                 source_type_filter=None,
                 process_fn=failing_fn,
                 silver_path=pl.DataFrame(),
-                silver_table_name="silver/processed_articles",
+                silver_table_name="02_silver/processed_articles",
                 silver_key_columns=["article_id", "ticker"],
             )
 
