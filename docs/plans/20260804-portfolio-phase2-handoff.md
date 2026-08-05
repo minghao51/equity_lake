@@ -1,5 +1,9 @@
 # Phase 2 Handoff — ML Rigor + RAG Agent
 
+> ⚠️ **SUPERSEDED** by [`20260805-phase2-handoff.md`](./20260805-phase2-handoff.md)
+> (grounded against the actual source after Phase 1 shipped). This speculative
+> draft is retained for history only.
+
 **Date:** 2026-08-04 · **Phase:** 2 of 3 · **Duration:** ~3–4 weeks
 **Roadmap:** [`20260804-portfolio-roadmap.md`](./20260804-portfolio-roadmap.md) ·
 **Map:** [`20260804-portfolio-implementation-map.md`](./20260804-portfolio-implementation-map.md)
