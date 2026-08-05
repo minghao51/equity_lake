@@ -1,6 +1,43 @@
 # equity-lake
 
-Local-first equity data pipeline for bootstrapping historical data, appending daily market updates, generating features and ML outputs, and querying the lake with DuckDB.
+> **An evidence-backed quantitative equity research platform.** A local-first data
+> lake feeds a strategy arena and (Phase 2) an ML model-comparison harness; every
+> result is a machine-readable **FindingCard** carrying a verdict — *including
+> honest negatives.* Built as a Data Scientist / Quant / AI Engineer portfolio.
+
+🔗 **Live demo (coming)** — for now, walk the [Strategy Lab notebook](notebooks/11-strategy-lab.ipynb).
+
+### The showcase path (60 seconds)
+
+```bash
+make demo            # seed the lake — synthetic & offline-safe (`equity demo seed --real` for market data)
+equity arena run --start-date 2022-01-03 --end-date 2026-08-04   # 3 strategies × 3 cost regimes vs benchmark
+ls data/findings/    # → 3 evidence-backed FindingCards (strategy / cost / benchmark)
+```
+
+```mermaid
+flowchart LR
+    Seed["make demo<br/>seed lake"] --> Arena["equity arena run<br/>strategies × costs"]
+    Arena --> FC["FindingCards<br/>verdict + evidence"]
+    Arena --> NB["Strategy Lab<br/>notebook"]
+    FC --> P2["Phase 2: ML comparison<br/>XGBoost vs LightGBM"]
+    P2 --> P3["Phase 3: hosted<br/>Findings surface"]
+```
+
+<details><summary><b>How to read this repo</b></summary>
+
+The data platform below is the **supporting credential**; the **findings are the
+lead narrative**. The 3-month roadmap turns this into a hosted showcase — see the
+[portfolio roadmap](docs/plans/20260804-portfolio-roadmap.md) and
+[Phase 1 handoff](docs/plans/20260804-portfolio-phase1-handoff.md).
+
+</details>
+
+---
+
+**Underlying platform** — a local-first equity pipeline: bootstrap historical data,
+append daily market updates across markets, run a three-stage ingestion → features
+→ ML pipeline, and query the lake with DuckDB.
 
 ## What It Does
 
@@ -105,6 +142,9 @@ Key commands:
 - `equity monitor`
 - `equity signal scan`
 - `equity backtest`
+- `equity demo seed` — seed the showcase lake (synthetic/offline-safe)
+- `equity arena run` — strategies × cost regimes → FindingCards
+- `equity report backtest` — serialize a backtest to report artifacts
 - `equity dashboard build`
 - `equity dashboard serve`
 

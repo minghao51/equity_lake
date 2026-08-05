@@ -25,8 +25,9 @@ so no editable install is required.
 | 05 | [feature-engineering-deep-dive](05-feature-engineering-deep-dive.ipynb) | Technical indicators in depth |
 | 06 | [ml-prediction](06-ml-prediction.ipynb) | XGBoost price forecasting |
 | 07 | [signal-scanning](07-signal-scanning.ipynb) | Watchlist-based signal generation |
-| 08 | [backtesting](08-backtesting.ipynb) | Vectorized backtesting (requires `uv sync --extra backtesting`) |
+| 08 | [backtesting](08-backtesting.ipynb) | Vectorized backtesting (requires `uv sync --group backtesting`) |
 | 09 | [sentiment-analysis](09-sentiment-analysis.ipynb) | News ingestion + VADER sentiment |
 | 10 | [validation-and-quality](10-validation-and-quality.ipynb) | pointblank schema validation & profiling |
+| 11 | [strategy-lab](11-strategy-lab.ipynb) | Strategy arena → evidence-backed FindingCards (research memo; `uv sync --group backtesting --group viz`) |
 
 The `data/` subfolder holds small sample datasets used by some notebooks.
