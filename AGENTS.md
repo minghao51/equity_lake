@@ -52,14 +52,15 @@ No `domain/` tree — top-level modules are canonical. Import boundary tests in 
 
 ## 5. Key Patterns
 
-- **CLI:** Unified `equity` command via Typer. All commands are native Typer — no legacy passthrough.
-- **Config:** Single `Settings(BaseSettings)` class with `YamlConfigSettingsSource`. Env prefix `EQUITY_`, nested delimiter `__`. Priority: init > env vars > .env > YAML.
+- **CLI:** Unified `equity` command via Typer (native, no passthrough). Sub-apps are declared in `cli/_app.py` and wired with `app.add_typer(<x>_app, name="…")` in `cli/__main__.py` **before** importing the command module that decorates commands onto them. Every command: docstring help text, `Annotated[..., typer.Option("--flag", help="…")]`, and `raise typer.Exit(1)` on required failure (deterministic exit status); add a help-scan test in `tests/unit/test_cli_unified.py`. `backtest` is a flat top-level command — do **not** add `backtest <sub>`; put sub-commands under a dedicated sub-app (e.g. `report`).
+- **Config:** Single `Settings(BaseSettings)` with `YamlConfigSettingsSource`, `env_prefix="EQUITY_"`, `env_nested_delimiter="__"`, **`extra="forbid"`**. Priority: init > env vars > .env > YAML. Because `extra="forbid"`, **any `EQUITY_<GROUP>__*` env var requires a matching nested `BaseModel` field** or Settings raises at load — add the model + `.env.example` entry in the same change. **SDK/API keys stay raw/unprefixed** (`FRED_API_KEY`, `FINNHUB_API_KEY`, `DEEPSEEK_API_KEY`, `WANDB_API_KEY`, …), read via `os.getenv` at the client seam, never declared in `Settings`.
 - **Storage:** Numbered medallion Delta tables with Parquet data files. DuckDB for analytical queries. S3 sync via Cloudflare R2.
+- **Paths (auxiliary vs medallion):** Cataloged Delta tables live under `data/lake/0{1..4}_*/` (sourced from `catalog/datasets.py` → `data/catalog.jsonl`). **Auxiliary** non-lake artifacts — signals, update history, model outputs, findings, backtest/risk reports — live under `data/<name>/` (`DATA_DIR / "<name>"` in `core/paths.py`); they are **not** cataloged and **not** validated by pointblank. Define a Pydantic model at their write boundary instead.
 - **Logging:** structlog with JSON output and correlation IDs. Use `structlog.get_logger()`. Call `setup_structured_logging()` in CLI entry points.
 - **Markets:** us_equity, cn_ashare, hk_sg_equity, jpx_equity, krx_equity. Directory constants in `core/paths.py`, mapped via `MARKET_DIR_MAP` in `ingestion/types.py`.
 - **Retry:** All source fetchers use `tenacity` for retry/backoff (exponential, max 3 attempts). Do not hand-roll retry loops.
 - **Validation:** pointblank schemas enforced at ingestion write boundaries via `validation/pipeline.py`.
-- **Backtesting:** `VectorBacktestEngine` (polars-backtest) is default. Requires `uv sync --extra backtesting`.
+- **Backtesting:** `VectorBacktestEngine` (polars-backtest) is default. Requires `uv sync --group backtesting` (it is a `[dependency-groups]` entry, so `--group`, not `--extra`).
 
 ## Operational guardrails
 
@@ -84,6 +85,8 @@ default fast suite. Missing feature history requires
 | Storage change | Writer, reader, health checks, idempotency tests, architecture docs |
 | CLI change | Help text, CLI test, user guide |
 | Pipeline-stage change | Failure contract, orchestration test, data-flow update |
+| New top-level package | Extend `LAYER_BOUNDARIES` in `tests/unit/test_import_boundaries.py`; no hatch change (single `packages=["src/equity_lake"]` glob covers it); lazy-import heavy deps |
+| New optional dependency | Add a `[dependency-groups]` extra; import lazily (`try/except ImportError`); add a mypy `ignore_missing_imports` override |
 
 Canonical architecture pages and MkDocs navigation are intentional exceptions
 to the date-prefixed Markdown rule. New plans, audits, and handoffs remain

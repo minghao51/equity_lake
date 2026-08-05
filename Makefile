@@ -1,7 +1,7 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test
+.PHONY: help setup sync daily query pipeline monitor test clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo
 
 # Default target
 help:
@@ -196,8 +196,13 @@ test-backtest:
 	@echo "🧪 Running full backtesting test suite..."
 	uv run python examples/backtest_demo.py
 
-# Quick start (for new developers)
-quick-start:
+# Portfolio showcase: seed the demo lake (offline-safe, synthetic by default)
+demo:
+	@echo "🎬 Seeding demo lake (synthetic, offline-safe)..."
+	uv run equity demo seed
+	@echo ""
+	@echo "✅ Demo lake populated. Next:"
+	@echo "  equity arena run --start-date 2022-01-03 --end-date $$(date +%F)"
 	@echo "🚀 Quick start for Equity EOD Data Pipeline..."
 	make setup
 	make dev-setup

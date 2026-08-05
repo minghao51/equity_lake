@@ -1028,6 +1028,12 @@ markets:
 # Predefined ticker groups for convenient filtering
 # ============================================================================
 groups:
+  # Portfolio showcase demo universe (~50 liquid US tickers; all active in markets.us)
+  demo:
+    description: "Phase 1 Strategy Lab demo universe"
+    markets: [us]
+    tickers: [AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, BRK-B, JPM, V, MA, BAC, WFC, UNH, JNJ, LLY, TMO, MRK, ABT, AVGO, WMT, PG, KO, PEP, COST, HD, MCD, NKE, DIS, NFLX, XOM, CVX, COP, CAT, BA, GE, HON, UNP, ADBE, CRM, ORCL, AMD, INTC, CSCO, QCOM, IBM, VZ, CMCSA, DHR, LIN]
+
   # US Market Groups
   faang:
     description: "Big 5 tech companies (FAANG)"

@@ -76,6 +76,8 @@ PLATINUM_PREDICTIONS_DIR = PLATINUM_DIR / "predictions"
 # ---------------------------------------------------------------------------
 SIGNALS_DIR = DATA_DIR / "signals"
 UPDATE_HISTORY_DIR = DATA_DIR / "update_history"
+# Research artifacts (FindingCards, backtest & risk reports) — NOT cataloged.
+FINDINGS_DIR = DATA_DIR / "findings"
 
 # ---------------------------------------------------------------------------
 # Backward-compatible aliases (deprecated — use medallion constants above)
@@ -106,6 +108,7 @@ __all__ = [
     "CN_ASHARE_DIR",
     "CONFIG_DIR",
     "DATA_DIR",
+    "FINDINGS_DIR",
     "GOLD_DIR",
     "GOLD_FEATURES_DIR",
     "HK_SG_EQUITY_DIR",

@@ -78,6 +78,25 @@ class TestBootstrapSubcommands:
         assert result.exit_code == 0
 
 
+class TestArenaReportSubcommands:
+    def test_arena_run_help(self):
+        result = runner.invoke(app, ["arena", "run", "--help"])
+        assert result.exit_code == 0
+        assert "FindingCards" in result.stdout
+
+    def test_report_backtest_help(self):
+        result = runner.invoke(app, ["report", "backtest", "--help"])
+        assert result.exit_code == 0
+        assert "report artifacts" in result.stdout
+
+
+class TestDemoSubcommands:
+    def test_demo_seed_help(self):
+        result = runner.invoke(app, ["demo", "seed", "--help"])
+        assert result.exit_code == 0
+        assert "offline-safe" in result.stdout or "synthetic" in result.stdout.lower()
+
+
 class TestConfigSubcommands:
     def test_config_show_help(self):
         result = runner.invoke(app, ["config", "show", "--help"])

@@ -18,6 +18,9 @@ dashboard_app = typer.Typer(help="Dashboard build and serve")
 bootstrap_app = typer.Typer(help="Data bootstrapping and sample generation")
 config_app = typer.Typer(help="Configuration management")
 validate_app = typer.Typer(help="Data quality validation and profiling")
+arena_app = typer.Typer(help="Strategy arena: run strategies x cost regimes, emit FindingCards")
+report_app = typer.Typer(help="Report generation (e.g. backtest reports)")
+demo_app = typer.Typer(help="Demo lake seeding for the Strategy Lab showcase")
 
 
 def _init_logging(verbose: bool = False) -> None:

@@ -12,9 +12,12 @@ import typer
 from equity_lake.cli._app import (
     _init_logging,
     app,
+    arena_app,
     bootstrap_app,
     config_app,
     dashboard_app,
+    demo_app,
+    report_app,
     signal_app,
     validate_app,
 )
@@ -24,6 +27,9 @@ app.add_typer(dashboard_app, name="dashboard")
 app.add_typer(bootstrap_app, name="bootstrap")
 app.add_typer(config_app, name="config")
 app.add_typer(validate_app, name="validate")
+app.add_typer(arena_app, name="arena")
+app.add_typer(report_app, name="report")
+app.add_typer(demo_app, name="demo")
 
 
 @dashboard_app.command("build")
@@ -73,6 +79,8 @@ import equity_lake.cli.commands.intelligence  # noqa: E402, F401
 import equity_lake.cli.commands.analysis  # noqa: E402, F401
 import equity_lake.cli.commands.admin  # noqa: E402, F401
 import equity_lake.cli.commands.catalog  # noqa: E402, F401
+import equity_lake.cli.commands.arena  # noqa: E402, F401
+import equity_lake.cli.commands.demo  # noqa: E402, F401
 
 
 if __name__ == "__main__":
