@@ -73,6 +73,7 @@ ml = [
     "seaborn>=0.13.2",
     "networkx>=3.6.1",
     "statsmodels>=0.14.6",
+    "lightgbm>=4.3.0",
 ]
 viz = [
     "matplotlib>=3.8.0",
@@ -247,6 +248,7 @@ module = [
     "feedparser.*",
     "openai.*",
     "readability.*",
+    "lightgbm.*",
     "shap.*",
     "statsmodels.*",
     "networkx.*",
