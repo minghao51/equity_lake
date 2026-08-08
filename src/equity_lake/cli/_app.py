@@ -21,6 +21,7 @@ validate_app = typer.Typer(help="Data quality validation and profiling")
 arena_app = typer.Typer(help="Strategy arena: run strategies x cost regimes, emit FindingCards")
 report_app = typer.Typer(help="Report generation (e.g. backtest reports)")
 demo_app = typer.Typer(help="Demo lake seeding for the Strategy Lab showcase")
+ml_app = typer.Typer(help="ML comparison, ablation, and training")
 
 
 def _init_logging(verbose: bool = False) -> None:

@@ -97,6 +97,23 @@ class TestDemoSubcommands:
         assert "offline-safe" in result.stdout or "synthetic" in result.stdout.lower()
 
 
+class TestMlSubcommands:
+    def test_ml_compare_help(self):
+        result = runner.invoke(app, ["ml", "compare", "--help"])
+        assert result.exit_code == 0
+        assert "FindingCards" in result.stdout
+
+    def test_ml_ablate_help(self):
+        result = runner.invoke(app, ["ml", "ablate", "--help"])
+        assert result.exit_code == 0
+        assert "enrichment-ablation" in result.stdout or "ablation" in result.stdout.lower()
+
+    def test_ml_train_help(self):
+        result = runner.invoke(app, ["ml", "train", "--help"])
+        assert result.exit_code == 0
+        assert "backend" in result.stdout.lower()
+
+
 class TestConfigSubcommands:
     def test_config_show_help(self):
         result = runner.invoke(app, ["config", "show", "--help"])
