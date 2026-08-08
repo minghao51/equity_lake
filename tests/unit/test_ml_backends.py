@@ -7,6 +7,8 @@ fast suite stays green without the optional ``ml`` dependency group.
 
 from __future__ import annotations
 
+import warnings
+
 import joblib
 import numpy as np
 import pytest
@@ -17,6 +19,8 @@ from equity_lake.ml.backends import (
     ModelBackend,
     backend_of,
     build_estimator,
+    build_fit_kwargs,
+    fit_estimator,
     normalize_params,
     validate_backend,
 )
@@ -205,3 +209,95 @@ def test_backend_of_detects_built_estimators(backend: str) -> None:
 def test_backend_of_rejects_unknown_model() -> None:
     with pytest.raises(TypeError):
         backend_of(object())
+
+
+def test_build_fit_kwargs_xgboost_with_eval() -> None:
+    out = build_fit_kwargs(
+        "xgboost",
+        sample_weight=[1, 2],
+        eval_set=[("Xv", "yv")],
+        eval_sample_weight=[3],
+        verbose=False,
+    )
+    assert out == {
+        "sample_weight": [1, 2],
+        "eval_set": [("Xv", "yv")],
+        "sample_weight_eval_set": [3],
+        "verbose": False,
+    }
+
+
+def test_build_fit_kwargs_lightgbm_translates_eval_set_to_eval_xy() -> None:
+    # D9: LightGBM 4.7 deprecates ``eval_set`` in favor of ``eval_X``/``eval_y``;
+    # ``eval_sample_weight`` stays a list (only ``eval_set`` is deprecated).
+    pytest.importorskip("lightgbm")
+    assert build_fit_kwargs(
+        "lightgbm",
+        sample_weight=[1, 2],
+        eval_set=[("Xv", "yv")],
+        eval_sample_weight=[3],
+        verbose=False,
+    ) == {
+        "sample_weight": [1, 2],
+        "eval_X": "Xv",
+        "eval_y": "yv",
+        "eval_sample_weight": [3],
+    }  # verbose intentionally omitted (constructor arg for LightGBM)
+
+
+@pytest.mark.parametrize("backend", ["xgboost", "lightgbm"])
+def test_build_fit_kwargs_without_eval(backend: str) -> None:
+    _skip_if_lightgbm_missing(backend)
+    if backend == "xgboost":
+        assert build_fit_kwargs("xgboost", verbose=False) == {"verbose": False}
+    else:
+        assert build_fit_kwargs("lightgbm", verbose=False) == {}
+
+
+def test_fit_estimator_xgboost_roundtrip_with_eval() -> None:
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(40, 3))
+    y = rng.integers(0, 2, size=40)
+    model = build_estimator(
+        "xgboost",
+        {"n_estimators": 10, "max_depth": 2, "learning_rate": 0.1, "eval_metric": "logloss"},
+    )
+    fit_estimator(
+        model,
+        X[:30],
+        y[:30],
+        eval_set=[(X[30:], y[30:])],
+        eval_sample_weight=[np.ones(10)],
+        verbose=False,
+    )
+    assert isinstance(model, ModelBackend)
+    assert model.predict_proba(X[:5]).shape == (5, 2)
+    assert backend_of(model) == "xgboost"
+
+
+def test_fit_estimator_lightgbm_uses_eval_xy_without_deprecation() -> None:
+    # D9 + D13: a real LightGBM fit via ``eval_set`` must not emit the 4.7
+    # deprecation (translated to ``eval_X``/``eval_y``), and ``predict_proba``
+    # must return (N, 2).
+    pytest.importorskip("lightgbm")
+    rng = np.random.default_rng(2)
+    X = rng.normal(size=(60, 3))
+    y = rng.integers(0, 2, size=60)
+    model = build_estimator(
+        "lightgbm",
+        {"n_estimators": 10, "max_depth": 3, "learning_rate": 0.1, "objective": "binary:logistic", "eval_metric": "logloss"},
+        scale_pos_weight=1.5,
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit_estimator(
+            model,
+            X[:40],
+            y[:40],
+            eval_set=[(X[40:], y[40:])],
+            eval_sample_weight=[np.ones(20)],
+        )
+    deprecated = [w for w in caught if "eval_set" in str(w.message) and "deprecated" in str(w.message)]
+    assert not deprecated, f"LightGBM emitted eval_set deprecation: {[str(w.message) for w in deprecated]}"
+    assert backend_of(model) == "lightgbm"
+    assert model.predict_proba(X[:5]).shape == (5, 2)

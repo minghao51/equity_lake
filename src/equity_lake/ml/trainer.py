@@ -5,7 +5,8 @@ from typing import Any
 import numpy as np
 import polars as pl
 import structlog
-import xgboost as xgb
+
+from equity_lake.ml.backends import ModelBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -25,7 +26,7 @@ def compute_class_weights(y: pl.Series) -> dict[str, Any]:
     }
 
 
-def compute_shap_importance(model: xgb.XGBClassifier, X: pl.DataFrame, feature_cols: list[str], top_k: int = 10) -> dict[str, float] | None:
+def compute_shap_importance(model: ModelBackend, X: pl.DataFrame, feature_cols: list[str], top_k: int = 10) -> dict[str, float] | None:
     try:
         import shap
     except ImportError:
@@ -34,6 +35,10 @@ def compute_shap_importance(model: xgb.XGBClassifier, X: pl.DataFrame, feature_c
         X_sample = X.select([col for col in feature_cols if col in X.columns]).to_pandas()
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X_sample)
+        # XGBoost returns an ndarray; LightGBM returns a list of per-class arrays
+        # (D8). Take the positive-class slice so the 2-D reduction below applies.
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1] if len(shap_values) > 1 else shap_values[0]
         if hasattr(shap_values, "ndim") and shap_values.ndim == 3:
             shap_values = shap_values[:, :, 1]
         if not hasattr(shap_values, "ndim") or shap_values.ndim != 2:

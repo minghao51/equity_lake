@@ -190,6 +190,72 @@ def backend_of(model: Any) -> BackendName:
     raise TypeError(f"Unsupported model backend: {type(model).__name__}")
 
 
+def build_fit_kwargs(
+    backend: str,
+    *,
+    sample_weight: Any = None,
+    eval_set: Any = None,
+    eval_sample_weight: Any = None,
+    verbose: bool = False,
+) -> dict[str, Any]:
+    """Build backend-correct ``.fit`` keyword arguments from a common form.
+
+    Callers pass the sklearn-style ``eval_set=[(Xv, yv)]`` and a list-aligned
+    ``eval_sample_weight=[w]``; this function translates them per backend so the
+    four call sites in ``forecasting.py``/``validation.py`` stay backend-neutral:
+
+    * **XGBoost** keeps ``eval_set`` / ``sample_weight_eval_set`` and adds
+      ``verbose`` (silenced in ``fit``).
+    * **LightGBM 4.7+** deprecated ``eval_set`` (D9); translate to the native
+      ``eval_X`` / ``eval_y`` pair (``eval_sample_weight`` stays a list).
+      ``verbose`` is a constructor arg for LightGBM (set via ``normalize_params``),
+      so it is intentionally omitted here.
+    """
+    backend = validate_backend(backend)
+    kwargs: dict[str, Any] = {}
+    if sample_weight is not None:
+        kwargs["sample_weight"] = sample_weight
+    if eval_set is not None:
+        if backend == "xgboost":
+            kwargs["eval_set"] = eval_set
+            if eval_sample_weight is not None:
+                kwargs["sample_weight_eval_set"] = eval_sample_weight
+        else:
+            # D9: LightGBM 4.7 deprecates ``eval_set`` in favor of ``eval_X``/``eval_y``.
+            first_eval = eval_set[0]
+            kwargs["eval_X"] = first_eval[0]
+            kwargs["eval_y"] = first_eval[1]
+            if eval_sample_weight is not None:
+                # LightGBM still expects eval_sample_weight as a list aligned with
+                # the eval sets (only ``eval_set`` itself is deprecated).
+                kwargs["eval_sample_weight"] = eval_sample_weight
+    if backend == "xgboost":
+        kwargs["verbose"] = verbose
+    return kwargs
+
+
+def fit_estimator(
+    model: ModelBackend,
+    X: Any,
+    y: Any,
+    *,
+    sample_weight: Any = None,
+    eval_set: Any = None,
+    eval_sample_weight: Any = None,
+    verbose: bool = False,
+) -> ModelBackend:
+    """Fit ``model`` with backend-correct eval/verbose kwargs and return it."""
+    kwargs = build_fit_kwargs(
+        backend_of(model),
+        sample_weight=sample_weight,
+        eval_set=eval_set,
+        eval_sample_weight=eval_sample_weight,
+        verbose=verbose,
+    )
+    model.fit(X, y, **kwargs)
+    return model
+
+
 __all__ = [
     "DEFAULT_BACKEND",
     "SUPPORTED_BACKENDS",
@@ -197,6 +263,8 @@ __all__ = [
     "ModelBackend",
     "backend_of",
     "build_estimator",
+    "build_fit_kwargs",
+    "fit_estimator",
     "normalize_params",
     "validate_backend",
 ]

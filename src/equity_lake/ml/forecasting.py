@@ -20,6 +20,7 @@ from sklearn.model_selection import GridSearchCV
 from tqdm import tqdm
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
+from equity_lake.ml.backends import DEFAULT_BACKEND, ModelBackend, backend_of, build_estimator, fit_estimator, validate_backend
 from equity_lake.ml.candidates import DEFAULT_BACKTEST_STRATEGY, build_candidate_frame
 from equity_lake.ml.feature_loader import FeatureLoader
 from equity_lake.ml.labeling import apply_triple_barrier_labels
@@ -78,15 +79,17 @@ class PriceForecaster:
         model_dir: str | None = None,
         model_mode: str = "v1_direction",
         ml_config: dict[str, Any] | None = None,
+        backend: str = DEFAULT_BACKEND,
     ) -> None:
         if model_mode not in MODEL_MODES:
             raise ValueError(f"Unsupported model_mode={model_mode!r}")
 
         self.model_mode = model_mode
+        self.backend = validate_backend(backend)
         self.model_dir = Path(model_dir) if model_dir else DEFAULT_MODEL_DIR
         self.model_dir.mkdir(parents=True, exist_ok=True)
         self._feature_loader = FeatureLoader()
-        self._loaded_models: collections.OrderedDict[Path, xgb.XGBClassifier] = collections.OrderedDict()
+        self._loaded_models: collections.OrderedDict[Path, ModelBackend] = collections.OrderedDict()
         self.ml_config = dict(ml_config or {})
         self.v2_settings = {**DEFAULT_V2_SETTINGS, **self.ml_config}
         self.candidate_strategies = self._load_candidate_strategies()
@@ -129,8 +132,8 @@ class PriceForecaster:
         test_window: int = 21,
         embargo_window: int = 1,
         label_horizon_days: int | None = None,
-    ) -> xgb.XGBClassifier:
-        """Train and persist an XGBoost classifier."""
+    ) -> ModelBackend:
+        """Train and persist a backend classifier (XGBoost or LightGBM)."""
         self._last_training_artifacts = None
         if max_model_age_days > 0:
             existing_path = self._resolve_model_path(ticker, end_date)
@@ -226,8 +229,6 @@ class PriceForecaster:
             default_params.update(params)
 
         class_counts = compute_class_weights(y_train)
-        if class_counts["scale_pos_weight"] != 1.0:
-            default_params["scale_pos_weight"] = class_counts["scale_pos_weight"]
 
         if tune_hyperparams:
             model = self._tune_hyperparameters(
@@ -240,12 +241,16 @@ class PriceForecaster:
                 label_horizon_days=label_horizon,
             )
         else:
-            model = xgb.XGBClassifier(**default_params)
-            fit_kwargs: dict[str, Any] = {"verbose": False}
-            if X_val.height > 0:
-                fit_kwargs["eval_set"] = [(X_val, y_val.to_numpy())]
-                fit_kwargs["sample_weight_eval_set"] = [sample_weights_val]
-            model.fit(X_train, y_train.to_numpy(), sample_weight=sample_weights_train, **fit_kwargs)
+            model = build_estimator(self.backend, default_params, scale_pos_weight=class_counts["scale_pos_weight"])
+            fit_estimator(
+                model,
+                X_train,
+                y_train.to_numpy(),
+                sample_weight=sample_weights_train,
+                eval_set=[(X_val, y_val.to_numpy())] if X_val.height > 0 else None,
+                eval_sample_weight=[sample_weights_val] if X_val.height > 0 else None,
+                verbose=False,
+            )
 
         model_path = self.model_dir / self._build_model_filename(ticker, end_date)
         joblib.dump(model, model_path)
@@ -299,7 +304,7 @@ class PriceForecaster:
         test_window: int,
         embargo_window: int,
         label_horizon_days: int,
-    ) -> xgb.XGBClassifier:
+    ) -> ModelBackend:
         """Run purged walk-forward grid search for hyperparameters."""
         param_grid = {
             "max_depth": [3, 5, 7],
@@ -322,15 +327,14 @@ class PriceForecaster:
             "random_state": 42,
             "n_jobs": -1,
         }
-        if class_counts["scale_pos_weight"] != 1.0:
-            estimator_kwargs["scale_pos_weight"] = class_counts["scale_pos_weight"]
+        estimator = build_estimator(self.backend, estimator_kwargs, scale_pos_weight=class_counts["scale_pos_weight"])
 
         fit_kwargs: dict[str, Any] = {}
         if sample_weight is not None:
             fit_kwargs["sample_weight"] = sample_weight
 
         grid_search = GridSearchCV(
-            estimator=xgb.XGBClassifier(**estimator_kwargs),
+            estimator=estimator,
             param_grid=param_grid,
             cv=cv,
             scoring="accuracy",
@@ -339,13 +343,13 @@ class PriceForecaster:
         )
         grid_search.fit(X_train, y_train.to_numpy(), **fit_kwargs)
         logger.info("model_tuned", best_params=grid_search.best_params_, model_mode=self.model_mode)
-        return cast(xgb.XGBClassifier, grid_search.best_estimator_)
+        return cast(ModelBackend, grid_search.best_estimator_)
 
     def predict(
         self,
         ticker: str,
         date: date,
-        model: xgb.XGBClassifier | None = None,
+        model: ModelBackend | None = None,
     ) -> dict[str, Any]:
         """Generate a prediction for a single ticker."""
         start_date = date - timedelta(days=180 if self.model_mode == "v2_meta_label" else 60)
@@ -436,16 +440,17 @@ class PriceForecaster:
                 train_slice = training_df.slice(train_start, test_idx - train_start)
                 X_tr = self._prepare_training_matrix(train_slice, feature_cols)
                 y_tr = self._prepare_target_series(train_slice, target_column)
-                model = xgb.XGBClassifier(
-                    max_depth=5,
-                    learning_rate=0.05,
-                    n_estimators=200,
-                    objective="binary:logistic",
-                    eval_metric="logloss",
-                    random_state=42,
-                    n_jobs=-1,
-                )
-                model.fit(X_tr, y_tr.to_numpy(), verbose=False)
+                backtest_params: dict[str, Any] = {
+                    "max_depth": 5,
+                    "learning_rate": 0.05,
+                    "n_estimators": 200,
+                    "objective": "binary:logistic",
+                    "eval_metric": "logloss",
+                    "random_state": 42,
+                    "n_jobs": -1,
+                }
+                model = build_estimator(self.backend, backtest_params)
+                fit_estimator(model, X_tr, y_tr.to_numpy(), verbose=False)
                 last_train_idx = test_idx
 
             test_slice = training_df.slice(test_idx, 1)
@@ -522,6 +527,7 @@ class PriceForecaster:
             test_window=test_window,
             embargo_window=embargo_window,
             label_horizon_days=label_horizon_days,
+            backend=self.backend,
         )
 
     def _get_feature_columns(self, df: FrameLike) -> list[str]:
@@ -529,11 +535,19 @@ class PriceForecaster:
         return [col for col in ensure_polars(df).columns if col not in NON_FEATURE_COLUMNS]
 
     def _build_model_filename(self, ticker: str, trained_on: date) -> str:
-        return f"{ticker}_xgboost_{self.model_mode}_{trained_on.isoformat()}.pkl"
+        return f"{ticker}_{self.backend}_{self.model_mode}_{trained_on.isoformat()}.pkl"
 
     def _parse_model_path(self, model_path: Path) -> tuple[str, date]:
-        ticker_prefix, _, suffix = model_path.stem.partition("_xgboost_")
-        if not ticker_prefix or not suffix:
+        # The backend token separates ``{ticker}_{backend}_{mode}_{date}``. Try
+        # ``_lightgbm_`` first (longer token); ``_xgboost_`` stays loadable for
+        # pre-Phase-2 artifacts (DEFAULT_BACKEND == "xgboost").
+        stem = model_path.stem
+        suffix: str | None = None
+        for token in ("_lightgbm_", "_xgboost_"):
+            if token in stem:
+                _, _, suffix = stem.partition(token)
+                break
+        if not suffix:
             raise ValueError(f"Unrecognized model filename: {model_path.name}")
         if "_" in suffix:
             mode_part, date_part = suffix.rsplit("_", 1)
@@ -544,7 +558,7 @@ class PriceForecaster:
     def _resolve_model_path(self, ticker: str, as_of_date: date) -> Path | None:
         """Return the latest model path available on or before the target date."""
         candidates: list[tuple[date, Path]] = []
-        for model_path in self.model_dir.glob(f"{ticker}_xgboost_*.pkl"):
+        for model_path in self.model_dir.glob(f"{ticker}_{self.backend}_*.pkl"):
             try:
                 mode, trained_on = self._parse_model_path(model_path)
             except ValueError:
@@ -561,18 +575,21 @@ class PriceForecaster:
 
     _MAX_CACHED_MODELS = 20
 
-    def _load_model(self, model_path: Path) -> xgb.XGBClassifier:
+    def _load_model(self, model_path: Path) -> ModelBackend:
         if model_path in self._loaded_models:
             self._loaded_models.move_to_end(model_path)
             return self._loaded_models[model_path]
         if len(self._loaded_models) >= self._MAX_CACHED_MODELS:
             evicted_path, _ = self._loaded_models.popitem(last=False)
             logger.debug("model_cache_evict", path=str(evicted_path))
-        model = cast(xgb.XGBClassifier, joblib.load(model_path))
-        loaded_xgb = getattr(model, "_xgb_version", "unknown")
-        current_xgb = xgb.__version__
-        if loaded_xgb != "unknown" and loaded_xgb != current_xgb:
-            logger.warning("model_version_mismatch", loaded_xgboost=loaded_xgb, current_xgboost=current_xgb, model=str(model_path))
+        model = cast(ModelBackend, joblib.load(model_path))
+        # D10: ``_xgb_version`` is XGBoost-internal; LightGBM models have no such
+        # attribute, so the version-mismatch check is XGBoost-only.
+        if backend_of(model) == "xgboost":
+            loaded_xgb = getattr(model, "_xgb_version", "unknown")
+            current_xgb = xgb.__version__
+            if loaded_xgb != "unknown" and loaded_xgb != current_xgb:
+                logger.warning("model_version_mismatch", loaded_xgboost=loaded_xgb, current_xgboost=current_xgb, model=str(model_path))
         self._loaded_models[model_path] = model
         return self._loaded_models[model_path]
 
@@ -588,7 +605,7 @@ class PriceForecaster:
         X_val: pl.DataFrame,
         y_train: pl.Series,
         y_val: pl.Series,
-        model: xgb.XGBClassifier,
+        model: ModelBackend,
         validation_settings: dict[str, Any],
         validation_metrics: dict[str, Any] | None,
         class_counts: dict[str, Any] | None = None,

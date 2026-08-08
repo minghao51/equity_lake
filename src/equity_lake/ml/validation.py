@@ -7,10 +7,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
-import xgboost as xgb
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
+from equity_lake.ml.backends import DEFAULT_BACKEND, build_estimator, fit_estimator
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,7 @@ def run_purged_walk_forward_validation(
     test_window: int,
     embargo_window: int,
     label_horizon_days: int,
+    backend: str = DEFAULT_BACKEND,
 ) -> dict[str, float | int]:
     """Run purged walk-forward validation and aggregate core metrics."""
     X_pl = ensure_polars(X)
@@ -78,6 +79,7 @@ def run_purged_walk_forward_validation(
 
         pos_count = int((y_tr == 1).sum())
         neg_count = int((y_tr == 0).sum())
+        scale_pos_weight = neg_count / pos_count if pos_count > 0 and neg_count > 0 else 1.0
         model_kwargs: dict = {
             "max_depth": 5,
             "learning_rate": 0.05,
@@ -87,10 +89,8 @@ def run_purged_walk_forward_validation(
             "random_state": 42,
             "n_jobs": -1,
         }
-        if pos_count > 0 and neg_count > 0:
-            model_kwargs["scale_pos_weight"] = neg_count / pos_count
-        model = xgb.XGBClassifier(**model_kwargs)
-        model.fit(X_tr, y_tr, verbose=False)
+        model = build_estimator(backend, model_kwargs, scale_pos_weight=scale_pos_weight)
+        fit_estimator(model, X_tr, y_tr, verbose=False)
         preds = (model.predict_proba(X_te)[:, 1] >= 0.5).astype(int)
         fold_accuracies.append(float(accuracy_score(y_te, preds)))
         fold_precisions.append(float(precision_score(y_te, preds, zero_division=0)))
