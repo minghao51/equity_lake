@@ -74,6 +74,7 @@ ml = [
     "networkx>=3.6.1",
     "statsmodels>=0.14.6",
     "lightgbm>=4.3.0",
+    "wandb>=0.18.0",
 ]
 viz = [
     "matplotlib>=3.8.0",
@@ -249,6 +250,7 @@ module = [
     "openai.*",
     "readability.*",
     "lightgbm.*",
+    "wandb.*",
     "shap.*",
     "statsmodels.*",
     "networkx.*",
