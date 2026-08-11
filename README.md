@@ -33,6 +33,22 @@ lead narrative**. The 3-month roadmap turns this into a hosted showcase — see 
 
 </details>
 
+### Phase 2A — ML rigor (public W&B)
+
+The [`equity ml`](docs/user-guide/20260810-ml-rigor.md) harness adds three more
+FindingCards and mirrors every comparison to a **public** Weights & Biases
+project, with one Report per comparison:
+
+- **W&B project:** <https://wandb.ai/howt51/equity_lake>
+  - [meta-label-vs-direction × xgb-vs-lgbm — Report](https://wandb.ai/howt51/equity_lake/reports/meta-label-vs-direction-xgb-vs-lgbm--VmlldzoxNzcwMzYxNA==)
+  - [enrichment-ablation — Report](https://wandb.ai/howt51/equity_lake/reports/enrichment-ablation--VmlldzoxNzcwMzU4OQ==)
+- `ls data/findings/` → **6** cards (strategy / cost / benchmark +
+  meta-label-vs-direction / xgb-vs-lgbm / enrichment-ablation)
+
+Verdicts are honest single-ticker (AAPL), short-window out-of-sample comparisons
+— negatives included. Each card's `scope` (ticker / windows / folds) is the
+reproducibility contract; see the W&B Reports for the full metrics.
+
 ---
 
 **Underlying platform** — a local-first equity pipeline: bootstrap historical data,

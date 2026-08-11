@@ -607,6 +607,10 @@ def _merge_macro(
     wide = raw.pivot(values="value", index="date", on="indicator").sort("date")
     numeric_cols = [col for col in wide.columns if col != "date"]
     wide = wide.with_columns([pl.col(col).cast(pl.Float64) for col in numeric_cols])
+    # Normalize the join-key dtype: ``features_df`` may carry ``date`` as
+    # datetime (FeatureEngineer path) while the macro scan yields Date — a bare
+    # join raises SchemaError. Cast the macro frame to match features_df.
+    wide = wide.with_columns(pl.col("date").cast(features_df["date"].dtype))
 
     full_dates = pl.DataFrame({"date": features_df["date"].unique().sort()})
     wide = full_dates.join(wide, on="date", how="left").sort("date")

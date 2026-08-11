@@ -72,3 +72,6 @@ IMPLEMENTATION_PLAN.md
 docs/catalog/node_modules/
 docs/catalog/dist/
 docs/catalog/.astro/
+
+# Weights & Biases local run logs
+wandb/

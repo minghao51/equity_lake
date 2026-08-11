@@ -197,9 +197,13 @@ def _create_comparison_report(
     ``None`` and the caller falls back to the run URL.
     """
     try:
-        from wandb.apis.reports import MarkdownBlock, Report  # type: ignore[attr-defined]  # private/volatile API; guarded by the try/except below
+        from wandb.apis.reports import MarkdownBlock, Report  # private/volatile API; guarded by the try/except below
     except Exception as exc:  # private API; best-effort.
         logger.debug("wandb_report_import_failed", error=str(exc))
+        return None
+    if project is None or entity is None:
+        # Report() requires concrete project/entity strings; without them a
+        # report cannot be addressed, so fall back to the run URL.
         return None
     try:
         lines = [f"# {title}", ""]
