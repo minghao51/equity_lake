@@ -25,6 +25,9 @@ def _fake_card() -> FindingCard:
     )
 
 
+# --- health + findings --------------------------------------------------------
+
+
 def test_health_endpoint_ok() -> None:
     client = TestClient(create_app())
     response = client.get("/health")
@@ -49,3 +52,56 @@ def test_findings_detail_404_when_missing(monkeypatch) -> None:
     client = TestClient(create_app())
     response = client.get("/findings/no-such-card")
     assert response.status_code == 404
+
+
+# --- signals ------------------------------------------------------------------
+
+
+def test_signals_endpoint_defaults_to_today(monkeypatch) -> None:
+    monkeypatch.setattr(deps, "list_signals", lambda d: [{"ticker": "AAPL", "date": str(d)}])
+    client = TestClient(create_app())
+    response = client.get("/signals")
+    assert response.status_code == 200
+    assert response.json()[0]["ticker"] == "AAPL"
+
+
+def test_signals_endpoint_parses_date_param(monkeypatch) -> None:
+    captured: dict[str, date] = {}
+    monkeypatch.setattr(deps, "list_signals", lambda d: captured.update(d=d) or [])  # type: ignore[func-returns-value]
+    client = TestClient(create_app())
+    response = client.get("/signals?target_date=2024-01-02")
+    assert response.status_code == 200
+    assert captured["d"] == date(2024, 1, 2)
+
+
+# --- models / predictions / backtests ----------------------------------------
+
+
+def test_models_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(deps, "list_models", lambda: [{"ticker": "AAPL", "backend": "xgboost"}])
+    client = TestClient(create_app())
+    response = client.get("/models")
+    assert response.status_code == 200
+    assert response.json()[0]["backend"] == "xgboost"
+
+
+def test_predictions_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(deps, "list_predictions", lambda **kw: [{"ticker": "AAPL", "p": 0.6}])
+    client = TestClient(create_app())
+    response = client.get("/predictions?ticker=AAPL&limit=5")
+    assert response.status_code == 200
+    assert response.json()[0]["ticker"] == "AAPL"
+
+
+def test_predictions_rejects_out_of_range_limit() -> None:
+    client = TestClient(create_app())
+    response = client.get("/predictions?limit=0")
+    assert response.status_code == 422  # Query(ge=1) validation
+
+
+def test_backtests_endpoint(monkeypatch) -> None:
+    monkeypatch.setattr(deps, "list_backtests", lambda: [{"slug": "momentum__zero"}])
+    client = TestClient(create_app())
+    response = client.get("/backtests")
+    assert response.status_code == 200
+    assert response.json()[0]["slug"] == "momentum__zero"

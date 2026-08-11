@@ -17,7 +17,7 @@ def create_app() -> FastAPI:
     """Build and configure the read-only ASGI application (routers mounted here)."""
     from fastapi import FastAPI
 
-    from equity_lake.api.routers import findings, health
+    from equity_lake.api.routers import backtests, findings, health, models, predictions, signals
 
     app = FastAPI(
         title="Equity Lake API",
@@ -26,6 +26,10 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(findings.router)
+    app.include_router(signals.router)
+    app.include_router(models.router)
+    app.include_router(predictions.router)
+    app.include_router(backtests.router)
     return app
 
 
