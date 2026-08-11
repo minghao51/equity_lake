@@ -301,3 +301,32 @@ def test_fit_estimator_lightgbm_uses_eval_xy_without_deprecation() -> None:
     assert not deprecated, f"LightGBM emitted eval_set deprecation: {[str(w.message) for w in deprecated]}"
     assert backend_of(model) == "lightgbm"
     assert model.predict_proba(X[:5]).shape == (5, 2)
+
+
+def test_compute_shap_importance_lightgbm_returns_non_none_dict() -> None:
+    # D8: LightGBM's ``TreeExplainer.shap_values`` can return a list of per-class
+    # ndarrays; ``compute_shap_importance`` must reduce that to a 2-D frame and
+    # return a populated dict rather than silently failing with ``None``.
+    pytest.importorskip("lightgbm")
+    pytest.importorskip("shap")
+    import polars as pl
+
+    from equity_lake.ml.trainer import compute_shap_importance
+
+    rng = np.random.default_rng(7)
+    x_np = rng.normal(size=(60, 4))
+    y = rng.integers(0, 2, size=60)
+    feature_cols = ["f0", "f1", "f2", "f3"]
+    x = pl.DataFrame({name: x_np[:, i] for i, name in enumerate(feature_cols)})
+
+    model = build_estimator(
+        "lightgbm",
+        {"n_estimators": 10, "max_depth": 3, "learning_rate": 0.1, "objective": "binary:logistic", "eval_metric": "logloss"},
+    )
+    model.fit(x_np, y)
+
+    importance = compute_shap_importance(model, x, feature_cols)
+    assert importance is not None
+    assert isinstance(importance, dict)
+    assert set(importance) <= set(feature_cols)
+    assert all(isinstance(v, float) for v in importance.values())

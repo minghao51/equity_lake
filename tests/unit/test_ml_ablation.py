@@ -54,6 +54,8 @@ def test_run_ablation_returns_enrichment_ablation_card(tmp_path) -> None:
     assert "accuracy_delta" in card.metrics
     assert "enriched_feature_count" in card.metrics
     assert "technical_feature_count" in card.metrics
+    # P1: the per-ticker harness must stamp the ticker into the card scope.
+    assert card.scope["tickers"] == ["AAPL"]
 
 
 def test_ablation_card_round_trips_via_load(tmp_path) -> None:

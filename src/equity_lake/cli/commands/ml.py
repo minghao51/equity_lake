@@ -103,6 +103,7 @@ def ml_compare(
     try:
         cards = run_comparison(
             features=features,
+            ticker=selected,
             train_window=train_window,
             test_window=test_window,
             embargo_window=embargo_window,
@@ -158,6 +159,7 @@ def ml_ablate(
         card = run_ablation(
             enriched_features=enriched,
             technical_features=technical,
+            ticker=selected,
             train_window=train_window,
             test_window=test_window,
             embargo_window=embargo_window,

@@ -44,6 +44,32 @@ Built-in loaders now include:
 - `sec_filings`
 - `options_flow`
 
+## ML Rigor
+
+The `equity ml` group runs the Phase 2A ML comparisons and ablations that
+write FindingCards to `data/findings/`. See the [ML Rigor guide](20260810-ml-rigor.md)
+for the full workflow; the commands are:
+
+```bash
+# Labeling (v1 vs v2) + backend (XGBoost vs LightGBM) comparison
+#   -> meta-label-vs-direction.json, xgb-vs-lgbm.json
+dotenvx run -- uv run equity ml compare  --universe demo
+
+# Feature-enrichment ablation (enriched vs technical-only)
+#   -> enrichment-ablation.json
+dotenvx run -- uv run equity ml ablate   --universe demo
+
+# Train one backend classifier (mirrors `intelligence forecast --mode train`)
+dotenvx run -- uv run equity ml train --ticker AAPL --backend lightgbm --model-mode v2_meta_label
+```
+
+- Requires feature history under `03_gold/features`; if missing the commands
+  exit non-zero and point at `equity pipeline --allow-history-backfill`.
+- `--universe demo` runs the **first** ticker of the group (AAPL); override with
+  `--ticker`. `--backend` selects `xgboost` (default) or `lightgbm`.
+- Weights & Biases runs/Reports are logged best-effort when `WANDB_API_KEY` is
+  set; local cards are always written.
+
 ## Existing Pipeline Commands
 
 ```bash

@@ -63,6 +63,10 @@ def test_run_comparison_returns_two_expected_cards(tmp_path, features_frame: pl.
     assert "accuracy_delta" in model.metrics
     assert "feature_importance_agreement" in model.metrics
 
+    # P1: the per-ticker harness must stamp the ticker into the card scope.
+    for card in cards:
+        assert card.scope["tickers"] == ["AAPL"]
+
 
 def test_comparison_cards_round_trip_via_load(tmp_path, features_frame: pl.DataFrame) -> None:
     """Written cards persist under base and reload via load_finding_cards."""

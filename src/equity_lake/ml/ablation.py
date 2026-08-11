@@ -42,6 +42,21 @@ logger = structlog.get_logger(__name__)
 _EPS: float = 0.01
 
 
+def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
+    """Pick the per-ticker card scope value (parent §2 P1).
+
+    An explicit ``override`` (the CLI's ``--ticker``) wins; otherwise read the
+    frame's ``ticker`` column so the pure-harness call path records honest
+    reproducibility metadata.
+    """
+    if override:
+        return override
+    if "ticker" in frame.columns and frame.height > 0:
+        value = frame["ticker"][0]
+        return "" if value is None else str(value)
+    return ""
+
+
 def _feature_columns_for(df: pl.DataFrame) -> list[str]:
     return _feature_columns(df)
 
@@ -81,6 +96,7 @@ def _build_ablation_card(
     enriched: dict[str, float],
     technical: dict[str, float],
     *,
+    ticker: str,
     enriched_feature_count: int,
     technical_feature_count: int,
     train_window: int,
@@ -137,6 +153,7 @@ def _build_ablation_card(
         evidence_refs=[],
         run_date=date.today(),
         scope={
+            "tickers": [ticker],
             "train_window": train_window,
             "test_window": test_window,
             "embargo_window": embargo_window,
@@ -163,6 +180,7 @@ def run_ablation(
     *,
     enriched_features: pl.DataFrame,
     technical_features: pl.DataFrame,
+    ticker: str | None = None,
     train_window: int = 252,
     test_window: int = 21,
     embargo_window: int = 1,
@@ -213,9 +231,11 @@ def run_ablation(
         skew_detected=skew_detected,
     )
 
+    resolved_ticker = _resolve_ticker(enriched_features, ticker)
     card = _build_ablation_card(
         enriched_metrics,
         technical_metrics,
+        ticker=resolved_ticker,
         enriched_feature_count=len(enriched_cols),
         technical_feature_count=len(technical_cols),
         train_window=train_window,

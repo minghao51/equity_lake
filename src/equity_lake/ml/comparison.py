@@ -126,6 +126,21 @@ def _scale_pos_weight(y_train: np.ndarray) -> float:
     return float(neg) / float(pos)
 
 
+def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
+    """Pick the per-ticker card scope value.
+
+    An explicit ``override`` (the CLI's ``--ticker``) wins; otherwise read the
+    frame's ``ticker`` column so the pure-harness call path (unit tests, library
+    use) still records honest reproducibility metadata (parent §2 P1).
+    """
+    if override:
+        return override
+    if "ticker" in frame.columns and frame.height > 0:
+        value = frame["ticker"][0]
+        return "" if value is None else str(value)
+    return ""
+
+
 def _aggregate_oos(labels: np.ndarray, probs: np.ndarray, folds: int) -> dict[str, float]:
     """Pool per-fold OOS predictions into accuracy/precision/Brier metrics."""
     n = int(labels.size)
@@ -219,6 +234,7 @@ def _mean_oos(
 def _build_meta_label_card(
     by_mode: ModeBackendMetrics,
     *,
+    ticker: str,
     backends: Sequence[str],
     modes: Sequence[str],
     train_window: int,
@@ -274,6 +290,7 @@ def _build_meta_label_card(
         evidence_refs=[],
         run_date=date.today(),
         scope={
+            "tickers": [ticker],
             "backends": list(backends),
             "modes": list(modes),
             "train_window": train_window,
@@ -288,6 +305,7 @@ def _build_model_card(
     by_mode: ModeBackendMetrics,
     importances_by_mode: ModeBackendImportances,
     *,
+    ticker: str,
     backends: Sequence[str],
     modes: Sequence[str],
     train_window: int,
@@ -357,6 +375,7 @@ def _build_model_card(
         evidence_refs=[],
         run_date=date.today(),
         scope={
+            "tickers": [ticker],
             "backends": list(backends),
             "modes": list(modes),
             "train_window": train_window,
@@ -383,6 +402,7 @@ def _log_to_wandb(cards: list[FindingCard]) -> None:
 def run_comparison(
     *,
     features: pl.DataFrame,
+    ticker: str | None = None,
     backends: Sequence[str] = ("xgboost", "lightgbm"),
     modes: Sequence[str] = ("v1_direction", "v2_meta_label"),
     train_window: int = 252,
@@ -423,9 +443,11 @@ def run_comparison(
             backends=list(backends),
         )
 
+    resolved_ticker = _resolve_ticker(features, ticker)
     cards = [
         _build_meta_label_card(
             by_mode,
+            ticker=resolved_ticker,
             backends=backends,
             modes=modes,
             train_window=train_window,
@@ -436,6 +458,7 @@ def run_comparison(
         _build_model_card(
             by_mode,
             importances_by_mode,
+            ticker=resolved_ticker,
             backends=backends,
             modes=modes,
             train_window=train_window,
