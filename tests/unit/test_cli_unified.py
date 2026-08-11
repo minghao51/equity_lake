@@ -114,6 +114,13 @@ class TestMlSubcommands:
         assert "backend" in result.stdout.lower()
 
 
+class TestApiSubcommands:
+    def test_api_serve_help(self):
+        result = runner.invoke(app, ["api", "serve", "--help"])
+        assert result.exit_code == 0
+        assert "API" in result.stdout or "api" in result.stdout.lower()
+
+
 class TestConfigSubcommands:
     def test_config_show_help(self):
         result = runner.invoke(app, ["config", "show", "--help"])

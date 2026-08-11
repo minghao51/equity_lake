@@ -72,3 +72,15 @@ USER equity
 VOLUME ["/app/data", "/app/logs"]
 
 CMD ["tail", "-f", "/dev/null"]
+
+# =============================================================================
+# Stage 5: Read API Image (Phase 2B FastAPI server)
+# =============================================================================
+FROM production AS api
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["equity", "api", "serve", "--host", "0.0.0.0", "--port", "8000"]
