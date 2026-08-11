@@ -327,6 +327,11 @@ class PriceForecaster:
             "random_state": 42,
             "n_jobs": -1,
         }
+        if self.backend == "lightgbm":
+            # D2: GridSearchCV sets ``subsample`` via ``set_params``, bypassing
+            # ``normalize_params``' subsample_freq injection — so LightGBM bagging
+            # would stay off (bagging_freq=0) during tuning. Inject it here.
+            estimator_kwargs["subsample_freq"] = 1
         estimator = build_estimator(self.backend, estimator_kwargs, scale_pos_weight=class_counts["scale_pos_weight"])
 
         fit_kwargs: dict[str, Any] = {}

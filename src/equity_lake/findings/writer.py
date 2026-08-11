@@ -23,15 +23,19 @@ def evidence_dir(card_id: str, *, base: Path | None = None) -> Path:
     return directory
 
 
+def card_path(card_id: str, *, base: Path | None = None) -> Path:
+    """Return the canonical write path ``<base>/<id>.json`` without writing it."""
+    return (base or FINDINGS_DIR) / f"{card_id}.json"
+
+
 def write_finding_card(card: FindingCard, *, base: Path | None = None) -> Path:
     """Validate and write a :class:`FindingCard` as ``<base>/<id>.json``.
 
     The Pydantic model is the write-boundary contract: invalid cards raise before
     any file is touched. Returns the written path.
     """
-    root = base or FINDINGS_DIR
-    root.mkdir(parents=True, exist_ok=True)
-    path = root / f"{card.id}.json"
+    path = card_path(card.id, base=base)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(card.model_dump_json(indent=2), encoding="utf-8")
     logger.info("finding_card_written", card_id=card.id, axis=card.axis, path=str(path))
     return path

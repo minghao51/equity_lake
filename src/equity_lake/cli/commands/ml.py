@@ -82,7 +82,7 @@ def ml_compare(
     """Compare v1 vs v2 labeling and XGBoost vs LightGBM, emit 2 FindingCards."""
     from pathlib import Path
 
-    from equity_lake.findings.writer import write_finding_card
+    from equity_lake.findings.writer import card_path
     from equity_lake.ml.comparison import run_comparison
     from equity_lake.ml.feature_loader import FeatureLoader
 
@@ -115,8 +115,8 @@ def ml_compare(
 
     typer.secho(f"Comparison complete for {selected} ({universe} universe).", fg=typer.colors.GREEN)
     for card in cards:
-        # ``run_comparison`` already wrote each card; echo the resolved path.
-        path = write_finding_card(card, base=base)
+        # ``run_comparison`` already wrote each card; resolve the path without re-writing.
+        path = card_path(card.id, base=base)
         typer.echo(f"  [{card.axis}] {card.id}: {card.verdict} — {card.conclusion}")
         typer.echo(f"    -> {path}")
 
@@ -137,7 +137,7 @@ def ml_ablate(
     from pathlib import Path
 
     from equity_lake.features import _load_feature_engineer
-    from equity_lake.findings.writer import write_finding_card
+    from equity_lake.findings.writer import card_path
     from equity_lake.ml.ablation import run_ablation
 
     _init_logging(verbose)
@@ -170,7 +170,7 @@ def ml_ablate(
         raise typer.Exit(1) from exc
 
     typer.secho(f"Ablation complete for {selected} ({universe} universe).", fg=typer.colors.GREEN)
-    path = write_finding_card(card, base=base)
+    path = card_path(card.id, base=base)
     typer.echo(f"  [{card.axis}] {card.id}: {card.verdict} — {card.conclusion}")
     typer.echo(f"    -> {path}")
 
@@ -188,7 +188,7 @@ def ml_train(
     tune: Annotated[bool, typer.Option("--tune", help="Hyperparameter tuning")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Train one backend classifier (mirrors ``intelligence forecast --mode train``)."""
+    """Train one backend classifier (canonical entrypoint; ``intelligence forecast --mode train`` is the legacy alias)."""
     from equity_lake.ml.forecasting import PriceForecaster
 
     _init_logging(verbose)

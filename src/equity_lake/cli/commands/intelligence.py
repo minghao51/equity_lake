@@ -61,7 +61,10 @@ def forecast(
     tune: Annotated[bool, typer.Option("--tune", help="Hyperparameter tuning")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Price forecasting."""
+    """Price forecasting (train/predict/backtest).
+
+    For model training prefer ``equity ml train`` (surfaces ``--backend``).
+    """
     from equity_lake.ml.forecasting import PriceForecaster
 
     _init_logging(verbose)

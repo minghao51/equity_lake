@@ -27,13 +27,8 @@ import structlog
 
 from equity_lake.findings.models import FindingCard, FindingVerdict
 from equity_lake.findings.writer import write_finding_card
+from equity_lake.ml._metrics import DEFAULT_FIT_PARAMS, aggregate_oos, feature_columns, scale_pos_weight
 from equity_lake.ml.backends import build_estimator, fit_estimator
-from equity_lake.ml.comparison import (
-    _DEFAULT_FIT_PARAMS,
-    _aggregate_oos,
-    _feature_columns,
-    _scale_pos_weight,
-)
 from equity_lake.ml.validation import PurgedEmbargoedWalkForwardSplitter
 
 logger = structlog.get_logger(__name__)
@@ -58,7 +53,7 @@ def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
 
 
 def _feature_columns_for(df: pl.DataFrame) -> list[str]:
-    return _feature_columns(df)
+    return feature_columns(df)
 
 
 def _score_arm(
@@ -73,7 +68,7 @@ def _score_arm(
     ``next_day_return``); the caller is responsible for that alignment.
     """
     if not feature_cols or df.is_empty():
-        return _aggregate_oos(np.array([]), np.array([]), 0)
+        return aggregate_oos(np.array([]), np.array([]), 0)
 
     x_all = df.select([pl.col(col).cast(pl.Float64, strict=False).alias(col) for col in feature_cols]).to_numpy()
     y_all = (df["next_day_return"] > 0).cast(pl.Int64).to_numpy()
@@ -83,13 +78,13 @@ def _score_arm(
     for train_idx, test_idx in folds:
         x_tr, y_tr = x_all[train_idx], y_all[train_idx]
         x_te, y_te = x_all[test_idx], y_all[test_idx]
-        model = build_estimator("xgboost", dict(_DEFAULT_FIT_PARAMS), scale_pos_weight=_scale_pos_weight(y_tr))
+        model = build_estimator("xgboost", dict(DEFAULT_FIT_PARAMS), scale_pos_weight=scale_pos_weight(y_tr))
         fit_estimator(model, x_tr, y_tr, verbose=False)
         proba = model.predict_proba(x_te)[:, 1]
         oos_probs.extend(float(p) for p in proba)
         oos_labels.extend(int(v) for v in y_te)
 
-    return _aggregate_oos(np.asarray(oos_labels), np.asarray(oos_probs), len(folds))
+    return aggregate_oos(np.asarray(oos_labels), np.asarray(oos_probs), len(folds))
 
 
 def _build_ablation_card(

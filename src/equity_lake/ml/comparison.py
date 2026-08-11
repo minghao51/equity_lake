@@ -34,13 +34,13 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import structlog
-from sklearn.metrics import accuracy_score, precision_score
 
 from equity_lake.findings.models import FindingCard, FindingVerdict
 from equity_lake.findings.writer import write_finding_card
+from equity_lake.ml._metrics import DEFAULT_FIT_PARAMS, aggregate_oos, feature_columns, scale_pos_weight
 from equity_lake.ml.backends import DEFAULT_BACKEND, build_estimator, fit_estimator
 from equity_lake.ml.candidates import DEFAULT_BACKTEST_STRATEGY, build_candidate_frame
-from equity_lake.ml.forecasting import DEFAULT_V2_SETTINGS, NON_FEATURE_COLUMNS
+from equity_lake.ml.forecasting import DEFAULT_V2_SETTINGS
 from equity_lake.ml.labeling import apply_triple_barrier_labels
 from equity_lake.ml.validation import PurgedEmbargoedWalkForwardSplitter
 
@@ -51,35 +51,8 @@ ModeBackendMetrics = dict[str, dict[str, dict[str, float]]]
 #: mode -> backend -> feature_importances_
 ModeBackendImportances = dict[str, dict[str, list[float]]]
 
-#: Columns that must never be fed to a model as features. Extends
-#: ``NON_FEATURE_COLUMNS`` with the v1 target (``target``) and the triple-barrier
-#: bookkeeping columns (``barrier_start_idx`` / ``barrier_end_idx``) so the OOS
-#: metrics below are honest — these encode the label or the evaluation window.
-_EXCLUDE_COLUMNS: frozenset[str] = frozenset(
-    NON_FEATURE_COLUMNS | {"target", "barrier_start_idx", "barrier_end_idx"},
-)
-
 #: Margin (in metric units) below which two scores are considered tied.
 _EPS: float = 0.01
-
-#: Canonical (XGBoost-style) params reused for every fold; ``build_estimator``
-#: normalizes per backend. Kept modest so the harness is fast on small frames.
-_DEFAULT_FIT_PARAMS: dict[str, object] = {
-    "max_depth": 3,
-    "learning_rate": 0.1,
-    "n_estimators": 50,
-    "subsample": 0.9,
-    "colsample_bytree": 0.9,
-    "objective": "binary:logistic",
-    "eval_metric": "logloss",
-    "random_state": 42,
-    "n_jobs": -1,
-}
-
-
-def _feature_columns(df: pl.DataFrame) -> list[str]:
-    """Return model feature columns, excluding labels/identifiers/bookkeeping."""
-    return [col for col in df.columns if col not in _EXCLUDE_COLUMNS]
 
 
 def _prepare_training_frame(features: pl.DataFrame, mode: str) -> pl.DataFrame:
@@ -118,14 +91,6 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(rank_a, rank_b) / denom)
 
 
-def _scale_pos_weight(y_train: np.ndarray) -> float:
-    pos = int((y_train == 1).sum())
-    neg = int((y_train == 0).sum())
-    if pos <= 0 or neg <= 0:
-        return 1.0
-    return float(neg) / float(pos)
-
-
 def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
     """Pick the per-ticker card scope value.
 
@@ -141,29 +106,6 @@ def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
     return ""
 
 
-def _aggregate_oos(labels: np.ndarray, probs: np.ndarray, folds: int) -> dict[str, float]:
-    """Pool per-fold OOS predictions into accuracy/precision/Brier metrics."""
-    n = int(labels.size)
-    if n == 0:
-        return {
-            "oos_accuracy": 0.0,
-            "oos_precision": 0.0,
-            "oos_brier": 0.0,
-            "oos_mean_prob": 0.0,
-            "folds": 0.0,
-            "n_oos": 0.0,
-        }
-    preds = (probs >= 0.5).astype(int)
-    return {
-        "oos_accuracy": float(accuracy_score(labels, preds)),
-        "oos_precision": float(precision_score(labels, preds, zero_division=0)),
-        "oos_brier": float(np.mean((probs - labels) ** 2)),
-        "oos_mean_prob": float(probs.mean()),
-        "folds": float(folds),
-        "n_oos": float(n),
-    }
-
-
 def _score_mode(
     df: pl.DataFrame,
     target_column: str,
@@ -174,12 +116,12 @@ def _score_mode(
     """Train per-fold per-backend models; return pooled OOS metrics + importances.
 
     Returns ``(backend_metrics, backend_importances)`` where importances (aligned
-    to ``_feature_columns(df)``) are taken from each backend's final fold model
+    to ``feature_columns(df)``) are taken from each backend's final fold model
     and feed the backend agreement metric.
     """
     clean = df.filter(pl.col(target_column).is_not_null())
-    feature_cols = _feature_columns(clean)
-    empty_metrics = _aggregate_oos(np.array([]), np.array([]), 0)
+    feature_cols = feature_columns(clean)
+    empty_metrics = aggregate_oos(np.array([]), np.array([]), 0)
     if not feature_cols or clean.is_empty():
         return {backend: dict(empty_metrics) for backend in backends}, {backend: [] for backend in backends}
 
@@ -196,7 +138,7 @@ def _score_mode(
         for train_idx, test_idx in folds:
             x_tr, y_tr = x_all[train_idx], y_all[train_idx]
             x_te, y_te = x_all[test_idx], y_all[test_idx]
-            model = build_estimator(backend, dict(_DEFAULT_FIT_PARAMS), scale_pos_weight=_scale_pos_weight(y_tr))
+            model = build_estimator(backend, dict(DEFAULT_FIT_PARAMS), scale_pos_weight=scale_pos_weight(y_tr))
             fit_estimator(model, x_tr, y_tr, verbose=False)
             proba = model.predict_proba(x_te)[:, 1]
             oos_probs.extend(float(p) for p in proba)
@@ -205,7 +147,7 @@ def _score_mode(
             if importances is not None:
                 last_importances = [float(v) for v in np.asarray(importances).ravel()]
 
-        backend_metrics[backend] = _aggregate_oos(np.asarray(oos_labels), np.asarray(oos_probs), len(folds))
+        backend_metrics[backend] = aggregate_oos(np.asarray(oos_labels), np.asarray(oos_probs), len(folds))
         backend_importances[backend] = last_importances
     return backend_metrics, backend_importances
 
