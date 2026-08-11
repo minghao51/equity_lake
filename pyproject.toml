@@ -51,6 +51,8 @@ dependencies = [
     "scikit-learn>=1.8.0",
     "readability-lxml>=0.8.1",
     "edgartools>=5.36.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
 
 [dependency-groups]
@@ -257,6 +259,8 @@ module = [
     "exchange_calendars.*",
     "edgar",
     "edgar.*",
+    "fastapi.*",
+    "uvicorn.*",
 ]
 ignore_missing_imports = true
 
