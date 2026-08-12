@@ -1,8 +1,7 @@
 # Phase 2C (RAG agent) execution handoff — providers locked, corpus + key gated
 
 **Date:** 2026-08-11 · **Workstream:** 2C (of Phase 2) · **Status:** 2A + 2B
-complete & verified on `main`; 2C scoped, provider-decision locked, pending a
-silver corpus + an OpenRouter key before real execution
+complete & verified on `main`; 2C scoped — **provider + dim decisions confirmed & OpenRouter keyed (2026-08-11)**; only the **silver corpus** remains before real execution (seeding plan in §4.1)
 **Companion (read first):**
 [`20260810-phase2a-review-handoff.md`](./20260810-phase2a-review-handoff.md) and
 [`20260805-phase2-handoff.md`](./20260805-phase2-handoff.md) §5 (the 2B/2C
@@ -119,7 +118,7 @@ that way. Verified facts (OpenRouter + Qwen docs, 2026-08-11):
 4. Add module constants:
    `OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"`,
    `EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"`,
-   `EMBEDDING_DIM = 1024` (see §5 — dim is an open decision).
+   `EMBEDDING_DIM = 1024` (**DECIDED 2026-08-11** — MRL-truncated, lean index).
    Caveat to verify at impl: if OpenRouter does **not** forward `dimensions`
    to the model, fall back to native 4096 (store full vectors, or truncate
    client-side). Confirm with one probe call before locking the sqlite-vec
@@ -171,22 +170,36 @@ before finalizing chunk size / overlap).
 - [ ] `sqlite-vec` in a new `agent` group; lazy-imported; mypy override (§3c).
 - [ ] B8 factories in `llm_base.py`; `BaseLLMBatchProcessor` refactored to use
       `build_chat_client()` (§3a).
-- [ ] `.env.example` `OPENROUTER_API_KEY=` (done) + key in `.env`.
+- [x] `.env.example` `OPENROUTER_API_KEY=` + key in `.env` (both done 2026-08-11).
 - [ ] RAG eval (§4) green before any UI/dashboard exposure.
 
 ---
 
 ## 4. Blockers gating *real* 2C execution (independent of the provider choice)
 
-1. **Empty corpus.** `02_silver/processed_articles` and `sec_extractions` have
-   **0 parquet files**. There is nothing to embed yet. Seed them first via the
-   ingestion pipeline, e.g. `dotenvx run -- uv run equity news` (news +
-   sentiment → silver) and the SEC path (`equity intelligence sec` /
-   `equity intelligence financials`); confirm parquet lands in the two silver
-   dirs before building the index.
-2. **`OPENROUTER_API_KEY` + cost OK.** Real embeddings (OpenRouter) and real
-   chat (DeepSeek) cost tokens. Get the user's go-ahead + the key before any
-   live indexing/eval run.
+1. **Empty corpus — seeding plan (confirmed 2026-08-11).**
+   `02_silver/processed_articles` and `sec_extractions` have **0 parquet**.
+   Both are produced by **DeepSeek bronze→silver enrichment** of
+   `bronze/raw_articles` (all keys present: `DEEPSEEK_API_KEY`, `SEC_USER_AGENT`,
+   `FINNHUB_API_KEY`):
+
+   | Corpus table | Producer | Trigger |
+   |---|---|---|
+   | `sec_extractions` | `sec_processor.process_sec_bronze_to_silver` | `equity sec --tickers <demo> --lookback <days> --process` (fetch EDGAR→bronze **and** enrich→silver in one command) |
+   | `processed_articles` | `bronze_silver.process_bronze_to_silver` | fetch transcripts→bronze (`equity transcripts --tickers <demo>`), then enrich via `equity pipeline --markets us_earnings_transcripts` (gate at `pipeline.py:122`) |
+
+   Small-scope first run (control DeepSeek cost), then verify + scale:
+   ```bash
+   dotenvx run -- uv run equity sec --tickers AAPL,MSFT,GOOGL --lookback 180 --process
+   dotenvx run -- uv run equity transcripts --tickers AAPL,MSFT,GOOGL
+   dotenvx run -- uv run equity pipeline --markets us_earnings_transcripts
+   ```
+   Verify: `ls data/lake/02_silver/{sec_extractions,processed_articles}/` + DuckDB
+   row counts. Expand scope after confirming the silver schema — the `index.py`
+   chunker is designed against the real columns (the one design item still open).
+2. **`OPENROUTER_API_KEY` — RESOLVED (2026-08-11):** key added to `.env`.
+   (Cost awareness stands: real OpenRouter embeddings + DeepSeek chat spend
+   tokens — still scope-limit the first index/eval runs.)
 3. **The RAG eval is non-negotiable** (parent §5): retrieval + generation must
    hit **target accuracy AND a citation rate threshold**, and **refuse with a
    citation when no evidence clears the threshold**. `agent/eval.py` must be
@@ -194,26 +207,23 @@ before finalizing chunk size / overlap).
 
 ---
 
-## 5. Open decisions — need user input before/during execution
+## 5. Decisions (confirmed 2026-08-11)
 
-1. **Embedding dimension.** Pin `EMBEDDING_DIM` to **1024** (MRL, lean index,
-   fast KNN — recommended for a small article corpus) or full **4096** (max
-   retrieval quality). It is a one-line constant but locks the sqlite-vec
-   column width, so decide before the first real index build.
-2. **Sequencing.** Two paths:
-   - **(a) Key- & corpus-light scaffolding first** (recommended): ship §3a + §3b
-     + §3c + §3d skeleton with **mocked** clients (unit-tested, zero token
-     spend, fully green/committable). Locks the provider decision and the
-     package shape. Real index + eval follow once corpus + key exist.
-   - **(b) Wait** for the corpus + key, then build end-to-end in one pass.
-3. **Chunking strategy** (chunk size / overlap / per-source) — finalize against
-   a *populated* silver frame; do not guess.
+1. **Embedding dimension — DECIDED: `EMBEDDING_DIM = 1024`** (MRL-truncated,
+   lean index). Locks the sqlite-vec column width. (Still probe one real call to
+   confirm OpenRouter honors `dimensions` — §3a-4 caveat.)
+2. **Sequencing — DECIDED: proceed** (not wait). `OPENROUTER_API_KEY` is set,
+   so real embedding calls are possible the moment the corpus exists.
+3. **OPEN** — chunking strategy (chunk size / overlap / per-source): finalize
+   against a *populated* silver frame (post-seed); do not guess.
 
 ---
 
 ## 6. Suggested sequencing for the next thread
 
-1. **Confirm §5 decisions** with the user (dim; scaffolding-first vs wait).
+1. **Decisions are confirmed** (dim=1024, proceed, OpenRouter keyed). First
+   task: **seed the corpus** per §4.1 (small scope, verify the silver schema),
+   then design the chunker against the real columns.
 2. **(If scaffolding-first)** Implement §3a (B8 factories + refactor),
    §3c (sqlite-vec group + mypy), §3d (`agent/` skeleton + boundary),
    `agent/index.py` + `agent/eval.py` with **mocked** clients; full gate green;
