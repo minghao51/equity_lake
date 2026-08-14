@@ -31,6 +31,37 @@ from equity_lake.core.retry import build_retry_decorator
 logger = structlog.get_logger()
 
 
+# ---------------------------------------------------------------------------
+# LLM provider clients — the OpenAI SDK pointed at DeepSeek / OpenRouter via
+# base_url. Keys stay raw/unprefixed and are read via os.getenv at this seam
+# only (never declared in Settings), matching FRED_API_KEY / WANDB_API_KEY.
+# ---------------------------------------------------------------------------
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
+EMBEDDING_DIM = 1024
+
+
+def build_chat_client() -> AsyncOpenAI:
+    """DeepSeek chat-completions client (OpenAI-compatible)."""
+    api_key = os.getenv("DEEPSEEK_API_KEY")
+    if not api_key:
+        raise ValueError("DEEPSEEK_API_KEY not set")
+    return AsyncOpenAI(api_key=api_key, base_url=DEEPSEEK_BASE_URL)
+
+
+def build_embedding_client() -> AsyncOpenAI:
+    """OpenRouter embeddings client (OpenAI-compatible) for the Phase 2C RAG index.
+
+    Embeddings are MRL-truncatable via the ``dimensions`` param; the vec column
+    width is locked at ``EMBEDDING_DIM`` (probed against OpenRouter).
+    """
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if not api_key:
+        raise ValueError("OPENROUTER_API_KEY not set")
+    return AsyncOpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+
+
 class RetryableError(Exception):
     """Raised when DeepSeek returns empty content or invalid JSON."""
 
@@ -56,11 +87,7 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
         model: str = "deepseek-v4-flash",
         max_body_chars: int = 2000,
     ):
-        api_key = os.getenv("DEEPSEEK_API_KEY")
-        if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY not set")
-
-        self.client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        self.client = build_chat_client()
         self.model = model
         self.batch_size = batch_size
         self.semaphore = asyncio.Semaphore(max_concurrency)
@@ -155,4 +182,13 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
         """Convert extractions to a silver Polars DataFrame."""
 
 
-__all__ = ["BaseLLMBatchProcessor", "RetryableError"]
+__all__ = [
+    "BaseLLMBatchProcessor",
+    "DEEPSEEK_BASE_URL",
+    "EMBEDDING_DIM",
+    "EMBEDDING_MODEL",
+    "OPENROUTER_BASE_URL",
+    "RetryableError",
+    "build_chat_client",
+    "build_embedding_client",
+]
