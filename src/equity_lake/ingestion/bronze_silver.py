@@ -73,6 +73,7 @@ def process_unstructured_to_silver(
     trading_date: date,
     *,
     source_type_filter: str | None,
+    exclude_source_types: list[str] | None = None,
     process_fn: Callable[[pl.DataFrame], pl.DataFrame],
     silver_path: Path,
     silver_table_name: str,
@@ -97,10 +98,16 @@ def process_unstructured_to_silver(
     Returns:
         True if silver write succeeded, False otherwise.
     """
-    bronze_df = read_bronze(trading_date)
+    bronze_df = read_bronze()
     if bronze_df.is_empty():
         logger.warning(f"No bronze {log_label}s to process", trading_date=str(trading_date))
         return False
+
+    # SEC filings have a dedicated processor + silver table (sec_extractions);
+    # never route them through the generic article processor. The single-day
+    # filter used to hide them, but backfilled historical corpus coexists in bronze.
+    if exclude_source_types and "source_type" in bronze_df.columns:
+        bronze_df = bronze_df.filter(~pl.col("source_type").is_in(exclude_source_types))
 
     if source_type_filter and "source_type" in bronze_df.columns:
         bronze_df = bronze_df.filter(pl.col("source_type") == source_type_filter)
@@ -149,7 +156,11 @@ def _write_silver_generic(df: pl.DataFrame, table_name: str, key_columns: list[s
 
 
 def _get_processed_ids(silver_path: Path, trading_date: date) -> set[str]:
-    """Return article_ids already present in the given silver table for the date."""
+    """Return article_ids already present in the given silver table.
+
+    ``trading_date`` is retained for caller compatibility but no longer filters
+    the scan: dedup is global so backfilled historical rows are never reprocessed.
+    """
     try:
         import duckdb
 
@@ -160,8 +171,7 @@ def _get_processed_ids(silver_path: Path, trading_date: date) -> set[str]:
         try:
             con.execute("INSTALL delta; LOAD delta;")
             rows = con.execute(
-                f"SELECT DISTINCT article_id FROM {scan} WHERE date = ?",
-                [trading_date],
+                f"SELECT DISTINCT article_id FROM {scan}",
             ).fetchall()
         finally:
             con.close()
@@ -188,6 +198,7 @@ def process_bronze_to_silver(trading_date: date) -> bool:
     return process_unstructured_to_silver(
         trading_date,
         source_type_filter=None,
+        exclude_source_types=["sec_filing"],
         process_fn=run_llm_processing,
         silver_path=SILVER_PROCESSED_ARTICLES_DIR,
         silver_table_name="02_silver/processed_articles",

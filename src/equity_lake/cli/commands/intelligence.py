@@ -283,7 +283,7 @@ def sec_filings(
 
     if not dry_run:
         with timer("write_bronze"):
-            upsert_dataset(df, "bronze/raw_articles", trading_date)
+            upsert_dataset(df, "01_bronze/raw_articles", trading_date)
 
     if process_silver and not dry_run:
         typer.echo("Processing SEC bronze to silver...")
@@ -335,7 +335,7 @@ def transcripts(
 
     if not dry_run:
         with timer("write_bronze"):
-            upsert_dataset(df, "bronze/raw_articles", trading_date)
+            upsert_dataset(df, "01_bronze/raw_articles", trading_date)
 
     typer.secho("Transcript ingestion complete", fg=typer.colors.GREEN)
 
