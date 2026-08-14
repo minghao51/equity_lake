@@ -42,6 +42,7 @@ nav:
       - Signals: user-guide/signals.md
       - ML Rigor: user-guide/20260810-ml-rigor.md
       - REST API: user-guide/20260811-read-api.md
+      - RAG Corpus Seeding: user-guide/20260813-rag-corpus-seeding.md
       - Dashboard Hosting: user-guide/20260406-dashboard-hosting.md
   - Developer:
       - Architecture: developer/architecture/ARCHITECTURE.md
