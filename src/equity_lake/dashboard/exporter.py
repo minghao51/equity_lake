@@ -162,6 +162,9 @@ class DashboardExporter:
     def _load_health_report(self) -> dict[str, Any] | None:
         health_path = self.output_dir / "health-report.json"
         if not health_path.exists():
+            # Fall back to the canonical monitor output path.
+            health_path = LOGS_DIR / "health-report.json"
+        if not health_path.exists():
             return None
         try:
             return cast(dict[str, Any], json.loads(health_path.read_text(encoding="utf-8")))

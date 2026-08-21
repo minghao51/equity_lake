@@ -37,6 +37,14 @@ __all__ = [
 logger = structlog.get_logger()
 
 
+def _optional_market_outcome(market: str, error: str) -> SourceOutcome:
+    """Empty or failed optional enrichments are skipped (not failed) so they do
+    not fail the whole run. Required price markets stay FAILED on empty/failure."""
+    if market in OPTIONAL_ENRICHMENT_MARKETS:
+        return SourceOutcome(SourceStatus.SKIPPED_EXISTING, error=error)
+    return SourceOutcome(SourceStatus.FAILED, error=error)
+
+
 def _market_has_date(market_dir: str, trading_date: date, con: duckdb.DuckDBPyConnection | None = None) -> bool:
     """Cheap row-count existence check (does NOT validate schema).
 
@@ -215,13 +223,13 @@ def run_daily_ingestion(
 
                 if not fetch_result.success:
                     logger.error(f"{market} fetch failed: {fetch_result.error}", duration_seconds=fetch_result.duration_seconds)
-                    results[market] = SourceOutcome(SourceStatus.FAILED, error=str(fetch_result.error))
+                    results[market] = _optional_market_outcome(market, str(fetch_result.error))
                     continue
 
                 df = fetch_result.data
                 if frame_is_empty(df):
                     logger.warning(f"No data fetched for {market}, skipping")
-                    results[market] = SourceOutcome(SourceStatus.FAILED, error="empty_frame")
+                    results[market] = _optional_market_outcome(market, "empty_frame")
                     continue
 
                 results[market] = (
@@ -263,7 +271,7 @@ def run_daily_ingestion(
 
                 if frame_is_empty(df):
                     logger.warning(f"No data fetched for {market}, skipping")
-                    results[market] = SourceOutcome(SourceStatus.FAILED, error="empty_frame")
+                    results[market] = _optional_market_outcome(market, "empty_frame")
                     continue
 
                 results[market] = (
@@ -274,6 +282,6 @@ def run_daily_ingestion(
 
             except Exception as e:
                 logger.error(f"Error processing {market}: {e}")
-                results[market] = SourceOutcome(SourceStatus.FAILED, error=str(e))
+                results[market] = _optional_market_outcome(market, str(e))
 
     return results

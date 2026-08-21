@@ -193,11 +193,12 @@ class FinnhubNewsFetcher(MarketDataFetcher):
                 params=params,
                 timeout=10,
             )
+            response.raise_for_status()
         except Exception as exc:
             logger.error("API request failed for %s: %s", ticker, exc)
             return []
 
-        data = response.json() if hasattr(response, "json") else []
+        data = response.json()
 
         if not isinstance(data, list):
             logger.warning("Unexpected response format for %s: %s", ticker, type(data))

@@ -34,6 +34,29 @@ def _make_training_frame(ticker: str, periods: int = 80) -> pd.DataFrame:
     )
 
 
+def test_get_feature_columns_excludes_labels_and_barriers() -> None:
+    """Feature columns must never include the label or triple-barrier bookkeeping.
+
+    Regression test for a label-leakage bug where ``NON_FEATURE_COLUMNS`` omitted
+    ``target`` / ``barrier_start_idx`` / ``barrier_end_idx``, causing the model to
+    train on its own labels.
+    """
+    frame = _make_training_frame("AAPL")
+    frame["target"] = 1
+    frame["barrier_start_idx"] = 0
+    frame["barrier_end_idx"] = 5
+
+    forecaster = PriceForecaster(model_dir="/tmp")
+    features = forecaster._get_feature_columns(frame)
+
+    assert "target" not in features
+    assert "barrier_start_idx" not in features
+    assert "barrier_end_idx" not in features
+    # Genuine features must still be selected.
+    assert "rsi_14" in features
+    assert "macd" in features
+
+
 def test_resolve_model_path_uses_latest_model_not_after_target_date(tmp_path) -> None:
     """Historical inference should not pick a model trained in the future."""
     forecaster = PriceForecaster(model_dir=str(tmp_path))

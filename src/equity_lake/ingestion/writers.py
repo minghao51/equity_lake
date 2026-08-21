@@ -7,9 +7,7 @@ and does not create standalone Parquet files.
 """
 
 from datetime import date
-from typing import Any
 
-import polars as pl
 import structlog
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
@@ -137,62 +135,8 @@ def validate_schema(df: FrameLike, market: str) -> bool:
     return True
 
 
-def validate_news_data_quality(df: FrameLike) -> dict[str, Any]:
-    """
-    Validate news data quality and return quality metrics.
-
-    Args:
-        df: News DataFrame to validate
-
-    Returns:
-        Dictionary with quality metrics.
-    """
-    df_pl = ensure_polars(df)
-    metrics: dict[str, Any] = {
-        "total_rows": df_pl.height,
-        "missing_headlines": 0,
-        "missing_urls": 0,
-        "invalid_dates": 0,
-        "duplicate_urls": 0,
-        "sentiment_distribution": {},
-        "date_range": None,
-    }
-
-    if df_pl.is_empty():
-        logger.warning("Empty DataFrame provided for quality validation")
-        return metrics
-
-    if "headline" in df_pl.columns:
-        metrics["missing_headlines"] = df_pl.select(pl.col("headline").null_count()).item()
-
-    if "url" in df_pl.columns:
-        metrics["missing_urls"] = df_pl.select(pl.col("url").null_count()).item()
-        metrics["duplicate_urls"] = df_pl.select(pl.col("url").is_duplicated().sum()).item()
-
-    if "date" in df_pl.columns:
-        metrics["date_range"] = {
-            "min": str(df_pl.select(pl.col("date").min()).item()),
-            "max": str(df_pl.select(pl.col("date").max()).item()),
-        }
-
-    if "sentiment_label" in df_pl.columns:
-        counts = df_pl.group_by("sentiment_label").agg(pl.len().alias("count")).rows(named=True)
-        metrics["sentiment_distribution"] = {row["sentiment_label"]: row["count"] for row in counts}
-
-    logger.info(
-        "News data quality: %s rows, %s missing headlines, %s missing URLs, %s duplicate URLs",
-        metrics["total_rows"],
-        metrics["missing_headlines"],
-        metrics["missing_urls"],
-        metrics["duplicate_urls"],
-    )
-
-    return metrics
-
-
 __all__ = [
     "validate_schema",
-    "validate_news_data_quality",
     "upsert_dataset",
 ]
 

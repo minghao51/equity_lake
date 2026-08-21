@@ -13,15 +13,4 @@ def build_dashboard(output_dir: Path | None = None) -> Any:
     return _build_dashboard(output_dir=output_dir)
 
 
-class DashboardExporter:  # pragma: no cover - lazy proxy
-    """Lazy proxy for the concrete exporter implementation."""
-
-    def __new__(cls, *args: Any, **kwargs: Any) -> Any:
-        from equity_lake.dashboard.exporter import (
-            DashboardExporter as _DashboardExporter,
-        )
-
-        return _DashboardExporter(*args, **kwargs)
-
-
-__all__ = ["DashboardExporter", "build_dashboard"]
+__all__ = ["build_dashboard"]

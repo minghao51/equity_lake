@@ -21,6 +21,8 @@ from equity_lake.ml import run_prediction_job
 
 logger = structlog.get_logger()
 
+HISTORY_BACKFILL_WINDOW_DAYS = 120
+
 
 def _backfill_feature_history(
     trading_date: date,
@@ -30,7 +32,7 @@ def _backfill_feature_history(
     dry_run: bool = False,
     explicit_tickers: list[str] | None = None,
 ) -> int:
-    start_date = trading_date - timedelta(days=120)
+    start_date = trading_date - timedelta(days=HISTORY_BACKFILL_WINDOW_DAYS)
     return backfill_date_range(
         start_date=start_date,
         end_date=trading_date,
@@ -64,19 +66,20 @@ def execute_eod_pipeline(
     skip_ingestion: bool = False,
     skip_features: bool = False,
     skip_ml: bool = False,
-    ticker_config: Any = None,
+    ticker_config: TickerConfig | None = None,
     filters: dict[str, Any] | None = None,
     explicit_tickers: list[str] | None = None,
     allow_history_backfill: bool = False,
 ) -> dict[str, Any]:
-    """Execute the full EOD pipeline: ingestion -> features -> ML.
-
-    This replaces PipelineOrchestrator.run_pipeline().
-    """
+    """Execute the full EOD pipeline: ingestion -> features -> ML."""
     settings = get_settings()
     ticker_config = ticker_config or TickerConfig()
     markets = markets or list(settings.ingestion.default_markets)
-    tickers = tickers or ticker_config.get_tickers_for_market("us", active_only=True)[:10]
+    tickers = tickers or [
+        t
+        for m in markets
+        for t in ticker_config.get_tickers_for_market(m, active_only=True)
+    ][:10]
 
     results: dict[str, Any] = {}
     feature_output_tickers = tickers
@@ -88,7 +91,7 @@ def execute_eod_pipeline(
         results["ingestion"] = _stage(True, skipped=True, reason="dry_run", markets={})
     elif skip_ingestion:
         results["ingestion"] = _stage(True, skipped=True, reason="skip_ingestion")
-    elif not skip_ingestion:
+    else:
         ingestion_results = run_daily_ingestion(
             trading_date=trading_date,
             markets=markets,
@@ -189,7 +192,7 @@ def execute_eod_pipeline(
                     logger.error("feature_history_backfill_not_authorized", markets=markets, tickers=tickers)
                 else:
                     price_markets = sorted(m for m in markets if m in REQUIRED_PRICE_MARKETS)
-                    start_date = trading_date - timedelta(days=120)
+                    start_date = trading_date - timedelta(days=HISTORY_BACKFILL_WINDOW_DAYS)
                     logger.warning(
                         "feature_history_backfill_authorized",
                         start_date=str(start_date),
@@ -206,7 +209,7 @@ def execute_eod_pipeline(
                             price_markets,
                             ticker_config,
                             dry_run=dry_run,
-                            explicit_tickers=tickers,
+                            explicit_tickers=explicit_tickers,
                         )
                         backfill_ok = True
                     except Exception as backfill_exc:

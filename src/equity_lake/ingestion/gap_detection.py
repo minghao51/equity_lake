@@ -20,18 +20,6 @@ from equity_lake.core.paths import LAKE_DIR
 
 logger = structlog.get_logger(__name__)
 
-_MARKET_DIR_MAP = {
-    "us_equity": "us_equity",
-    "cn_ashare": "cn_ashare",
-    "hk_sg_equity": "hk_sg_equity",
-    "jpx_equity": "jpx_equity",
-    "krx_equity": "krx_equity",
-}
-
-
-def _market_calendar_key(market_dir: str) -> str:
-    return _MARKET_DIR_MAP.get(market_dir, market_dir)
-
 
 class GapDetector:
     """Detect gaps in time series data using DuckDB.
@@ -113,7 +101,8 @@ class GapDetector:
     ) -> list[tuple[str, date]]:
         scan = self._scan_source(market)
         if business_days_only:
-            trading_dates = trading_days_between(market, start_date, end_date)
+            calendar_key = market.rsplit("/", 1)[-1]
+            trading_dates = trading_days_between(calendar_key, start_date, end_date)
             if not trading_dates:
                 return []
             placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
@@ -152,7 +141,8 @@ class GapDetector:
     ) -> list[tuple[str, date]]:
         scan = self._scan_source(market)
         if business_days_only:
-            trading_dates = trading_days_between(market, start_date, end_date)
+            calendar_key = market.rsplit("/", 1)[-1]
+            trading_dates = trading_days_between(calendar_key, start_date, end_date)
             if not trading_dates:
                 return []
             placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
@@ -210,7 +200,8 @@ class GapDetector:
         if start_date is None:
             start_date = end_date - timedelta(days=90)
 
-        expected_days = self._count_trading_days(market, start_date, end_date) if business_days_only else (end_date - start_date).days + 1
+        calendar_key = market.rsplit("/", 1)[-1]
+        expected_days = self._count_trading_days(calendar_key, start_date, end_date) if business_days_only else (end_date - start_date).days + 1
 
         scan = self._scan_source(market)
         query = f"""

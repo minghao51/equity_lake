@@ -52,6 +52,9 @@ NON_FEATURE_COLUMNS = {
     "upper_barrier_return",
     "lower_barrier_return",
     "vertical_barrier_days",
+    "target",
+    "barrier_start_idx",
+    "barrier_end_idx",
 }
 DEFAULT_V2_SETTINGS = {
     "vertical_barrier_days": 5,

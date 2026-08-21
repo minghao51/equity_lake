@@ -6,21 +6,16 @@ from typing import Any, Self, cast
 import duckdb
 import polars as pl
 import structlog
-from joblib import Memory
 
 from equity_lake.core.paths import (
     CN_ASHARE_DIR,
     HK_SG_EQUITY_DIR,
     JPX_EQUITY_DIR,
     KRX_EQUITY_DIR,
-    LOGS_DIR,
     US_EQUITY_DIR,
 )
 
 logger = structlog.get_logger(__name__)
-
-CACHE_DIR = LOGS_DIR / "backtest_cache"
-memory = Memory(CACHE_DIR, verbose=0)
 
 
 class BacktestDataLoader:
@@ -45,7 +40,6 @@ class BacktestDataLoader:
         logger.info(
             "BacktestDataLoader initialized",
             cache_enabled=cache_enabled,
-            cache_dir=str(CACHE_DIR) if cache_enabled else None,
         )
 
     def _setup_views(self) -> None:
@@ -222,94 +216,6 @@ class BacktestDataLoader:
 
         return data
 
-    @memory.cache  # type: ignore[untyped-decorator]
-    def load_cached(
-        self,
-        tickers: tuple[str, ...],
-        start_date: str,
-        end_date: str,
-        markets: tuple[str, ...],
-        columns: tuple[str, ...],
-    ) -> pl.DataFrame:
-        return self.load(
-            tickers=list(tickers),
-            start_date=date.fromisoformat(start_date),
-            end_date=date.fromisoformat(end_date),
-            markets=list(markets),
-            columns=list(columns),
-        )
-
-    def get_available_tickers(
-        self,
-        market: str,
-        as_of_date: date | None = None,
-    ) -> list[str]:
-        view_name = f"backtest_{market}"
-
-        if as_of_date:
-            sql = f"""
-            SELECT DISTINCT ticker
-            FROM {view_name}
-            WHERE date = $1
-            ORDER BY ticker
-            """
-            params = [as_of_date]
-        else:
-            sql = f"""
-            SELECT DISTINCT ticker
-            FROM {view_name}
-            ORDER BY ticker
-            """
-            params = []
-
-        try:
-            rows = self.conn.execute(sql, params).fetchall()
-            return [row[0] for row in rows]
-        except Exception as e:
-            logger.error("Failed to get tickers", market=market, error=str(e))
-            return []
-
-    def get_date_range(
-        self,
-        market: str,
-        ticker: str | None = None,
-    ) -> tuple[date | None, date | None]:
-        view_name = f"backtest_{market}"
-
-        if ticker:
-            sql = f"""
-            SELECT
-                MIN(date) as min_date,
-                MAX(date) as max_date
-            FROM {view_name}
-            WHERE ticker = $1
-            """
-            params = [ticker]
-        else:
-            sql = f"""
-            SELECT
-                MIN(date) as min_date,
-                MAX(date) as max_date
-            FROM {view_name}
-            """
-            params = []
-
-        try:
-            row = self.conn.execute(sql, params).fetchone()
-            if row and row[0] is not None:
-                return (
-                    date.fromisoformat(str(row[0])),
-                    date.fromisoformat(str(row[1])),
-                )
-        except Exception as e:
-            logger.error("Failed to get date range", market=market, error=str(e))
-
-        return (None, None)
-
-    def clear_cache(self) -> None:
-        memory.clear()
-        logger.info("Cache cleared")
-
     def close(self) -> None:
         self.conn.close()
         logger.debug("DuckDB connection closed")
@@ -323,5 +229,4 @@ class BacktestDataLoader:
 
 __all__ = [
     "BacktestDataLoader",
-    "CACHE_DIR",
 ]

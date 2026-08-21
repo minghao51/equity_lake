@@ -8,6 +8,7 @@ from typing import Annotated
 import typer
 
 from equity_lake.cli._app import _init_logging, app
+from equity_lake.core.paths import LOGS_DIR
 
 
 @app.command("backtest")
@@ -83,7 +84,7 @@ def query(
 def monitor(
     max_age_days: Annotated[int | None, typer.Option("--max-age-days", help="Max data age (default: from settings)")] = None,
     null_threshold: Annotated[float | None, typer.Option("--null-threshold", help="Null % threshold (default: from settings)")] = None,
-    output_json: Annotated[str | None, typer.Option("--output-json", help="Save full report (alerts + metrics + timestamp)")] = None,
+    output_json: Annotated[str | None, typer.Option("--output-json", help="Save full report. Defaults to logs/health-report.json")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Monitor pipeline health and data quality."""
@@ -100,7 +101,7 @@ def monitor(
         verbose=verbose,
     )
     monitor_inst.run_health_check()
-    if output_json:
-        # save_report serializes {alerts, metrics, timestamp} — the full report,
-        # parity with the legacy argparse entrypoint.
-        monitor_inst.save_report(Path(output_json))
+    # Always persist to the canonical location so dashboards can render it.
+    # --output-json overrides the default logs/health-report.json path.
+    output_path = Path(output_json) if output_json is not None else LOGS_DIR / "health-report.json"
+    monitor_inst.save_report(output_path)

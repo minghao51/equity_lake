@@ -23,7 +23,6 @@ from __future__ import annotations
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-BASE_DIR = PROJECT_ROOT
 CONFIG_DIR = PROJECT_ROOT / "config"
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -59,7 +58,6 @@ SILVER_SOCIAL_SENTIMENT_DIR = SILVER_DIR / "social_sentiment"
 SILVER_PROCESSED_ARTICLES_DIR = SILVER_DIR / "processed_articles"
 SILVER_SEC_EXTRACTIONS_DIR = SILVER_DIR / "sec_extractions"
 SILVER_ANALYST_RATINGS_DIR = SILVER_DIR / "analyst_ratings"
-SILVER_SEC_FINANCIALS_DIR = SILVER_DIR / "sec_financials"
 
 # ---------------------------------------------------------------------------
 # Gold layer (03_gold/) — feature engineering output
@@ -69,13 +67,11 @@ GOLD_FEATURES_DIR = GOLD_DIR / "features"
 # ---------------------------------------------------------------------------
 # Platinum layer (04_platinum/) — ML predictions and signals
 # ---------------------------------------------------------------------------
-PLATINUM_PREDICTIONS_DIR = PLATINUM_DIR / "predictions"
 
 # ---------------------------------------------------------------------------
 # Auxiliary tables (outside the medallion lake) — signal history bookkeeping
 # ---------------------------------------------------------------------------
 SIGNALS_DIR = DATA_DIR / "signals"
-UPDATE_HISTORY_DIR = DATA_DIR / "update_history"
 # Research artifacts (FindingCards, backtest & risk reports) — NOT cataloged.
 FINDINGS_DIR = DATA_DIR / "findings"
 
@@ -84,9 +80,7 @@ FINDINGS_DIR = DATA_DIR / "findings"
 # ---------------------------------------------------------------------------
 US_NEWS_DIR = SILVER_NEWS_SENTIMENT_DIR
 US_SOCIAL_SENTIMENT_DIR = SILVER_SOCIAL_SENTIMENT_DIR
-ANALYST_RATINGS_DIR = SILVER_ANALYST_RATINGS_DIR
 SEC_EXTRACTIONS_DIR = SILVER_SEC_EXTRACTIONS_DIR
-SEC_FINANCIALS_DIR = SILVER_SEC_FINANCIALS_DIR
 
 
 def ensure_dirs() -> None:
@@ -99,8 +93,6 @@ def ensure_dirs() -> None:
 
 
 __all__ = [
-    "ANALYST_RATINGS_DIR",
-    "BASE_DIR",
     "BRONZE_DIR",
     "BRONZE_MACRO_DIR",
     "BRONZE_MARKET_DATA_DIR",
@@ -118,19 +110,15 @@ __all__ = [
     "LOGS_DIR",
     "MODELS_DIR",
     "PLATINUM_DIR",
-    "PLATINUM_PREDICTIONS_DIR",
     "PROJECT_ROOT",
     "SEC_EXTRACTIONS_DIR",
-    "SEC_FINANCIALS_DIR",
     "SIGNALS_DIR",
     "SILVER_ANALYST_RATINGS_DIR",
     "SILVER_DIR",
     "SILVER_NEWS_SENTIMENT_DIR",
     "SILVER_PROCESSED_ARTICLES_DIR",
     "SILVER_SEC_EXTRACTIONS_DIR",
-    "SILVER_SEC_FINANCIALS_DIR",
     "SILVER_SOCIAL_SENTIMENT_DIR",
-    "UPDATE_HISTORY_DIR",
     "US_EQUITY_DIR",
     "US_NEWS_DIR",
     "US_SOCIAL_SENTIMENT_DIR",

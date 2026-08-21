@@ -17,7 +17,6 @@ from equity_lake.core.config import TickerConfig
 from equity_lake.core.polars_utils import ensure_polars, normalize_temporal_columns
 from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import STANDARD_COLUMNS
-from equity_lake.sources.macro import MacroIndicatorFetcher
 
 logger = structlog.get_logger()
 
@@ -224,19 +223,25 @@ class MarketDataFetcher:
         @self._retry_decorator
         def _wrapped() -> Any:
             try:
-                return func(*args, **kwargs)
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code >= 500:
-                    raise TransientError(str(exc)) from exc
-                raise
+                result = func(*args, **kwargs)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
                 raise TransientError(str(exc)) from exc
-            except requests.HTTPError as exc:
-                if exc.response is not None and exc.response.status_code >= 500:
-                    raise TransientError(str(exc)) from exc
-                raise
             except (requests.ConnectionError, requests.Timeout) as exc:
                 raise TransientError(str(exc)) from exc
+
+            # Surface retryable HTTP statuses as TransientError so tenacity retries
+            # them: server errors (>=500), 408 Request Timeout, and 429 Too Many
+            # Requests (rate limits from Finnhub/Reddit/SEC). Other 4xx (auth,
+            # not-found) propagate immediately and are not retried.
+            if hasattr(result, "raise_for_status"):
+                try:
+                    result.raise_for_status()
+                except (httpx.HTTPStatusError, requests.HTTPError) as exc:
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status is not None and (status >= 500 or status in (408, 429)):
+                        raise TransientError(str(exc)) from exc
+                    raise
+            return result
 
         return _wrapped()
 
@@ -350,7 +355,6 @@ class YFinanceBaseFetcher(MarketDataFetcher):
 
 
 __all__ = [
-    "MacroIndicatorFetcher",
     "MarketDataFetcher",
     "TransientError",
     "YFinanceBaseFetcher",

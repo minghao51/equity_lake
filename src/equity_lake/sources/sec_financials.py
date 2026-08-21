@@ -17,11 +17,13 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+import httpx
 import polars as pl
+import requests
 import structlog
 
 from equity_lake.core.schemas import SEC_FINANCIAL_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher, _empty_frame
+from equity_lake.sources.base import MarketDataFetcher, TransientError, _empty_frame
 
 logger = structlog.get_logger()
 
@@ -94,6 +96,32 @@ class SECFinancialsFetcher(MarketDataFetcher):
         logger.info("Fetched SEC financials", count=df.height)
         return df
 
+    def _retry_edgar_call(self, fn):
+        """Run an edgar network call through the tenacity retry policy.
+
+        edgar's transient failures (SEC throttling, connection resets) surface as
+        network/timeout exceptions; convert those to ``TransientError`` so they
+        are retried with backoff. Permanent errors (e.g. unknown ticker) propagate
+        unchanged and are skipped per-ticker by the caller.
+        """
+
+        def _attempt():
+            try:
+                return fn()
+            except (
+                requests.ConnectionError,
+                requests.Timeout,
+                httpx.ConnectError,
+                httpx.ReadTimeout,
+                httpx.PoolTimeout,
+                OSError,
+            ) as exc:
+                raise TransientError(str(exc)) from exc
+            except Exception:
+                raise
+
+        return self._retry_on_failure(_attempt)
+
     def _fetch_ticker(
         self,
         ticker: str,
@@ -108,7 +136,7 @@ class SECFinancialsFetcher(MarketDataFetcher):
 
         for form_type in ("10-K", "10-Q"):
             try:
-                filings = company.get_filings(form=form_type)
+                filings = self._retry_edgar_call(lambda form=form_type: company.get_filings(form=form))
                 if not filings:
                     continue
 
