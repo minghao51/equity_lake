@@ -12,12 +12,12 @@ Usage:
     uv run equity query --query top_gainers
 """
 
-import logging
 from pathlib import Path
 from typing import Any, cast
 
 import duckdb
 import polars as pl
+import structlog
 
 from equity_lake.core.paths import (
     CN_ASHARE_DIR,
@@ -28,7 +28,7 @@ from equity_lake.core.paths import (
 )
 from equity_lake.storage.examples import QueryExamples
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 # =============================================================================
@@ -61,7 +61,7 @@ class EquityDataDB:
         if self._views_initialized:
             return
         self._views_initialized = True
-        logger.info("Setting up unified views...")
+        logger.info("Setting up unified views")
         self.con.execute("INSTALL delta; LOAD delta;")
 
         for view_name, data_dir, market_label in self.MARKET_VIEWS:
@@ -83,7 +83,7 @@ class EquityDataDB:
 
     def _create_market_view(self, view_name: str, data_dir: Path, market_label: str) -> None:
         if not data_dir.exists():
-            logger.warning(f"Data directory not found: {data_dir}")
+            logger.warning("Data directory not found", path=str(data_dir))
             return
 
         from equity_lake.storage.lake_reader import duckdb_scan_for
@@ -93,10 +93,10 @@ class EquityDataDB:
 
         try:
             self.con.execute(sql)
-            logger.debug(f"Created view: {view_name}")
+            logger.debug("Created view", view=view_name)
             self.available_views.append(view_name)
         except Exception as e:
-            logger.error(f"Failed to create view {view_name}: {e}")
+            logger.error("Failed to create view", view=view_name, error=str(e))
 
     def _create_unified_view(self) -> None:
         """Create unified view across all markets."""
@@ -108,9 +108,9 @@ class EquityDataDB:
 
         try:
             self.con.execute(sql)
-            logger.debug("Created unified view: equity_all")
+            logger.debug("Created unified view", view="equity_all")
         except Exception as e:
-            logger.error(f"Failed to create unified view: {e}")
+            logger.error("Failed to create unified view", error=str(e))
 
     def query(self, sql: str) -> pl.DataFrame:
         """Execute SQL query and return a Polars DataFrame."""
@@ -118,7 +118,7 @@ class EquityDataDB:
         try:
             return self.con.execute(sql).pl()
         except Exception as e:
-            logger.error(f"Query failed: {e}")
+            logger.error("Query failed", error=str(e))
             return pl.DataFrame()
 
     def query_arrow(self, sql: str) -> Any:
@@ -129,7 +129,7 @@ class EquityDataDB:
         try:
             return self.con.execute(sql).fetch_arrow_table()
         except Exception as e:
-            logger.error(f"Arrow query failed: {e}")
+            logger.error("Arrow query failed", error=str(e))
             return pa.table({})
 
     def execute(self, sql: str) -> Any:
@@ -138,7 +138,7 @@ class EquityDataDB:
         try:
             return self.con.execute(sql)
         except Exception as e:
-            logger.error(f"Execution failed: {e}")
+            logger.error("Execution failed", error=str(e))
             raise
 
     QUERY_MAP: dict[str, str] = {
@@ -158,7 +158,7 @@ class EquityDataDB:
         method_name = self.QUERY_MAP.get(name)
         if method_name is None:
             available = ", ".join(self.QUERY_MAP.keys())
-            logger.error(f"Unknown query: {name}. Available: {available}")
+            logger.error("Unknown query", name=name, available=available)
             return pl.DataFrame()
         return cast(pl.DataFrame, getattr(examples, method_name)(**kwargs))
 
@@ -170,7 +170,7 @@ class EquityDataDB:
             try:
                 results[name] = getattr(examples, method_name)()
             except Exception as e:
-                logger.error(f"Query {name} failed: {e}")
+                logger.error("Query failed", name=name, error=str(e))
                 results[name] = pl.DataFrame()
         return results
 

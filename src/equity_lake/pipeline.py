@@ -8,7 +8,7 @@ from typing import Any
 import structlog
 
 from equity_lake.core.config import TickerConfig, get_settings
-from equity_lake.features import run_feature_job
+from equity_lake.features import NoFeatureHistoryError, run_feature_job
 from equity_lake.ingestion.backfill import backfill_date_range
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
 from equity_lake.ingestion.types import (
@@ -75,11 +75,7 @@ def execute_eod_pipeline(
     settings = get_settings()
     ticker_config = ticker_config or TickerConfig()
     markets = markets or list(settings.ingestion.default_markets)
-    tickers = tickers or [
-        t
-        for m in markets
-        for t in ticker_config.get_tickers_for_market(m, active_only=True)
-    ][:10]
+    tickers = tickers or [t for m in markets for t in ticker_config.get_tickers_for_market(m, active_only=True)][:10]
 
     results: dict[str, Any] = {}
     feature_output_tickers = tickers
@@ -180,7 +176,7 @@ def execute_eod_pipeline(
             feature_output_tickers = sorted(features_df["ticker"].drop_nulls().unique().to_list())
             results["features"] = _stage(True, rows=len(features_df))
         except Exception as exc:
-            if str(exc) == "No features generated":
+            if isinstance(exc, NoFeatureHistoryError):
                 logger.warning("feature_pipeline_missing_history", tickers=tickers, markets=markets)
                 backfill_ok = False
                 if not allow_history_backfill:

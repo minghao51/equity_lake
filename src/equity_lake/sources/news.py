@@ -4,8 +4,8 @@ import os
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal
 
+import httpx
 import polars as pl
-import requests
 import structlog
 
 from equity_lake.core.schemas import NEWS_COLUMNS
@@ -188,7 +188,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
 
         try:
             response = self._retry_on_failure(
-                requests.get,
+                httpx.get,
                 url,
                 params=params,
                 timeout=10,

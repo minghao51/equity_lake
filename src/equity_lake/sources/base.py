@@ -9,7 +9,6 @@ from typing import Any, cast
 import httpx
 import pandas as pd
 import polars as pl
-import requests
 import structlog
 import yfinance as yf
 
@@ -19,6 +18,74 @@ from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import STANDARD_COLUMNS
 
 logger = structlog.get_logger()
+
+
+def _apply_market_filters(config: TickerConfig, market: str, filters: dict[str, Any]) -> list[str]:
+    """Apply config-based ticker filters for a single market."""
+    if "tags" in filters:
+        tags = filters["tags"]
+        if isinstance(tags, list):
+            match_all = bool(filters.get("match_all_tags", False))
+            tickers = config.get_tickers_by_tags(tags, match_all=match_all, market=market)
+            logger.info("Filtered by tags %s: %s tickers", tags, len(tickers))
+            return tickers
+
+    if "sectors" in filters:
+        sectors = filters["sectors"]
+        if isinstance(sectors, list):
+            ticker_set = {ticker for sector in sectors for ticker in config.get_tickers_by_sector(str(sector), market=market)}
+            result = list(ticker_set)
+            logger.info("Filtered by sectors %s: %s tickers", sectors, len(result))
+            return result
+
+    if "groups" in filters:
+        groups = filters["groups"]
+        if isinstance(groups, list):
+            ticker_set = {ticker for group in groups for ticker in config.get_tickers_by_group(str(group))}
+            result = list(ticker_set)
+            logger.info("Filtered by groups %s: %s tickers", groups, len(result))
+            return result
+
+    if "min_priority" in filters:
+        min_priority = filters["min_priority"]
+        if isinstance(min_priority, int):
+            tickers = config.get_tickers_for_market(market, active_only=True, min_priority=min_priority)
+            logger.info("Filtered by min_priority %s: %s tickers", min_priority, len(tickers))
+            return tickers
+
+    return config.get_tickers_for_market(market, active_only=True)
+
+
+def resolve_tickers(
+    ticker_config: TickerConfig | None,
+    market: str,
+    filters: dict[str, Any] | None,
+    fallback: list[str] | None = None,
+) -> list[str]:
+    """Resolve active tickers for ``market`` from config, with filters and fallback.
+
+    Shared by single-market sources and the HK/SG dual-market source so ticker
+    selection logic is defined in exactly one place.
+    """
+    try:
+        config = ticker_config or TickerConfig()
+    except Exception as exc:
+        logger.warning("Failed to load ticker config: %s. Using fallback list.", exc)
+        return fallback or []
+
+    if filters:
+        return _apply_market_filters(config, market, filters)
+
+    tickers = config.get_tickers_for_market(market, active_only=True)
+    if not tickers:
+        logger.warning(
+            "No active %s tickers found in config. Using FALLBACK ticker list. Check config/tickers.yaml for proper configuration.",
+            market.upper(),
+        )
+        return fallback or []
+
+    logger.info("Loaded %s tickers from config for %s market", len(tickers), market.upper())
+    return tickers
 
 
 class TransientError(Exception):
@@ -130,60 +197,11 @@ class MarketDataFetcher:
         fallback_list: list[str] | None = None,
     ) -> list[str]:
         """Load tickers from config with optional filtering and fallback."""
-        try:
-            config = ticker_config or TickerConfig()
-        except Exception as exc:
-            logger.warning("Failed to load ticker config: %s. Using fallback list.", exc)
-            return fallback_list or []
-
-        if filters:
-            return self._apply_filters(config, filters)
-
-        tickers = config.get_tickers_for_market(self.market, active_only=True)
-        if not tickers:
-            logger.warning(
-                "No active %s tickers found in config. Using FALLBACK ticker list. Check config/tickers.yaml for proper configuration.",
-                self.market.upper(),
-            )
-            return fallback_list or []
-
-        logger.info("Loaded %s tickers from config for %s market", len(tickers), self.market.upper())
-        return tickers
+        return resolve_tickers(ticker_config, self.market, filters, fallback_list)
 
     def _apply_filters(self, config: TickerConfig, filters: dict[str, Any]) -> list[str]:
-        """Apply config-based ticker filters."""
-        if "tags" in filters:
-            tags = filters["tags"]
-            if isinstance(tags, list):
-                match_all = bool(filters.get("match_all_tags", False))
-                tickers = config.get_tickers_by_tags(tags, match_all=match_all, market=self.market)
-                logger.info("Filtered by tags %s: %s tickers", tags, len(tickers))
-                return tickers
-
-        if "sectors" in filters:
-            sectors = filters["sectors"]
-            if isinstance(sectors, list):
-                ticker_set = {ticker for sector in sectors for ticker in config.get_tickers_by_sector(str(sector), market=self.market)}
-                result = list(ticker_set)
-                logger.info("Filtered by sectors %s: %s tickers", sectors, len(result))
-                return result
-
-        if "groups" in filters:
-            groups = filters["groups"]
-            if isinstance(groups, list):
-                ticker_set = {ticker for group in groups for ticker in config.get_tickers_by_group(str(group))}
-                result = list(ticker_set)
-                logger.info("Filtered by groups %s: %s tickers", groups, len(result))
-                return result
-
-        if "min_priority" in filters:
-            min_priority = filters["min_priority"]
-            if isinstance(min_priority, int):
-                tickers = config.get_tickers_for_market(self.market, active_only=True, min_priority=min_priority)
-                logger.info("Filtered by min_priority %s: %s tickers", min_priority, len(tickers))
-                return tickers
-
-        return config.get_tickers_for_market(self.market, active_only=True)
+        """Apply config-based ticker filters for this source's market."""
+        return _apply_market_filters(config, self.market, filters)
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch data for a specific date."""
@@ -226,8 +244,6 @@ class MarketDataFetcher:
                 result = func(*args, **kwargs)
             except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
                 raise TransientError(str(exc)) from exc
-            except (requests.ConnectionError, requests.Timeout) as exc:
-                raise TransientError(str(exc)) from exc
 
             # Surface retryable HTTP statuses as TransientError so tenacity retries
             # them: server errors (>=500), 408 Request Timeout, and 429 Too Many
@@ -236,7 +252,7 @@ class MarketDataFetcher:
             if hasattr(result, "raise_for_status"):
                 try:
                     result.raise_for_status()
-                except (httpx.HTTPStatusError, requests.HTTPError) as exc:
+                except httpx.HTTPStatusError as exc:
                     status = getattr(getattr(exc, "response", None), "status_code", None)
                     if status is not None and (status >= 500 or status in (408, 429)):
                         raise TransientError(str(exc)) from exc

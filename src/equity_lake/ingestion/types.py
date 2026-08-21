@@ -4,6 +4,23 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
 
+from equity_lake.core.paths import (
+    BRONZE_MACRO_DIR,
+    BRONZE_RAW_ARTICLES_DIR,
+    CN_ASHARE_DIR,
+    GOLD_FEATURES_DIR,
+    HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
+    LAKE_DIR,
+    PLATINUM_PREDICTIONS_DIR,
+    SILVER_ANALYST_RATINGS_DIR,
+    SILVER_NEWS_SENTIMENT_DIR,
+    SILVER_SEC_FINANCIALS_DIR,
+    SILVER_SOCIAL_SENTIMENT_DIR,
+    US_EQUITY_DIR,
+)
+
 # Supported market identifiers
 Market = Literal[
     "us",
@@ -61,31 +78,43 @@ OPTIONAL_ENRICHMENT_MARKETS: frozenset[str] = frozenset(
     }
 )
 
-# Market to directory mapping (medallion paths)
+
+def _rel(path) -> str:
+    """Relative medallion path string for a lake directory (single source: paths.py)."""
+    return str(path.relative_to(LAKE_DIR))
+
+
+# Market to directory mapping (medallion paths).
+# Derived from ``equity_lake.core.paths`` constants so there is one canonical
+# source of truth for where each market is stored.
 MARKET_DIR_MAP: dict[str, str] = {
     # Bronze — market data
-    "us": "01_bronze/market_data/us_equity",
-    "cn": "01_bronze/market_data/cn_ashare",
-    "hk_sg": "01_bronze/market_data/hk_sg_equity",
-    "jpx": "01_bronze/market_data/jpx_equity",
-    "krx": "01_bronze/market_data/krx_equity",
-    "macro": "01_bronze/macro",
+    "us": _rel(US_EQUITY_DIR),
+    "cn": _rel(CN_ASHARE_DIR),
+    "hk_sg": _rel(HK_SG_EQUITY_DIR),
+    "jpx": _rel(JPX_EQUITY_DIR),
+    "krx": _rel(KRX_EQUITY_DIR),
+    "macro": _rel(BRONZE_MACRO_DIR),
     # Bronze — unstructured
-    "rss_news": "01_bronze/raw_articles",
-    "reddit_posts": "01_bronze/raw_articles",
-    "stocktwits_messages": "01_bronze/raw_articles",
-    "us_earnings_transcripts": "01_bronze/raw_articles",
-    "sec_filings_fulltext": "01_bronze/raw_articles",
+    "rss_news": _rel(BRONZE_RAW_ARTICLES_DIR),
+    "reddit_posts": _rel(BRONZE_RAW_ARTICLES_DIR),
+    "stocktwits_messages": _rel(BRONZE_RAW_ARTICLES_DIR),
+    "us_earnings_transcripts": _rel(BRONZE_RAW_ARTICLES_DIR),
+    "sec_filings_fulltext": _rel(BRONZE_RAW_ARTICLES_DIR),
     # Silver — structured
-    "us_news": "02_silver/news_sentiment",
-    "us_social_sentiment": "02_silver/social_sentiment",
-    "us_analyst_ratings": "02_silver/analyst_ratings",
-    "us_sec_financials": "02_silver/sec_financials",
+    "us_news": _rel(SILVER_NEWS_SENTIMENT_DIR),
+    "us_social_sentiment": _rel(SILVER_SOCIAL_SENTIMENT_DIR),
+    "us_analyst_ratings": _rel(SILVER_ANALYST_RATINGS_DIR),
+    "us_sec_financials": _rel(SILVER_SEC_FINANCIALS_DIR),
     # Gold
-    "features": "03_gold/features",
+    "features": _rel(GOLD_FEATURES_DIR),
     # Platinum
-    "predictions": "04_platinum/predictions",
+    "predictions": _rel(PLATINUM_PREDICTIONS_DIR),
 }
+
+# Reverse lookup (medallion path -> market key), derived from MARKET_DIR_MAP so
+# it cannot drift from the forward mapping.
+MARKET_DIR_REVERSE: dict[str, str] = {v: k for k, v in MARKET_DIR_MAP.items()}
 
 
 class SourceStatus(str, Enum):
@@ -128,6 +157,7 @@ __all__ = [
     "REQUIRED_PRICE_MARKETS",
     "OPTIONAL_ENRICHMENT_MARKETS",
     "MARKET_DIR_MAP",
+    "MARKET_DIR_REVERSE",
     "SourceStatus",
     "SourceOutcome",
 ]

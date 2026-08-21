@@ -10,6 +10,7 @@ Features:
 - Progress tracking and resume capability
 - Integrity verification after download
 - Support for both public and private S3 buckets
+- Tenacity-backed retry/backoff for transient access and sync failures
 
 Usage:
     uv run equity sync
@@ -17,16 +18,34 @@ Usage:
     uv run equity sync --workers 32 --dry-run
 """
 
-import logging
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Final
 
-# Logger configuration
-logger = logging.getLogger(__name__)
+import structlog
+
+from equity_lake.core.retry import build_retry_decorator
+
+logger = structlog.get_logger(__name__)
 UNSIGNED_FLAG: Final[str] = "--no-sign-request"
+
+
+class S3ToolNotFoundError(RuntimeError):
+    """Raised when neither s5cmd nor the AWS CLI is available."""
+
+
+class S3RetryableError(RuntimeError):
+    """Transient S3 failure (timeout, connection drop) eligible for retry."""
+
+
+_s3_retry = build_retry_decorator(
+    attempts=3,
+    wait_multiplier=1.0,
+    wait_min=2.0,
+    wait_max=30.0,
+    retry_on=(S3RetryableError,),
+)
 
 
 # =============================================================================
@@ -62,71 +81,67 @@ class S3Syncer:
         self.tool = self._detect_tool(tool) if tool == "auto" else tool
         self._use_unsigned_requests = False
 
-        logger.info(f"Initialized S3 syncer with tool: {self.tool}")
+        logger.info("Initialized S3 syncer", tool=self.tool)
 
     def _detect_tool(self, tool: str) -> str:
-        """Detect available sync tool."""
-        # Check for s5cmd first (faster)
+        """Detect available sync tool, raising if none is found."""
         try:
             result = subprocess.run(["s5cmd", "--version"], capture_output=True, timeout=5)
             if result.returncode == 0:
-                logger.info("✅ Detected s5cmd (recommended)")
+                logger.info("Detected s5cmd (recommended)")
                 return "s5cmd"
         except (FileNotFoundError, subprocess.TimeoutExpired):
             logger.debug("s5cmd not found")
 
-        # Check for AWS CLI
         try:
             result = subprocess.run(["aws", "--version"], capture_output=True, timeout=5)
             if result.returncode == 0:
-                logger.info("✅ Detected AWS CLI")
+                logger.info("Detected AWS CLI")
                 return "aws"
         except (FileNotFoundError, subprocess.TimeoutExpired):
             logger.debug("AWS CLI not found")
 
-        logger.error("❌ No S3 sync tool found. Please install either:")
-        logger.error("   - s5cmd: https://github.com/peak/s5cmd")
-        logger.error("   - AWS CLI: https://aws.amazon.com/cli/")
-        sys.exit(1)
+        raise S3ToolNotFoundError(
+            "No S3 sync tool found. Install either s5cmd (https://github.com/peak/s5cmd) or the AWS CLI (https://aws.amazon.com/cli/)."
+        )
 
+    @_s3_retry
     def _test_s3_access(self) -> bool:
-        """Test if S3 bucket is accessible."""
-        logger.info(f"Testing access to {self.bucket}")
+        """Test if S3 bucket is accessible (with retry on transient failures)."""
+        logger.info("Testing access to bucket", bucket=self.bucket)
 
-        try:
-            if self.tool == "s5cmd":
-                cmd = ["s5cmd", "ls", f"{self.bucket}"]
+        if self.tool == "s5cmd":
+            try:
+                result = subprocess.run(["s5cmd", "ls", self.bucket], capture_output=True, text=True, timeout=30)
+            except subprocess.TimeoutExpired as exc:
+                raise S3RetryableError(f"S3 access test timed out: {exc}") from exc
+            if result.returncode == 0:
+                logger.info("S3 bucket accessible")
+                return True
+            logger.error("S3 access failed", stderr=result.stderr)
+            return False
+
+        for unsigned in (False, True):
+            cmd = ["aws", "s3", "ls", self.bucket]
+            if unsigned:
+                cmd.append(UNSIGNED_FLAG)
+            try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                if result.returncode == 0:
-                    logger.info("✅ S3 bucket accessible")
-                    return True
-                logger.error(f"❌ S3 access failed: {result.stderr}")
-                return False
+            except subprocess.TimeoutExpired as exc:
+                raise S3RetryableError(f"S3 access test timed out: {exc}") from exc
+            if result.returncode == 0:
+                self._use_unsigned_requests = unsigned
+                mode = "unsigned" if unsigned else "credentialed"
+                logger.info("S3 bucket accessible", mode=mode)
+                return True
 
-            for unsigned in (False, True):
-                cmd = ["aws", "s3", "ls", self.bucket]
-                if unsigned:
-                    cmd.append(UNSIGNED_FLAG)
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                if result.returncode == 0:
-                    self._use_unsigned_requests = unsigned
-                    mode = "unsigned" if unsigned else "credentialed"
-                    logger.info("✅ S3 bucket accessible (%s mode)", mode)
-                    return True
+        logger.error("S3 access failed", stderr=result.stderr)
+        return False
 
-            logger.error(f"❌ S3 access failed: {result.stderr}")
-            return False
-
-        except subprocess.TimeoutExpired:
-            logger.error("❌ S3 access test timed out")
-            return False
-        except Exception as e:
-            logger.error(f"❌ S3 access test error: {e}")
-            return False
-
+    @_s3_retry
     def sync_with_s5cmd(self) -> bool:
         """Sync using s5cmd (fast parallel sync)."""
-        logger.info(f"Starting sync with s5cmd ({self.workers} workers)")
+        logger.info("Starting sync with s5cmd", workers=self.workers)
 
         cmd = [
             "s5cmd",
@@ -138,12 +153,12 @@ class S3Syncer:
         ]
 
         if self.dry_run:
-            logger.info(f"[DRY RUN] Would run: {' '.join(cmd)}")
+            logger.info("DRY RUN would run", command=" ".join(cmd))
             return True
 
         process: subprocess.Popen[str] | None = None
         try:
-            logger.info(f"Running: {' '.join(cmd)}")
+            logger.info("Running", command=" ".join(cmd))
 
             process = subprocess.Popen(
                 cmd,
@@ -153,15 +168,14 @@ class S3Syncer:
                 bufsize=1,
             )
 
-            # Stream output
             if process.stdout is not None:
                 for line in process.stdout:
-                    logger.info(line.strip())
+                    logger.info("s5cmd", line=line.strip())
 
             process.wait(timeout=600)
             return process.returncode == 0
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             logger.error("s5cmd sync timed out after 600s")
             if process is not None:
                 process.terminate()
@@ -169,13 +183,14 @@ class S3Syncer:
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill()
-            return False
+            raise S3RetryableError("s5cmd sync timed out") from exc
         except Exception as e:
-            logger.error(f"s5cmd sync failed: {e}")
+            logger.error("s5cmd sync failed", error=str(e))
             if process is not None:
                 process.terminate()
             return False
 
+    @_s3_retry
     def sync_with_aws_cli(self) -> bool:
         """Sync using AWS CLI (slower but widely available)."""
         logger.info("Starting sync with AWS CLI")
@@ -191,37 +206,36 @@ class S3Syncer:
         if self._use_unsigned_requests:
             cmd.append(UNSIGNED_FLAG)
 
-        # Add progress indicator
         cmd.extend(["--no-progress", "--quiet"])
 
         if self.dry_run:
-            logger.info(f"[DRY RUN] Would run: {' '.join(cmd)}")
+            logger.info("DRY RUN would run", command=" ".join(cmd))
             return True
 
         try:
-            logger.info(f"Running: {' '.join(cmd)}")
-
+            logger.info("Running", command=" ".join(cmd))
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-
-            logger.info(result.stdout)
+            logger.info("aws_cli_stdout", stdout=result.stdout)
             return True
-
         except subprocess.CalledProcessError as e:
-            logger.error(f"AWS CLI sync failed: {e.stderr}")
+            logger.error("AWS CLI sync failed", stderr=e.stderr)
             return False
+        except subprocess.TimeoutExpired as e:
+            logger.error("AWS CLI sync timed out", error=str(e))
+            raise S3RetryableError("AWS CLI sync timed out") from e
         except Exception as e:
-            logger.error(f"AWS CLI sync error: {e}")
+            logger.error("AWS CLI sync error", error=str(e))
             return False
 
     def verify_download(self) -> bool:
         """Verify downloaded files."""
-        logger.info("Verifying download...")
+        logger.info("Verifying download")
 
         parquet_files = list(self.target_dir.rglob("*.parquet"))
         delta_log = self.target_dir / "_delta_log"
 
         if not parquet_files and not delta_log.exists():
-            logger.error("❌ No Parquet files or Delta log found")
+            logger.error("No Parquet files or Delta log found")
             return False
 
         total_size = 0
@@ -240,59 +254,54 @@ class S3Syncer:
                 _ = pq.ParquetFile(parquet_file).metadata
                 valid_files += 1
             except Exception as exc:
-                logger.error("❌ Invalid parquet footer for %s: %s", parquet_file, exc)
+                logger.error("Invalid parquet footer", file=str(parquet_file), error=str(exc))
 
         total_size_mb = total_size / (1024 * 1024)
 
-        logger.info(f"✅ Found {len(parquet_files):,} Parquet files")
-        logger.info(f"✅ Total size: {total_size_mb:.2f} MB")
-        logger.info("✅ Verified %s/%s parquet footers", valid_files, len(parquet_files))
+        logger.info("Found parquet files", count=len(parquet_files))
+        logger.info("Total size MB", size=round(total_size_mb, 2))
+        logger.info("Verified parquet footers", valid=valid_files, total=len(parquet_files))
 
-        # Check for expected Hive partition structure
         date_partitions = list(self.target_dir.glob("date=*"))
-        logger.info(f"✅ Found {len(date_partitions)} date partitions")
+        logger.info("Found date partitions", count=len(date_partitions))
 
         return len(parquet_files) > 0 and valid_files == len(parquet_files)
 
     def sync(self) -> bool:
         """Execute S3 sync process."""
-        logger.info("=" * 60)
         logger.info("S3 Historical Data Sync")
-        logger.info("=" * 60)
-        logger.info(f"Source: {self.bucket}")
-        logger.info(f"Target: {self.target_dir}")
-        logger.info(f"Tool: {self.tool}")
-        logger.info(f"Workers: {self.workers}")
+        logger.info("Sync parameters", source=self.bucket, target=str(self.target_dir), tool=self.tool, workers=self.workers)
 
-        # Test access first
-        if not self._test_s3_access():
-            logger.error("S3 access test failed. Please check:")
-            logger.error("  1. Bucket URL is correct")
-            logger.error("  2. Network connectivity")
-            logger.error("  3. AWS credentials (if private bucket)")
+        try:
+            if not self._test_s3_access():
+                logger.error("S3 access test failed. Check: 1) bucket URL, 2) network connectivity, 3) AWS credentials (if private bucket).")
+                return False
+        except S3ToolNotFoundError as exc:
+            logger.error("S3 tool unavailable", error=str(exc))
             return False
 
-        # Create target directory
         self.target_dir.mkdir(parents=True, exist_ok=True)
 
-        # Execute sync based on tool
         start_time = datetime.now()
 
-        success = self.sync_with_s5cmd() if self.tool == "s5cmd" else self.sync_with_aws_cli()
+        try:
+            success = self.sync_with_s5cmd() if self.tool == "s5cmd" else self.sync_with_aws_cli()
+        except S3RetryableError as exc:
+            logger.error("S3 sync failed after retries", error=str(exc))
+            return False
 
         elapsed = (datetime.now() - start_time).total_seconds()
 
         if success:
-            logger.info(f"✅ Sync completed in {elapsed:.1f} seconds")
+            logger.info("Sync completed", seconds=round(elapsed, 1))
 
-            # Verify download
             if not self.dry_run:
                 if self.verify_download():
-                    logger.info("✅ Download verification passed")
+                    logger.info("Download verification passed")
                 else:
-                    logger.warning("⚠️  Download verification failed")
+                    logger.warning("Download verification failed")
         else:
-            logger.error("❌ Sync failed")
+            logger.error("Sync failed")
             return False
 
         return True

@@ -3,6 +3,7 @@
 from datetime import date
 
 from equity_lake.core.dates import resolve_trading_date
+from equity_lake.features import NoFeatureHistoryError
 from equity_lake.ingestion.types import SourceOutcome, SourceStatus
 from equity_lake.pipeline import execute_eod_pipeline
 
@@ -50,7 +51,7 @@ def test_execute_eod_pipeline_dry_run_skips_writes_and_processors(monkeypatch):
 def test_missing_history_requires_explicit_authorization(monkeypatch):
     """A missing warm-up window fails clearly without starting recovery."""
 
-    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: (_ for _ in ()).throw(RuntimeError("No features generated")))
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: (_ for _ in ()).throw(NoFeatureHistoryError("No features generated")))
     monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **_: (_ for _ in ()).throw(AssertionError("backfill called")))
 
     results = execute_eod_pipeline(
@@ -75,7 +76,7 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
     def run_feature_job(**kwargs):
         if not hasattr(run_feature_job, "called"):
             run_feature_job.called = True
-            raise RuntimeError("No features generated")
+            raise NoFeatureHistoryError("No features generated")
         return next(feature_calls)
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
@@ -112,7 +113,7 @@ def test_authorized_history_recovery_scopes_backfill_to_price_markets(monkeypatc
     monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or 1)
     monkeypatch.setattr(
         "equity_lake.pipeline.run_feature_job",
-        lambda **_: (_ for _ in ()).throw(RuntimeError("No features generated")),
+        lambda **_: (_ for _ in ()).throw(NoFeatureHistoryError("No features generated")),
     )
 
     execute_eod_pipeline(
@@ -138,7 +139,7 @@ def test_authorized_history_recovery_records_failure_when_backfill_raises(monkey
 
     def run_feature_job(**kwargs):
         feature_calls.append(kwargs)
-        raise RuntimeError("No features generated")
+        raise NoFeatureHistoryError("No features generated")
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
 

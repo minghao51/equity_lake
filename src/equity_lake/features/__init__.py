@@ -11,6 +11,14 @@ if TYPE_CHECKING:
     from equity_lake.features.engineering import FeatureEngineer
 
 
+class NoFeatureHistoryError(RuntimeError):
+    """Raised by ``run_feature_job`` when no features can be produced.
+
+    Distinguishes a recoverable "missing history" condition (which the pipeline
+    may resolve via ``--allow-history-backfill``) from other failures.
+    """
+
+
 def _load_feature_engineer() -> type[FeatureEngineer]:
     try:
         from equity_lake.features.engineering import FeatureEngineer
@@ -56,7 +64,7 @@ def run_feature_job(
         engineer.close()
 
     if features_df.is_empty():
-        raise ValueError("No features generated")
+        raise NoFeatureHistoryError("No features generated")
 
     if "date" in features_df.columns and features_df.schema["date"] != pl.Date:
         features_df = features_df.with_columns(pl.col("date").cast(pl.Date))
@@ -64,7 +72,7 @@ def run_feature_job(
     output_df = features_df.filter((pl.col("date") >= pl.lit(output_start_date)) & (pl.col("date") <= pl.lit(output_end_date)))
 
     if output_df.is_empty():
-        raise ValueError("No features generated for the requested output window")
+        raise NoFeatureHistoryError("No features generated for the requested output window")
 
     from equity_lake.ingestion.writers import upsert_dataset
 

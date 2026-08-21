@@ -4,8 +4,8 @@ import os
 from datetime import UTC, date, datetime
 from typing import Any
 
+import httpx
 import polars as pl
-import requests
 import structlog
 
 from equity_lake.core.schemas import SOCIAL_COLUMNS
@@ -144,7 +144,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
 
         try:
             response = self._retry_on_failure(
-                requests.get,
+                httpx.get,
                 url,
                 params=params,
                 timeout=10,

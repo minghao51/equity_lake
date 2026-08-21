@@ -19,7 +19,6 @@ from typing import Any
 
 import httpx
 import polars as pl
-import requests
 import structlog
 
 from equity_lake.core.schemas import SEC_FINANCIAL_COLUMNS
@@ -109,8 +108,6 @@ class SECFinancialsFetcher(MarketDataFetcher):
             try:
                 return fn()
             except (
-                requests.ConnectionError,
-                requests.Timeout,
                 httpx.ConnectError,
                 httpx.ReadTimeout,
                 httpx.PoolTimeout,

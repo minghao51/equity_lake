@@ -8,15 +8,15 @@ exercises it. ``QueryExamples`` is instantiated by ``EquityDataDB.run_named_quer
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 import polars as pl
+import structlog
 
 if TYPE_CHECKING:
     from equity_lake.storage.duckdb import EquityDataDB
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class QueryExamples:
@@ -53,7 +53,7 @@ class QueryExamples:
 
     def query_2_top_volume_stocks(self, days: int = 7) -> pl.DataFrame:
         """Query 2: Top stocks by trading volume."""
-        logger.info(f"Running Query 2: Top {days}-Day Volume Leaders")
+        logger.info("Running query", query="2: Top Volume Leaders", days=days)
 
         sql = f"""
         WITH data_latest AS (
@@ -85,7 +85,7 @@ class QueryExamples:
 
     def query_3_top_gainers_losers(self, days: int = 7) -> pl.DataFrame:
         """Query 3: Top gainers and losers."""
-        logger.info(f"Running Query 3: Top {days}-Day Gainers & Losers")
+        logger.info("Running query", query="3: Top Gainers & Losers", days=days)
 
         sql = f"""
         WITH data_latest AS (
@@ -122,7 +122,7 @@ class QueryExamples:
 
     def query_4_cross_market_comparison(self, ticker: str) -> pl.DataFrame:
         """Query 4: Compare same ticker across markets (if available)."""
-        logger.info(f"Running Query 4: Cross-Market Comparison for {ticker}")
+        logger.info("Running query", query="4: Cross-Market Comparison", ticker=ticker)
 
         sql = """
         SELECT
@@ -140,13 +140,13 @@ class QueryExamples:
         try:
             return self.db.con.execute(sql, [ticker.upper()]).pl()
         except Exception as e:
-            logger.error(f"Query 4 failed: {e}")
+            logger.error("Query failed", query="4", error=str(e))
             return pl.DataFrame()
 
     def query_5_moving_averages(self, ticker: str, ma_days: int = 20) -> pl.DataFrame:
         """Query 5: Moving averages for a stock."""
         ma_days = int(ma_days)
-        logger.info(f"Running Query 5: {ma_days}-Day Moving Average for {ticker}")
+        logger.info("Running query", query="5: Moving Average", ticker=ticker, ma_days=ma_days)
 
         sql = f"""
         WITH stock_data AS (
@@ -178,12 +178,12 @@ class QueryExamples:
         try:
             return self.db.con.execute(sql, [ticker.upper()]).pl()
         except Exception as e:
-            logger.error(f"Query 5 failed: {e}")
+            logger.error("Query failed", query="5", error=str(e))
             return pl.DataFrame()
 
     def query_6_volatility_analysis(self, days: int = 30) -> pl.DataFrame:
         """Query 6: Most volatile stocks."""
-        logger.info(f"Running Query 6: {days}-Day Volatility Analysis")
+        logger.info("Running query", query="6: Volatility Analysis", days=days)
 
         sql = f"""
         WITH data_latest AS (
@@ -256,7 +256,7 @@ class QueryExamples:
 
     def query_8_price_range_analysis(self, days: int = 30) -> pl.DataFrame:
         """Query 8: Price range analysis (52-week high/low)."""
-        logger.info(f"Running Query 8: {days}-Day Price Range Analysis")
+        logger.info("Running query", query="8: Price Range Analysis", days=days)
 
         sql = f"""
         WITH data_latest AS (
@@ -315,9 +315,9 @@ def benchmark_queries(db: EquityDataDB) -> dict[str, float]:
             result = query_func()
             elapsed = time.time() - start
             benchmarks[name] = elapsed
-            logger.info(f"  {name}: {elapsed:.3f}s ({len(result)} rows)")
+            logger.info("Benchmark complete", query=name, elapsed=round(elapsed, 3), rows=len(result))
         except Exception as e:
-            logger.error(f"  {name}: FAILED - {e}")
+            logger.error("Benchmark failed", query=name, error=str(e))
             benchmarks[name] = -1
 
     return benchmarks

@@ -79,6 +79,7 @@ def dashboard_serve(
 
 import equity_lake.cli.commands.data  # noqa: E402, F401, I001
 import equity_lake.cli.commands.pipeline  # noqa: E402, F401
+import equity_lake.cli.commands.ingest  # noqa: E402, F401
 import equity_lake.cli.commands.intelligence  # noqa: E402, F401
 import equity_lake.cli.commands.analysis  # noqa: E402, F401
 import equity_lake.cli.commands.admin  # noqa: E402, F401

@@ -6,12 +6,21 @@ from datetime import date
 
 import typer
 
+from equity_lake.core.paths import ensure_dirs
+
 app = typer.Typer(
     name="equity",
     help="Equity Lake: Local-first equity data pipeline",
     add_completion=False,
     rich_markup_mode="rich",
 )
+
+
+@app.callback()
+def _main_callback() -> None:
+    """Ensure runtime directories exist before any command runs."""
+    ensure_dirs()
+
 
 signal_app = typer.Typer(help="Signal scanning for equity watchlists")
 dashboard_app = typer.Typer(help="Dashboard build and serve")

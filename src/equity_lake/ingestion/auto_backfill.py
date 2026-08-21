@@ -14,21 +14,13 @@ import structlog
 from equity_lake.core.config import TickerConfig
 from equity_lake.ingestion.gap_detection import GapDetector
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
-from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS, SourceOutcome, SourceStatus
+from equity_lake.ingestion.types import MARKET_DIR_MAP, MARKET_DIR_REVERSE, VALID_MARKETS, SourceOutcome, SourceStatus
 
 logger = structlog.get_logger(__name__)
 
-_DELTA_MAP: dict[str, str] = {
-    "us_equity": "us",
-    "cn_ashare": "cn",
-    "hk_sg_equity": "hk_sg",
-    "jpx_equity": "jpx",
-    "krx_equity": "krx",
-}
-
 
 def _market_dir_to_short(market_dir: str) -> str | None:
-    return _DELTA_MAP.get(market_dir)
+    return MARKET_DIR_REVERSE.get(market_dir)
 
 
 def find_and_fill_gaps(

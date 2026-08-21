@@ -127,11 +127,14 @@ def seed_transcripts_bronze(hf: pl.DataFrame, fetch_ts: datetime) -> dict[str, A
     Idempotent: merges on ``article_id`` (deterministic), so re-runs upsert
     without duplicating.
     """
-    from equity_lake.storage.delta import merge_delta
+    from equity_lake.storage.delta import DeltaMergeError, merge_delta
 
     df = _to_bronze(hf, fetch_ts)
     n_tickers = df["source_metadata"].map_elements(lambda s: json.loads(s).get("ticker"), return_dtype=pl.Utf8).n_unique()
-    ok = merge_delta(df, BRONZE_MARKET, key_columns=["article_id"])
+    try:
+        ok = merge_delta(df, BRONZE_MARKET, key_columns=["article_id"])
+    except DeltaMergeError:
+        ok = False
     summary: dict[str, Any] = {"rows": df.height if ok else 0, "tickers": int(n_tickers) if ok else 0, "ok": ok}
     logger.info("seed_transcripts_bronze_complete", **summary)
     return summary
@@ -145,7 +148,7 @@ def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: date
     instead of enriching the whole 33k-row base.
     """
     from equity_lake.ingestion.llm_processor import run_llm_processing
-    from equity_lake.storage.delta import merge_delta
+    from equity_lake.storage.delta import DeltaMergeError, merge_delta
 
     wanted = {t.strip().upper() for t in tickers if t.strip()}
     scoped = hf.filter(pl.col("symbol").str.to_uppercase().is_in(sorted(wanted)))
@@ -160,7 +163,10 @@ def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: date
         logger.warning("seed_transcripts_silver_no_output")
         return {"rows": 0, "tickers": 0, "ok": False}
 
-    ok = merge_delta(silver, SILVER_MARKET, key_columns=["article_id", "ticker"])
+    try:
+        ok = merge_delta(silver, SILVER_MARKET, key_columns=["article_id", "ticker"])
+    except DeltaMergeError:
+        ok = False
     n_tickers = int(silver["ticker"].n_unique()) if "ticker" in silver.columns and ok else 0
     summary: dict[str, Any] = {"rows": int(silver.height) if ok else 0, "tickers": n_tickers, "ok": ok}
     logger.info("seed_transcripts_silver_complete", **summary)

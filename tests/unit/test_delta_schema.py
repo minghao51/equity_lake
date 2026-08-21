@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import polars as pl
 
-from equity_lake.storage.delta import merge_delta
+from equity_lake.storage.delta import DeltaMergeError, merge_delta
 
 
 class TestMergeDeltaSchemaEvolution:
@@ -31,7 +31,7 @@ class TestMergeDeltaSchemaEvolution:
             assert call_kwargs.kwargs["mode"] == "append"
             assert call_kwargs.kwargs["schema_mode"] == "merge"
 
-    def test_non_schema_error_returns_false(self):
+    def test_non_schema_error_raises(self):
         mock_dt_instance = MagicMock()
         mock_dt_instance.merge.side_effect = Exception("disk I/O error")
 
@@ -44,9 +44,11 @@ class TestMergeDeltaSchemaEvolution:
 
             df = pl.DataFrame({"ticker": ["AAPL"], "date": [None]})
 
-            result = merge_delta(df, "test_market", key_columns=["ticker", "date"])
+            import pytest
 
-            assert result is False
+            with pytest.raises(DeltaMergeError):
+                merge_delta(df, "test_market", key_columns=["ticker", "date"])
+
             mock_write.assert_not_called()
 
     def test_new_table_falls_back_to_write(self):

@@ -5,9 +5,20 @@ from typing import Any
 import structlog
 
 from equity_lake.core.config import TickerConfig
-from equity_lake.sources.base import YFinanceBaseFetcher
+from equity_lake.sources.base import YFinanceBaseFetcher, _apply_market_filters, resolve_tickers
 
 logger = structlog.get_logger()
+
+
+def _split_group_tickers(config: TickerConfig, groups: list[str]) -> tuple[list[str], list[str]]:
+    """Resolve group tickers once, then split into HK/SG by symbol suffix."""
+    combined: list[str] = []
+    for group in groups:
+        combined.extend(config.get_tickers_by_group(str(group)))
+    hk_tickers = [t for t in combined if t.endswith(".HK")]
+    sg_tickers = [t for t in combined if t.endswith(".SI")]
+    return hk_tickers, sg_tickers
+
 
 _FALLBACK_HK_TICKERS = [
     "0700.HK",
@@ -82,66 +93,18 @@ class HKSGEquityFetcher(YFinanceBaseFetcher):
             logger.warning("Failed to load ticker config: %s. Using fallback lists.", exc)
             return _FALLBACK_HK_TICKERS, _FALLBACK_SG_TICKERS
 
+        if filters and "groups" in filters and isinstance(filters.get("groups"), list):
+            hk_tickers, sg_tickers = _split_group_tickers(config, filters["groups"])
+            logger.info("Filtered by groups: %s HK, %s SG", len(hk_tickers), len(sg_tickers))
+            return hk_tickers, sg_tickers
+
         if filters:
-            return self._apply_dual_filters(config, filters)
+            hk_tickers = _apply_market_filters(config, "hk", filters)
+            sg_tickers = _apply_market_filters(config, "sg", filters)
+            return hk_tickers, sg_tickers
 
-        hk_tickers = config.get_tickers_for_market("hk", active_only=True)
-        sg_tickers = config.get_tickers_for_market("sg", active_only=True)
-        if not hk_tickers and not sg_tickers:
-            logger.warning("No active tickers found in config for HK/SG markets")
-            return _FALLBACK_HK_TICKERS, _FALLBACK_SG_TICKERS
-
-        logger.info("Loaded tickers from config: %s HK, %s SG", len(hk_tickers), len(sg_tickers))
-        return hk_tickers, sg_tickers
-
-    def _apply_dual_filters(
-        self,
-        config: TickerConfig,
-        filters: dict[str, Any],
-    ) -> tuple[list[str], list[str]]:
-        hk_tickers = config.get_tickers_for_market("hk", active_only=True)
-        sg_tickers = config.get_tickers_for_market("sg", active_only=True)
-
-        if "tags" in filters:
-            tags = filters["tags"]
-            if isinstance(tags, list):
-                match_all = bool(filters.get("match_all_tags", False))
-                hk_tickers = config.get_tickers_by_tags(tags, match_all=match_all, market="hk")
-                sg_tickers = config.get_tickers_by_tags(tags, match_all=match_all, market="sg")
-                logger.info("Filtered by tags %s: %s HK, %s SG", tags, len(hk_tickers), len(sg_tickers))
-                return hk_tickers, sg_tickers
-
-        if "sectors" in filters:
-            sectors = filters["sectors"]
-            if isinstance(sectors, list):
-                hk_tickers = list({ticker for sector in sectors for ticker in config.get_tickers_by_sector(str(sector), market="hk")})
-                sg_tickers = list({ticker for sector in sectors for ticker in config.get_tickers_by_sector(str(sector), market="sg")})
-                logger.info("Filtered by sectors %s: %s HK, %s SG", sectors, len(hk_tickers), len(sg_tickers))
-                return hk_tickers, sg_tickers
-
-        if "groups" in filters:
-            groups = filters["groups"]
-            if isinstance(groups, list):
-                hk_grouped: set[str] = set()
-                sg_grouped: set[str] = set()
-                for group in groups:
-                    for ticker in config.get_tickers_by_group(str(group)):
-                        if ticker.endswith(".HK"):
-                            hk_grouped.add(ticker)
-                        elif ticker.endswith(".SI"):
-                            sg_grouped.add(ticker)
-                hk_tickers = list(hk_grouped)
-                sg_tickers = list(sg_grouped)
-                logger.info("Filtered by groups %s: %s HK, %s SG", groups, len(hk_tickers), len(sg_tickers))
-                return hk_tickers, sg_tickers
-
-        if "min_priority" in filters:
-            min_priority = filters["min_priority"]
-            if isinstance(min_priority, int):
-                hk_tickers = config.get_tickers_for_market("hk", active_only=True, min_priority=min_priority)
-                sg_tickers = config.get_tickers_for_market("sg", active_only=True, min_priority=min_priority)
-                logger.info("Filtered by min_priority %s: %s HK, %s SG", min_priority, len(hk_tickers), len(sg_tickers))
-
+        hk_tickers = resolve_tickers(config, "hk", None, _FALLBACK_HK_TICKERS)
+        sg_tickers = resolve_tickers(config, "sg", None, _FALLBACK_SG_TICKERS)
         return hk_tickers, sg_tickers
 
 

@@ -28,6 +28,7 @@ from equity_lake.core.paths import (
     LOGS_DIR,
     US_EQUITY_DIR,
 )
+from equity_lake.storage.lake_reader import duckdb_scan_for
 
 MARKET_DATASETS = {
     "us_equity": US_EQUITY_DIR,
@@ -57,7 +58,7 @@ def _summarize_dataset(conn: Any, name: str, path: Path) -> dict[str, Any]:
                 COUNT(*) AS rows,
                 COUNT(DISTINCT ticker) AS symbols,
                 CAST(MAX(date) AS VARCHAR) AS latest_date
-            FROM read_parquet('{path}/**/*.parquet', hive_partitioning=1)
+            FROM {duckdb_scan_for(path)}
         """
         row = conn.execute(query).fetchone()
         if row is None:
@@ -190,7 +191,7 @@ def render_dataset_detail(datasets: list[dict[str, Any]]) -> None:
         conn = duckdb.connect(":memory:")
         query = f"""
             SELECT *
-            FROM read_parquet('{dataset["path"]}/**/*.parquet', hive_partitioning=1)
+            FROM {duckdb_scan_for(Path(dataset["path"]))}
             ORDER BY date DESC
             LIMIT 100
         """

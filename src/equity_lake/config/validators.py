@@ -2,18 +2,24 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import yaml
+from pydantic import ValidationError
 
+from equity_lake.core.config import TickerConfigRoot
 from equity_lake.signals.models import SignalConfig
 from equity_lake.signals.models import Watchlist as SignalWatchlist
 
 
 def validate_tickers(filepath: Path) -> list[str]:
-    """Validate tickers.yaml structure and content."""
-    errors = []
+    """Validate tickers.yaml structure and content via the canonical models.
+
+    Structural checks (required fields, types, duplicate symbols) are enforced
+    by the pydantic ``TickerConfigRoot`` model; content-format checks (symbol
+    regex, unknown group references) come from ``TickerConfigRoot.validate_config``.
+    """
+    errors: list[str] = []
 
     if not filepath.exists():
         errors.append(f"File not found: {filepath}")
@@ -21,77 +27,35 @@ def validate_tickers(filepath: Path) -> list[str]:
 
     try:
         with open(filepath, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-    except yaml.YAMLError as e:
-        errors.append(f"YAML parse error: {e}")
+            raw = yaml.safe_load(f)
+    except yaml.YAMLError as exc:
+        errors.append(f"YAML parse error: {exc}")
         return errors
 
-    for key in ["version", "markets"]:
-        if key not in config:
+    if not isinstance(raw, dict):
+        errors.append("Top-level configuration must be a mapping")
+        return errors
+
+    for key in ("version", "markets"):
+        if key not in raw:
             errors.append(f"Missing required key: {key}")
 
-    if "markets" not in config:
+    markets = raw.get("markets")
+    if isinstance(markets, dict):
+        for market_name, market_data in markets.items():
+            if not isinstance(market_data, dict) or not market_data.get("tickers"):
+                errors.append(f"Market '{market_name}' has no tickers defined")
+
+    try:
+        instance = TickerConfigRoot.from_yaml(filepath)
+    except ValidationError as exc:
+        for err in exc.errors():
+            loc = ".".join(str(p) for p in err["loc"]) or "<root>"
+            errors.append(f"{loc}: {err['msg']}")
         return errors
 
-    markets = config["markets"]
-    validation = config.get("validation", {})
-    market_formats = validation.get("market_formats", {})
-    valid_exchanges = validation.get("valid_exchanges", {})
-
-    for market_name, market_data in markets.items():
-        if "tickers" not in market_data:
-            errors.append(f"Market '{market_name}' missing 'tickers' key")
-            continue
-
-        tickers = market_data["tickers"]
-        if not isinstance(tickers, list):
-            errors.append(f"Market '{market_name}' tickers must be a list")
-            continue
-
-        if not tickers:
-            errors.append(f"Market '{market_name}' has no tickers defined")
-            continue
-
-        valid_exchanges_list = valid_exchanges.get(market_name, [])
-        ticker_pattern = market_formats.get(market_name)
-        compiled_pattern = re.compile(ticker_pattern) if ticker_pattern else None
-
-        seen_symbols = set()
-        for i, ticker in enumerate(tickers):
-            prefix = f"Market '{market_name}', ticker[{i}]"
-
-            for field in ["symbol", "name", "exchange", "sector", "active"]:
-                if field not in ticker:
-                    errors.append(f"{prefix}: missing field '{field}'")
-
-            symbol = ticker.get("symbol", "")
-
-            if symbol in seen_symbols:
-                errors.append(f"{prefix}: duplicate symbol '{symbol}'")
-            seen_symbols.add(symbol)
-
-            if compiled_pattern and symbol and not compiled_pattern.match(symbol):
-                errors.append(f"{prefix}: symbol '{symbol}' does not match format '{ticker_pattern}'")
-
-            exchange = ticker.get("exchange", "")
-            if valid_exchanges_list and exchange and exchange not in valid_exchanges_list:
-                errors.append(f"{prefix}: invalid exchange '{exchange}' (valid: {', '.join(valid_exchanges_list)})")
-
-            active = ticker.get("active")
-            if active is not None and not isinstance(active, bool):
-                errors.append(f"{prefix}: 'active' must be boolean, got {type(active).__name__}")
-
-    if "groups" in config:
-        groups = config["groups"]
-        if not isinstance(groups, dict):
-            errors.append("'groups' must be a mapping")
-        else:
-            for group_name, group_data in groups.items():
-                if "description" not in group_data:
-                    errors.append(f"Group '{group_name}': missing 'description'")
-                if "tickers" not in group_data:
-                    errors.append(f"Group '{group_name}': missing 'tickers'")
-
+    result = instance.validate_config()
+    errors.extend(result["errors"])
     return errors
 
 

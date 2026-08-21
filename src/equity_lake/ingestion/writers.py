@@ -94,10 +94,13 @@ def upsert_dataset(
         logger.info("[DRY RUN] Would upsert %s rows to Delta table %s", len(df_polars), market)
         return True
 
-    from equity_lake.storage.delta import merge_delta
+    from equity_lake.storage.delta import DeltaError, merge_delta
 
     key_columns = _dedupe_key_columns(market)
-    return merge_delta(df_polars, market, key_columns=key_columns)
+    try:
+        return merge_delta(df_polars, market, key_columns=key_columns)
+    except DeltaError:
+        return False
 
 
 def validate_schema(df: FrameLike, market: str) -> bool:

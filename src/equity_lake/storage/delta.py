@@ -20,6 +20,29 @@ from equity_lake.core.polars_utils import FrameLike, normalize_temporal_columns
 
 logger = structlog.get_logger(__name__)
 
+
+class DeltaError(RuntimeError):
+    """Base class for Delta storage failures, carrying the originating market."""
+
+
+class DeltaWriteError(DeltaError):
+    """Raised when a Delta write fails; the original cause is attached."""
+
+    def __init__(self, market: str, cause: Exception) -> None:
+        super().__init__(f"Failed to write Delta table for market '{market}'")
+        self.market = market
+        self.__cause__ = cause
+
+
+class DeltaMergeError(DeltaError):
+    """Raised when a Delta merge fails; the original cause is attached."""
+
+    def __init__(self, market: str, cause: Exception) -> None:
+        super().__init__(f"Failed to merge into Delta table for market '{market}'")
+        self.market = market
+        self.__cause__ = cause
+
+
 _DATE_COL = "date"
 WriteMode = Literal["append", "overwrite", "ignore", "error"]
 SchemaMode = Literal["merge", "overwrite"] | None
@@ -66,9 +89,9 @@ def write_delta(
             path=str(table_path),
         )
         return True
-    except Exception:
+    except Exception as exc:
         logger.exception("delta_write_failed", market=market)
-        return False
+        raise DeltaWriteError(market, exc) from exc
 
 
 def merge_delta(
@@ -107,11 +130,12 @@ def merge_delta(
         logger.info("delta_merge", market=market, rows=df_polars.height)
         return True
     except Exception as exc:
-        if "schema" in str(exc).lower() or "column" in str(exc).lower():
+        lowered = str(exc).lower()
+        if "schema" in lowered or "column" in lowered:
             logger.warning("delta_merge_schema_mismatch", market=market, hint="falling back to append with schema merge")
             return write_delta(df_polars, market, mode="append", schema_mode="merge", lake_dir=lake_dir)
         logger.exception("delta_merge_failed", market=market)
-        return False
+        raise DeltaMergeError(market, exc) from exc
 
 
 def read_delta(
@@ -249,6 +273,9 @@ def _backup_old_partitions(market_dir: Path, keep_backup: bool = True) -> None:
 
 
 __all__ = [
+    "DeltaError",
+    "DeltaMergeError",
+    "DeltaWriteError",
     "compact_delta",
     "delta_table_path",
     "delta_table_version",

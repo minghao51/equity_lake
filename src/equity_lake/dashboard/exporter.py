@@ -22,6 +22,7 @@ from equity_lake.core.paths import (
     LOGS_DIR,
     US_EQUITY_DIR,
 )
+from equity_lake.storage.lake_reader import duckdb_scan_for
 
 _REDACTED = "***REDACTED***"
 _SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key)", re.IGNORECASE)
@@ -125,7 +126,7 @@ class DashboardExporter:
                 COUNT(*) AS rows,
                 COUNT(DISTINCT ticker) AS symbols,
                 CAST(MAX(date) AS VARCHAR) AS latest_date
-            FROM read_parquet('{dataset_dir}/**/*.parquet', hive_partitioning=1)
+            FROM {duckdb_scan_for(dataset_dir)}
         """
 
         try:
