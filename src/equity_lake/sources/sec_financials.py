@@ -14,6 +14,7 @@ limiting internally via ``httpxthrottlecache``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -95,7 +96,7 @@ class SECFinancialsFetcher(MarketDataFetcher):
         logger.info("Fetched SEC financials", count=df.height)
         return df
 
-    def _retry_edgar_call(self, fn):
+    def _retry_edgar_call(self, fn: Callable[[], Any]) -> Any:
         """Run an edgar network call through the tenacity retry policy.
 
         edgar's transient failures (SEC throttling, connection resets) surface as
@@ -104,7 +105,7 @@ class SECFinancialsFetcher(MarketDataFetcher):
         unchanged and are skipped per-ticker by the caller.
         """
 
-        def _attempt():
+        def _attempt() -> Any:
             try:
                 return fn()
             except (
@@ -114,8 +115,6 @@ class SECFinancialsFetcher(MarketDataFetcher):
                 OSError,
             ) as exc:
                 raise TransientError(str(exc)) from exc
-            except Exception:
-                raise
 
         return self._retry_on_failure(_attempt)
 
@@ -133,7 +132,13 @@ class SECFinancialsFetcher(MarketDataFetcher):
 
         for form_type in ("10-K", "10-Q"):
             try:
-                filings = self._retry_edgar_call(lambda form=form_type: company.get_filings(form=form))
+
+                def _get_filings(current_form: str = form_type) -> Any:
+                    # Default-arg binding pins the current loop iteration;
+                    # the call is synchronous via _retry_edgar_call anyway.
+                    return company.get_filings(form=current_form)
+
+                filings = self._retry_edgar_call(_get_filings)
                 if not filings:
                     continue
 
@@ -223,6 +228,8 @@ class SECFinancialsFetcher(MarketDataFetcher):
             logger.warning("sec_financials_extract_failed", ticker=ticker, error=str(exc))
             return None
 
+    _SHARES_CONCEPTS = ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"]
+
     def _get_metric(self, statements: Any, statement_type: str, concept_names: list[str]) -> Any:
         try:
             if statement_type == "income_statement":
@@ -240,18 +247,27 @@ class SECFinancialsFetcher(MarketDataFetcher):
                     values = df[concept].dropna()
                     if len(values) > 0:
                         return values.iloc[0]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "sec_financials_metric_lookup_failed",
+                statement_type=statement_type,
+                concepts=concept_names,
+                error=str(exc),
+            )
         return None
 
     def _get_shares(self, xbrl: Any) -> Any:
         try:
             facts = xbrl.data
-            for concept in ["EntityCommonStockSharesOutstanding", "CommonStockSharesOutstanding"]:
+            for concept in self._SHARES_CONCEPTS:
                 if concept in facts:
                     return facts[concept].value
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "sec_financials_shares_lookup_failed",
+                concepts=self._SHARES_CONCEPTS,
+                error=str(exc),
+            )
         return None
 
 

@@ -14,7 +14,7 @@ import structlog
 from equity_lake.core.config import TickerConfig
 from equity_lake.ingestion.gap_detection import GapDetector
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
-from equity_lake.ingestion.types import MARKET_DIR_MAP, MARKET_DIR_REVERSE, VALID_MARKETS, SourceOutcome, SourceStatus
+from equity_lake.ingestion.types import MARKET_DIR_MAP, MARKET_DIR_REVERSE, REQUIRED_PRICE_MARKETS, SourceOutcome, SourceStatus
 
 logger = structlog.get_logger(__name__)
 
@@ -33,27 +33,54 @@ def find_and_fill_gaps(
 ) -> dict[str, int]:
     """Detect missing dates per market and backfill them.
 
+    Gap-filling applies only to the required price markets (``us``, ``cn``,
+    ``hk_sg``, ``jpx``, ``krx``): a gap is a missing ticker/date row measured
+    against an exchange trading calendar, and only these markets have one.
+    Enrichment markets are excluded — several share ticker-less tables (e.g.
+    ``01_bronze/raw_articles``) with no per-ticker-per-trading-day expectation,
+    and the rest are event-driven. Explicitly requesting an enrichment market
+    is skipped with a warning.
+
     Returns a dict mapping market name to number of dates filled.
     """
     end_date = end_date or date.today()
     start_date = end_date - timedelta(days=days_back)
-    target_markets = markets or list(VALID_MARKETS)
+    target_markets = markets or sorted(REQUIRED_PRICE_MARKETS)
     results: dict[str, int] = {}
 
     with GapDetector() as detector:
         for market in target_markets:
-            market_dir = MARKET_DIR_MAP.get(market, market)
-            market_short = _market_dir_to_short(market_dir) or market
-            if market in ("macro", "us_news", "us_social_sentiment"):
+            if market not in REQUIRED_PRICE_MARKETS:
+                logger.warning(
+                    "auto_backfill_skip_non_price_market",
+                    market=market,
+                    reason="gap-filling requires a ticker-scoped price table backed by a trading calendar",
+                )
                 continue
 
-            missing = detector.find_missing_dates(
-                market_dir,
-                ticker=None,
-                start_date=start_date,
-                end_date=end_date,
-                business_days_only=True,
-            )
+            market_dir = MARKET_DIR_MAP.get(market, market)
+            market_short = _market_dir_to_short(market_dir) or market
+
+            try:
+                missing = detector.find_missing_dates(
+                    market_dir,
+                    ticker=None,
+                    start_date=start_date,
+                    end_date=end_date,
+                    business_days_only=True,
+                )
+            except Exception as exc:
+                # One broken table (missing dir, ticker-less schema, ...) must
+                # not abort the whole run; the detector has already logged the
+                # query failure with its traceback.
+                logger.error(
+                    "auto_backfill_detection_failed",
+                    market=market,
+                    market_dir=market_dir,
+                    error=str(exc),
+                )
+                continue
+
             if not missing:
                 logger.info("auto_backfill_no_gaps", market=market)
                 continue

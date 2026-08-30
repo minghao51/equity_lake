@@ -10,6 +10,25 @@ import polars as pl
 from equity_lake.sources import JPXEquityFetcher, KRXEquityFetcher
 
 
+def _yf_multi_ticker_frame(tickers: list[str]) -> pd.DataFrame:
+    """A frame shaped like yf.download(group_by="ticker") output for N tickers."""
+    per_ticker = {
+        ticker: pd.DataFrame(
+            {
+                "Open": [150.0],
+                "High": [155.0],
+                "Low": [148.0],
+                "Close": [152.0],
+                "Adj Close": [152.0],
+                "Volume": [1000000],
+            },
+            index=pd.DatetimeIndex(["2024-01-01"]),
+        )
+        for ticker in tickers
+    }
+    return pd.concat(per_ticker, axis=1, names=["Ticker", "Field"])
+
+
 class TestJPXEquityFetcher:
     """Test suite for JPXEquityFetcher."""
 
@@ -62,18 +81,7 @@ class TestJPXEquityFetcher:
     @patch("equity_lake.sources.base.yf.download")
     def test_fetch_with_batching(self, mock_download):
         """Test that fetch processes data in batches."""
-        mock_data = pd.DataFrame(
-            {
-                "Open": [150.0],
-                "High": [155.0],
-                "Low": [148.0],
-                "Close": [152.0],
-                "Adj Close": [152.0],
-                "Volume": [1000000],
-            },
-            index=pd.DatetimeIndex(["2024-01-01"]),
-        )
-        mock_download.return_value = mock_data
+        mock_download.return_value = _yf_multi_ticker_frame(["7203.T", "6758.T", "9984.T"])
 
         tickers = ["7203.T", "6758.T", "9984.T"]
         fetcher = JPXEquityFetcher(tickers=tickers, batch_size=2)

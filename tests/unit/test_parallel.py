@@ -1,5 +1,6 @@
 """Unit tests for ingestion.parallel — duration tracking and error handling."""
 
+import time
 from datetime import date
 
 import polars as pl
@@ -29,6 +30,44 @@ def test_fetch_markets_parallel_records_duration():
     for market in markets:
         assert results[market].success is True
         assert results[market].duration_seconds >= 0.0
+
+
+def test_fetch_markets_parallel_duration_reflects_work():
+    """Duration must be measured from submit time, not from when as_completed yields the future.
+
+    Regression: start time was recorded after the future completed, so
+    duration_seconds was ~0 regardless of how long the fetch took.
+    """
+
+    def slow_fetch(trading_date, **kwargs):
+        time.sleep(0.1)
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    results = fetch_markets_parallel(
+        ["us"],
+        date(2024, 1, 2),
+        {"us": (slow_fetch, {})},
+    )
+
+    assert results["us"].success is True
+    assert results["us"].duration_seconds >= 0.05
+
+
+def test_fetch_markets_parallel_error_duration_reflects_work():
+    """Failing fetches must also report a real duration."""
+
+    def slow_failure(trading_date, **kwargs):
+        time.sleep(0.1)
+        raise RuntimeError("boom")
+
+    results = fetch_markets_parallel(
+        ["us"],
+        date(2024, 1, 2),
+        {"us": (slow_failure, {})},
+    )
+
+    assert results["us"].success is False
+    assert results["us"].duration_seconds >= 0.05
 
 
 def test_fetch_markets_parallel_records_error_duration():

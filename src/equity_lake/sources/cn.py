@@ -28,7 +28,6 @@ class CNAshareFetcher(MarketDataFetcher):
         filters: dict[str, Any] | None = None,
         max_workers: int = 10,
         stock_limit: int = 100,
-        adaptive_threshold: float = 0.2,
     ):
         super().__init__(
             retry_attempts,
@@ -38,7 +37,6 @@ class CNAshareFetcher(MarketDataFetcher):
         )
         self.filters = filters or {}
         self.max_workers = max_workers
-        self.adaptive_threshold = adaptive_threshold
 
     def _fetch_single_stock(
         self,
@@ -76,8 +74,8 @@ class CNAshareFetcher(MarketDataFetcher):
         )
 
         def _fetch() -> pl.DataFrame:
-            date_str = trading_date.strftime("%Y%m%d")
             try:
+                date_str = trading_date.strftime("%Y%m%d")
                 if not tickers:
                     logger.warning(
                         "cn_configured_tickers_unavailable",
@@ -89,8 +87,6 @@ class CNAshareFetcher(MarketDataFetcher):
                 frames: list[pd.DataFrame] = []
                 success_count = 0
                 failure_count = 0
-                batch_size = len(tickers)
-                check_interval = max(1, batch_size // 4)
 
                 with (
                     timer("parallel_cn_stock_fetching", stock_count=len(tickers)),
@@ -105,34 +101,16 @@ class CNAshareFetcher(MarketDataFetcher):
                         ): stock_code
                         for stock_code in tickers
                     }
-                    for i, future in enumerate(as_completed(futures)):
-                        stock_code = futures[future]
-                        try:
-                            result = future.result(timeout=30)
-                            if result is not None:
-                                frames.append(result)
-                                success_count += 1
-                            else:
-                                failure_count += 1
-                        except Exception as exc:
-                            logger.debug(
-                                "stock_fetch_exception",
-                                stock=stock_code,
-                                error=str(exc),
-                            )
+                    for future in as_completed(futures):
+                        # as_completed only yields finished futures, so result()
+                        # returns immediately; per-stock failures are already
+                        # degraded to None inside _fetch_single_stock.
+                        result = future.result()
+                        if result is not None:
+                            frames.append(result)
+                            success_count += 1
+                        else:
                             failure_count += 1
-
-                        if (i + 1) % check_interval == 0 and (success_count + failure_count) > 0:
-                            failure_rate = failure_count / (success_count + failure_count)
-                            if failure_rate > self.adaptive_threshold:
-                                new_workers = max(1, executor._max_workers - 2)
-                                if new_workers < executor._max_workers:
-                                    executor._max_workers = new_workers
-                                    logger.warning(
-                                        "adaptive_throttle",
-                                        failure_rate=f"{failure_rate:.0%}",
-                                        reduced_workers=new_workers,
-                                    )
 
                 logger.info(
                     "stock_fetch_completed",
@@ -164,12 +142,17 @@ class CNAshareFetcher(MarketDataFetcher):
                     unique_tickers=unique_tickers,
                 )
                 return frame
-            except Exception:
-                logger.exception(
+            except Exception as exc:
+                # Let provider failures escape so tenacity can retry transient
+                # errors and the orchestrator sees a fetch failure, not an
+                # empty frame (mirrors cn_efinance.py).
+                logger.error(
                     "fetch_cn_ashare_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
                     date=str(trading_date),
                 )
-                return _empty_frame()
+                raise
 
         return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 

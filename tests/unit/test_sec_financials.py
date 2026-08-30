@@ -153,3 +153,23 @@ class TestExtractFinancials:
         assert row["net_margin"] == 0.2  # 20000/100000
         assert row["operating_margin"] == 0.3  # 30000/100000
         assert row["eps"] == 2.0  # 20000/10000
+
+    def test_get_metric_swallows_statement_errors(self):
+        """_get_metric degrades to None on statement errors (logged at debug)."""
+        fetcher = SECFinancialsFetcher(tickers=["AAPL"])
+        statements = MagicMock()
+        statements.income_statement.side_effect = RuntimeError("boom")
+
+        assert fetcher._get_metric(statements, "income_statement", ["Revenues", "Revenue"]) is None
+
+    def test_get_shares_swallows_lookup_errors(self):
+        """_get_shares degrades to None on fact lookup errors (logged at debug)."""
+
+        class ExplodingXbrl:
+            @property
+            def data(self):  # noqa: ANN201 - test stub
+                raise RuntimeError("boom")
+
+        fetcher = SECFinancialsFetcher(tickers=["AAPL"])
+
+        assert fetcher._get_shares(ExplodingXbrl()) is None

@@ -7,12 +7,14 @@ Tests cover:
 - CNHybridFetcher (multi-source fallback system)
 """
 
+import urllib.error
 from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import polars as pl
 import pytest
+import requests
 
 from equity_lake.sources import (
     CNAshareFetcher,
@@ -20,6 +22,42 @@ from equity_lake.sources import (
     CNHybridFetcher,
     USEquityFetcher,
 )
+from equity_lake.sources.base import TransientError
+
+
+def _yf_flat_frame() -> pd.DataFrame:
+    """A flat (non-MultiIndex) OHLCV frame as returned for a single ticker."""
+    return pd.DataFrame(
+        {
+            "Open": [150.0],
+            "High": [155.0],
+            "Low": [148.0],
+            "Close": [152.0],
+            "Adj Close": [152.0],
+            "Volume": [1000000],
+        },
+        index=pd.DatetimeIndex(["2024-01-01"]),
+    )
+
+
+def _yf_multi_ticker_frame(tickers: list[str], periods: int = 1) -> pd.DataFrame:
+    """A frame shaped like yf.download(group_by="ticker") output for N tickers."""
+    per_ticker = {
+        ticker: pd.DataFrame(
+            {
+                "Open": [150.0] * periods,
+                "High": [155.0] * periods,
+                "Low": [148.0] * periods,
+                "Close": [152.0] * periods,
+                "Adj Close": [152.0] * periods,
+                "Volume": [1000000] * periods,
+            },
+            index=pd.date_range("2024-01-01", periods=periods, freq="D"),
+        )
+        for ticker in tickers
+    }
+    return pd.concat(per_ticker, axis=1, names=["Ticker", "Field"])
+
 
 # =============================================================================
 # USEquityFetcher Tests (Batch Download Improvements)
@@ -68,20 +106,7 @@ class TestUSEquityFetcherBatching:
     @patch("equity_lake.sources.base.yf.download")
     def test_fetch_with_batching(self, mock_download, sample_us_tickers):
         """Test that fetch processes data in batches."""
-        # Mock yfinance to return data for each batch
-        mock_data = pd.DataFrame(
-            {
-                "Open": [150.0],
-                "High": [155.0],
-                "Low": [148.0],
-                "Close": [152.0],
-                "Adj Close": [152.0],
-                "Volume": [1000000],
-            },
-            index=pd.DatetimeIndex(["2024-01-01"]),
-        )
-
-        mock_download.return_value = mock_data
+        mock_download.return_value = _yf_multi_ticker_frame(sample_us_tickers)
 
         fetcher = USEquityFetcher(tickers=sample_us_tickers, batch_size=3)
         result = fetcher.fetch(date(2024, 1, 1))
@@ -103,17 +128,7 @@ class TestUSEquityFetcherBatching:
                 # Second batch fails
                 return pd.DataFrame()
             # Other batches succeed
-            return pd.DataFrame(
-                {
-                    "Open": [150.0],
-                    "High": [155.0],
-                    "Low": [148.0],
-                    "Close": [152.0],
-                    "Adj Close": [152.0],
-                    "Volume": [1000000],
-                },
-                index=pd.DatetimeIndex(["2024-01-01"]),
-            )
+            return _yf_multi_ticker_frame(sample_us_tickers)
 
         mock_download.side_effect = side_effect
 
@@ -128,17 +143,7 @@ class TestUSEquityFetcherBatching:
     @patch("equity_lake.sources.base.yf.download")
     def test_fetch_standardizes_columns(self, mock_download, sample_us_tickers):
         """Test that fetch standardizes column names."""
-        mock_download.return_value = pd.DataFrame(
-            {
-                "Open": [150.0],
-                "High": [155.0],
-                "Low": [148.0],
-                "Close": [152.0],
-                "Adj Close": [152.0],
-                "Volume": [1000000],
-            },
-            index=pd.DatetimeIndex(["2024-01-01"]),
-        )
+        mock_download.return_value = _yf_multi_ticker_frame(sample_us_tickers[:2])
 
         fetcher = USEquityFetcher(tickers=sample_us_tickers[:2], batch_size=2)
         result = fetcher.fetch(date(2024, 1, 1))
@@ -169,6 +174,75 @@ class TestUSEquityFetcherBatching:
         )
 
         fetcher = USEquityFetcher(tickers=["AAPL"], batch_size=500)
+        result = fetcher.fetch(date(2024, 1, 1))
+
+        assert not result.is_empty()
+        assert result["ticker"][0] == "AAPL"
+
+
+class TestRetryOnTransientErrors:
+    """Requests/urllib-based fetchers must retry per the tenacity contract."""
+
+    @patch("equity_lake.sources.base.yf.download")
+    def test_requests_connection_error_retried_three_times_then_fails(self, mock_download):
+        mock_download.side_effect = requests.exceptions.ConnectionError("connection reset")
+
+        fetcher = USEquityFetcher(tickers=["AAPL"], retry_delay=0.01)
+
+        with pytest.raises(TransientError):
+            fetcher.fetch(date(2024, 1, 1))
+        assert mock_download.call_count == 3
+
+    @patch("equity_lake.sources.base.yf.download")
+    def test_requests_timeout_retried_three_times_then_fails(self, mock_download):
+        mock_download.side_effect = requests.exceptions.Timeout("read timed out")
+
+        fetcher = USEquityFetcher(tickers=["AAPL"], retry_delay=0.01)
+
+        with pytest.raises(TransientError):
+            fetcher.fetch(date(2024, 1, 1))
+        assert mock_download.call_count == 3
+
+    @patch("equity_lake.sources.base.yf.download")
+    def test_urllib_500_retried_three_times_then_fails(self, mock_download):
+        mock_download.side_effect = urllib.error.HTTPError("https://query1.finance.yahoo.com", 500, "Internal Server Error", None, None)
+
+        fetcher = USEquityFetcher(tickers=["AAPL"], retry_delay=0.01)
+
+        with pytest.raises(TransientError):
+            fetcher.fetch(date(2024, 1, 1))
+        assert mock_download.call_count == 3
+
+    @patch("equity_lake.sources.base.yf.download")
+    def test_http_404_not_retried(self, mock_download):
+        mock_download.side_effect = urllib.error.HTTPError("https://query1.finance.yahoo.com", 404, "Not Found", None, None)
+
+        fetcher = USEquityFetcher(tickers=["AAPL"], retry_delay=0.01)
+
+        with pytest.raises(urllib.error.HTTPError):
+            fetcher.fetch(date(2024, 1, 1))
+        assert mock_download.call_count == 1
+
+
+class TestMultiTickerFlatFrame:
+    """A flat (non-MultiIndex) frame from a multi-ticker batch is a failed download."""
+
+    @patch("equity_lake.sources.base.yf.download")
+    def test_multi_ticker_flat_frame_returns_no_rows(self, mock_download):
+        """Regression: a flat frame must not be copied onto every ticker in the batch."""
+        mock_download.return_value = _yf_flat_frame()
+
+        fetcher = USEquityFetcher(tickers=["AAPL", "MSFT"], batch_size=2)
+        result = fetcher.fetch(date(2024, 1, 1))
+
+        assert result.is_empty()
+
+    @patch("equity_lake.sources.base.yf.download")
+    def test_single_ticker_batch_flat_frame_still_parsed(self, mock_download):
+        """Flat-frame handling is kept for single-ticker batches."""
+        mock_download.return_value = _yf_flat_frame()
+
+        fetcher = USEquityFetcher(tickers=["AAPL"], batch_size=1)
         result = fetcher.fetch(date(2024, 1, 1))
 
         assert not result.is_empty()
@@ -475,6 +549,32 @@ class TestCNAshareFetcher:
         called_codes = [call.kwargs["symbol"] for call in mock_hist.call_args_list]
         assert called_codes == ["000001", "000002"]
 
+    @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
+    def test_fetch_all_stocks_fail_returns_empty_without_raising(self, mock_hist):
+        """Per-stock failures degrade to failure_count, not an outer exception."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001"]
+        mock_hist.side_effect = Exception("network down")
+
+        fetcher = CNAshareFetcher(ticker_config=ticker_config)
+        result = fetcher.fetch(date(2024, 1, 1))
+
+        assert result.is_empty()
+
+    @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
+    def test_fetch_outer_errors_propagate_not_swallowed(self, mock_hist):
+        """Errors that escape the per-stock loop must propagate (tenacity contract), not return an empty frame."""
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001"]
+
+        fetcher = CNAshareFetcher(ticker_config=ticker_config, retry_delay=0.01)
+
+        with (
+            patch.object(fetcher, "_fetch_single_stock", side_effect=RuntimeError("akshare exploded")),
+            pytest.raises(RuntimeError, match="akshare exploded"),
+        ):
+            fetcher.fetch(date(2024, 1, 1))
+
 
 # =============================================================================
 # CNHybridFetcher Tests (Multi-Source Fallback)
@@ -756,23 +856,10 @@ class TestFetcherIntegration:
     @patch("equity_lake.sources.base.yf.download")
     def test_us_fetcher_with_large_dataset(self, mock_download):
         """Test USEquityFetcher with large ticker list."""
-        # Create mock data
-        mock_data = pd.DataFrame(
-            {
-                "Open": [150.0] * 100,
-                "High": [155.0] * 100,
-                "Low": [148.0] * 100,
-                "Close": [152.0] * 100,
-                "Adj Close": [152.0] * 100,
-                "Volume": [1000000] * 100,
-            },
-            index=pd.date_range("2024-01-01", periods=100),
-        )
-
-        mock_download.return_value = mock_data
-
         # Test with 1200 tickers (should create 3 batches)
         large_ticker_list = [f"TICKER{i:04d}" for i in range(1200)]
+        mock_download.return_value = _yf_multi_ticker_frame(large_ticker_list, periods=100)
+
         fetcher = USEquityFetcher(tickers=large_ticker_list, batch_size=500)
 
         result = fetcher.fetch(date(2024, 1, 1))

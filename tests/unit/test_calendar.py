@@ -2,6 +2,8 @@
 
 from datetime import date
 
+import exchange_calendars as xc
+
 from equity_lake.core.calendar import (
     count_trading_days,
     is_trading_day,
@@ -38,6 +40,44 @@ class TestTradingDaysBetween:
     def test_unknown_market_returns_empty(self) -> None:
         days = trading_days_between("unknown", date(2026, 6, 1), date(2026, 6, 5))
         assert days == []
+
+    def test_hk_sg_intersects_all_exchanges(self) -> None:
+        """hk_sg_equity must yield the XHKG ∩ XSES sessions, not just exchanges[0]."""
+        start, end = date(2024, 1, 1), date(2024, 12, 31)
+        xhkg = {s.date() for s in xc.get_calendar("XHKG").sessions_in_range(start, end)}
+        xses = {s.date() for s in xc.get_calendar("XSES").sessions_in_range(start, end)}
+        assert trading_days_between("hk_sg_equity", start, end) == sorted(xhkg & xses)
+
+    def test_hk_sg_excludes_sg_only_holidays(self) -> None:
+        """2024-08-09 (Singapore National Day): XHKG trades, XSES closed — must not be expected."""
+        days = trading_days_between("hk_sg_equity", date(2024, 8, 5), date(2024, 8, 12))
+        assert date(2024, 8, 9) not in days
+        assert date(2024, 8, 8) in days
+        assert date(2024, 8, 12) in days
+
+    def test_hk_sg_excludes_hk_only_holidays(self) -> None:
+        """2024-04-04 (Ching Ming Festival): XSES trades, XHKG closed — must not be expected."""
+        days = trading_days_between("hk_sg_equity", date(2024, 4, 2), date(2024, 4, 8))
+        assert date(2024, 4, 4) not in days
+        assert date(2024, 4, 2) in days
+
+    def test_short_market_keys_accepted(self) -> None:
+        """Ingestion short keys (MARKET_DIR_REVERSE values) resolve like the long forms."""
+        start, end = date(2026, 6, 1), date(2026, 6, 5)
+        assert trading_days_between("us", start, end) == trading_days_between("us_equity", start, end)
+        assert is_trading_day("hk_sg", date(2026, 6, 2)) is is_trading_day("hk_sg_equity", date(2026, 6, 2))
+
+
+class TestIsTradingDayHkSg:
+    """is_trading_day keeps union semantics (any exchange) — documented counterpart of the intersection above."""
+
+    def test_union_across_exchanges(self) -> None:
+        # 2024-08-09: XSES closed (SG National Day) but XHKG trades → union says True.
+        assert is_trading_day("hk_sg_equity", date(2024, 8, 9)) is True
+        # 2024-04-04: XHKG closed (Ching Ming) but XSES trades → union says True.
+        assert is_trading_day("hk_sg_equity", date(2024, 4, 4)) is True
+        # 2024-03-29 (Good Friday): both closed → False.
+        assert is_trading_day("hk_sg_equity", date(2024, 3, 29)) is False
 
 
 class TestCountTradingDays:

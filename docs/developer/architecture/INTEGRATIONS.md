@@ -82,7 +82,7 @@ dotenvx run -- uv run equity ingest --markets us
 | `FINNHUB_API_KEY` | `us_news`, `us_social_sentiment`, `us_earnings_transcripts`, `us_analyst_ratings` | The router raises when unset for these markets |
 | `REDDIT_USER_AGENT` | `reddit_posts` | Format `<platform>:<app-id>:<version> (by u/<username>)`; `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` are listed for the praw-based Reddit sentiment loader (`sentiment` group) |
 | `SEC_USER_AGENT` | `sec_filings_fulltext`, `us_sec_financials` | Descriptive agent with contact email, per SEC policy |
-| `STOCKTWITS_ENABLED`, `STOCKTWITS_CLIENT_ID` | `stocktwits_messages` | Off by default |
+| `STOCKTWITS_ENABLED`, `STOCKTWITS_ACCESS_TOKEN` | `stocktwits_messages` | Off by default |
 | `DEEPSEEK_API_KEY` | Bronze→silver LLM enrichment | OpenAI-compatible client against `api.deepseek.com` |
 | `OPENROUTER_API_KEY` | Embeddings (RAG vector index) | |
 | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET` | `equity sync` (S3 bootstrap) | Only for private buckets; boto3/s5cmd in the `s3` group |

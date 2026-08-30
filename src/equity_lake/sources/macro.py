@@ -7,6 +7,7 @@ DataFrames to the canonical Delta writer in ``ingestion/writers.py``.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -163,12 +164,8 @@ class MacroDataPipeline:
         self.indicators = self._initialize_fetchers()
 
     def _get_fred_api_key(self) -> str:
-        import os
-
-        from dotenv import load_dotenv
-
-        load_dotenv()
-
+        # Env loading belongs to the dotenvx CLI seam; never call load_dotenv()
+        # inside library code.
         api_key = os.getenv("FRED_API_KEY", "")
         if not api_key:
             logger.warning(

@@ -53,7 +53,7 @@ class StockTwitsFetcher(MarketDataFetcher):
         super().__init__(retry_attempts, retry_delay)
         self.tickers = tickers or []
         self.messages_per_symbol = min(messages_per_symbol, 30)
-        self.client_id = os.getenv("STOCKTWITS_CLIENT_ID")
+        self.access_token = os.getenv("STOCKTWITS_ACCESS_TOKEN")
         self.enabled = os.getenv("STOCKTWITS_ENABLED", "false").lower() in ("true", "1", "yes")
         logger.info("Initialized StockTwitsFetcher", ticker_count=len(self.tickers), enabled=self.enabled)
 
@@ -98,8 +98,11 @@ class StockTwitsFetcher(MarketDataFetcher):
         def _fetch() -> list[dict[str, Any]]:
             url = f"{STOCKTWITS_API_URL}/streams/symbol/{ticker}.json"
             params: dict[str, Any] = {"limit": self.messages_per_symbol}
-            if self.client_id:
-                params["access_token"] = self.client_id
+            # StockTwits API v2 authenticates via the ``access_token`` query
+            # parameter; no Authorization-header auth is documented for this
+            # endpoint (see https://api.stocktwits.com/developers/docs/api).
+            if self.access_token:
+                params["access_token"] = self.access_token
 
             headers = {
                 "User-Agent": "Equity Lake/1.0",

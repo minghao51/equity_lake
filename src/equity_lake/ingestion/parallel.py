@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import Any
 
@@ -37,25 +37,33 @@ def fetch_markets_parallel(
     fetch_func_map: dict[str, tuple[Callable[..., Any], dict[str, Any]]],
     max_workers: int | None = None,
 ) -> dict[str, FetchResult]:
-    """Fetch multiple markets in parallel using ThreadPoolExecutor."""
+    """Fetch multiple markets in parallel using ThreadPoolExecutor.
+
+    ``duration_seconds`` is measured from executor submit to completion, so it
+    reflects real work (including any time the task waited in the executor
+    queue), not the time spent iterating ``as_completed``.
+    """
     workers = max_workers or len(markets)
     results: dict[str, FetchResult] = {}
 
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {}
+        futures: dict[Future[Any], str] = {}
+        submitted_at: dict[Future[Any], float] = {}
         for market in markets:
             if market in fetch_func_map:
                 func, kwargs = fetch_func_map[market]
-                futures[executor.submit(func, trading_date, **kwargs)] = market
+                future = executor.submit(func, trading_date, **kwargs)
+                futures[future] = market
+                submitted_at[future] = time.monotonic()
 
         for future in as_completed(futures):
             market = futures[future]
-            start = time.monotonic()
+            duration_seconds = time.monotonic() - submitted_at[future]
             try:
                 data = future.result()
-                results[market] = FetchResult(market=market, data=data, success=True, duration_seconds=time.monotonic() - start)
+                results[market] = FetchResult(market=market, data=data, success=True, duration_seconds=duration_seconds)
             except Exception as exc:
-                results[market] = FetchResult(market=market, success=False, error=str(exc), duration_seconds=time.monotonic() - start)
+                results[market] = FetchResult(market=market, success=False, error=str(exc), duration_seconds=duration_seconds)
 
     return results
 
@@ -82,8 +90,6 @@ def fetch_items_parallel(
         results: list[Any] = []
         for i, item in enumerate(items):
             if rate_limit_seconds > 0 and i > 0:
-                import time
-
                 time.sleep(rate_limit_seconds)
             try:
                 results.extend(work_func(item, trading_date))

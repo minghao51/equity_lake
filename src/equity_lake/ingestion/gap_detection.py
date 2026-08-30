@@ -16,8 +16,37 @@ import structlog
 
 from equity_lake.core.calendar import trading_days_between
 from equity_lake.core.paths import LAKE_DIR
+from equity_lake.ingestion.types import MARKET_DIR_REVERSE
 
 logger = structlog.get_logger(__name__)
+
+
+def _calendar_key(market: str) -> str:
+    """Resolve a medallion table directory (or market key) to a ``core.calendar`` market key.
+
+    Resolution goes through the canonical market map (``MARKET_DIR_REVERSE``)
+    instead of substring slicing: ``"01_bronze/market_data/us_equity"`` resolves
+    to the ``"us"`` market key, while ``"02_silver/analyst_ratings"`` resolves to
+    ``"us_analyst_ratings"`` instead of the bogus calendar key
+    ``"analyst_ratings"``. Only the required price markets map to a trading
+    calendar; any other key intentionally yields no sessions. Tables shared
+    by several markets (e.g. ``01_bronze/raw_articles``) resolve to one of
+    their market keys — none of which has a calendar.
+    """
+    return MARKET_DIR_REVERSE.get(market, market)
+
+
+def _expected_trading_dates(market: str, start_date: date, end_date: date) -> list[date]:
+    """Expected sessions for a market dir; empty (with a warning) when no trading calendar maps to it."""
+    trading_dates = trading_days_between(_calendar_key(market), start_date, end_date)
+    if not trading_dates:
+        logger.warning(
+            "gap_detection_no_trading_calendar",
+            market=market,
+            calendar_key=_calendar_key(market),
+            reason="no trading calendar maps to this table; cannot derive expected trading days",
+        )
+    return trading_dates
 
 
 class GapDetector:
@@ -100,8 +129,7 @@ class GapDetector:
     ) -> list[tuple[str, date]]:
         scan = self._scan_source(market)
         if business_days_only:
-            calendar_key = market.rsplit("/", 1)[-1]
-            trading_dates = trading_days_between(calendar_key, start_date, end_date)
+            trading_dates = _expected_trading_dates(market, start_date, end_date)
             if not trading_dates:
                 return []
             placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
@@ -140,8 +168,7 @@ class GapDetector:
     ) -> list[tuple[str, date]]:
         scan = self._scan_source(market)
         if business_days_only:
-            calendar_key = market.rsplit("/", 1)[-1]
-            trading_dates = trading_days_between(calendar_key, start_date, end_date)
+            trading_dates = _expected_trading_dates(market, start_date, end_date)
             if not trading_dates:
                 return []
             placeholders = ", ".join(f"'{d.isoformat()}'" for d in trading_dates)
@@ -199,7 +226,7 @@ class GapDetector:
         if start_date is None:
             start_date = end_date - timedelta(days=90)
 
-        calendar_key = market.rsplit("/", 1)[-1]
+        calendar_key = _calendar_key(market)
         expected_days = self._count_trading_days(calendar_key, start_date, end_date) if business_days_only else (end_date - start_date).days + 1
 
         scan = self._scan_source(market)

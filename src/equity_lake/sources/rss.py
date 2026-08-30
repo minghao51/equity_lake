@@ -17,7 +17,7 @@ import yaml
 
 from equity_lake.core.paths import CONFIG_DIR
 from equity_lake.core.schemas import BRONZE_ARTICLE_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher, _empty_frame
+from equity_lake.sources.base import MarketDataFetcher, TransientError, _empty_frame
 
 logger = structlog.get_logger()
 
@@ -118,13 +118,24 @@ class RSSNewsFetcher(MarketDataFetcher):
             headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             }
-            try:
-                with httpx.Client(timeout=20, follow_redirects=True) as client:
-                    resp = client.get(feed_url, headers=headers)
+            # Fetch only through the httpx client so every request honors the
+            # configured timeout. Do NOT fall back to feedparser.parse(feed_url):
+            # it performs its own HTTP without a timeout. Connection errors and
+            # retryable statuses (5xx/408/429) propagate as TransientError for
+            # tenacity retries; permanent 4xx propagate as httpx.HTTPStatusError
+            # without retry. Either way, fetch() degrades the failed feed to
+            # zero articles instead of failing the whole run.
+            with httpx.Client(timeout=20, follow_redirects=True) as client:
+                resp = client.get(feed_url, headers=headers)
+                # Classify status inline (mirrors sources/base.py's rule):
+                # raise_for_status() would raise httpx.HTTPStatusError, which
+                # the retry conversion tuple does not catch, so 5xx would
+                # never be retried.
+                if resp.status_code >= 500 or resp.status_code in (408, 429):
+                    raise TransientError(f"HTTP {resp.status_code} fetching feed {feed_name}")
+                if resp.is_error:
                     resp.raise_for_status()
-                    parsed = feedparser.parse(resp.content)
-            except (httpx.HTTPError, OSError):
-                parsed = feedparser.parse(feed_url)
+                parsed = feedparser.parse(resp.content)
 
             if parsed.bozo and parsed.bozo_exception:
                 logger.warning("rss_parse_warning", feed=feed_name, error=str(parsed.bozo_exception))

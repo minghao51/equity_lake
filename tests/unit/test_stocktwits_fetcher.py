@@ -85,3 +85,21 @@ class TestStockTwitsFetcher:
             fetcher = StockTwitsFetcher(tickers=["AAPL"])
             result = fetcher.fetch(date(2026, 6, 14))
             assert result.is_empty()
+
+    def test_access_token_sent_as_query_param(self, mock_httpx_client):
+        """STOCKTWITS_ACCESS_TOKEN is sent as the access_token query param."""
+        mock_response = Mock()
+        mock_response.json.return_value = {"messages": []}
+        mock_response.raise_for_status = Mock()
+        mock_httpx_client.get.return_value = mock_response
+
+        with (
+            patch.dict("os.environ", {"STOCKTWITS_ENABLED": "true", "STOCKTWITS_ACCESS_TOKEN": "token123"}),
+            patch("equity_lake.sources.stocktwits.httpx.Client", return_value=mock_httpx_client),
+        ):
+            fetcher = StockTwitsFetcher(tickers=["AAPL"])
+            assert fetcher.access_token == "token123"
+            fetcher.fetch(date(2026, 6, 14))
+
+        params = mock_httpx_client.get.call_args.kwargs["params"]
+        assert params["access_token"] == "token123"

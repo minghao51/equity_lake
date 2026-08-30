@@ -232,8 +232,12 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         Returns:
             Parsed article dictionary or None if invalid
         """
-        # Extract datetime
-        datetime_str = article.get("datetime", 0)
+        # Extract datetime; missing timestamps drop the article instead of
+        # defaulting to epoch-0 (which would create 1970-01-01 partitions).
+        datetime_str = article.get("datetime")
+        if datetime_str is None:
+            logger.warning("Dropping article for %s with missing timestamp", ticker)
+            return None
         try:
             dt = datetime.fromtimestamp(datetime_str, tz=UTC) if isinstance(datetime_str, int) else datetime.fromisoformat(str(datetime_str))
         except (ValueError, TypeError, OverflowError) as exc:

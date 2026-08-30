@@ -373,6 +373,14 @@ class TestFinnhubNewsFetcherParsing:
         assert result["source"] == "Unknown"
         assert result["category"] == "general"
 
+    def test_parse_article_with_missing_timestamp_is_dropped(self):
+        """Missing timestamps drop the article instead of defaulting to epoch-0."""
+        fetcher = FinnhubNewsFetcher(api_key="test_key", tickers=["AAPL"])
+
+        assert fetcher._parse_article({"headline": "no timestamp at all"}, "AAPL") is None
+        assert fetcher._parse_article({"datetime": None, "headline": "null timestamp"}, "AAPL") is None
+        assert fetcher._parse_article({"datetime": "not-a-date", "headline": "bad timestamp"}, "AAPL") is None
+
 
 class TestFinnhubNewsFetcherRetry:
     """Test suite for retry logic."""

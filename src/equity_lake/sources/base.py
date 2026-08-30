@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import urllib.error
 from collections.abc import Callable
 from datetime import date, timedelta
 from typing import Any, cast
@@ -9,6 +10,7 @@ from typing import Any, cast
 import httpx
 import pandas as pd
 import polars as pl
+import requests
 import structlog
 import yfinance as yf
 
@@ -228,7 +230,27 @@ class MarketDataFetcher:
         def _wrapped() -> Any:
             try:
                 result = func(*args, **kwargs)
-            except (httpx.ConnectError, httpx.ReadTimeout, httpx.WriteTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
+            except (
+                httpx.ConnectError,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.PoolTimeout,
+                httpx.RemoteProtocolError,
+                # requests/urllib-based libs (yfinance, akshare, efinance,
+                # FinanceDataReader) must retry on the same contract as httpx.
+                requests.exceptions.ConnectionError,
+                requests.exceptions.Timeout,
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
+                raise TransientError(str(exc)) from exc
+            except urllib.error.HTTPError as exc:
+                # HTTPError subclasses URLError, so it must be handled first:
+                # only server errors, 408, and 429 are retryable; other 4xx
+                # (auth, not-found) propagate immediately and are not retried.
+                if exc.code >= 500 or exc.code in (408, 429):
+                    raise TransientError(str(exc)) from exc
+                raise
+            except urllib.error.URLError as exc:
                 raise TransientError(str(exc)) from exc
 
             # Surface retryable HTTP statuses as TransientError so tenacity retries
@@ -238,7 +260,7 @@ class MarketDataFetcher:
             if hasattr(result, "raise_for_status"):
                 try:
                     result.raise_for_status()
-                except httpx.HTTPStatusError as exc:
+                except (httpx.HTTPStatusError, requests.exceptions.HTTPError) as exc:
                     status = getattr(getattr(exc, "response", None), "status_code", None)
                     if status is not None and (status >= 500 or status in (408, 429)):
                         raise TransientError(str(exc)) from exc
@@ -298,20 +320,29 @@ class YFinanceBaseFetcher(MarketDataFetcher):
         if data is None or (hasattr(data, "empty") and data.empty):
             return []
 
-        frames: list[pd.DataFrame] = []
         if not isinstance(data.columns, pd.MultiIndex):
-            base_frame = data.reset_index()
-            tickers = ticker_batch if len(ticker_batch) > 1 else [ticker_batch[0]]
-            for ticker in tickers:
-                frame = base_frame.copy()
-                frame["ticker"] = ticker
-                frames.append(frame)
-        else:
-            for ticker in ticker_batch:
-                if ticker in data.columns:
-                    ticker_data = data[ticker].reset_index()
-                    ticker_data["ticker"] = ticker
-                    frames.append(ticker_data)
+            # A flat (non-MultiIndex) frame for a multi-ticker batch means the
+            # download failed (yfinance could not attribute rows per ticker).
+            # Copying it onto every ticker would duplicate one ticker's prices
+            # across the whole batch, so treat the batch as failed instead.
+            if len(ticker_batch) > 1:
+                logger.error(
+                    "multi_ticker_flat_frame_discarded",
+                    market=self.market,
+                    batch_ticker_count=len(ticker_batch),
+                    first_tickers=ticker_batch[:5],
+                )
+                return []
+            frame = data.reset_index()
+            frame["ticker"] = ticker_batch[0]
+            return [frame]
+
+        frames: list[pd.DataFrame] = []
+        for ticker in ticker_batch:
+            if ticker in data.columns:
+                ticker_data = data[ticker].reset_index()
+                ticker_data["ticker"] = ticker
+                frames.append(ticker_data)
         return frames
 
     def _get_column_rename(self) -> dict[str, str]:
