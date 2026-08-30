@@ -44,7 +44,7 @@ setup:
 	@echo "Installing core dependencies..."
 	uv sync
 	@echo "✅ Setup complete!"
-	@echo "For the full ML pipeline: uv sync --extra ml"
+	@echo "For the full ML pipeline: uv sync --group ml"
 	@echo "Run tests with: make test"
 
 dev-setup: setup
@@ -89,7 +89,7 @@ fetch-macro:
 
 generate-test-data:
 	@echo "🎲 Generating realistic test data..."
-	uv run equity-generate-test-data
+	uv run equity bootstrap sample
 
 # News & Sentiment
 news:

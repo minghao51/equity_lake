@@ -224,7 +224,10 @@ class TestNativeCommands:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={
-                "bronze_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                "ingestion": {
+                    "success": True,
+                    "bronze_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                },
                 "features": {"success": True, "rows": 1},
                 "ml": {"success": True, "results": {}},
             },
@@ -236,7 +239,10 @@ class TestNativeCommands:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={
-                "sec_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                "ingestion": {
+                    "success": True,
+                    "sec_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                },
                 "features": {"success": True, "rows": 1},
                 "ml": {"success": True, "results": {}},
             },

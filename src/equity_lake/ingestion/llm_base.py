@@ -136,7 +136,7 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
 
     async def process_all(self, bronze_df: pl.DataFrame) -> pl.DataFrame:
         if bronze_df.is_empty():
-            logger.warning(f"Empty {self.log_label} bronze DataFrame, nothing to process")
+            logger.warning("llm_empty_bronze_input", log_label=self.log_label)
             return pl.DataFrame()
 
         rows = bronze_df.to_dicts()
@@ -166,7 +166,7 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
             else:
                 extracted.extend(result.items)  # type: ignore[attr-defined]
 
-        logger.info(f"{self.log_label} processing complete", extracted=len(extracted), failed=failed_count)
+        logger.info("llm_processing_complete", log_label=self.log_label, extracted=len(extracted), failed=failed_count)
         return self._to_silver_df(extracted, bronze_df)
 
     @abstractmethod

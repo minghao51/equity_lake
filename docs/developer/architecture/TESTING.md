@@ -1,933 +1,187 @@
 # Testing
 
-**Last Updated**: 2026-03-05
+**Last Updated**: 2026-08-29
 **Project**: Equity EOD Data Pipeline
 
-## Testing Framework
+## Framework and Configuration
 
-### Core Stack
+pytest (`>=8.0.0`) with pytest-mock and pytest-xdist from the `dev`
+dependency group. There is no pytest-asyncio. The configuration in
+`pyproject.toml` is the single source of truth:
 
-**Primary Framework**: pytest (>=8.0.0)
-
-**Key Plugins**:
-- **pytest-cov** (>=5.0.0): Coverage reporting
-- **pytest-mock**: Mocking utilities
-- **pytest-asyncio**: Async test support
-
-**Configuration** (`pyproject.toml`):
 ```toml
 [tool.pytest.ini_options]
+minversion = "8.0"
+addopts = ["--strict-markers", "--strict-config", "-ra", "-q", "--durations=10", "--import-mode=importlib"]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "-v",                    # Verbose output
-    "--strict-markers",      # Error on unknown markers
-    "--cov=src/equity_lake", # Coverage
-    "--cov-report=term",     # Terminal coverage report
-    "--cov-report=html",     # HTML coverage report
-    "--cov-report=term-missing" # Show missing lines
-]
-
+pythonpath = ["src", "."]
 markers = [
-    "unit: Unit tests (no external dependencies)",
-    "integration: Integration tests (requires data lake)",
-    "slow: Slow tests (> 1 second)",
+    "slow: >1s tests",
+    "unit: fast isolated tests",
+    "integration: external services / cross-module",
+    "e2e: full workflow",
+    "serial: cannot run in parallel",
+    "network: needs internet or API key",
+    "smoke: critical path",
 ]
 ```
 
----
+What the flags buy:
 
-### Running Tests
+- `--strict-markers` — a typo'd `@pytest.mark.<name>` is a collection error,
+  not a silent no-op. Only the seven markers above are registered.
+- `--strict-config` — unknown INI keys error out.
+- `-ra` / `-q` — quiet output with a failure summary.
+- `--durations=10` — the ten slowest tests are listed every run.
+- `--import-mode=importlib` — test modules do not need `__init__.py` files
+  and can share basenames across directories.
+- `pythonpath = ["src", "."]` — imports `equity_lake` straight from `src/`
+  and picks up the root `tests/conftest.py`.
 
-#### Run All Tests
+## Test Layout
+
+Tests are organized by scope first; `tests/` holds only `conftest.py`, the
+two scope directories, and a `README.md`:
+
+| Location | Scope | Contents |
+|---|---|---|
+| `tests/unit/` | Fast, isolated suite | ~70 flat `test_*.py` modules (fetchers, router, writers, catalog, CLI, signals, ML, validation, …) plus `tests/unit/features/dag/` for the Hamilton feature DAG |
+| `tests/integration/` | Cross-module workflows | 5 files: `test_duckdb_queries.py`, `test_news_ingestion.py`, `test_pipeline_orchestrator.py`, `test_dashboard_exporter.py`, `test_signal_integration.py` |
+
+`tests/conftest.py::pytest_collection_modifyitems` auto-marks every test by
+location: `unit/` → `@pytest.mark.unit`; `integration/` →
+`@pytest.mark.integration` **and** `@pytest.mark.slow`. Manual markers are
+only needed to add `network`/`e2e`/`smoke` or to override the defaults.
+
+## Marker Policy
+
+- `network` — the test needs internet or a real API key. It must be applied
+  explicitly (conventionally stacked with `slow` + `integration`) and is
+  excluded from the default fast suite via `-m "not network"`; CI's
+  `-m "not integration"` run also deselects it. Examples:
+  `tests/unit/test_ingestion_orchestrator.py`,
+  `tests/unit/test_macro_sources.py`.
+- `serial` — reserved for tests that cannot run under pytest-xdist workers;
+  keep them out of `-n auto` runs.
+- `slow` — anything over ~1 second, including everything under
+  `integration/` via auto-marking.
+- `unit` / `integration` / `e2e` / `smoke` — scope labels for selection;
+  `e2e` and `smoke` are registered for future use.
+
+Because `--strict-markers` is on, adding a new marker means registering it
+in `pyproject.toml` first.
+
+## Running Tests
+
 ```bash
-make test
-# or
-uv run pytest
+uv run pytest                     # full local suite (quiet, durations)
+uv run pytest -n auto             # parallel via pytest-xdist (serial-marked tests excluded)
+uv run pytest -m "not network"    # fast suite without network tests
+uv run pytest tests/unit -q       # just the fast unit suite
+uv run pytest -m integration      # integration suite
+uv run pytest -k "router"         # keyword selection
+uv run pytest --lf                 # re-run failures
 ```
 
-#### Run Specific Test File
+Makefile wrappers (see `Makefile`):
+
 ```bash
-uv run pytest tests/unit/sources/test_yfinance_source.py
+make test              # dotenvx run -- uv run pytest -v --cov=src/equity_lake --cov-report=html --cov-report=term
+make test-unit         # -m "unit"
+make test-integration  # -m "integration"
+make test-slow         # -m "slow"
 ```
 
-#### Run Specific Test Function
-```bash
-uv run pytest tests/unit/sources/test_yfinance_source.py::test_fetcher_returns_dataframe
-```
+Coverage is measured with pytest-cov on demand (as in `make test`). The
+`[tool.coverage.*]` sections in `pyproject.toml` set the source to
+`src/equity_lake` and exclude repr/debug/main-guard lines — there is **no**
+coverage threshold gate configured.
 
-#### Run by Marker
-```bash
-# Unit tests only
-uv run pytest -m unit
+## Shared Fixtures (`tests/conftest.py`)
 
-# Integration tests only
-uv run pytest -m integration
+| Fixture | Provides |
+|---|---|
+| `sample_ohlcv_data` | 5-row OHLCV **polars** `pl.DataFrame` (explicit dtypes) for 2024-01-01 |
+| `sample_multi_day_data` | 3 tickers × 5 days polars OHLCV |
+| `sample_us_tickers` / `sample_cn_tickers` | Small ticker lists |
+| `sample_large_ticker_list` | 1200 tickers to exercise batch chunking (batch size 500) |
+| `temp_data_dir` | `tmp_path / "lake"` with market subdirectories |
+| `temp_partitioned_parquet` | Hive-partitioned `date=YYYY-MM-DD/` Parquet tree from `sample_multi_day_data` |
+| `mock_env_vars` | `monkeypatch`-set environment variables |
+| `mock_yfinance_download` | Patches `yfinance.download` with a one-day OHLCV pandas frame |
+| `mock_akshare_stock_zh_a_hist`, `mock_akshare_stock_info_a_code_name` | Chinese-column akshare frames |
+| `mock_efinance_get_quote_history`, `mock_efinance_get_realtime_quotes`, `mock_efinance_module` | efinance seams (including a full module mock) |
+| `mock_httpx_client` | `MagicMock` pre-wired as an `httpx.Client` context manager for `patch("<module>.httpx.Client", …)` |
+| `capture_logs` | `caplog` set to DEBUG |
+| `temp_duckdb_db` | Path string for a throwaway DuckDB database |
 
-# Skip slow tests
-uv run pytest -m "not slow"
-
-# Run only slow tests
-uv run pytest -m slow
-```
-
-#### With Coverage
-```bash
-uv run pytest --cov=src/equity_lake --cov-report=html --cov-report=term
-```
-
-#### Verbose Output
-```bash
-uv run pytest -v
-```
-
-#### Stop on First Failure
-```bash
-uv run pytest -x
-```
-
-#### Run Failed Tests Only
-```bash
-uv run pytest --lf
-```
-
----
-
-## Test Structure
-
-### Directory Layout
-
-```
-tests/
-├── __init__.py
-├── conftest.py                 # Shared fixtures
-│
-├── unit/                       # Unit tests
-│   ├── sources/                # Test market fetchers
-│   │   ├── test_yfinance_source.py
-│   │   ├── test_akshare_source.py
-│   │   └── test_base_fetcher.py
-│   ├── storage/                # Test storage layer
-│   │   ├── test_parquet.py
-│   │   ├── test_duckdb.py
-│   │   └── test_s3_sync.py
-│   └── test_orchestrator.py    # Test coordination logic
-│
-├── integration/                # Integration tests
-│   ├── test_full_ingestion.py
-│   ├── test_s3_workflow.py
-│   └── test_query_workflow.py
-│
-└── signals/                    # Signal tests
-    ├── test_scanner.py
-    └── test_strategies.py
-```
-
----
-
-### Test Organization
-
-#### Unit Tests (`tests/unit/`)
-
-**Purpose**: Test individual components in isolation
-
-**Characteristics**:
-- No external dependencies (network, filesystem)
-- Mock external APIs (yfinance, akshare)
-- Fast execution (< 1 second each)
-- High coverage of logic paths
-
-**Example**:
-```python
-import pytest
-from datetime import date
-from unittest.mock import patch, MagicMock
-import pandas as pd
-
-from equity_lake.sources.us import USEquityFetcher
-
-@pytest.mark.unit
-def test_us_fetcher_returns_valid_dataframe():
-    """Test that USEquityFetcher returns valid DataFrame."""
-    # Arrange
-    fetcher = USEquityFetcher()
-    test_date = date(2024, 12, 1)
-
-    # Act
-    with patch('yfinance.download') as mock_download:
-        mock_download.return_value = pd.DataFrame({
-            'Open': [150.0],
-            'High': [155.0],
-            'Low': [149.0],
-            'Close': [154.0],
-            'Volume': [1000000]
-        })
-
-        df = fetcher.fetch(test_date)
-
-    # Assert
-    assert not df.empty
-    assert 'ticker' in df.columns
-    assert 'close' in df.columns
-    assert df['date'].iloc[0] == test_date
-```
-
----
-
-#### Integration Tests (`tests/integration/`)
-
-**Purpose**: Test end-to-end workflows
-
-**Characteristics**:
-- Real filesystem operations
-- Temporary directories for data
-- May use real Parquet files
-- Slower execution (seconds to minutes)
-- Test component interactions
-
-**Example**:
-```python
-import pytest
-from datetime import date
-from pathlib import Path
-
-from equity_lake.ingestion.orchestrator import run_daily_ingestion
-
-@pytest.mark.integration
-def test_full_ingestion_workflow(temp_lake_dir):
-    """Test complete ingestion workflow."""
-    # Arrange
-    test_date = date(2024, 12, 1)
-
-    # Act
-    results = run_daily_ingestion(
-        trading_date=test_date,
-        markets=['us'],
-        output_dir=temp_lake_dir
-    )
-
-    # Assert
-    assert results['us'] is not None
-    assert len(results['us']) > 0
-
-    # Verify Parquet files created
-    parquet_file = temp_lake_dir / 'us_equity' / f'date={test_date}' / f'{test_date}.parquet'
-    assert parquet_file.exists()
-```
-
----
-
-### Test Markers
-
-#### Markers Overview
-
-**Purpose**: Categorize tests by type
-
-**Available Markers**:
-- `@pytest.mark.unit`: Unit tests (no external dependencies)
-- `@pytest.mark.integration`: Integration tests (requires data lake)
-- `@pytest.mark.slow`: Slow tests (> 1 second)
-
-**Usage**:
-```python
-import pytest
-
-@pytest.mark.unit
-def test_fast_logic():
-    """Unit test: Fast, no external dependencies."""
-    pass
-
-@pytest.mark.integration
-def test_database_workflow():
-    """Integration test: Requires database."""
-    pass
-
-@pytest.mark.slow
-def test_large_dataset():
-    """Slow test: Processes large dataset."""
-    pass
-```
-
-**Running by Marker**:
-```bash
-# Run only unit tests
-uv run pytest -m unit
-
-# Run unit + integration (exclude slow)
-uv run pytest -m "unit or integration"
-
-# Skip slow tests
-uv run pytest -m "not slow"
-```
-
----
+Helpers `create_test_parquet_file()` and `count_parquet_files()` live in the
+same module. Add new shared fixtures there, not in per-file `conftest.py`
+copies.
 
 ## Mocking Patterns
 
-### Mocking External APIs
-
-#### yfinance Mock
-
-**Example**:
-```python
-from unittest.mock import patch
-import pandas as pd
-
-@pytest.mark.unit
-def test_us_fetcher_with_mocked_yfinance():
-    """Test USEquityFetcher with mocked yfinance."""
-    # Mock data
-    mock_data = pd.DataFrame({
-        'Open': [150.0, 140.0],
-        'High': [155.0, 145.0],
-        'Low': [149.0, 139.0],
-        'Close': [154.0, 144.0],
-        'Volume': [1000000, 900000]
-    }, index=pd.date_range('2024-12-01', periods=2))
-
-    with patch('yfinance.download') as mock_download:
-        mock_download.return_value = mock_data
-
-        # Test fetcher
-        fetcher = USEquityFetcher()
-        df = fetcher.fetch(date(2024, 12, 1))
-
-        # Assertions
-        assert mock_download.called
-        assert len(df) == 2
-        assert df['close'].iloc[0] == 154.0
-```
-
----
-
-#### akshare Mock
-
-**Example**:
-```python
-from unittest.mock import patch
-import pandas as pd
-
-@pytest.mark.unit
-def test_cn_fetcher_with_mocked_akshare():
-    """Test CNAshareFetcher with mocked akshare."""
-    # Mock data (Chinese column names)
-    mock_data = pd.DataFrame({
-        '股票代码': ['000001', '000002'],
-        '开盘': [10.0, 20.0],
-        '最高': [11.0, 21.0],
-        '最低': [9.0, 19.0],
-        '收盘': [10.5, 20.5],
-        '成交量': [1000000, 2000000]
-    })
-
-    with patch('akshare.stock_zh_a_hist') as mock_fetch:
-        mock_fetch.return_value = mock_data
-
-        # Test fetcher
-        fetcher = CNAshareFetcher()
-        df = fetcher.fetch(date(2024, 12, 1))
-
-        # Assertions
-        assert mock_fetch.called
-        assert 'open' in df.columns  # Column mapped to English
-        assert df['close'].iloc[0] == 10.5
-```
-
----
-
-### Mocking Filesystem Operations
-
-#### Temporary Directories
-
-**Example**:
-```python
-import pytest
-from pathlib import Path
-
-@pytest.fixture
-def temp_lake_dir(tmp_path):
-    """Create temporary data lake directory."""
-    lake_dir = tmp_path / "data" / "lake"
-    lake_dir.mkdir(parents=True)
-    return lake_dir
-
-@pytest.mark.integration
-def test_write_parquet(temp_lake_dir):
-    """Test Parquet writing with temporary directory."""
-    # Use temp_lake_dir for test
-    output_path = temp_lake_dir / 'test.parquet'
-
-    df = pd.DataFrame({'a': [1, 2, 3]})
-    df.to_parquet(output_path)
-
-    assert output_path.exists()
-```
-
----
-
-#### Mocking Path Operations
-
-**Example**:
-```python
-from unittest.mock import patch
-from pathlib import Path
-
-@pytest.mark.unit
-def test_path_resolution():
-    """Test path resolution with mocked filesystem."""
-    with patch('pathlib.Path.exists') as mock_exists:
-        mock_exists.return_value = True
-
-        path = Path('data/lake/01_bronze/market_data/us_equity')
-        assert path.exists()
-
-        mock_exists.assert_called_once()
-```
-
----
-
-### Mocking Database Operations
-
-#### DuckDB Mock
-
-**Example**:
-```python
-from unittest.mock import MagicMock
-
-@pytest.mark.unit
-def test_duckdb_query():
-    """Test DuckDB query with mocked connection."""
-    # Mock DuckDB connection
-    mock_con = MagicMock()
-    mock_con.execute.return_value.df.return_value = pd.DataFrame({
-        'ticker': ['AAPL'],
-        'close': [154.0]
-    })
-
-    # Test with mocked connection
-    df = mock_con.execute("SELECT * FROM equity_all").df()
-
-    # Assertions
-    assert mock_con.execute.called
-    assert len(df) == 1
-    assert df['close'].iloc[0] == 154.0
-```
-
----
-
-## Test Fixtures
-
-### Shared Fixtures (`tests/conftest.py`)
-
-#### OHLCV Data Fixture
-
-```python
-import pytest
-from datetime import date
-import pandas as pd
-
-@pytest.fixture
-def sample_ohlcv_df():
-    """Return sample OHLCV DataFrame."""
-    return pd.DataFrame({
-        'ticker': ['AAPL', 'GOOGL', 'MSFT'],
-        'date': [date(2024, 12, 1), date(2024, 12, 1), date(2024, 12, 1)],
-        'open': [150.0, 140.0, 380.0],
-        'high': [155.0, 145.0, 385.0],
-        'low': [149.0, 139.0, 378.0],
-        'close': [154.0, 144.0, 383.0],
-        'volume': [1000000, 900000, 800000],
-        'adj_close': [154.0, 144.0, 383.0]
-    })
-```
-
-**Usage**:
-```python
-def test_with_sample_data(sample_ohlcv_df):
-    """Test using shared OHLCV fixture."""
-    assert len(sample_ohlcv_df) == 3
-    assert 'AAPL' in sample_ohlcv_df['ticker'].values
-```
-
----
-
-#### Temporary Directory Fixture
-
-```python
-import pytest
-from pathlib import Path
-
-@pytest.fixture
-def temp_lake_dir(tmp_path):
-    """Create temporary data lake directory."""
-    lake_dir = tmp_path / "data" / "lake"
-    lake_dir.mkdir(parents=True)
-
-    # Create market subdirectories
-    (lake_dir / 'us_equity').mkdir()
-    (lake_dir / 'cn_ashare').mkdir()
-    (lake_dir / 'hk_sg_equity').mkdir()
-
-    return lake_dir
-```
-
-**Usage**:
-```python
-def test_with_temp_dir(temp_lake_dir):
-    """Test using temporary directory."""
-    assert temp_lake_dir.exists()
-    assert (temp_lake_dir / 'us_equity').exists()
-```
-
----
-
-#### Mock Fetcher Fixture
-
-```python
-import pytest
-from equity_lake.sources.base import MarketDataFetcher
-import pandas as pd
-from datetime import date
-
-@pytest.fixture
-def mock_fetcher():
-    """Return mock fetcher with sample data."""
-    class MockFetcher(MarketDataFetcher):
-        def fetch(self, trading_date: date) -> pd.DataFrame:
-            return pd.DataFrame({
-                'ticker': ['TEST'],
-                'date': [trading_date],
-                'open': [100.0],
-                'high': [105.0],
-                'low': [99.0],
-                'close': [104.0],
-                'volume': [1000000]
-            })
-
-    return MockFetcher()
-```
-
-**Usage**:
-```python
-def test_with_mock_fetcher(mock_fetcher):
-    """Test using mock fetcher."""
-    df = mock_fetcher.fetch(date(2024, 12, 1))
-    assert df['ticker'].iloc[0] == 'TEST'
-```
-
----
-
-### Parametrized Fixtures
-
-**Purpose**: Run tests with multiple inputs
-
-**Example**:
-```python
-@pytest.mark.parametrize(
-    "market,expected_ticker",
-    [
-        ('us', 'AAPL'),
-        ('cn', '000001'),
-        ('hk_sg', '0700.HK'),
-    ]
-)
-def test_market_specific_ticker(market, expected_ticker):
-    """Test ticker format for each market."""
-    assert is_valid_ticker_format(expected_ticker, market)
-```
-
----
-
-## Coverage Goals
-
-### Coverage Configuration
-
-**Target**: 90%+ line coverage
-
-**Configuration** (`pyproject.toml`):
-```toml
-[tool.coverage.run]
-source = ["src/equity_lake"]
-omit = [
-    "*/tests/*",
-    "*/__init__.py",
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-]
-```
-
----
-
-### Running Coverage
-
-#### Generate Coverage Report
-```bash
-uv run pytest --cov=src/equity_lake --cov-report=html --cov-report=term
-```
-
-#### View HTML Report
-```bash
-open htmlcov/index.html
-```
-
-#### Minimum Coverage Threshold
-```bash
-uv run pytest --cov=src/equity_lake --cov-fail-under=90
-```
-
-**Output**:
-```
-Name                              Stmts   Miss  Cover   Missing
----------------------------------------------------------------
-src/equity_lake/cli/daily.py         45      2    96%   23-24
-src/equity_lake/ingestion/orchestrator.py  120     10    92%   45-50
-src/equity_lake/storage/duckdb.py      80      5    94%   12-13
----------------------------------------------------------------
-TOTAL                                245     17    93%
-```
-
----
-
-### Coverage Exclusions
-
-**Rationale**:
-- `__init__.py`: Minimal package initialization
-- Debug/development code
-- Abstract methods (implemented in subclasses)
-- Error handling paths for external failures
-
-**Example**:
-```python
-def __repr__(self):  # pragma: no cover
-    return f"Fetcher(market={self.market})"
-
-if __name__ == "__main__":  # pragma: no cover
-    main()
-```
-
----
-
-## Integration vs. Unit Testing
-
-### Unit Tests
-
-**Focus**: Individual functions/classes in isolation
-
-**Characteristics**:
-- Fast execution (< 1 second each)
-- No external dependencies
-- Mock all external interactions
-- Test logic paths and edge cases
-
-**When to Use**:
-- Testing business logic
-- Validating data transformations
-- Testing error handling
-- Edge case testing
-
-**Example**:
-```python
-@pytest.mark.unit
-def test_column_mapping():
-    """Test Chinese to English column mapping."""
-    df = pd.DataFrame({'开盘': [10.0], '收盘': [10.5]})
-    mapped = map_chinese_columns(df)
-
-    assert 'open' in mapped.columns
-    assert 'close' in mapped.columns
-```
-
----
-
-### Integration Tests
-
-**Focus**: End-to-end workflows
-
-**Characteristics**:
-- Slower execution (seconds to minutes)
-- Real filesystem operations
-- Real Parquet file operations
-- Test component interactions
-
-**When to Use**:
-- Testing complete workflows
-- Validating file I/O
-- Testing database operations
-- Verifying integration points
-
-**Example**:
-```python
-@pytest.mark.integration
-def test_full_ingestion_to_parquet(temp_lake_dir):
-    """Test complete workflow: fetch → validate → write."""
-    # Fetch
-    fetcher = USEquityFetcher()
-    df = fetcher.fetch(date(2024, 12, 1))
-
-    # Validate
-    assert validate_schema(df, 'us')
-
-    # Write
-    path = temp_lake_dir / 'test.parquet'
-    df.to_parquet(path)
-
-    # Verify
-    assert path.exists()
-    result = pd.read_parquet(path)
-    assert len(result) == len(df)
-```
-
----
-
-## Best Practices
-
-### AAA Pattern (Arrange-Act-Assert)
-
-**Structure**:
-1. **Arrange**: Set up test data and mocks
-2. **Act**: Call the function being tested
-3. **Assert**: Verify expected outcomes
-
-**Example**:
-```python
-def test_fetcher_returns_data():
-    # Arrange
-    fetcher = USEquityFetcher()
-    test_date = date(2024, 12, 1)
-
-    with patch('yfinance.download') as mock_download:
-        mock_download.return_value = sample_data
-
-        # Act
-        result = fetcher.fetch(test_date)
-
-        # Assert
-        assert not result.empty
-        assert result['date'].iloc[0] == test_date
-```
-
----
-
-### Test Isolation
-
-**Principle**: Tests should not depend on each other
-
-**Good**:
-```python
-def test_fetcher_with_valid_date():
-    fetcher = USEquityFetcher()
-    df = fetcher.fetch(date(2024, 12, 1))
-    assert not df.empty
-
-def test_fetcher_with_another_date():
-    fetcher = USEquityFetcher()
-    df = fetcher.fetch(date(2024, 12, 2))
-    assert not df.empty
-```
-
-**Bad** (tests depend on order):
-```python
-def test_write_data():
-    global_df = pd.DataFrame({'a': [1]})
-    global_df.to_parquet('test.parquet')
-
-def test_read_data():
-    # Assumes test_write_data ran first
-    df = pd.read_parquet('test.parquet')
-    assert len(df) == 1
-```
-
----
-
-### Descriptive Test Names
-
-**Pattern**: `test_<function>_<condition>_<expected_result>`
-
-**Examples**:
-```python
-def test_fetcher_with_valid_date_returns_dataframe():
-    """Test that fetcher returns DataFrame for valid date."""
-    pass
-
-def test_fetcher_with_future_date_raises_error():
-    """Test that fetcher raises error for future date."""
-    pass
-
-def test_validator_with_missing_columns_returns_false():
-    """Test that validator returns False for missing columns."""
-    pass
-```
-
----
-
-### Edge Case Testing
-
-**Common Edge Cases**:
-- Empty DataFrames
-- Missing columns
-- Null values
-- Future dates
-- Weekends/holidays
-- Network failures
-- API errors
-
-**Example**:
-```python
-@pytest.mark.unit
-def test_validator_with_empty_dataframe():
-    """Test validator rejects empty DataFrame."""
-    df = pd.DataFrame()
-    assert not validate_schema(df, 'test')
-
-def test_validator_with_null_prices():
-    """Test validator rejects null prices."""
-    df = pd.DataFrame({
-        'ticker': ['AAPL'],
-        'date': [date(2024, 12, 1)],
-        'open': [None],  # Null price
-        'high': [155.0],
-        'low': [149.0],
-        'close': [154.0],
-        'volume': [1000000]
-    })
-    assert not validate_schema(df, 'test')
-```
-
----
-
-## Test Data Generation
-
-### Test Data Generator Script
-
-**Location**: `src/equity_lake/devtools/test_data.py`
-
-**Purpose**: Generate realistic test data for development
-
-**Usage**:
-```bash
-make generate-test-data
-# or
-uv run equity bootstrap sample
-```
-
-**Output**:
-- Creates sample Parquet files in `data/lake/`
-- Generates OHLCV data with realistic distributions
-- Useful for testing queries and analytics
-
----
-
-### Manual Test Data
-
-**Creating Test Data**:
-```python
-import pandas as pd
-from datetime import date, timedelta
-
-def generate_test_data(start_date, days=10):
-    """Generate test data for multiple days."""
-    dates = [start_date + timedelta(days=i) for i in range(days)]
-    tickers = ['AAPL', 'GOOGL', 'MSFT']
-
-    data = []
-    for date in dates:
-        for ticker in tickers:
-            base_price = 150.0 if ticker == 'AAPL' else 140.0
-            data.append({
-                'ticker': ticker,
-                'date': date,
-                'open': base_price,
-                'high': base_price + 5,
-                'low': base_price - 5,
-                'close': base_price + 2,
-                'volume': 1000000
-            })
-
-    return pd.DataFrame(data)
-
-df = generate_test_data(date(2024, 12, 1), days=5)
-df.to_parquet('test_data.parquet')
-```
-
----
-
-## Performance Testing
-
-### Benchmarking
-
-**Example**:
-```python
-import pytest
-import time
-
-@pytest.mark.slow
-def test_query_performance():
-    """Test query performance with large dataset."""
-    # Setup: Load large dataset
-    df = pd.read_parquet('data/lake/01_bronze/market_data/us_equity/date=*/*.parquet')
-
-    # Benchmark query
-    start_time = time.time()
-    result = df[df['date'] >= '2024-01-01']
-    duration = time.time() - start_time
-
-    # Assert query completes in reasonable time
-    assert duration < 5.0  # Should complete in < 5 seconds
-```
-
----
+- Patch at the seam where the library is *used*, not where it is defined —
+  e.g. `@patch("equity_lake.sources.base.yf.download")` as done in
+  `tests/unit/test_fetchers.py`.
+- External pandas frames from mocks flow through
+  `standardize_columns()`/`ensure_polars()` exactly like production data;
+  assertions are made on the resulting polars frame.
+- HTTP clients are faked with the `mock_httpx_client` fixture; set
+  `.get`/`.post` return values and patch the target module's
+  `httpx.Client`.
+- Anything needing real internet or API keys gets `@pytest.mark.network`
+  (stacked with `slow` + `integration`) so the fast suite stays offline.
+
+## Guardrail Tests
+
+Two unit modules encode architecture contracts; keep them green when
+touching structure:
+
+- `tests/unit/test_import_boundaries.py` — two mechanisms: a runtime import
+  check that every `equity_lake.core` module imports without
+  `cli`/`dashboard`/`sources` present, and a static AST pass asserting each
+  layer in `LAYER_BOUNDARIES` (`core`, `storage`, `ingestion`, `features`,
+  `agent`, `api`) imports no forbidden top-level package. Also asserts no
+  `domain/` tree and that legacy module shims stay absent. A new top-level
+  package must extend `LAYER_BOUNDARIES` here.
+- `tests/unit/test_cli_unified.py` — help-scan coverage for the unified CLI
+  (ADR-0005): every command and sub-app is invoked with `--help` via
+  Typer's `CliRunner` and must exit 0. Every new command needs an entry.
 
 ## Continuous Integration
 
-### GitHub Actions Workflow
+`.github/workflows/` (there is no `test.yml`):
 
-**Location**: `.github/workflows/test.yml`
+- **quality.yml** — four jobs on PR and pushes to `main`:
+  - `lint-typecheck`: `uv run ruff check .` + `uv run mypy src`, matrixed
+    over Python 3.12/3.13.
+  - `test`: `uv run pytest -q -m "not integration"` on the same 3.12/3.13
+    matrix, plus an advisory `pip-audit` (non-blocking).
+  - `docs`: pymarkdown lint on selected pages + `mkdocs build` (twice, for
+    internal link validation).
+  - `cli-smoke`: verifies the `equity --help` command tree for key
+    commands (`dashboard`, `monitor`, `pipeline`, `catalog-generate`).
+- **data-validation.yml** — on changes to `config/tickers.yaml`,
+  `config/watchlist.yaml`, or `config/signals.yaml`, runs
+  `uv run equity config validate --all`.
+- **catalog-check.yml / catalog-deploy.yml / pages.yml** — catalog and docs
+  site publishing.
 
-```yaml
-name: Test
-on: [push, pull_request]
+Local equivalents of the CI gate: `uv run ruff check .`,
+`uv run ruff format --check .`, `uv run mypy`, `uv run pytest`.
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+## Test Data
 
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Install uv
-        run: curl -LsSf https://astral.sh/uv/install.sh | sh
-
-      - name: Install dependencies
-        run: uv sync
-
-      - name: Run tests
-        run: uv run pytest --cov=src/equity_lake --cov-report=xml
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-```
-
----
-
-## Summary
-
-**Testing Framework**: pytest with coverage
-**Test Organization**: Unit tests (fast, mocked) vs Integration tests (slow, real operations)
-**Mocking**: Mock external APIs (yfinance, akshare), filesystem, database
-**Fixtures**: Shared OHLCV data, temporary directories, mock fetchers
-**Coverage**: 90%+ target, exclude `__init__.py`, debug code
-**Best Practices**: AAA pattern, test isolation, descriptive names, edge cases
-**Test Data**: Generator script for development, manual creation for specific cases
-**CI/CD**: GitHub Actions for automated testing
+- **Synthetic generator**: `src/equity_lake/devtools/test_data.py`
+  (`uv run python -m equity_lake.devtools.test_data`) writes realistic
+  partitioned OHLCV Parquet across markets for manual experiments; see
+  `--start-date`, `--days`, `--markets`, `--num-tickers`.
+  (`make generate-test-data` runs the curated `equity bootstrap sample`
+  instead.) See [Developer Tools](../../developer-guide/devtools.md).
+- **Curated sample**: `uv run equity bootstrap sample` produces a small
+  sample dataset (reusing existing lake data when available) for onboarding
+  and dashboard checks; `make demo` seeds the full demo lake via
+  `devtools/seed_demo.py`.
+- Prefer the polars fixtures from `tests/conftest.py` for unit tests;
+  generated data is for manual/visual use.

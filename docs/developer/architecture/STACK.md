@@ -1,243 +1,138 @@
 # Tech Stack
 
-**Last Updated**: 2026-03-05
+**Last Updated**: 2026-08-29
 **Project**: Equity EOD Data Pipeline
 
-## Language & Runtime
+This page describes the stack as declared in `pyproject.toml`: 31 production
+dependencies plus 11 optional `[dependency-groups]`. Optional groups are
+installed with `uv sync --group <name>` and imported lazily (see
+[Optional vs core](#optional-vs-core-dependencies)).
 
-### Python
-- **Version**: 3.12+ (specified in `.python-version`)
-- **Package Manager**: uv (ultra-fast Python package manager written in Rust)
-- **Virtual Environment**: uv-managed `.venv`
+## Runtime & Language
 
-### Why uv?
-- 10-100x faster dependency resolution than pip
-- Zero-config virtual environment management
-- Built-in dependency caching
-- Compatible with existing `pyproject.toml`
+- **Python**: `>=3.12,<3.14` (`requires-python`); local pin `.python-version` = 3.12; classifiers cover 3.12 and 3.13.
+- **Package manager**: uv. Always `uv run <command>`, never bare `python`. Lock file is `uv.lock` (not `.uv.lock`); Docker builds use `uv sync --frozen`.
+- **Secrets**: dotenvx (`dotenvx run -- …`). Keys are never committed; `.env.example` is the template.
+- **Build backend**: hatchling; wheel packages `src/equity_lake` (src layout).
+- **CLI entry point**: `equity = "equity_lake.cli.__main__:app"` — a native Typer app (no passthrough), with sub-apps wired in `cli/__main__.py`.
 
-## Core Dependencies
+## Data Engine
 
-### Data Acquisition
-- **yfinance** (>=0.2.50): Yahoo Finance API for US/HK/SG market data
-- **akshare** (>=1.15.0): China A-shares market data
-- **efinance**: Alternative Chinese market data source
+- **polars** (>=1.0.0): primary dataframe engine across ingestion, validation, features, and ML prep — ADR-0003 (`docs/decisions/0003-polars-first-dataframe-engine.md`).
+- **pandas** (>=2.2.0) + **numpy**: only at external-library boundaries that require them (yfinance, akshare, efinance); converted in and out at the client seam.
+- **DuckDB** (>=1.0.0): embedded SQL engine for analytical queries over the lake (`storage/duckdb.py`, `storage/lake_reader.py`, monitoring health checks).
+- **deltalake** (>=0.25.0) + **pyarrow** (>=18.0.0): all cataloged lake tables are date-partitioned Delta tables whose data files are Parquet (`storage/delta.py`).
+- **exchange-calendars** (>=4.6): trading-calendar awareness for scheduling and freshness checks (`core/calendar.py`).
 
-### Data Processing
-- **polars** (>=1.0.0): Primary dataframe engine for ingestion, validation, feature engineering, and ML data prep
-- **pandas** (>=2.2.0): Compatibility layer for estimator interop and deferred backtesting surfaces
-- **numpy**: Numerical computing foundation
-- **pyarrow** (>=18.0.0): Parquet I/O and columnar storage
+## Pipeline & ML
 
-### Storage & Query
-- **duckdb** (>=1.0.0): SQL query engine for analytics
-- **fastparquet**: Alternative Parquet reader/writer
+- **sf-hamilton** (>=1.69.0): the feature-engineering DAG (`features/`), tagged for catalog generation (`catalog/datasets.py` → `data/catalog.jsonl`).
+- **xgboost** (>=3.1.3) + **scikit-learn** (>=1.8.0): core model stack (`ml/backends.py`, training/inference in `ml/`).
+- **lightgbm**: alternative backend behind the same `ml/backends.py` seam; imported lazily and requires `uv sync --group ml`.
+- **joblib** (>=1.5.3): model (de)serialization and parallel utilities.
 
-### Cloud & Storage
-- **boto3**: AWS SDK for Python (S3 operations)
-- **s5cmd**: High-performance S3 sync tool (external binary)
+## API & Serving
 
-### Utilities
-- **python-dotenv** (>=1.0.0): Environment variable management
-- **requests**: HTTP client library
-- **typer**: CLI framework for modern command-line interfaces
-- **rich**: Terminal formatting and progress bars
+These ship today — they are not future work.
 
-## Development Tools
+- **fastapi** (>=0.115.0): REST API in `src/equity_lake/api/` (`main.py`, `routers/`, `deps.py`).
+- **uvicorn** (>=0.30.0): ASGI server behind `equity api serve` (`cli/commands/api.py`).
+- **Docker**: the `Dockerfile` has a dedicated `api` image stage running `equity api serve --host 0.0.0.0 --port 8000`.
+- **streamlit**: local dashboard UI, behind the optional `dashboard` group (`uv sync --group dashboard`).
 
-### Code Quality
-- **ruff** (>=0.8.0): Ultra-fast Python linter and formatter
-  - Replaces flake8, black, isort
-  - Configuration in `pyproject.toml`
-- **mypy** (>=1.11.0): Static type checker
-  - Strict mode enabled
-  - Comprehensive type checking
+## Integrations (External Data & Content)
 
-### Testing
-- **pytest** (>=8.0.0): Testing framework
-- **pytest-cov** (>=5.0.0): Coverage plugin
-- **pytest-mock**: Mocking utilities
-- **pytest-asyncio**: Async test support
+| Package | Use |
+|---|---|
+| yfinance (>=0.2.50) | US, HK/SG, JPX EOD prices; some macro indicators |
+| akshare (>=1.15.0) | China A-share EOD prices (primary CN source) |
+| efinance (>=0.5.5.2,<0.5.6) | CN fallback source in the hybrid fetcher |
+| finance-datareader (>=0.9.96,<1.0) | KRX (South Korea) EOD prices |
+| fredapi (>=0.5.2) | FRED macro indicators (`FRED_API_KEY`) |
+| feedparser (>=6.0.11) | RSS/Atom financial news feeds |
+| openai (>=1.50.0) | OpenAI-compatible client used for DeepSeek LLM enrichment and OpenRouter embeddings (`ingestion/llm_base.py`; raw `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY`) |
+| edgartools (>=5.36.0) | SEC XBRL structured financials |
+| readability-lxml (>=0.8.1) | Clean-text extraction from SEC filings and articles |
 
-### Build & Automation
-- **make**: Build automation via Makefile
-- **pre-commit**: Git hooks for pre-commit checks
-- **docker**: Containerization
-- **docker-compose**: Multi-container orchestration
+See [INTEGRATIONS.md](INTEGRATIONS.md) for the full adapter map.
 
-## Configuration Files
+## Ops & Quality
 
-### Project Configuration
-- **`pyproject.toml`**: Primary project configuration
-  - Dependencies (production and dev)
-  - Ruff configuration
-  - Mypy settings
-  - Project metadata
-  - CLI entry points
+- **structlog** (>=24.1.0): structured JSON logging with correlation IDs (`setup_structured_logging()` at CLI entry points).
+- **tenacity** (>=9.0.0): retry with exponential backoff (max 3 attempts) for all source fetchers, via the shared factory `core/retry.py::build_retry_decorator`. Never hand-roll retry loops.
+- **httpx** (>=0.28.0): HTTP client for REST APIs (Finnhub, Reddit JSON, SEC EDGAR, StockTwits).
+- **pydantic** (>=2.5.0) / **pydantic-settings** (>=2.6.1): schemas and the single `Settings(BaseSettings)` with `YamlConfigSettingsSource`, `env_prefix="EQUITY_"`, `env_nested_delimiter="__"`, `extra="forbid"` (ADR-0004).
+- **pointblank**: validation schemas at ingestion write boundaries (`validation/pipeline.py`) — behind the optional `validation` group.
+- **typer** (>=0.12.0) + **rich** (>=13.7.0): unified `equity` CLI and terminal output.
+- **pyyaml** (>=6.0.2): config files (`config/settings.yaml`, RSS/social source lists). **tqdm**: progress bars.
+- **Dev tooling** (in the `dev` group): pytest (>=8), pytest-cov, pytest-mock, pytest-xdist, ruff (>=0.8, line-length 150, rules E,F,UP,B,SIM,I), mypy (>=1.11, strict), pre-commit, pymarkdownlnt, pip-audit, jupyter/ipykernel, vaderSentiment.
 
-### Python Configuration
-- **`.python-version`**: Specifies Python 3.12
-- **`pyproject.toml`**: Dependency management via uv
+## Storage Layout Summary
 
-### Container Configuration
-- **`Dockerfile`**: Multi-stage Python container image
-- **`docker-compose.yml`**: Container orchestration for pipeline services
+Numbered medallion layout under `data/lake/` (canonical — see `core/paths.py`):
 
-### Development Configuration
-- **`Makefile`**: Convenience commands for common operations
-  - `make setup`: Initialize development environment
-  - `make daily`: Run daily ingestion
-  - `make test`: Run test suite
-  - `make lint`: Run ruff linting
-  - `make format`: Format code with ruff
-
-### Git Configuration
-- **`.gitignore`**: Excludes artifacts (`.venv/`, `data/`, `__pycache__/`)
-- **`.pre-commit-config.yaml`**: Pre-commit hook definitions
-
-## Frameworks & Patterns
-
-### Architecture Patterns
-- **ETL Pipeline**: Extract-Transform-Load pattern for data ingestion
-- **Data Lake**: Hive-partitioned Parquet storage
-- **Strategy Pattern**: Pluggable market data fetchers
-- **Template Method**: Base classes with customizable fetch logic
-
-### Code Organization
-- **Modular Design**: Clear separation of concerns
-  - `src/equity_lake/core/`: Shared utilities and constants
-  - `src/equity_lake/ingestion/`: Data fetchers and orchestration
-  - `src/equity_lake/storage/`: Data persistence and querying
-  - `src/equity_lake/features/`: Feature engineering
-  - `src/equity_lake/signals/`: Trading signal generation
-
-### Design Principles
-- **Local-First**: After initial S3 sync, run completely locally
-- **Idempotent Operations**: Safe to re-run without side effects
-- **Graceful Degradation**: Continue processing if one market fails
-- **Observable Operations**: Comprehensive logging for debugging
-
-## Data Stack
-
-### Storage Format
-- **Parquet**: Columnar storage format
-  - Compression: Snappy
-  - Partitioning: Hive-style by date (`date=YYYY-MM-DD/`)
-
-### Query Engine
-- **DuckDB**: In-memory SQL database
-  - Zero-copy Parquet reading
-  - Hive partitioning support
-  - Python API integration
-
-### Data Lake Structure
 ```
 data/lake/
-├── us_equity/         # US stocks (from S3)
-├── cn_ashare/         # China A-shares (local fetch)
-└── hk_sg_equity/      # HK/SG stocks (local fetch)
+├── 01_bronze/            # market_data/{us_equity, cn_ashare, hk_sg_equity, jpx_equity, krx_equity},
+│                         # raw_articles/, macro/
+├── 02_silver/            # news_sentiment/, social_sentiment/, processed_articles/,
+│                         # sec_extractions/, analyst_ratings/, sec_financials/
+├── 03_gold/              # features/
+└── 04_platinum/          # predictions/
 ```
 
-## CLI Entry Points
+All tables are date-partitioned Delta tables with Parquet data files. The five
+price markets are fixed: us_equity, cn_ashare, hk_sg_equity, jpx_equity,
+krx_equity. Auxiliary artifacts (signals, findings, models, backtest/risk
+reports) live under `data/<name>/` and are not cataloged.
 
-### Primary Commands
-- **`equity ingest`**: Run daily EOD ingestion (`src/equity_lake/cli/commands/data.py`)
-- **`equity sync`**: S3 historical data sync (`src/equity_lake/cli/commands/data.py`)
-- **`equity query`**: DuckDB query interface (`src/equity_lake/cli/commands/analysis.py`)
+## Dependency Groups
 
-### Installation
-```bash
-# Using uv
-uv pip install -e .
+Every optional capability is a `[dependency-groups]` entry (installed with
+`uv sync --group <name>`, not `--extra`):
 
-# Or traditional pip
-pip install -e .
-```
+| Group | Purpose | Install |
+|---|---|---|
+| `dev` | pytest suite, ruff, mypy, pre-commit, audit, notebook tooling | `uv sync --group dev` |
+| `ml` | Extended ML: lightgbm, shap, wandb, statsmodels, networkx, seaborn | `uv sync --group ml` |
+| `viz` | Plotting: matplotlib, seaborn, plotly | `uv sync --group viz` |
+| `backtesting` | `VectorBacktestEngine` (polars-backtest) + jinja2 reports — required for `equity backtest` | `uv sync --group backtesting` |
+| `agent` | sqlite-vec vector store for RAG | `uv sync --group agent` |
+| `dashboard` | streamlit dashboard UI | `uv sync --group dashboard` |
+| `validation` | pointblank data validation | `uv sync --group validation` |
+| `sentiment` | vaderSentiment + praw | `uv sync --group sentiment` |
+| `s3` | boto3 + s5cmd for S3 bootstrap/sync | `uv sync --group s3` |
+| `schedule` | croniter schedule parsing | `uv sync --group schedule` |
+| `docs` | MkDocs Material, mkdocstrings-python, mike | `uv sync --group docs` |
 
-## Version Management
+Note: `boto3` and `s5cmd` are **not** core dependencies — they belong to the
+optional `s3` group. Likewise `pointblank` (validation), `streamlit`
+(dashboard), and `lightgbm` (ml) are optional.
 
-### Dependency Strategy
-- **Pin Major Versions**: Production dependencies pinned to major versions
-- **Dev Dependencies**: Latest compatible versions allowed
-- **uv Lock File**: `.uv.lock` for reproducible builds
+## Optional vs Core Dependencies
 
-### Compatibility
-- **Python**: 3.12+ required
-- **Platform**: macOS, Linux (WSL supported)
-- **Architecture**: x86_64, arm64 (Apple Silicon)
+Per `AGENTS.md`, adding an optional dependency requires:
 
-## Performance Optimizations
+- A `[dependency-groups]` entry (never `[project.optional-dependencies]`).
+- Lazy imports at the usage seam (`try/except ImportError`), e.g.
+  `ml/backends.py` for lightgbm, `cn_hybrid.py`/`cn_efinance.py` for efinance.
+- A mypy `ignore_missing_imports` override for the module in `pyproject.toml`
+  (the override list already covers lightgbm, wandb, shap, praw, streamlit,
+  pointblank, polars-backtest, sqlite_vec, croniter, edgar, and others).
 
-### Parallel Processing
-- **S3 Sync**: s5cmd with 32 parallel workers
-- **Data Fetching**: Concurrent API calls where possible
-- **DuckDB**: Automatic query parallelization
-
-### Memory Efficiency
-- **Chunked Reading**: Process large datasets in chunks
-- **Lazy Loading**: DuckDB zero-copy Parquet reading
-- **Streaming**: Minimize in-memory data retention
+API/SDK keys (`FRED_API_KEY`, `FINNHUB_API_KEY`, `DEEPSEEK_API_KEY`,
+`WANDB_API_KEY`, …) stay raw/unprefixed and are read via `os.getenv` at the
+client seam — never declared in `Settings`.
 
 ## Development Workflow
 
-### Quick Start
 ```bash
-# 1. Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Create venv and install dependencies
-uv venv && source .venv/bin/activate
-uv sync
-
-# 3. Run tests
-make test
-
-# 4. Run linting
-make lint
+uv sync                     # core + dev
+uv run pytest               # fast suite
+uv run ruff check . && uv run ruff format --check .
+uv run mypy
 ```
 
-### Code Quality Pipeline
-```bash
-# Format code
-make format
-
-# Run linter
-make lint
-
-# Type check
-make check
-
-# Run tests with coverage
-make test
-```
-
-## Known Limitations
-
-### Platform-Specific
-- **s5cmd**: Linux/macOS only (Windows uses AWS CLI fallback)
-- **Cron**: Native cron on Linux/macOS (Windows Task Scheduler equivalent)
-
-### API Limitations
-- **yfinance**: Rate limiting, occasional downtime
-- **akshare**: May require VPN for China access
-- **Free APIs**: No service level guarantees
-
-## Future Stack Considerations
-
-### Potential Additions
-- **Apache Airflow**: Workflow orchestration
-- **Prefect/Dask**: Modern workflow alternatives
-- **Redis**: Caching layer for API responses
-- **PostgreSQL**: Metadata and config storage
-- **FastAPI**: REST API for data access
-
-### Migration Path
-- Current stack optimized for local development
-- Cloud-native migration path available via Docker
-- Microservices architecture possible if needed
-
----
-
-**Total Dependencies**: 20+ production packages, 10+ dev packages
-**Python Version**: 3.12+ (tested on 3.12)
-**Package Manager**: uv (primary), pip (fallback)
+Docker: multi-stage builds install with `uv sync --frozen` (`--no-dev` for the
+production image, `--all-groups` for the dev image); the `api` stage serves
+FastAPI via uvicorn.

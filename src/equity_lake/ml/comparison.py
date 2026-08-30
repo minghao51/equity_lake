@@ -37,7 +37,7 @@ import structlog
 
 from equity_lake.findings.models import FindingCard, FindingVerdict
 from equity_lake.findings.writer import write_finding_card
-from equity_lake.ml._metrics import DEFAULT_FIT_PARAMS, aggregate_oos, feature_columns, scale_pos_weight
+from equity_lake.ml._metrics import DEFAULT_FIT_PARAMS, aggregate_oos, feature_columns, log_to_wandb, resolve_ticker, scale_pos_weight
 from equity_lake.ml.backends import DEFAULT_BACKEND, build_estimator, fit_estimator
 from equity_lake.ml.candidates import DEFAULT_BACKTEST_STRATEGY, build_candidate_frame
 from equity_lake.ml.forecasting import DEFAULT_V2_SETTINGS
@@ -89,21 +89,6 @@ def _spearman(a: np.ndarray, b: np.ndarray) -> float:
     if denom == 0.0:
         return 0.0
     return float(np.dot(rank_a, rank_b) / denom)
-
-
-def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
-    """Pick the per-ticker card scope value.
-
-    An explicit ``override`` (the CLI's ``--ticker``) wins; otherwise read the
-    frame's ``ticker`` column so the pure-harness call path (unit tests, library
-    use) still records honest reproducibility metadata (parent §2 P1).
-    """
-    if override:
-        return override
-    if "ticker" in frame.columns and frame.height > 0:
-        value = frame["ticker"][0]
-        return "" if value is None else str(value)
-    return ""
 
 
 def _score_mode(
@@ -328,19 +313,6 @@ def _build_model_card(
     )
 
 
-def _log_to_wandb(cards: list[FindingCard]) -> None:
-    """Fire-and-forget W&B logging (Step 3 registry adapter; never required)."""
-    import contextlib
-    import importlib
-
-    try:
-        reg = importlib.import_module("equity_lake.ml.registry")
-    except ImportError:
-        return
-    with contextlib.suppress(Exception):
-        reg.log_comparison(cards)
-
-
 def run_comparison(
     *,
     features: pl.DataFrame,
@@ -385,7 +357,7 @@ def run_comparison(
             backends=list(backends),
         )
 
-    resolved_ticker = _resolve_ticker(features, ticker)
+    resolved_ticker = resolve_ticker(features, ticker)
     cards = [
         _build_meta_label_card(
             by_mode,
@@ -411,7 +383,7 @@ def run_comparison(
     ]
     for card in cards:
         write_finding_card(card, base=base)
-    _log_to_wandb(cards)
+    log_to_wandb(cards)
     return cards
 
 

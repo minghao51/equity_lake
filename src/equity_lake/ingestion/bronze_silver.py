@@ -100,7 +100,7 @@ def process_unstructured_to_silver(
     """
     bronze_df = read_bronze()
     if bronze_df.is_empty():
-        logger.warning(f"No bronze {log_label}s to process", trading_date=str(trading_date))
+        logger.warning("no_bronze_to_process", log_label=log_label, trading_date=str(trading_date))
         return False
 
     # SEC filings have a dedicated processor + silver table (sec_extractions);
@@ -112,7 +112,7 @@ def process_unstructured_to_silver(
     if source_type_filter and "source_type" in bronze_df.columns:
         bronze_df = bronze_df.filter(pl.col("source_type") == source_type_filter)
         if bronze_df.is_empty():
-            logger.info(f"No {log_label} bronze articles for source_type={source_type_filter}")
+            logger.info("no_bronze_for_source_type", log_label=log_label, source_type=source_type_filter)
             return False
 
     processed_ids = _get_processed_ids(silver_path, trading_date)
@@ -121,28 +121,28 @@ def process_unstructured_to_silver(
         bronze_df = bronze_df.filter(~pl.col("article_id").is_in(list(processed_ids)))
         skipped = before - bronze_df.height
         if skipped:
-            logger.info(f"Skipping already-processed {log_label}s", skipped=skipped, remaining=bronze_df.height)
+            logger.info("skipping_already_processed", log_label=log_label, skipped=skipped, remaining=bronze_df.height)
 
     if bronze_df.is_empty():
-        logger.info(f"All bronze {log_label}s already processed", trading_date=str(trading_date))
+        logger.info("all_bronze_already_processed", log_label=log_label, trading_date=str(trading_date))
         return True
 
-    logger.info(f"Processing {log_label} bronze to silver", count=bronze_df.height, trading_date=str(trading_date))
+    logger.info("processing_bronze_to_silver", log_label=log_label, count=bronze_df.height, trading_date=str(trading_date))
 
     try:
         silver_df = process_fn(bronze_df)
     except Exception as exc:
-        logger.error(f"{log_label}_processing_failed", error=str(exc))
+        logger.error("processing_failed", log_label=log_label, error=str(exc))
         return False
 
     if silver_df.is_empty():
-        logger.warning(f"{log_label} processing produced no silver rows")
+        logger.warning("processing_produced_no_silver", log_label=log_label)
         return False
 
     ticker_filter = _load_known_tickers()
     if ticker_filter and "ticker" in silver_df.columns:
         silver_df = silver_df.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(ticker_filter))
-        logger.info(f"Filtered {log_label} silver by known tickers", remaining=silver_df.height, known_tickers=len(ticker_filter))
+        logger.info("filtered_silver_by_known_tickers", log_label=log_label, remaining=silver_df.height, known_tickers=len(ticker_filter))
 
     return _write_silver_generic(silver_df, silver_table_name, silver_key_columns)
 

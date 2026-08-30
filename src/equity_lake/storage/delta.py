@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal, cast
 
-import duckdb
 import polars as pl
 import structlog
 from deltalake import DeltaTable, write_deltalake
@@ -216,6 +215,8 @@ def migrate_parquet_to_delta(
         return False
 
     logger.info("delta_migrate_start", market=market, path=str(market_dir))
+
+    import duckdb
 
     con = duckdb.connect(":memory:")
     glob = str(market_dir / "**" / "*.parquet")

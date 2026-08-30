@@ -55,3 +55,16 @@ def frame_is_empty(df: FrameLike | None) -> bool:
     if isinstance(df, pl.DataFrame):
         return bool(df.is_empty())
     raise TypeError(f"Unsupported dataframe type: {type(df)!r}")
+
+
+def ensure_columns(df: pl.DataFrame, columns: list[str]) -> pl.DataFrame:
+    """Ensure all *columns* exist in *df*, filling missing ones with NULL.
+
+    Returns a new DataFrame with exactly *columns* (in order), dropping any
+    extra columns not in the list.
+    """
+    for col in columns:
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None).alias(col))
+    available = [col for col in columns if col in df.columns]
+    return df.select(available)

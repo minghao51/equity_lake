@@ -27,7 +27,7 @@ import structlog
 
 from equity_lake.findings.models import FindingCard, FindingVerdict
 from equity_lake.findings.writer import write_finding_card
-from equity_lake.ml._metrics import DEFAULT_FIT_PARAMS, aggregate_oos, feature_columns, scale_pos_weight
+from equity_lake.ml._metrics import DEFAULT_FIT_PARAMS, aggregate_oos, feature_columns, log_to_wandb, resolve_ticker, scale_pos_weight
 from equity_lake.ml.backends import build_estimator, fit_estimator
 from equity_lake.ml.validation import PurgedEmbargoedWalkForwardSplitter
 
@@ -35,21 +35,6 @@ logger = structlog.get_logger(__name__)
 
 #: Margin (in accuracy units) below which the two arms are considered tied.
 _EPS: float = 0.01
-
-
-def _resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
-    """Pick the per-ticker card scope value (parent §2 P1).
-
-    An explicit ``override`` (the CLI's ``--ticker``) wins; otherwise read the
-    frame's ``ticker`` column so the pure-harness call path records honest
-    reproducibility metadata.
-    """
-    if override:
-        return override
-    if "ticker" in frame.columns and frame.height > 0:
-        value = frame["ticker"][0]
-        return "" if value is None else str(value)
-    return ""
 
 
 def _feature_columns_for(df: pl.DataFrame) -> list[str]:
@@ -158,19 +143,6 @@ def _build_ablation_card(
     )
 
 
-def _log_to_wandb(card: FindingCard) -> None:
-    """Fire-and-forget W&B logging (Step 3 registry adapter; never required)."""
-    import contextlib
-    import importlib
-
-    try:
-        reg = importlib.import_module("equity_lake.ml.registry")
-    except ImportError:
-        return
-    with contextlib.suppress(Exception):
-        reg.log_comparison([card])
-
-
 def run_ablation(
     *,
     enriched_features: pl.DataFrame,
@@ -226,7 +198,7 @@ def run_ablation(
         skew_detected=skew_detected,
     )
 
-    resolved_ticker = _resolve_ticker(enriched_features, ticker)
+    resolved_ticker = resolve_ticker(enriched_features, ticker)
     card = _build_ablation_card(
         enriched_metrics,
         technical_metrics,
@@ -240,7 +212,7 @@ def run_ablation(
         skew_detected=skew_detected,
     )
     write_finding_card(card, base=base)
-    _log_to_wandb(card)
+    log_to_wandb([card])
     return card
 
 

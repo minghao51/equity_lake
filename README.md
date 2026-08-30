@@ -11,7 +11,7 @@
 
 ```bash
 make demo            # seed the lake — synthetic & offline-safe (`equity demo seed --real` for market data)
-equity arena run --start-date 2022-01-03 --end-date 2026-08-04   # 3 strategies × 3 cost regimes vs benchmark
+dotenvx run -- uv run equity arena run --start-date 2022-01-03 --end-date 2026-08-04   # 3 strategies × 3 cost regimes vs benchmark
 ls data/findings/    # → 3 evidence-backed FindingCards (strategy / cost / benchmark)
 ```
 
@@ -110,8 +110,12 @@ uv run equity pipeline --help
 Bootstrap from S3:
 
 ```bash
-dotenvx run -- uv run equity sync --bucket s3://your-bucket/us_equity
+dotenvx run -- uv run equity sync --bucket s3://your-bucket
 ```
+
+The bucket is a root URL whose remote tree mirrors the numbered medallion layout without
+a `data/lake/` prefix — each market is pulled from
+`<bucket>/01_bronze/market_data/<market_dir>`.
 
 Run daily ingestion:
 
@@ -161,6 +165,9 @@ Key commands:
 - `equity demo seed` — seed the showcase lake (synthetic/offline-safe)
 - `equity arena run` — strategies × cost regimes → FindingCards
 - `equity report backtest` — serialize a backtest to report artifacts
+- `equity ml compare` — XGBoost vs LightGBM comparisons mirrored to W&B
+- `equity forecast` — price forecasting (train/predict/backtest)
+- `equity api serve` — read-only FastAPI over the data lake
 - `equity dashboard build`
 - `equity dashboard serve`
 

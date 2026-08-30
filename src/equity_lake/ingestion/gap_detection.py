@@ -12,7 +12,6 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
-import numpy as np
 import structlog
 
 from equity_lake.core.calendar import trading_days_between
@@ -231,108 +230,7 @@ class GapDetector:
             logger.error("Failed to get coverage stats: %s", e)
             return {}
 
-    def _count_business_days(self, start_date: date, end_date: date) -> int:
-        return int(np.busday_count(start_date, end_date + timedelta(days=1)))
-
     def _count_trading_days(self, market: str, start_date: date, end_date: date) -> int:
         from equity_lake.core.calendar import count_trading_days
 
         return count_trading_days(market, start_date, end_date)
-
-    def get_missing_date_ranges(
-        self,
-        market: str,
-        ticker: str,
-        start_date: date | None = None,
-        end_date: date | None = None,
-        business_days_only: bool = True,
-    ) -> list[tuple[date, date]]:
-        missing_dates = self.find_missing_dates(market, ticker, start_date, end_date, business_days_only)
-
-        if ticker not in missing_dates or not missing_dates[ticker]:
-            return []
-
-        dates = sorted(missing_dates[ticker])
-        ranges = []
-        start = dates[0]
-        prev = dates[0]
-
-        for curr in dates[1:]:
-            if (curr - prev).days == 1:
-                prev = curr
-            else:
-                ranges.append((start, prev))
-                start = curr
-                prev = curr
-
-        ranges.append((start, prev))
-        return ranges
-
-
-def print_gap_report(missing_dates: dict[str, list[date]], verbose: bool = False) -> None:
-    if not missing_dates:
-        print("No missing data found!")
-        return
-
-    total_missing = sum(len(dates) for dates in missing_dates.values())
-    total_tickers = len(missing_dates)
-
-    print(f"\n{'=' * 70}")
-    print("Gap Detection Report")
-    print(f"{'=' * 70}")
-    print(f"Total tickers with gaps: {total_tickers}")
-    print(f"Total missing data points: {total_missing}")
-    print(f"{'=' * 70}\n")
-
-    low_gaps = {}
-    medium_gaps = {}
-    high_gaps = {}
-
-    for ticker, dates in missing_dates.items():
-        gap_count = len(dates)
-        if gap_count <= 5:
-            low_gaps[ticker] = dates
-        elif gap_count <= 20:
-            medium_gaps[ticker] = dates
-        else:
-            high_gaps[ticker] = dates
-
-    if high_gaps:
-        print(f"HIGH GAPS (20+ missing days): {len(high_gaps)} tickers")
-        for ticker, dates in sorted(high_gaps.items(), key=lambda x: len(x[1]), reverse=True):
-            print(f"  {ticker:10} | {len(dates):3} missing days")
-            if verbose:
-                print(f"             Missing: {', '.join(str(d) for d in dates[:10])}")
-                if len(dates) > 10:
-                    print(f"             ... and {len(dates) - 10} more")
-
-    if medium_gaps:
-        print(f"\nMEDIUM GAPS (6-20 missing days): {len(medium_gaps)} tickers")
-        for ticker, dates in sorted(medium_gaps.items(), key=lambda x: len(x[1]), reverse=True):
-            print(f"  {ticker:10} | {len(dates):3} missing days")
-
-    if low_gaps:
-        print(f"\nLOW GAPS (1-5 missing days): {len(low_gaps)} tickers")
-        for ticker, dates in sorted(low_gaps.items(), key=lambda x: len(x[1]), reverse=True):
-            print(f"  {ticker:10} | {len(dates):3} missing days")
-
-    print(f"\n{'=' * 70}\n")
-
-
-def print_coverage_stats(stats: dict[str, dict]) -> None:
-    if not stats:
-        print("No coverage data available")
-        return
-
-    print(f"\n{'Ticker':<10} {'Expected':<10} {'Actual':<10} {'Missing':<10} {'Coverage':<10}")
-    print("-" * 60)
-
-    sorted_tickers = sorted(stats.items(), key=lambda x: x[1]["coverage_pct"])
-
-    for ticker, ticker_stats in sorted_tickers:
-        print(
-            f"{ticker:<10} {ticker_stats['expected']:<10} {ticker_stats['actual']:<10} "
-            f"{ticker_stats['missing']:<10} {ticker_stats['coverage_pct']:>6.2f}%"
-        )
-
-    print()

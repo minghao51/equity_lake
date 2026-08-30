@@ -111,7 +111,7 @@ class FeatureEngineer:
         ``include_*`` flags. The legacy ``merge_*`` methods on this class are
         deprecated and should not be called directly.
         """
-        logger.info(f"Generating features for {len(tickers)} tickers from {start_date} to {end_date}")
+        logger.info("feature_generation_start", ticker_count=len(tickers), start_date=str(start_date), end_date=str(end_date))
 
         query = """
             SELECT
@@ -132,10 +132,10 @@ class FeatureEngineer:
         df = self.conn.execute(query, [tickers, start_date, end_date]).pl()
 
         if df.is_empty():
-            logger.warning(f"No data found for tickers: {tickers}")
+            logger.warning("no_data_for_tickers", tickers=tickers)
             return df
 
-        logger.info(f"Loaded {df.height} rows of OHLCV data")
+        logger.info("ohlcv_data_loaded", row_count=df.height)
 
         if "date" in df.columns and df.schema["date"] != pl.Date:
             df = df.with_columns(pl.col("date").cast(pl.Date))
@@ -147,7 +147,7 @@ class FeatureEngineer:
             if ticker_df.is_empty():
                 continue
             if ticker_df.height < 60:
-                logger.warning(f"Skipping {ticker}: only {ticker_df.height} days of data")
+                logger.warning("ticker_insufficient_data", ticker=ticker, height=ticker_df.height)
                 continue
 
             computed = self.feature_pipeline.compute_technical(ticker_df, include_target=compute_target)
@@ -189,8 +189,8 @@ class FeatureEngineer:
         if normalize_cross_sectional:
             features_df = self.zscore_cross_sectional(features_df)
 
-        logger.info(f"Generated {features_df.height} rows of features with {len(features_df.columns)} columns")
-        logger.debug(f"Feature columns: {list(features_df.columns)}")
+        logger.info("feature_generation_complete", row_count=features_df.height, column_count=len(features_df.columns))
+        logger.debug("feature_columns", columns=list(features_df.columns))
         return features_df
 
     def zscore_cross_sectional(

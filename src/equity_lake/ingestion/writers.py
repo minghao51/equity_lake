@@ -1,9 +1,7 @@
 """Writer helpers for ingestion.
 
 All writes go through the Delta Lake storage layer (ACID transactions,
-merge/upsert, time-travel). The canonical writer is ``upsert_dataset``; the
-historical ``write_to_partitioned_parquet`` name is retained as a bare alias
-and does not create standalone Parquet files.
+merge/upsert, time-travel). The canonical writer is ``upsert_dataset``.
 """
 
 from datetime import date
@@ -142,9 +140,3 @@ __all__ = [
     "validate_schema",
     "upsert_dataset",
 ]
-
-# Backwards-compatible alias for the previous Parquet-based API name. The
-# function performs a Delta upsert; the historical name is retained for
-# callers that have not yet migrated. Matches the bare-alias pattern in
-# ``signals/history.py``.
-write_to_partitioned_parquet = upsert_dataset

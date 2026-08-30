@@ -1,7 +1,7 @@
 # Developer Documentation
 
 This section contains technical documentation, architecture decisions, and
-historical records for the Equity Lake project.
+superseded records for the Equity Lake project.
 
 ## Architecture
 
@@ -12,14 +12,17 @@ Current system architecture and design documents:
 - [Conventions](architecture/CONVENTIONS.md)
 - [Testing Strategy](architecture/TESTING.md)
 - [Integration Points](architecture/INTEGRATIONS.md)
-- [Open Concerns](architecture/CONCERNS.md)
 - [ML Analytics Platform](architecture/ml-analytics-platform.md)
-- [Parallel Ingestion](architecture/parallel-ingestion.md)
+
+## Decision Records
+
+Architecture decision records (ADRs) live in [../decisions/README.md](../decisions/README.md).
+Boundary and architecture changes require an accepted ADR before implementation.
 
 ## History
 
 Superseded notes, implementation reports, and archived scripts:
 
-- [Archived Scripts](history/README.md) — One-time migration scripts retained for audit
+- [Archive](../archive/README.md) — Superseded docs and one-time migration scripts retained for audit
 - [Reports](../reports/README.md) — Operational analyses and handoff notes kept in the repo
 - Git history — superseded implementation details and older experiments that are no longer published as active docs

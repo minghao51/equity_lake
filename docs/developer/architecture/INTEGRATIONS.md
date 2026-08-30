@@ -1,563 +1,158 @@
 # Integrations
 
-**Last Updated**: 2026-03-05
+**Last Updated**: 2026-08-29
 **Project**: Equity EOD Data Pipeline
 
-## External APIs
+## Overview
 
-### yfinance API
+All external data enters through the adapter layer in `src/equity_lake/sources/`.
+Every adapter implements the `MarketDataFetcher` ABC from
+`sources/base.py` (`fetch(trading_date) -> pl.DataFrame`, plus `fetch_range`
+and config-driven ticker resolution) and gets its retry behavior from the
+shared tenacity factory `core/retry.py::build_retry_decorator` — never from
+hand-rolled loops.
 
-**Purpose**: Fetch EOD market data for US, Hong Kong, and Singapore equities
+Routing is declarative: `ingestion/router.py` maps each market identifier to a
+fetcher factory in `MARKET_REGISTRY` (factories lazy-import their fetcher and
+propagate configuration errors such as missing API keys to the caller). After a
+fetch, `fetch_market_data_with_config` converts to polars and validates the
+schema via `ingestion/writers.validate_schema` before the frame is handed to
+the Delta writer.
 
-**Usage Locations**:
-- `src/equity_lake/ingestion/sources/yfinance_source.py` (287 lines)
-- `src/equity_lake/ingestion/sources/us_equity.py` (USEquityFetcher)
-- `src/equity_lake/ingestion/sources/hk_sg_equity.py` (HKSGEquityFetcher)
+`ingestion/types.py` classifies the 15 market identifiers:
 
-**Implementation Details**:
-```python
-import yfinance as yf
+- `REQUIRED_PRICE_MARKETS` = `us`, `cn`, `hk_sg`, `jpx`, `krx` — their failure
+  blocks dependent features and ML.
+- `OPTIONAL_ENRICHMENT_MARKETS` = everything else — their failure is recorded
+  and the core feature path continues.
 
-# Single ticker download
-data = yf.download('AAPL', start='2024-12-01', end='2024-12-02')
+Destinations below come from `MARKET_DIR_MAP` in `ingestion/types.py`, derived
+from the canonical path constants in `core/paths.py`. All tables are
+date-partitioned Delta tables under `data/lake/`.
 
-# Batch download (multiple tickers)
-tickers = ['AAPL', 'GOOGL', 'MSFT']
-data = yf.download(tickers, start=start, end=end, group_by='ticker')
-```
+## Price-Market Fetchers
 
-**Rate Limiting**:
-- Built-in delay: 0.5-1 second between requests
-- Exponential backoff on failures (3 retries)
-- Batch downloads to reduce API calls
+| Market ID | Adapter (`src/equity_lake/sources/`) | Upstream | Lake destination |
+|---|---|---|---|
+| `us` | `us.py` — `USEquityFetcher` (`YFinanceBaseFetcher`, batch size 500) | yfinance | `01_bronze/market_data/us_equity` |
+| `cn` | `cn_hybrid.py` — `CNHybridFetcher` (uses `cn.py` `CNAshareFetcher`, `cn_efinance.py` `CNEfinanceFetcher`) | akshare (primary) → yfinance (fallback when akshare returns empty) → efinance (opt-in via `enable_efinance=True`) | `01_bronze/market_data/cn_ashare` |
+| `hk_sg` | `hk_sg.py` — `HKSGEquityFetcher` (splits `.HK` / `.SI` symbols) | yfinance | `01_bronze/market_data/hk_sg_equity` |
+| `jpx` | `jpx.py` — `JPXEquityFetcher` (`.T`-suffixed tickers, e.g. `7203.T`) | yfinance | `01_bronze/market_data/jpx_equity` |
+| `krx` | `krx.py` — `KRXEquityFetcher` (6-digit codes, e.g. `005930`; default retry delay 2s) | finance-datareader | `01_bronze/market_data/krx_equity` |
 
-**Data Retrieved**:
-- OHLCV (Open, High, Low, Close, Volume)
-- Adjusted close prices
-- Date range queries
-- Ticker metadata
+All five write the standard OHLCV schema (`core/schemas.py::STANDARD_COLUMNS`).
+An optional one-time S3 bootstrap (`storage/s3_sync.py`, `equity sync` in
+`cli/commands/data.py`) can seed US history before daily fetches; boto3/s5cmd
+live in the optional `s3` dependency group.
 
-**Error Handling**:
-- Network timeout handling
-- Retry logic with exponential backoff
-- Graceful degradation on API failures
+## Enrichment & News Adapters
 
-**Dependencies**:
-- `yfinance>=0.2.50`
-- Internet connectivity required
-- No API key needed (free public API)
+| Market ID | Adapter (`src/equity_lake/sources/`) | Upstream | Destination | Notes |
+|---|---|---|---|---|
+| `macro` | `macro.py` — `MacroFetcher` / `MacroDataPipeline` (`FredFetcher`, `YFinanceFetcher` per `MACRO_INDICATOR_CONFIG`) | FRED + yfinance (DXY, Treasury 10Y, TIPS, breakeven inflation, VIX, gold, policy uncertainty) | `01_bronze/macro` | `FRED_API_KEY` needed for FRED series; yfinance indicators key-free |
+| `us_news` | `news.py` — `FinnhubNewsFetcher` | Finnhub company news | `02_silver/news_sentiment` | VADER sentiment computed at fetch time |
+| `us_social_sentiment` | `sentiment.py` — `FinnhubSocialSentimentFetcher` | Finnhub social sentiment (Reddit/Twitter metrics) | `02_silver/social_sentiment` | |
+| `reddit_posts` | `reddit.py` — `RedditFetcher` | Reddit public `.json` endpoint (no OAuth) | `01_bronze/raw_articles` | Budget ~10 req/min; ~7s inter-request delay plus `X-Ratelimit-Remaining` inspection; `REDDIT_USER_AGENT` required in `<platform>:<app-id>:<version> (by u/<username>)` format; subreddits from `config/social_sources.yaml` |
+| `rss_news` | `rss.py` — `RSSNewsFetcher` | RSS/Atom feeds via feedparser | `01_bronze/raw_articles` | Feeds configured in `config/rss_feeds.yaml` |
+| `stocktwits_messages` | `stocktwits.py` — `StockTwitsFetcher` | StockTwits API | `01_bronze/raw_articles` | Disabled by default (`STOCKTWITS_ENABLED=false`); developer registrations are frozen; returns an empty frame with a warning when disabled. Use `us_social_sentiment` instead |
+| `us_earnings_transcripts` | `transcripts.py` — `EarningsTranscriptFetcher` | Finnhub earnings-call transcripts | `01_bronze/raw_articles` | Endpoint may require a premium tier; degrades gracefully to empty; content flows through the bronze→silver LLM pipeline |
+| `us_analyst_ratings` | `analyst_ratings.py` — `AnalystRatingFetcher` | Finnhub `/stock/recommendation` + `/stock/price-target` | `02_silver/analyst_ratings` | Already structured — no LLM processing |
+| `sec_filings_fulltext` | `sec_fulltext.py` — `SECFilingFetcher` | SEC EDGAR submissions + archives (10-K/10-Q) | `01_bronze/raw_articles` | readability-lxml text extraction, sectioned (Item 1A risk factors, Item 7 MD&A); SEC rate limit 10 req/s; `SEC_USER_AGENT` recommended |
+| `us_sec_financials` | `sec_financials.py` — `SECFinancialsFetcher` | SEC XBRL via edgartools | `02_silver/sec_financials` | Structured numeric extraction with ratios — no LLM; edgartools throttles EDGAR access internally |
 
----
+Adapters whose destination is `01_bronze/raw_articles` are unstructured
+inputs; the bronze→silver LLM processors (`ingestion/`, DeepSeek via the
+OpenAI-compatible client in `ingestion/llm_base.py`) turn them into
+`02_silver/processed_articles` and `02_silver/sec_extractions`.
 
-### akshare API
+## Keys & Authentication
 
-**Purpose**: Fetch China A-shares EOD market data
+Keys are raw, unprefixed environment variables read with `os.getenv` at each
+client seam — they are deliberately not declared in `Settings` (which is
+`extra="forbid"`). Run commands through dotenvx so `.env` is loaded:
 
-**Usage Locations**:
-- `src/equity_lake/ingestion/sources/akshare_source.py` (171 lines)
-- `src/equity_lake/ingestion/sources/cn_ashare.py` (CNAshareFetcher)
-- `src/equity_lake/ingestion/sources/cn_hybrid.py` (CNHybridFetcher)
-
-**Implementation Details**:
-```python
-import akshare as ak
-
-# Fetch stock list
-stock_list = ak.stock_info_a_code_name()
-
-# Fetch historical data
-df = ak.stock_zh_a_hist(
-    symbol='000001',
-    period='daily',
-    start_date='20241201',
-    end_date='20241202',
-    adjust='qfq'  # Forward-adjusted prices
-)
-```
-
-**Column Mapping Required**:
-- Chinese column names → English
-- '开盘' → 'open'
-- '最高' → 'high'
-- '最低' → 'low'
-- '收盘' → 'close'
-- '成交量' → 'volume'
-
-**Rate Limiting**:
-- Delay: 0.1 second between stock requests
-- Retry logic: 3 attempts with exponential backoff
-- Batch processing for multiple tickers
-
-**Data Retrieved**:
-- OHLCV for A-shares (Shanghai + Shenzhen)
-- Stock list and metadata
-- Adjusted prices (前复权)
-- Trading calendar
-
-**Error Handling**:
-- Connection error handling
-- VPN requirements for China access
-- Fallback to alternative sources
-
-**Dependencies**:
-- `akshare>=1.15.0`
-- May require VPN for mainland China access
-- No API key needed (free public API)
-
----
-
-### efinance API
-
-**Purpose**: Alternative Chinese market data source
-
-**Usage Locations**:
-- `src/equity_lake/ingestion/sources/efinance_source.py`
-
-**Implementation Details**:
-```python
-import efinance as ef
-
-# Fetch stock data
-df = ef.stock.get_quote_history()
-```
-
-**Use Case**:
-- Backup/fallback for akshare
-- Faster for certain queries
-- Different data coverage
-
-**Dependencies**:
-- `efinance` package
-- Similar network requirements as akshare
-
----
-
-## Databases
-
-### DuckDB
-
-**Purpose**: SQL query engine for analytics and data exploration
-
-**Usage Locations**:
-- `src/equity_lake/storage/duckdb.py` (main query interface)
-- `src/equity_lake/cli/query.py` (CLI entry point)
-
-**Implementation Details**:
-```python
-import duckdb
-
-# Create connection
-con = duckdb.connect(':memory:')
-
-# Query Parquet files directly
-df = con.execute("""
-    SELECT ticker, close, volume
-    FROM 'data/lake/01_bronze/market_data/us_equity/date=*/*.parquet'
-    WHERE date >= '2024-01-01'
-""").df()
-
-# Create unified view
-con.execute("""
-    CREATE OR REPLACE VIEW equity_all AS
-    SELECT *, 'us' as market FROM 'data/lake/01_bronze/market_data/us_equity/date=*/*.parquet'
-    UNION ALL
-    SELECT *, 'cn' as market FROM 'data/lake/01_bronze/market_data/cn_ashare/date=*/*.parquet'
-""")
-```
-
-**Features Used**:
-- Zero-copy Parquet reading
-- Hive partitioning support
-- SQL query optimization
-- In-memory processing
-
-**Performance Optimizations**:
-- Partition pruning (date filtering)
-- Column projection (SELECT specific columns)
-- Materialized views for frequent queries
-- Parallel query execution
-
-**Integration Pattern**:
-- Read-only access to Parquet files
-- No database server needed
-- Embedded in Python process
-
----
-
-### Parquet Data Lake
-
-**Purpose**: Primary storage for EOD market data
-
-**Storage Structure**:
-```
-data/lake/
-├── us_equity/
-│   ├── date=2024-12-01/
-│   │   └── 2024-12-01.parquet
-│   ├── date=2024-12-02/
-│   │   └── 2024-12-02.parquet
-│   └── ...
-├── cn_ashare/
-│   └── ... (same structure)
-└── hk_sg_equity/
-    └── ... (same structure)
-```
-
-**Implementation**:
-- **Format**: Apache Parquet (columnar storage)
-- **Compression**: Snappy (default)
-- **Partitioning**: Hive-style by date
-- **Library**: pyarrow for read/write operations
-
-**Code Locations**:
-- `src/equity_lake/storage/parquet.py` (read/write utilities)
-- `src/equity_lake/ingestion/` (write operations)
-- `src/equity_lake/storage/` DuckDB query layer (read operations)
-
-**Schema**:
-```python
-STANDARD_COLUMNS = [
-    'ticker',      # STRING
-    'date',        # DATE (partition key)
-    'open',        # FLOAT64
-    'high',        # FLOAT64
-    'low',         # FLOAT64
-    'close',       # FLOAT64
-    'volume',      # INT64
-    'adj_close'    # FLOAT64 (optional)
-]
-```
-
-**Write Operations**:
-```python
-import pyarrow as pa
-import pyarrow.parquet as pq
-
-# Write to partitioned directory
-table = pa.Table.from_pandas(df)
-pq.write_table(
-    table,
-    f'data/lake/01_bronze/market_data/us_equity/date={date}/{date}.parquet',
-    compression='snappy'
-)
-```
-
-**Read Operations**:
-```python
-import pandas as pd
-
-# Read single file
-df = pd.read_parquet('data/lake/01_bronze/market_data/us_equity/date=2024-12-01/2024-12-01.parquet')
-
-# Read multiple partitions with DuckDB
-df = con.execute("""
-    SELECT * FROM 'data/lake/01_bronze/market_data/us_equity/date=*/*.parquet'
-    WHERE date >= '2024-12-01'
-""").df()
-```
-
----
-
-## Cloud Storage
-
-### AWS S3
-
-**Purpose**: Bootstrap historical US equity data (one-time sync)
-
-**Usage Locations**:
-- `src/equity_lake/storage/s3_sync.py` (S3 sync orchestration)
-- `src/equity_lake/storage/s3.py` (sync implementation)
-- `src/equity_lake/cli/sync.py` (CLI entry point)
-
-**Authentication**:
 ```bash
-# AWS credentials (from environment or ~/.aws/credentials)
-export AWS_ACCESS_KEY_ID=your_key
-export AWS_SECRET_ACCESS_KEY=your_secret
-export AWS_DEFAULT_REGION=us-east-1
+cp .env.example .env
+dotenvx run -- uv run equity ingest --markets us
 ```
 
-**Configuration**:
-```python
-# Environment variables
-S3_BUCKET = os.getenv('S3_BUCKET', 's3://default-bucket/us_equity/')
-AWS_PROFILE = os.getenv('AWS_PROFILE', 'default')
-```
-
-**Implementation**:
-- **Tool 1**: s5cmd (preferred, high-performance)
-  ```bash
-  s5cmd cp --workers 32 s3://bucket/us_equity/* data/lake/01_bronze/market_data/us_equity/
-  ```
-
-- **Tool 2**: AWS CLI (fallback)
-  ```bash
-  aws s3 sync s3://bucket/us_equity/ data/lake/01_bronze/market_data/us_equity/
-  ```
-
-- **Tool 3**: boto3 (Python SDK)
-  ```python
-  import boto3
-  s3 = boto3.client('s3')
-  paginator = s3.get_paginator('list_objects_v2')
-  ```
-
-**Data Sync Pattern**:
-```
-S3 Bucket (Historical)
-    ↓ One-time sync
-Local Parquet Lake
-    ↓ Daily appends
-Query via DuckDB
-```
-
-**Error Handling**:
-- Access denied handling
-- Network timeout retries
-- Integrity verification (Parquet validation)
-- Partial sync resume capability
-
-**Dependencies**:
-- `boto3` (AWS SDK)
-- `s5cmd` (external binary, optional)
-- AWS CLI (external binary, fallback)
-
----
-
-## Authentication & Security
-
-### AWS Credentials
-
-**Configuration Sources** (in order of precedence):
-1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-2. AWS credentials file (`~/.aws/credentials`)
-3. IAM role (for EC2 instances)
-4. S3 bucket policy (public buckets)
-
-**Best Practices**:
-- Never commit credentials to git
-- Use `.env` file for local development (git-ignored)
-- Rotate credentials regularly
-- Use IAM roles for production
-- Principle of least privilege
-
----
-
-### API Keys
-
-**Current Status**: No API keys required for core functionality
-- yfinance: Free public API, no key needed
-- akshare: Free public API, no key needed
-- efinance: Free public API, no key needed
-
-**Future Integrations** (if needed):
-- Alpha Vantage (requires API key)
-- Finnhub (requires API key)
-- FRED Economic Data (requires API key)
-- Polygon.io (requires API key)
-
-**Configuration Pattern** (for future APIs):
-```python
-# .env file (git-ignored)
-ALPHA_VANTAGE_API_KEY=your_key_here
-FINNHUB_API_KEY=your_key_here
-
-# Load in Python
-from dotenv import load_dotenv
-load_dotenv()
-
-api_key = os.getenv('ALPHA_VANTAGE_API_KEY')
-```
-
----
-
-## Scheduling & Automation
-
-### Cron Jobs
-
-**Purpose**: Schedule daily EOD data ingestion
-
-**Implementation Options**:
-
-1. **System Cron** (Linux/macOS):
-   ```crontab
-   # Run daily at 6:00 PM (after market close)
-   0 18 * * 1-5 cd /path/to/equity_lake && dotenvx run -- uv run equity ingest >> logs/cron.log 2>&1
-   ```
-
-2. **Docker Cron**:
-   ```yaml
-   # docker-compose.yml
-   services:
-     scheduler:
-       image: equity-lake:latest
-       command: cron -f
-       volumes:
-         - ./data:/app/data
-   ```
-
-3. **Python Schedule** (alternative):
-   ```python
-   import schedule
-   schedule.every().day.at("18:00").do(run_daily_ingestion)
-   ```
-
-**Current Implementation**: Manual execution via CLI
-```bash
-# Run daily ingestion manually
-make daily
-# or
-uv run equity ingest
-```
-
----
-
-## Data Sources Summary
-
-### Primary Data Sources
-
-| Market | Source | API | Cost | Coverage |
-|--------|--------|-----|------|----------|
-| US Equities | yfinance | Yahoo Finance | Free | 7000+ stocks |
-| China A-shares | akshare | Various Chinese exchanges | Free | 5000+ stocks |
-| Hong Kong | yfinance | Yahoo Finance | Free | 2000+ stocks |
-| Singapore | yfinance | Yahoo Finance | Free | 600+ stocks |
-
-### Bootstrap Source
-
-| Data Type | Source | Method | Frequency |
-|-----------|--------|--------|-----------|
-| US Historical | AWS S3 | One-time sync | Once |
-| US Daily | yfinance | API fetch | Daily |
-| China Daily | akshare | API fetch | Daily |
-| HK/SG Daily | yfinance | API fetch | Daily |
-
----
-
-## Error Handling & Resilience
-
-### API Failure Handling
-
-**Retry Strategy**:
-- Exponential backoff: 1s, 2s, 4s delays
-- Max retries: 3 attempts
-- Timeout: 30 seconds per request
-
-**Graceful Degradation**:
-```python
-# Continue processing other markets if one fails
-try:
-    us_data = fetch_us_market(date)
-except Exception as e:
-    logger.error(f"US market failed: {e}")
-    us_data = None
-
-# Process successful fetches only
-if cn_data is not None:
-    write_to_partition(cn_data, 'cn_ashare')
-```
-
-**Logging**:
-- All API errors logged to `logs/ingest_daily.log`
-- Structured logging with correlation IDs
-- Error metrics and statistics
-
----
-
-## Network Requirements
-
-### Connectivity
-
-**Required Endpoints**:
-- `query1.finance.yahoo.com` (yfinance)
-- `akshare.akfamily.xyz` (akshare)
-- `*.amazonaws.com` (S3, if using)
-
-**Firewall Considerations**:
-- Outbound HTTPS (443) required
-- No inbound ports needed
-- May need VPN for China sources
-
-**Bandwidth**:
-- Initial S3 sync: ~5-10 GB (US historical)
-- Daily updates: ~5-50 MB per market
-- Query operations: Local (no network needed)
-
----
-
-## Integration Testing
-
-### Mock Strategy
-
-**External APIs**:
-- Mock yfinance responses: `tests/unit/sources/test_yfinance_source.py`
-- Mock akshare responses: `tests/unit/sources/test_akshare_source.py`
-- Mock S3 operations: `tests/unit/storage/test_s3_sync.py`
-
-**Example**:
-```python
-from unittest.mock import patch
-
-@patch('yfinance.download')
-def test_us_fetcher(mock_download):
-    mock_download.return_value = sample_dataframe
-    fetcher = USEquityFetcher()
-    df = fetcher.fetch(date(2024, 12, 1))
-    assert not df.empty
-```
-
----
-
-## Monitoring & Observability
-
-### Logging
-
-**Log Files**:
-- `logs/ingest_daily.log`: Daily ingestion logs
-- `logs/sync_from_s3.log`: S3 sync logs
-- `logs/query.log`: Query operation logs
-
-**Log Format**:
-- Structured JSON logs (via structlog)
-- Include: timestamp, level, message, context
-- Correlation IDs for request tracking
-
-**Metrics to Track**:
-- API success/failure rates
-- Data latency (time to fetch)
-- Row counts per market
-- Query performance
-
----
-
-## Future Integrations
-
-### Potential Additions
-
-1. **Workflow Orchestration**:
-   - Apache Airflow
-   - Prefect
-   - Dagster
-
-2. **Caching Layer**:
-   - Redis (API response caching)
-   - Memcached
-
-3. **Message Queue**:
-   - RabbitMQ (async task processing)
-   - Redis Queue (lightweight alternative)
-
-4. **Additional Data Sources**:
-   - Crypto (CoinGecko API)
-   - Commodities (Alpha Vantage)
-   - Economic indicators (FRED API)
-
-5. **Notification**:
-   - Slack webhooks (alerts)
-   - Email notifications (failures)
-
----
-
-**Total Integrations**: 4 external APIs, 2 databases, 1 cloud storage service
-**Authentication**: AWS credentials (optional, for S3 sync)
-**Scheduling**: Manual/cron (future: Airflow/Prefect)
+| Variable | Required for | Notes |
+|---|---|---|
+| `FRED_API_KEY` | `macro` (FRED series) | Free key from FRED |
+| `FINNHUB_API_KEY` | `us_news`, `us_social_sentiment`, `us_earnings_transcripts`, `us_analyst_ratings` | The router raises when unset for these markets |
+| `REDDIT_USER_AGENT` | `reddit_posts` | Format `<platform>:<app-id>:<version> (by u/<username>)`; `REDDIT_CLIENT_ID`/`REDDIT_CLIENT_SECRET` are listed for the praw-based Reddit sentiment loader (`sentiment` group) |
+| `SEC_USER_AGENT` | `sec_filings_fulltext`, `us_sec_financials` | Descriptive agent with contact email, per SEC policy |
+| `STOCKTWITS_ENABLED`, `STOCKTWITS_CLIENT_ID` | `stocktwits_messages` | Off by default |
+| `DEEPSEEK_API_KEY` | Bronze→silver LLM enrichment | OpenAI-compatible client against `api.deepseek.com` |
+| `OPENROUTER_API_KEY` | Embeddings (RAG vector index) | |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_BUCKET` | `equity sync` (S3 bootstrap) | Only for private buckets; boto3/s5cmd in the `s3` group |
+
+Full key-by-feature guide: [API Keys and Credentials](../../20260406-api-keys.md).
+
+Core price ingestion (US, CN, HK/SG, JPX, KRX) needs no API key at all.
+
+## Rate Limiting & Retry
+
+- **Retry (all adapters)**: tenacity via `core/retry.py::build_retry_decorator`
+  — exponential backoff, default 3 attempts, wait capped at 30s, `reraise=True`.
+  Only `TransientError` (network, timeout, HTTP 5xx) is retried; 4xx and
+  configuration errors propagate immediately. Attempt counts/delays default
+  from `Settings.ingestion`, overridable via `EQUITY_INGESTION__RETRY_ATTEMPTS`
+  / `EQUITY_INGESTION__RETRY_DELAY`.
+- **yfinance adapters**: batched downloads (500 tickers per batch for US/JPX).
+- **CN**: per-stock fetches parallelized via `ThreadPoolExecutor`
+  (`max_workers=10`), with adaptive fallback between sources.
+- **KRX**: default retry delay 2s.
+- **Reddit**: unauthenticated IP-based budget of ~10 requests/minute enforced
+  by ~7s spacing and `X-Ratelimit-Remaining` header checks.
+- **SEC EDGAR**: 10 requests/second limit; `edgartools` throttles internally
+  for the XBRL path; a descriptive `SEC_USER_AGENT` is expected by policy.
+- **Graceful degradation**: optional enrichment failures are logged and
+  recorded; required price-market failures block dependent stages
+  (see [pipeline contracts](pipeline-contracts.md)).
+
+## Storage Destinations
+
+Written by `storage/delta.py` as date-partitioned Delta tables (Parquet data
+files) under `data/lake/`:
+
+- **01_bronze**: `market_data/{us_equity, cn_ashare, hk_sg_equity, jpx_equity,
+  krx_equity}`, `macro`, `raw_articles` (news, Reddit, RSS, StockTwits,
+  transcripts, SEC filings).
+- **02_silver**: `news_sentiment`, `social_sentiment`, `analyst_ratings`,
+  `sec_financials` (direct-from-source structured outputs), plus
+  `processed_articles` / `sec_extractions` (LLM outputs).
+- **03_gold / 04_platinum**: derived features and predictions, not written by
+  source adapters.
+
+Only tables under `data/lake/` are cataloged and pointblank-validated at the
+ingestion write boundary (`validation/pipeline.py`).
+
+## Testing
+
+Fetcher unit tests mock the upstream libraries — no network needed (network
+tests are marked and excluded from the default suite):
+
+- `tests/unit/test_fetchers.py` — US, CN (akshare, efinance, hybrid)
+- `tests/unit/test_jpx_krx_fetchers.py` — JPX and KRX
+- `tests/unit/test_news_fetcher.py` — Finnhub news + `SentimentAnalyzer`
+- `tests/unit/test_social_sentiment.py`, `tests/unit/test_sentiment_generator.py`
+- `tests/unit/test_reddit_fetcher.py`, `tests/unit/test_rss_fetcher.py`,
+  `tests/unit/test_stocktwits_fetcher.py`
+- `tests/unit/test_transcripts.py`, `tests/unit/test_analyst_ratings.py`
+- `tests/unit/test_sec_fulltext.py`, `tests/unit/test_sec_fulltext_edge.py`,
+  `tests/unit/test_sec_processor.py`, `tests/unit/test_sec_financials.py`
+- `tests/unit/test_macro_sources.py`
+- `tests/unit/test_router.py` — `MARKET_REGISTRY` routing
+- `tests/unit/test_ingestion_orchestrator.py` — orchestration incl. HK/SG
+
+## Monitoring Touchpoints
+
+- **structlog** JSON logging with correlation IDs in every adapter.
+- Per-market outcomes are structured `SourceOutcome`s (`written`,
+  `skipped_existing`, `failed`) serialized into the pipeline results payload.
+- `equity monitor` (`cli/commands/analysis.py` → `monitoring/health.py`)
+  checks freshness and quality across the medallion tables, including
+  JPX/KRX bronze directories; `monitoring/alerting.py` dispatches alerts.
+- `equity query` (`cli/commands/analysis.py`) exposes DuckDB analytical reads
+  over the lake (`storage/duckdb.py`, `storage/lake_reader.py`).

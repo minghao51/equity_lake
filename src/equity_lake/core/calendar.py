@@ -8,15 +8,12 @@ and timezone.
 from __future__ import annotations
 
 from datetime import date
-from typing import Literal
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xc
 import structlog
 
 logger = structlog.get_logger()
-
-MarketName = Literal["us_equity", "cn_ashare", "hk_sg_equity", "jpx_equity", "krx_equity"]
 
 _MARKET_TO_EXCHANGE: dict[str, list[str]] = {
     "us_equity": ["XNYS"],
@@ -73,7 +70,6 @@ def market_now(market: str) -> date:
 
 
 __all__ = [
-    "MarketName",
     "count_trading_days",
     "is_trading_day",
     "market_now",

@@ -1,3 +1,5 @@
+> Archived 2026-08-29: superseded — most concerns have been addressed (pointblank validation, parallel ingestion, trading calendars, CI workflows). Current state is tracked in ADRs and the architecture pages.
+
 # Concerns
 
 **Last Updated**: 2026-03-05

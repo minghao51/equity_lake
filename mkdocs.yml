@@ -3,7 +3,7 @@ site_description: Local-first equity EOD data pipeline
 site_url: https://minghao.github.io/equity_lake
 repo_name: equity_lake
 repo_url: https://github.com/minghao/equity_lake
-exclude_docs: 'README.md|catalog/.*'
+exclude_docs: 'README.md|catalog/.*|archive/.*'
 
 theme:
   name: material
@@ -38,7 +38,12 @@ nav:
       - CLI Reference: user-guide/20260406-cli-reference.md
       - Ingestion: user-guide/ingestion.md
       - Pipeline: user-guide/pipeline.md
+      - Features and Enrichments: user-guide/20260829-features-and-enrichments.md
+      - Monitoring and Alerting: user-guide/20260829-monitoring-and-alerting.md
+      - Data Quality Validation: user-guide/20260829-data-quality-validation.md
+      - Delta Lake Maintenance: user-guide/20260829-delta-maintenance.md
       - Backtesting: user-guide/backtesting.md
+      - Arena and Findings: user-guide/20260829-arena-and-findings.md
       - Signals: user-guide/signals.md
       - ML Rigor: user-guide/20260810-ml-rigor.md
       - REST API: user-guide/20260811-read-api.md
@@ -48,9 +53,25 @@ nav:
       - Architecture: developer/architecture/ARCHITECTURE.md
       - Data Flow: developer/architecture/data-flow.md
       - Pipeline Contracts: developer/architecture/pipeline-contracts.md
+      - Integrations: developer/architecture/INTEGRATIONS.md
       - Stack: developer/architecture/STACK.md
       - Testing: developer/architecture/TESTING.md
       - Conventions: developer/architecture/CONVENTIONS.md
+      - Auto-Backfill and Gap Detection: developer/architecture/auto-backfill-and-gap-detection.md
+      - Catalog Subsystem: developer/architecture/catalog-subsystem.md
+      - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
+      - Project Structure: developer-guide/project-structure.md
+      - Developer Tools: developer-guide/devtools.md
+      - Decision Records:
+          - 'ADR-0001: Medallion layout and generated catalog': decisions/0001-medallion-layout-and-generated-catalog.md
+          - 'ADR-0002: Top-level modules and import boundaries': decisions/0002-top-level-modules-import-boundaries.md
+          - 'ADR-0003: Polars-first dataframe engine': decisions/0003-polars-first-dataframe-engine.md
+          - 'ADR-0004: Single Settings env contract': decisions/0004-single-settings-env-contract.md
+          - 'ADR-0005: Native Typer CLI contract': decisions/0005-native-typer-cli-contract.md
+          - 'ADR-0006: Auxiliary data paths': decisions/0006-auxiliary-data-paths.md
+          - 'ADR-0007: pointblank at ingestion boundaries': decisions/0007-pointblank-at-ingestion-boundaries.md
+          - 'ADR-0008: VectorBacktestEngine default': decisions/0008-vector-backtest-engine-default.md
+          - 'ADR-0009: Decisions and archive directories': decisions/0009-decisions-and-archive-directories.md
 
 plugins:
   - search

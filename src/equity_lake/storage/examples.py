@@ -301,7 +301,7 @@ def benchmark_queries(db: EquityDataDB) -> dict[str, float]:
     queries = QueryExamples(db)
     benchmarks = {}
 
-    benchmark_queries = [
+    benchmark_cases = [
         ("latest_summary", lambda: queries.query_1_latest_data_summary()),
         ("top_volume", lambda: queries.query_2_top_volume_stocks(7)),
         ("gainers_losers", lambda: queries.query_3_top_gainers_losers(7)),
@@ -309,7 +309,7 @@ def benchmark_queries(db: EquityDataDB) -> dict[str, float]:
         ("market_stats", lambda: queries.query_7_market_summary_stats()),
     ]
 
-    for name, query_func in benchmark_queries:
+    for name, query_func in benchmark_cases:
         start = time.time()
         try:
             result = query_func()

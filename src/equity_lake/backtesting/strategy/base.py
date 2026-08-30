@@ -56,15 +56,8 @@ class BaseStrategy(ABC):
         """Cleanup after strategy execution. Override if needed."""
         pass
 
-    def validate_params(self) -> bool:
-        return True
-
     def get_param(self, key: str, default: Any = None) -> Any:
         return self.params.get(key, default)
-
-    def set_param(self, key: str, value: Any) -> None:
-        self.params[key] = value
-        logger.debug("Parameter updated", key=key, value=value, strategy=self.name)
 
     def __repr__(self) -> str:
         params_str = ", ".join(f"{k}={v}" for k, v in self.params.items())

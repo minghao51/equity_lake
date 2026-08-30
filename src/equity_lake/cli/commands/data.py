@@ -1,3 +1,5 @@
+"""Data management commands (ingest, backfill, sync, delta operations)."""
+
 from __future__ import annotations
 
 import os

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 
 def _subtract_trading_days(base: date, days_back: int, market: str = "us_equity") -> date:
@@ -11,7 +11,7 @@ def _subtract_trading_days(base: date, days_back: int, market: str = "us_equity"
     current = base
     remaining = max(days_back, 0)
     while remaining > 0:
-        current -= __import__("datetime").timedelta(days=1)
+        current -= timedelta(days=1)
         if is_trading_day(market, current):
             remaining -= 1
     return current

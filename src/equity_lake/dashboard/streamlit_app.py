@@ -10,7 +10,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -19,88 +18,10 @@ import pandas as pd
 import streamlit as st
 
 from equity_lake.core.paths import (
-    CN_ASHARE_DIR,
     DATA_DIR,
-    GOLD_FEATURES_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
-    LOGS_DIR,
-    US_EQUITY_DIR,
 )
+from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, summarize_dataset
 from equity_lake.storage.lake_reader import duckdb_scan_for
-
-MARKET_DATASETS = {
-    "us_equity": US_EQUITY_DIR,
-    "cn_ashare": CN_ASHARE_DIR,
-    "hk_sg_equity": HK_SG_EQUITY_DIR,
-    "jpx_equity": JPX_EQUITY_DIR,
-    "krx_equity": KRX_EQUITY_DIR,
-    "features": GOLD_FEATURES_DIR,
-}
-
-
-def _summarize_dataset(conn: Any, name: str, path: Path) -> dict[str, Any]:
-    """Summarize a dataset for the dashboard."""
-    if not path.exists():
-        return {
-            "name": name,
-            "available": False,
-            "rows": 0,
-            "symbols": 0,
-            "latest_date": None,
-            "path": str(path),
-        }
-
-    try:
-        query = f"""
-            SELECT
-                COUNT(*) AS rows,
-                COUNT(DISTINCT ticker) AS symbols,
-                CAST(MAX(date) AS VARCHAR) AS latest_date
-            FROM {duckdb_scan_for(path)}
-        """
-        row = conn.execute(query).fetchone()
-        if row is None:
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(path),
-            }
-        return {
-            "name": name,
-            "available": True,
-            "rows": int(row[0] or 0),
-            "symbols": int(row[1] or 0),
-            "latest_date": row[2],
-            "path": str(path),
-        }
-    except Exception:
-        return {
-            "name": name,
-            "available": False,
-            "rows": 0,
-            "symbols": 0,
-            "latest_date": None,
-            "path": str(path),
-        }
-
-
-def _load_health_report() -> dict[str, Any] | None:
-    """Load the pipeline health report."""
-    health_path = Path("site") / "health-report.json"
-    if not health_path.exists():
-        # Try logs directory
-        health_path = LOGS_DIR / "health-report.json"
-    if not health_path.exists():
-        return None
-    try:
-        return cast(dict[str, Any], json.loads(health_path.read_text(encoding="utf-8")))
-    except json.JSONDecodeError:
-        return {"alerts": ["Health report could not be parsed."], "metrics": {}}
 
 
 def _load_update_history() -> list[dict[str, Any]]:
@@ -255,10 +176,10 @@ def main() -> None:
     import duckdb
 
     conn = duckdb.connect(":memory:")
-    datasets = [_summarize_dataset(conn, name, path) for name, path in MARKET_DATASETS.items()]
+    datasets = [summarize_dataset(conn, name, path) for name, path in MARKET_DATASETS.items()]
     conn.close()
 
-    health = _load_health_report()
+    health = load_health_report()
     updates = _load_update_history()
 
     # Navigation

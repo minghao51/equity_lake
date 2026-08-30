@@ -2,10 +2,11 @@
 
 from datetime import date
 
+from equity_lake.core.config import TickerConfig
 from equity_lake.core.dates import resolve_trading_date
 from equity_lake.features import NoFeatureHistoryError
 from equity_lake.ingestion.types import SourceOutcome, SourceStatus
-from equity_lake.pipeline import execute_eod_pipeline
+from equity_lake.pipeline import _backfill_feature_history, execute_eod_pipeline
 
 _WRITTEN = SourceOutcome(SourceStatus.WRITTEN)
 _FAILED = SourceOutcome(SourceStatus.FAILED)
@@ -104,6 +105,29 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
             "explicit_tickers": ["AAPL"],
         }
     ]
+
+
+def test_backfill_feature_history_scopes_tickers_only_callers(monkeypatch):
+    """A tickers-only caller must not trigger an unscoped all-ticker backfill."""
+
+    backfill_calls = []
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or 3)
+
+    # Tickers-only caller: previously forwarded explicit_tickers=None → unscoped 120-day all-ticker backfill.
+    written = _backfill_feature_history(date(2024, 1, 2), ["MSFT", "NVDA"], ["us"], TickerConfig())
+    assert written == 3
+    assert backfill_calls[0]["explicit_tickers"] == ["MSFT", "NVDA"]
+
+    # Explicit tickers still take precedence when provided.
+    _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us"], TickerConfig(), explicit_tickers=["TSLA"])
+    assert backfill_calls[1]["explicit_tickers"] == ["TSLA"]
+
+    # An empty list is forwarded as [] (no fall-back to tickers) at this seam.
+    # Downstream, run_daily_ingestion keeps it a list, but the router's
+    # ``not explicit_tickers`` fallback treats it like an unscoped request, so []
+    # must not be relied on as a scoping mechanism by callers.
+    _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us"], TickerConfig(), explicit_tickers=[])
+    assert backfill_calls[2]["explicit_tickers"] == []
 
 
 def test_authorized_history_recovery_scopes_backfill_to_price_markets(monkeypatch):
@@ -231,7 +255,7 @@ def test_bronze_to_silver_failure_only_disables_article_enrichment(monkeypatch):
 
     results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "rss_news"], tickers=["AAPL"], skip_ml=True)
 
-    assert results["bronze_to_silver"]["success"] is False
+    assert results["ingestion"]["bronze_to_silver"]["success"] is False
     assert results["features"]["success"] is True
     assert feature_kwargs["include_enriched_sentiment"] is False
 
@@ -253,9 +277,55 @@ def test_sec_processing_failure_only_disables_sec_enrichment(monkeypatch):
 
     results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "sec_filings_fulltext"], tickers=["AAPL"], skip_ml=True)
 
-    assert results["sec_to_silver"]["success"] is False
+    assert results["ingestion"]["sec_to_silver"]["success"] is False
     assert results["features"]["success"] is True
     assert feature_kwargs["include_sec_features"] is False
+
+
+def test_bronze_to_silver_success_enables_article_enrichment(monkeypatch):
+    """A successful optional article processing run flips the enrichment gate ON."""
+
+    import polars as pl
+
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "rss_news": _WRITTEN})
+    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_: True)
+    feature_kwargs = {}
+
+    def run_feature_job(**kwargs):
+        feature_kwargs.update(kwargs)
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
+
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "rss_news"], tickers=["AAPL"], skip_ml=True)
+
+    assert results["ingestion"]["bronze_to_silver"]["success"] is True
+    assert results["features"]["success"] is True
+    assert feature_kwargs["include_enriched_sentiment"] is True
+    assert feature_kwargs["include_sec_features"] is False  # SEC processor not run without an SEC market.
+
+
+def test_sec_processing_success_enables_sec_enrichment(monkeypatch):
+    """A successful optional SEC processing run flips the SEC enrichment gate ON."""
+
+    import polars as pl
+
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
+    monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_: True)
+    feature_kwargs = {}
+
+    def run_feature_job(**kwargs):
+        feature_kwargs.update(kwargs)
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
+
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "sec_filings_fulltext"], tickers=["AAPL"], skip_ml=True)
+
+    assert results["ingestion"]["sec_to_silver"]["success"] is True
+    assert results["features"]["success"] is True
+    assert feature_kwargs["include_sec_features"] is True
+    assert feature_kwargs["include_enriched_sentiment"] is False  # No unstructured market ingested.
 
 
 def test_execute_eod_pipeline_feature_stage(monkeypatch):

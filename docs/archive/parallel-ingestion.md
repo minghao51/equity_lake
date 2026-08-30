@@ -1,3 +1,5 @@
+> Archived 2026-08-29: superseded — flags and APIs referenced no longer exist. Parallel fetching is documented in the Architecture page (Ingestion section).
+
 # 🚀 Performance & Observability Improvements
 
 **Implemented**: 2025-01-24

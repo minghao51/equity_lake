@@ -7,7 +7,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import pointblank as pb
 import polars as pl
 import structlog
 from pydantic import BaseModel, Field
@@ -72,8 +71,7 @@ class DataProfiler:
         self.storage_path = Path(storage_path)
         self._profiles: dict[str, ProfileView] = {}
 
-    def profile(self, df: FrameLike, name: str, tags: dict[str, str] | None = None) -> ProfileView:
-        del tags
+    def profile(self, df: FrameLike, name: str) -> ProfileView:
         df_polars = ensure_polars(df)
         view = self._build_profile(df_polars)
         self._profiles[name] = view
@@ -88,20 +86,6 @@ class DataProfiler:
         if not path.exists():
             return None
         return ProfileView.read(str(path))
-
-    def validate_structure(self, df: FrameLike, name: str = "structural") -> tuple[bool, list[str]]:
-        """Run pointblank structural validation checks."""
-        df_polars = ensure_polars(df)
-        if df_polars.is_empty():
-            return True, []
-
-        validation = pb.Validate(data=df_polars, label=name).col_exists(columns=df_polars.columns[:5]).rows_complete().interrogate()
-
-        errors: list[str] = []
-        for step in validation.validation_info:
-            if not step.all_passed:
-                errors.append(f"{step.autobrief} ({step.n_failed} failed)")
-        return len(errors) == 0, errors
 
     def _build_profile(self, df: pl.DataFrame) -> ProfileView:
         summaries: dict[str, dict[str, Any]] = {}

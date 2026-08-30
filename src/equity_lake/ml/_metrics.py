@@ -8,11 +8,18 @@ via the leading-underscore module name.
 
 from __future__ import annotations
 
+import contextlib
+import importlib
+from typing import TYPE_CHECKING
+
 import numpy as np
 import polars as pl
 from sklearn.metrics import accuracy_score, precision_score
 
 from equity_lake.ml.forecasting import NON_FEATURE_COLUMNS
+
+if TYPE_CHECKING:
+    from equity_lake.findings.models import FindingCard
 
 #: Columns that must never be fed to a model as features. Extends
 #: ``NON_FEATURE_COLUMNS`` with the v1 target (``target``) and the triple-barrier
@@ -73,10 +80,37 @@ def aggregate_oos(labels: np.ndarray, probs: np.ndarray, folds: int) -> dict[str
     }
 
 
+def resolve_ticker(frame: pl.DataFrame, override: str | None) -> str:
+    """Pick the per-ticker card scope value.
+
+    An explicit *override* (the CLI's ``--ticker``) wins; otherwise read the
+    frame's ``ticker`` column so the pure-harness call path (unit tests, library
+    use) still records honest reproducibility metadata.
+    """
+    if override:
+        return override
+    if "ticker" in frame.columns and frame.height > 0:
+        value = frame["ticker"][0]
+        return "" if value is None else str(value)
+    return ""
+
+
+def log_to_wandb(cards: list[FindingCard]) -> None:
+    """Fire-and-forget W&B logging (Step 3 registry adapter; never required)."""
+    try:
+        reg = importlib.import_module("equity_lake.ml.registry")
+    except ImportError:
+        return
+    with contextlib.suppress(Exception):
+        reg.log_comparison(cards)
+
+
 __all__ = [
     "DEFAULT_FIT_PARAMS",
     "EXCLUDE_COLUMNS",
     "aggregate_oos",
     "feature_columns",
+    "log_to_wandb",
+    "resolve_ticker",
     "scale_pos_weight",
 ]

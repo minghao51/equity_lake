@@ -15,6 +15,7 @@ import httpx
 import polars as pl
 import structlog
 
+from equity_lake.core.polars_utils import ensure_columns
 from equity_lake.core.schemas import ANALYST_RATING_COLUMNS
 from equity_lake.sources.base import MarketDataFetcher, _empty_frame
 
@@ -70,11 +71,7 @@ class AnalystRatingFetcher(MarketDataFetcher):
             return _empty_frame()
 
         df = pl.DataFrame(all_rows)
-        for col in ANALYST_RATING_COLUMNS:
-            if col not in df.columns:
-                df = df.with_columns(pl.lit(None).alias(col))
-
-        df = df.select(ANALYST_RATING_COLUMNS)
+        df = ensure_columns(df, ANALYST_RATING_COLUMNS)
         logger.info("Fetched analyst ratings", rows=df.height)
         return df
 

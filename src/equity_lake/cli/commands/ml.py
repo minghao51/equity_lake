@@ -36,9 +36,9 @@ _DEFAULT_LOOKBACK_DAYS = 730
 
 def _resolve_ticker(universe: str, ticker_override: str | None) -> tuple[str, list[str]]:
     """Return ``(selected_ticker, all_universe_tickers)`` for a config group."""
-    from equity_lake.core.config import get_default_config
+    from equity_lake.core.config import TickerConfig
 
-    tickers = get_default_config().get_tickers_by_group(universe)
+    tickers = TickerConfig().get_tickers_by_group(universe)
     if not tickers:
         typer.secho(f"No tickers found in universe '{universe}'.", fg=typer.colors.RED)
         raise typer.Exit(1)

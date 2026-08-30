@@ -30,8 +30,8 @@ from equity_lake.ml.validation import PurgedEmbargoedWalkForwardSplitter, run_pu
 
 logger = structlog.get_logger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DATA_DIR = PROJECT_ROOT / "data"
+from equity_lake.core.paths import DATA_DIR  # noqa: E402
+
 DEFAULT_MODEL_DIR = DATA_DIR / "models"
 MODEL_MODES = {"v1_direction", "v2_meta_label"}
 NON_FEATURE_COLUMNS = {

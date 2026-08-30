@@ -56,7 +56,7 @@ Query the lake with DuckDB:
 dotenvx run -- uv run equity query
 dotenvx run -- uv run equity query --query latest_summary
 dotenvx run -- uv run equity query --query top_volume
-dotenvx run -- uv run equity query --date 2026-06-06
+dotenvx run -- uv run equity query --db equity_data.duckdb --verbose
 ```
 
 ## Supported Pipeline Flags
@@ -100,19 +100,21 @@ Configuration precedence is:
 3. `.env`
 4. `config/settings.yaml`
 
-Common settings overrides include:
+Settings are grouped (`project`, `ingestion`, `schedule`, `dashboard`, `monitoring`) and
+environment overrides use the `EQUITY_` prefix with `__` as the nested delimiter, so a
+setting like `dashboard.output_dir` maps to `EQUITY_DASHBOARD__OUTPUT_DIR`. Because
+`Settings` loads with `extra="forbid"`, a misspelled or flat unknown `EQUITY_*` variable
+fails loudly at load time instead of being ignored. Common overrides include:
 
-- `EQUITY_CONFIG_PATH`
-- `EQUITY_ENVIRONMENT`
-- `EQUITY_DATA_DIR`
-- `EQUITY_LAKE_DIR`
-- `EQUITY_LOGS_DIR`
-- `EQUITY_MODELS_DIR`
-- `EQUITY_DB_PATH`
-- `EQUITY_DASHBOARD_OUTPUT_DIR`
-- `EQUITY_DASHBOARD_TITLE`
-- `EQUITY_SCHEDULE_CRON`
-- `EQUITY_SCHEDULE_TIMEZONE`
+- `EQUITY_PROJECT__ENVIRONMENT` (development | production | testing)
+- `EQUITY_INGESTION__DEFAULT_MARKETS`
+- `EQUITY_INGESTION__RETRY_ATTEMPTS`
+- `EQUITY_SCHEDULE__CRON`
+- `EQUITY_SCHEDULE__TIMEZONE`
+- `EQUITY_DASHBOARD__OUTPUT_DIR`
+- `EQUITY_DASHBOARD__TITLE`
+- `EQUITY_MONITORING__MAX_AGE_DAYS`
+- `EQUITY_MONITORING__NULL_THRESHOLD_PCT`
 
 ## Data Layout
 
@@ -139,10 +141,14 @@ data/lake/<layer>/<dataset>/date=YYYY-MM-DD/*.parquet
 Bootstrap and first run:
 
 ```bash
-dotenvx run -- uv run equity sync --bucket s3://your-bucket/us_equity
+dotenvx run -- uv run equity sync --bucket s3://your-bucket
 dotenvx run -- uv run equity pipeline --dry-run --verbose
 dotenvx run -- uv run equity pipeline
 ```
+
+The bucket is a root URL whose remote tree mirrors the local numbered medallion layout
+without a `data/lake/` prefix — each market is pulled from
+`<bucket>/01_bronze/market_data/<market_dir>`.
 
 Daily local run:
 

@@ -158,15 +158,6 @@ class FeaturePipeline:
         )
         return result if isinstance(result, pl.DataFrame) else pl.DataFrame(result)
 
-    def compute(
-        self,
-        price_data: FrameLike,
-        features: list[str] | None = None,
-        inputs: dict[str, Any] | None = None,
-    ) -> pl.DataFrame:
-        """Backward-compatible alias for :meth:`compute_technical`."""
-        return self.compute_technical(price_data=price_data, features=features)
-
     def export_lineage(self, output_path: str | Path | None = None) -> str | None:
         """Export the DAG lineage as a PNG image.
 
@@ -187,12 +178,4 @@ class FeaturePipeline:
             return None
 
 
-def compute_features(
-    price_data: FrameLike,
-    features: list[str] | None = None,
-) -> pl.DataFrame:
-    """Compute features from price data using the default pipeline."""
-    return FeaturePipeline().compute_technical(price_data=price_data, features=features)
-
-
-__all__ = ["FeaturePipeline", "compute_features"]
+__all__ = ["FeaturePipeline"]

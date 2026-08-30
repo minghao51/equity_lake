@@ -3,6 +3,59 @@
 This guide shows how to use the equity_lake backtesting framework for testing trading strategies.
 `VectorBacktestEngine` is the supported engine surface.
 
+## CLI Usage
+
+The `equity` CLI exposes three backtesting commands. `--start-date` and `--end-date`
+are required on all three; run `equity <command> --help` for the full flag list.
+
+### `equity backtest`
+
+Flat top-level command sharing the strategy registry with `equity report backtest`:
+
+```bash
+dotenvx run -- uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
+  --start-date 2024-01-01 --end-date 2024-12-31 --output data/backtest.json
+```
+
+Key flags: `--strategy/-s` (default `momentum`), `--tickers/-t`, `--initial-cash`
+(default 100,000), `--output/-o` for a JSON result.
+
+### `equity report backtest`
+
+Runs a single backtest under one cost regime and writes its report artifacts
+(equity curve, drawdown, metrics, trades) under
+`data/findings/<strategy>__<regime>/`:
+
+```bash
+dotenvx run -- uv run equity report backtest --strategy trend_following \
+  --start-date 2024-01-01 --end-date 2024-12-31 --cost-regime high
+```
+
+`--cost-regime` selects `zero | realistic | high` (default `realistic`).
+
+### `equity arena run`
+
+Runs the full strategy arena — strategies `momentum | mean_reversion | trend_following`
+× cost regimes `zero | realistic | high` — and emits FindingCards plus per-run
+artifacts under `data/findings/`:
+
+```bash
+dotenvx run -- uv run equity arena run --start-date 2024-01-01 --end-date 2024-12-31
+```
+
+`--strategies` and `--cost-regimes` accept comma-separated subsets (default: all).
+
+### Cost regimes
+
+Costs are modeled as per-trade fee and tax ratios (`COST_REGIMES` in
+`src/equity_lake/backtesting/arena.py`; defaults in `engine.py`): the realistic
+regime uses
+`DEFAULT_FEE_RATIO = 0.001425` (0.1425%) and `DEFAULT_TAX_RATIO = 0.003` (0.3%).
+
+- `zero` — no costs
+- `realistic` — default fee + default tax (the values above)
+- `high` — 0.5% fee + default tax
+
 ## Quick Start
 
 ### 1. Basic Backtest Example
@@ -119,23 +172,17 @@ result = engine.run()
 
 ## Available Strategies
 
-### Trend Following Strategies
+### Trend Following
 
-1. **SMACrossoverStrategy** - Moving average crossover
-2. **DonchianBreakoutStrategy** - Donchian channel breakout
-3. **MACDStrategy** - MACD line crossover
-4. **AdaptiveTrendStrategy** - SMA + ADX filter + ATR stops
+1. **SMACrossoverStrategy** - Moving-average crossover (`fast_period` 50, `slow_period` 200, `use_ema`)
 
-### Momentum Strategies
+### Momentum
 
-1. **CrossSectionalMomentumStrategy** - Rank stocks by past returns
-2. **TimeSeriesMomentumStrategy** - Long/short based on individual asset momentum
+2. **CrossSectionalMomentumStrategy** - Rank stocks by past returns (`lookback_days` 252, `skip_days` 21, `top_pct`/`bottom_pct` 0.3, `rebalance_days` 21, `long_only`, `volatility_target` 0.15, `min_stocks` 10)
 
-### Mean Reversion Strategies
+### Mean Reversion
 
-1. **BBMeanReversionStrategy** - Bollinger Bands mean reversion
-2. **RSIMeanReversionStrategy** - RSI oversold/overbought
-3. **CombinedMeanReversionStrategy** - BB + RSI combined
+3. **BBMeanReversionStrategy** - Bollinger Bands mean reversion (`period` 20, `num_std` 2.0, `position_size` 0.95, `use_trend_filter`, `stop_loss_pct` 0.05)
 
 ## Data Loading
 
@@ -147,58 +194,28 @@ from datetime import date
 
 loader = BacktestDataLoader()
 
-# Load wide-format data (for backtesting)
+# load() always returns long-format polars (the format the engine consumes)
 data = loader.load(
     tickers=["AAPL", "MSFT", "GOOGL"],
     start_date=date(2020, 1, 1),
     end_date=date(2024, 12, 31),
-    markets=["us"],
-    wide_format=True
+    markets=["us"],          # default: all markets
+    columns=None,            # default: ticker/date/open/high/low/close/volume
+    fill_method="ffill",     # forward-fill missing trading days
 )
 
-# Data structure: MultiIndex columns (ticker, field)
-#   Index: date
-#   Columns: (AAPL, close), (AAPL, volume), (MSFT, close), ...
-
-# Extract close prices
-close_prices = data.xs('close', level='field', axis=1)
-
-# Load long-format data (for analysis)
-data_long = loader.load(
-    tickers=["AAPL", "MSFT"],
-    start_date=date(2020, 1, 1),
-    end_date=date(2024, 12, 31),
-    wide_format=False
-)
-
-# Data structure:
+# Data structure (one row per ticker/date):
 #   ticker | date       | open  | close | volume
 #   AAPL   | 2020-01-01 | 75.0  | 76.0  | 1000000
 #   MSFT   | 2020-01-01 | 150.0 | 151.0 | 900000
 
-loader.close()
+loader.close()  # or use `with BacktestDataLoader() as loader:` (context manager)
 ```
 
-### Check Available Data
+Pivot to wide format for custom analysis with polars:
 
 ```python
-from equity_lake.backtesting import BacktestDataLoader
-
-loader = BacktestDataLoader()
-
-# Get available tickers in US market
-us_tickers = loader.get_available_tickers("us")
-print(f"US tickers: {len(us_tickers)}")
-
-# Get date range for a specific ticker
-min_date, max_date = loader.get_date_range("us", "AAPL")
-print(f"AAPL data: {min_date} to {max_date}")
-
-# Get overall market date range
-min_date, max_date = loader.get_date_range("us")
-print(f"US market data: {min_date} to {max_date}")
-
-loader.close()
+close_wide = data.pivot("ticker", index="date", values="close")
 ```
 
 ## Creating Custom Strategies
@@ -206,59 +223,52 @@ loader.close()
 ### Strategy Template
 
 ```python
+import polars as pl
+
 from equity_lake.backtesting.strategy.base import BaseStrategy
-import pandas as pd
+
 
 class MyCustomStrategy(BaseStrategy):
     """My custom trading strategy."""
 
-    def __init__(self, params=None):
+    def __init__(self, params: dict | None = None):
         # Set default parameters
         default_params = {
-            "param1": 10,
-            "param2": 0.5,
+            "window": 10,
         }
         merged_params = {**default_params, **(params or {})}
         super().__init__(merged_params)
 
-    def initialize(self, data: pd.DataFrame) -> None:
+    def initialize(self, data: pl.DataFrame) -> None:
         """
-        Initialize strategy with historical data.
+        Pre-compute indicators from long-format data.
 
-        Use this to pre-compute indicators.
+        data columns: date, ticker, open, high, low, close, volume
         """
-        # Extract close prices
-        if isinstance(data.columns, pd.MultiIndex):
-            close_df = data.xs('close', level='field', axis=1)
-        else:
-            close_df = data
+        window = self.get_param("window")
+        self.indicators["sma"] = data.with_columns(
+            pl.col("close").rolling_mean(window_size=window).over("ticker").alias("sma")
+        ).select("date", "ticker", "sma")
 
-        # Compute your indicators
-        self.indicators['close'] = close_df
-        self.indicators['my_indicator'] = close_df.rolling(
-            window=self.get_param('param1')
-        ).mean()
-
-    def generate_signals(self, data: pd.DataFrame) -> pd.DataFrame:
+    def generate_weights(self, data: pl.DataFrame) -> pl.DataFrame:
         """
-        Generate entry and exit signals.
+        Return target portfolio weights.
 
         Returns:
-            DataFrame with 'entry' and 'exit' columns (boolean)
+            DataFrame with columns [date, ticker, weight] where weight
+            is 0.0 (no position) to 1.0 (full allocation)
         """
-        close_df = self.indicators['close']
-        indicator = self.indicators['my_indicator']
-
-        # Generate entry signals
-        entry_signals = (close_df > indicator).any(axis=1)
-
-        # Generate exit signals
-        exit_signals = (close_df < indicator).any(axis=1)
-
-        return pd.DataFrame({
-            'entry': entry_signals,
-            'exit': exit_signals,
-        })
+        sma = self.indicators["sma"]
+        return (
+            data.join(sma, on=["date", "ticker"], how="left")
+            .with_columns(
+                pl.when(pl.col("close") > pl.col("sma"))
+                .then(1.0)
+                .otherwise(0.0)
+                .alias("weight")
+            )
+            .select("date", "ticker", "weight")
+        )
 ```
 
 ### Using Custom Strategy
@@ -302,28 +312,24 @@ print(f"Number of Trades: {metrics['num_trades']}")
 ### Access Equity Curve
 
 ```python
-# Equity curve is a pandas Series
+# Equity curve is a polars Series (pl.Series)
 equity_curve = result.equity_curve
 
 # Plot equity curve (requires matplotlib)
 import matplotlib.pyplot as plt
 
-equity_curve.plot(figsize=(12, 6), title="Portfolio Value Over Time")
-plt.xlabel("Date")
+values = equity_curve.to_list()
+plt.figure(figsize=(12, 6))
+plt.plot(values)
+plt.title("Portfolio Value Over Time")
+plt.xlabel("Trading days")
 plt.ylabel("Portfolio Value ($)")
 plt.grid(True)
 plt.show()
 
-# Calculate drawdowns
-cummax = equity_curve.cummax()
+# Calculate drawdowns (polars Series)
+cummax = equity_curve.cum_max()
 drawdown = (equity_curve - cummax) / cummax
-
-# Plot drawdowns
-drawdown.plot(figsize=(12, 6), title="Drawdown Over Time")
-plt.xlabel("Date")
-plt.ylabel("Drawdown")
-plt.grid(True)
-plt.show()
 ```
 
 ### Analyze Trades
@@ -442,9 +448,16 @@ print(results_df.sort_values('sharpe_ratio', ascending=False))
 ```python
 loader = BacktestDataLoader()
 
-# Check before running
-tickers = loader.get_available_tickers("us")
-min_date, max_date = loader.get_date_range("us")
+# Check before running: probe coverage with a thin column slice
+probe = loader.load(
+    tickers=["AAPL", "MSFT"],
+    start_date=date(2019, 1, 1),
+    end_date=date(2024, 12, 31),
+    markets=["us"],
+    columns=["ticker", "date"],
+)
+min_date, max_date = probe["date"].min(), probe["date"].max()
+available_tickers = probe["ticker"].unique().to_list()
 
 start_date = max(min_date, date(2020, 1, 1))  # Ensure data exists
 end_date = min(max_date, date(2024, 12, 31))
@@ -479,28 +492,31 @@ loader.close()
 - **Overfitting**: Too complex for historical period
 - **Insufficient data**: Less than 3 years is risky
 
-## Running the Tests
+## Notebooks and Further Examples
 
-### Quick Validation
+The `notebooks/` directory contains runnable walkthroughs of this framework:
+
+- `notebooks/08-backtesting.ipynb` — guided tour of the engine, strategies, and results
+- `notebooks/11-strategy-lab.ipynb` — interactive strategy lab over the lake
+
+For a quick sanity check, re-run the [Quick Start](#1-basic-backtest-example) snippet
+above, or work through the Data Loading section earlier in this guide against a
+seeded lake (`make demo`).
+
+### Test Suite
+
+Backtesting regressions are covered by the unit suite:
 
 ```bash
-# Run quick validation check
-uv run python examples/quick_test.py
-```
-
-### Full Test Suite
-
-```bash
-# Run comprehensive backtesting tests
-uv run python examples/backtest_demo.py
+uv run pytest tests/unit -k backtest
 ```
 
 ## Getting Help
 
-1. **Check examples**: `examples/` directory
+1. **Check notebooks**: `notebooks/` directory (start with `08-backtesting.ipynb` and `11-strategy-lab.ipynb`)
 2. **Review source code**: `src/equity_lake/backtesting/`
-3. **Check logs**: `logs/backtest_cache/` for data loader issues
-4. **Open the archive**: `docs/developer/history/backtesting/` for historical design and test notes
+3. **Check the CLI surface**: `equity backtest --help`, `equity report backtest --help`, `equity arena run --help`
+4. **Open the archive**: `docs/archive/` for historical design and test notes
 
 ## Next Steps
 

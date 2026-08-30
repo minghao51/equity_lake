@@ -167,7 +167,14 @@ class PipelineMonitor:
                 age_days = (reference_date - latest_date).days
 
                 status = "\u2705" if age_days <= self.max_age_days else "\u26a0\ufe0f"
-                logger.info(f"{status} {market}: Latest data = {latest_date} ({age_days} days old, {date_count} dates total)")
+                logger.info(
+                    "data_freshness_check",
+                    market=market,
+                    latest_date=str(latest_date),
+                    age_days=age_days,
+                    date_count=date_count,
+                    status=status,
+                )
 
                 if age_days > self.max_age_days:
                     self.alerts.append(f"\u26a0\ufe0f  {market} data is stale: {age_days} days old (latest: {latest_date})")
@@ -184,7 +191,7 @@ class PipelineMonitor:
             return len(stale_markets) == 0
 
         except Exception as e:
-            logger.error(f"Data freshness check failed: {e}")
+            logger.error("data_freshness_check_failed", error=str(e))
             self.alerts.append(f"❌ Data freshness check failed: {e}")
             return False
 
@@ -233,7 +240,13 @@ class PipelineMonitor:
                 null_pct_volume = (row["null_volume"] / total_rows) * 100
 
                 if self.verbose:
-                    logger.info(f"  {market}: {null_pct_close:.2f}% null close, {null_pct_volume:.2f}% null volume ({total_rows:,} rows)")
+                    logger.info(
+                        "quality_detail",
+                        market=market,
+                        null_pct_close=round(null_pct_close, 2),
+                        null_pct_volume=round(null_pct_volume, 2),
+                        total_rows=total_rows,
+                    )
 
                 if null_pct_close > self.null_threshold_pct:
                     self.alerts.append(f"⚠️  {market}: {null_pct_close:.1f}% null close prices (threshold: {self.null_threshold_pct}%)")
@@ -252,7 +265,7 @@ class PipelineMonitor:
             return len(quality_issues) == 0
 
         except Exception as e:
-            logger.error(f"Data quality check failed: {e}")
+            logger.error("data_quality_check_failed", error=str(e))
             self.alerts.append(f"❌ Data quality check failed: {e}")
             return False
 
@@ -276,7 +289,7 @@ class PipelineMonitor:
 
         for log_file in log_files:
             if not log_file.exists():
-                logger.debug(f"No log file found: {log_file.name}")
+                logger.debug("log_file_not_found", file_name=log_file.name)
                 continue
 
             try:
@@ -291,10 +304,10 @@ class PipelineMonitor:
                 total_warnings += warning_count
 
                 if self.verbose and (error_count > 0 or warning_count > 0):
-                    logger.info(f"  {log_file.name}: {error_count} errors, {warning_count} warnings")
+                    logger.info("log_file_summary", file_name=log_file.name, error_count=error_count, warning_count=warning_count)
 
             except Exception as e:
-                logger.debug(f"Could not read {log_file.name}: {e}")
+                logger.debug("log_file_read_failed", file_name=log_file.name, error=str(e))
 
         if total_errors > 0:
             self.alerts.append(f"❌ Found {total_errors} errors in recent logs")
@@ -356,7 +369,7 @@ class PipelineMonitor:
                 self.alerts.append(f"⚠️  Features are stale: {age_days} days old (latest: {latest_date})")
                 return False
 
-            logger.info(f"✅ Features: {total_rows:,} rows, {unique_tickers} tickers, latest: {latest_date}")
+            logger.info("feature_store_status", total_rows=total_rows, unique_tickers=unique_tickers, latest_date=str(latest_date))
 
             self.metrics["feature_store"] = {
                 "total_rows": int(total_rows),
@@ -368,7 +381,7 @@ class PipelineMonitor:
             return True
 
         except Exception as e:
-            logger.debug(f"Feature store check failed: {e}")
+            logger.debug("feature_store_check_failed", error=str(e))
             # Feature store might not exist yet, which is ok
             return True
 
@@ -392,7 +405,7 @@ class PipelineMonitor:
 
         for table_name, table_path in tables:
             if not table_path.exists():
-                logger.debug(f"{table_name}: directory not found")
+                logger.debug("table_directory_not_found", table_name=table_name)
                 unstructured_metrics[table_name] = {"status": "missing"}
                 continue
 
@@ -420,7 +433,7 @@ class PipelineMonitor:
                     self.alerts.append(f"⚠️  {table_name}: data is stale ({age_days} days old, latest: {latest_date})")
                     all_fresh = False
                 else:
-                    logger.info(f"✅ {table_name}: {total_rows:,} rows, latest: {latest_date}")
+                    logger.info("unstructured_fresh", table_name=table_name, total_rows=total_rows, latest_date=str(latest_date))
 
                 unstructured_metrics[table_name] = {
                     "total_rows": total_rows,
@@ -429,7 +442,7 @@ class PipelineMonitor:
                 }
 
             except Exception as e:
-                logger.debug(f"{table_name} check failed: {e}")
+                logger.debug("table_check_failed", table_name=table_name, error=str(e))
                 unstructured_metrics[table_name] = {"status": "error", "error": str(e)}
 
         self.metrics["unstructured_freshness"] = {
@@ -499,4 +512,4 @@ class PipelineMonitor:
         with open(output_file, "w") as f:
             json.dump(report, f, indent=2, default=str)
 
-        logger.info(f"Health report saved to {output_file}")
+        logger.info("health_report_saved", output_file=str(output_file))

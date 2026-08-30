@@ -1,3 +1,5 @@
+"""Pipeline orchestration commands."""
+
 from __future__ import annotations
 
 from typing import Annotated
@@ -8,11 +10,13 @@ from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date
 
 
 def _pipeline_succeeded(results: dict[str, object]) -> bool:
-    """Return False only for required stage failures."""
+    """Return False only for required stage failures.
+
+    Optional enrichment sub-stages (``bronze_to_silver``/``sec_to_silver``) are
+    nested inside ``results["ingestion"]`` and never surface as top-level keys.
+    """
     for stage_name, stage_result in results.items():
         if not isinstance(stage_result, dict) or stage_result.get("success") is not False:
-            continue
-        if stage_name in {"bronze_to_silver", "sec_to_silver"}:
             continue
         if stage_name == "ml" and stage_result.get("reason") == "feature stage failed":
             continue

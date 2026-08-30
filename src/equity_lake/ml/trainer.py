@@ -43,7 +43,6 @@ def compute_shap_importance(model: ModelBackend, X: pl.DataFrame, feature_cols: 
             shap_values = shap_values[:, :, 1]
         if not hasattr(shap_values, "ndim") or shap_values.ndim != 2:
             return None
-        import numpy as np
 
         mean_abs = np.abs(shap_values).mean(axis=0)
         available_cols = [col for col in feature_cols if col in X.columns]
@@ -56,7 +55,6 @@ def compute_shap_importance(model: ModelBackend, X: pl.DataFrame, feature_cols: 
 
 def optimize_threshold(y_true: np.ndarray | pl.Series, y_proba: np.ndarray | pl.Series, metric: str = "f1") -> float:
     try:
-        import numpy as np
         from sklearn.metrics import f1_score, precision_score
     except ImportError:
         return 0.5

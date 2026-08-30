@@ -59,7 +59,7 @@ class MacroIndicatorFetcher:
         try:
             return _wrapped()
         except Exception:
-            logger.error(f"All {self.retry_attempts} attempts failed for {self.indicator_name}")
+            logger.error("macro_fetch_all_attempts_failed", indicator=self.indicator_name, retry_attempts=self.retry_attempts)
             return None
 
 
@@ -81,7 +81,7 @@ class YFinanceFetcher(MacroIndicatorFetcher):
             )
 
             if data is None or data.empty:
-                logger.warning(f"No data for {self.indicator_name} on {trading_date}")
+                logger.warning("yfinance_no_data", indicator=self.indicator_name, trading_date=str(trading_date))
                 return None
 
             if "Close" in data.columns:
@@ -89,7 +89,7 @@ class YFinanceFetcher(MacroIndicatorFetcher):
             elif "Adj Close" in data.columns:
                 value = float(data["Adj Close"].iloc[0])
             else:
-                logger.warning(f"No close price found for {self.indicator_name}")
+                logger.warning("yfinance_no_close_price", indicator=self.indicator_name)
                 return None
 
             df = pl.DataFrame(
@@ -102,7 +102,7 @@ class YFinanceFetcher(MacroIndicatorFetcher):
                 }
             )
 
-            logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
+            logger.info("macro_indicator_fetched", indicator=self.indicator_name, value=round(value, 4), trading_date=str(trading_date))
             return df
 
         return self._retry_on_failure(_fetch)
@@ -130,7 +130,7 @@ class FredFetcher(MacroIndicatorFetcher):
             )
 
             if data.empty:
-                logger.warning(f"No data for {self.indicator_name} ({self.series_id}) on {trading_date}")
+                logger.warning("fred_no_data", indicator=self.indicator_name, series_id=self.series_id, trading_date=str(trading_date))
                 return None
 
             value = float(data.iloc[0])
@@ -145,7 +145,7 @@ class FredFetcher(MacroIndicatorFetcher):
                 }
             )
 
-            logger.info(f"Fetched {self.indicator_name}: {value:.4f} on {trading_date}")
+            logger.info("macro_indicator_fetched", indicator=self.indicator_name, value=round(value, 4), trading_date=str(trading_date))
             return df
 
         return self._retry_on_failure(_fetch)
@@ -194,7 +194,7 @@ class MacroDataPipeline:
 
                 elif source == "fred":
                     if not self.fred_api_key:
-                        logger.warning(f"Skipping {indicator_name} - no FRED API key")
+                        logger.warning("fred_skip_no_key", indicator=indicator_name)
                         continue
 
                     series_id = indicator_config["series"]
@@ -207,16 +207,16 @@ class MacroDataPipeline:
                     fetchers.append(fred_fetcher)
 
                 else:
-                    logger.warning(f"Unknown source '{source}' for {indicator_name}")
+                    logger.warning("unknown_macro_source", source=source, indicator=indicator_name)
 
             except Exception as e:
-                logger.error(f"Failed to initialize fetcher for {indicator_name}: {e}")
+                logger.error("fetcher_init_failed", indicator=indicator_name, error=str(e))
 
-        logger.info(f"Initialized {len(fetchers)} macro indicator fetchers")
+        logger.info("macro_fetchers_initialized", count=len(fetchers))
         return fetchers
 
     def fetch_all(self, trading_date: date) -> pl.DataFrame:
-        logger.info(f"Fetching macro indicators for {trading_date}")
+        logger.info("macro_fetch_start", trading_date=str(trading_date))
 
         all_data: list[pl.DataFrame] = []
 
@@ -226,22 +226,22 @@ class MacroDataPipeline:
                 if result is not None and not result.is_empty():
                     all_data.append(result)
             except Exception as e:
-                logger.error(f"Failed to fetch {fetcher.indicator_name}: {e}")
+                logger.error("macro_fetch_indicator_failed", indicator=fetcher.indicator_name, error=str(e))
 
         if not all_data:
-            logger.warning(f"No macro data fetched for {trading_date}")
+            logger.warning("macro_fetch_empty", trading_date=str(trading_date))
             return _empty_macro_frame()
 
         df = pl.concat(all_data).select(MACRO_COLUMNS)
 
-        logger.info(f"Fetched {len(df)} macro indicators for {trading_date}")
+        logger.info("macro_fetch_complete", count=len(df), trading_date=str(trading_date))
         return df
 
     def fetch_with_fallback(self, trading_date: date, fallback_date: date | None = None) -> pl.DataFrame:
         df = self.fetch_all(trading_date)
 
         if df.is_empty() and fallback_date:
-            logger.info(f"Falling back to previous trading day: {fallback_date}")
+            logger.info("macro_fallback_date", fallback_date=str(fallback_date))
             df = self.fetch_all(fallback_date)
 
         return df

@@ -66,7 +66,7 @@ def test_feature_pipeline_accepts_mixed_date_formats() -> None:
         }
     )
 
-    result = FeaturePipeline().compute(frame)
+    result = FeaturePipeline().compute_technical(frame)
 
     assert result.schema["date"] == pl.Datetime
 
@@ -85,7 +85,7 @@ def test_feature_pipeline_accepts_polars_input() -> None:
         }
     )
 
-    result = FeaturePipeline().compute(frame)
+    result = FeaturePipeline().compute_technical(frame)
 
     assert isinstance(result, pl.DataFrame)
     assert result.schema["date"] == pl.Datetime

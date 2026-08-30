@@ -1,11 +1,73 @@
+"""Finnhub-backed ingestion commands (news, sentiment, transcripts, ratings)."""
+
 from __future__ import annotations
 
 import os
-from typing import Annotated, Literal
+from collections.abc import Callable
+from pathlib import Path
+from typing import Annotated, Any
 
 import typer
 
 from equity_lake.cli._app import _init_logging, _parse_comma_list, app
+
+
+def _require_finnhub_api_key(api_key: str | None) -> str:
+    """Return the Finnhub API key or abort with an error message."""
+    key = api_key or os.getenv("FINNHUB_API_KEY")
+    if not key:
+        typer.secho("FINNHUB_API_KEY not set. Get one at https://finnhub.io/", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    return key
+
+
+def _run_finnhub_command(
+    *,
+    name: str,
+    date_str: str | None,
+    tickers: str | None,
+    api_key: str | None,
+    dry_run: bool,
+    verbose: bool,
+    fetcher_factory: Callable[..., Any],
+    dataset_path: Path,
+    schema_market: str,
+    fetch_kwargs: dict[str, Any] | None = None,
+    empty_msg: str | None = None,
+) -> None:
+    """Shared ingestion command body for all Finnhub-backed sources."""
+    from equity_lake.core.dates import resolve_trading_date
+    from equity_lake.core.logging import timer
+    from equity_lake.ingestion.writers import upsert_dataset, validate_schema
+
+    _init_logging(verbose)
+    key = _require_finnhub_api_key(api_key)
+    trading_date = resolve_trading_date(date_str)
+    ticker_list = _parse_comma_list(tickers)
+    dataset_path.mkdir(parents=True, exist_ok=True)
+
+    with timer(f"init_{name}"):
+        fetcher = fetcher_factory(api_key=key, tickers=ticker_list, **(fetch_kwargs or {}))
+
+    with timer(f"fetch_{name}"):
+        df = fetcher.fetch(trading_date)
+
+    if df.is_empty():
+        typer.echo(empty_msg or f"No {name} data for {trading_date}")
+        return
+
+    if not validate_schema(df, schema_market):
+        typer.secho("Schema validation failed", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    with timer(f"write_{name}"):
+        success = upsert_dataset(df, schema_market, trading_date, dry_run=dry_run)
+
+    if success:
+        typer.secho(f"{name.replace('_', ' ').title()} ingestion complete", fg=typer.colors.GREEN)
+    else:
+        typer.secho("Failed to write data", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
 
 @app.command("news")
@@ -13,7 +75,7 @@ def news(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     max_articles: Annotated[int, typer.Option("--max-articles", help="Max articles per ticker")] = 50,
-    sentiment_method: Annotated[Literal["vader", "finbert"], typer.Option("--sentiment-method", help="vader or finbert")] = "vader",
+    sentiment_method: Annotated[str, typer.Option("--sentiment-method", help="vader or finbert")] = "vader",
     min_relevance: Annotated[float, typer.Option("--min-relevance", help="Min relevance 0.0-1.0")] = 0.0,
     max_workers: Annotated[int, typer.Option("--max-workers", help="Parallel workers")] = 1,
     api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
@@ -21,51 +83,26 @@ def news(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Fetch market news with sentiment analysis."""
-    from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.core.logging import timer
     from equity_lake.core.paths import US_NEWS_DIR
-    from equity_lake.ingestion.writers import upsert_dataset, validate_schema
     from equity_lake.sources.news import FinnhubNewsFetcher
 
-    _init_logging(verbose)
-
-    if not api_key and not os.getenv("FINNHUB_API_KEY"):
-        typer.secho("FINNHUB_API_KEY not set. Get one at https://finnhub.io/", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    trading_date = resolve_trading_date(date_str)
-    ticker_list = _parse_comma_list(tickers)
-    US_NEWS_DIR.mkdir(parents=True, exist_ok=True)
-
-    with timer("init_fetcher"):
-        fetcher = FinnhubNewsFetcher(
-            api_key=api_key,
-            tickers=ticker_list,
-            max_articles_per_ticker=max_articles,
-            sentiment_method=sentiment_method,
-            min_relevance=min_relevance,
-            max_workers=max_workers,
-        )
-
-    with timer("fetch_news"):
-        df = fetcher.fetch(trading_date)
-
-    if df.is_empty():
-        typer.echo("No news articles fetched")
-        return
-
-    if not validate_schema(df, "us_news"):
-        typer.secho("Schema validation failed", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    with timer("write_parquet"):
-        success = upsert_dataset(df, "us_news", trading_date, dry_run=dry_run)
-
-    if success:
-        typer.secho("News ingestion complete", fg=typer.colors.GREEN)
-    else:
-        typer.secho("Failed to write Parquet", fg=typer.colors.RED)
-        raise typer.Exit(1)
+    _run_finnhub_command(
+        name="news",
+        date_str=date_str,
+        tickers=tickers,
+        api_key=api_key,
+        dry_run=dry_run,
+        verbose=verbose,
+        fetcher_factory=FinnhubNewsFetcher,
+        dataset_path=US_NEWS_DIR,
+        schema_market="us_news",
+        fetch_kwargs={
+            "max_articles_per_ticker": max_articles,
+            "sentiment_method": sentiment_method,
+            "min_relevance": min_relevance,
+            "max_workers": max_workers,
+        },
+    )
 
 
 @app.command("sentiment")
@@ -78,48 +115,71 @@ def sentiment(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Analyze market sentiment."""
-    from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.core.logging import timer
     from equity_lake.core.paths import US_SOCIAL_SENTIMENT_DIR
-    from equity_lake.ingestion.writers import upsert_dataset, validate_schema
     from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
-    _init_logging(verbose)
+    _run_finnhub_command(
+        name="sentiment",
+        date_str=date_str,
+        tickers=tickers,
+        api_key=api_key,
+        dry_run=dry_run,
+        verbose=verbose,
+        fetcher_factory=FinnhubSocialSentimentFetcher,
+        dataset_path=US_SOCIAL_SENTIMENT_DIR,
+        schema_market="us_social_sentiment",
+        fetch_kwargs={"max_workers": max_workers},
+    )
 
-    if not api_key and not os.getenv("FINNHUB_API_KEY"):
-        typer.secho("FINNHUB_API_KEY not set. Get one at https://finnhub.io/", fg=typer.colors.RED)
-        raise typer.Exit(1)
 
-    trading_date = resolve_trading_date(date_str)
-    ticker_list = _parse_comma_list(tickers)
-    US_SOCIAL_SENTIMENT_DIR.mkdir(parents=True, exist_ok=True)
+@app.command("transcripts")
+def transcripts(
+    date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
+    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
+    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+) -> None:
+    """Fetch earnings call transcripts from Finnhub."""
+    from equity_lake.core.paths import BRONZE_RAW_ARTICLES_DIR
+    from equity_lake.sources.transcripts import EarningsTranscriptFetcher
 
-    with timer("init_fetcher"):
-        fetcher = FinnhubSocialSentimentFetcher(
-            api_key=api_key,
-            tickers=ticker_list,
-            max_workers=max_workers,
-        )
+    _run_finnhub_command(
+        name="transcripts",
+        date_str=date_str,
+        tickers=tickers,
+        api_key=api_key,
+        dry_run=dry_run,
+        verbose=verbose,
+        fetcher_factory=EarningsTranscriptFetcher,
+        dataset_path=BRONZE_RAW_ARTICLES_DIR,
+        schema_market="us_earnings_transcripts",
+    )
 
-    with timer("fetch_sentiment"):
-        df = fetcher.fetch(trading_date)
 
-    if df.is_empty():
-        typer.echo("No sentiment data fetched")
-        return
+@app.command("ratings")
+def ratings(
+    date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
+    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
+    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+) -> None:
+    """Fetch analyst ratings from Finnhub (structured data, no LLM needed)."""
+    from equity_lake.core.paths import SILVER_ANALYST_RATINGS_DIR
+    from equity_lake.sources.analyst_ratings import AnalystRatingFetcher
 
-    if not validate_schema(df, "us_social_sentiment"):
-        typer.secho("Schema validation failed", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    with timer("write_parquet"):
-        success = upsert_dataset(df, "us_social_sentiment", trading_date, dry_run=dry_run)
-
-    if success:
-        typer.secho("Sentiment ingestion complete", fg=typer.colors.GREEN)
-    else:
-        typer.secho("Failed to write Parquet", fg=typer.colors.RED)
-        raise typer.Exit(1)
+    _run_finnhub_command(
+        name="ratings",
+        date_str=date_str,
+        tickers=tickers,
+        api_key=api_key,
+        dry_run=dry_run,
+        verbose=verbose,
+        fetcher_factory=AnalystRatingFetcher,
+        dataset_path=SILVER_ANALYST_RATINGS_DIR,
+        schema_market="us_analyst_ratings",
+    )
 
 
 @app.command("sec")
@@ -169,86 +229,6 @@ def sec_filings(
             typer.secho("SEC processing failed or no new sections", fg=typer.colors.YELLOW)
     else:
         typer.secho("SEC filing ingestion complete", fg=typer.colors.GREEN)
-
-
-@app.command("transcripts")
-def transcripts(
-    date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
-    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
-    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
-) -> None:
-    """Fetch earnings call transcripts from Finnhub."""
-    _init_logging(verbose)
-
-    if not api_key and not os.getenv("FINNHUB_API_KEY"):
-        typer.secho("FINNHUB_API_KEY not set. Get one at https://finnhub.io/", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.core.logging import timer
-    from equity_lake.ingestion.writers import upsert_dataset
-    from equity_lake.sources.transcripts import EarningsTranscriptFetcher
-
-    trading_date = resolve_trading_date(date_str)
-    ticker_list = _parse_comma_list(tickers)
-
-    with timer("fetch_transcripts"):
-        fetcher = EarningsTranscriptFetcher(api_key=api_key, tickers=ticker_list)
-        df = fetcher.fetch(trading_date)
-
-    if df.is_empty():
-        typer.echo("No transcripts fetched")
-        return
-
-    typer.echo(f"Fetched {df.height} transcript articles")
-
-    if not dry_run:
-        with timer("write_bronze"):
-            upsert_dataset(df, "01_bronze/raw_articles", trading_date)
-
-    typer.secho("Transcript ingestion complete", fg=typer.colors.GREEN)
-
-
-@app.command("ratings")
-def ratings(
-    date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
-    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
-    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
-) -> None:
-    """Fetch analyst ratings from Finnhub (structured data, no LLM needed)."""
-    _init_logging(verbose)
-
-    if not api_key and not os.getenv("FINNHUB_API_KEY"):
-        typer.secho("FINNHUB_API_KEY not set. Get one at https://finnhub.io/", fg=typer.colors.RED)
-        raise typer.Exit(1)
-
-    from equity_lake.core.dates import resolve_trading_date
-    from equity_lake.core.logging import timer
-    from equity_lake.ingestion.writers import upsert_dataset
-    from equity_lake.sources.analyst_ratings import AnalystRatingFetcher
-
-    trading_date = resolve_trading_date(date_str)
-    ticker_list = _parse_comma_list(tickers)
-
-    with timer("fetch_ratings"):
-        fetcher = AnalystRatingFetcher(api_key=api_key, tickers=ticker_list)
-        df = fetcher.fetch(trading_date)
-
-    if df.is_empty():
-        typer.echo("No analyst ratings fetched")
-        return
-
-    typer.echo(f"Fetched {df.height} rating rows")
-
-    if not dry_run:
-        with timer("write_ratings"):
-            upsert_dataset(df, "us_analyst_ratings", trading_date)
-
-    typer.secho("Analyst ratings ingestion complete", fg=typer.colors.GREEN)
 
 
 @app.command("financials")

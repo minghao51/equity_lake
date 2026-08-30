@@ -217,18 +217,16 @@ def run_daily_ingestion(
                 )
 
             for market, fetch_result in fetch_results.items():
-                logger.info(f"\n{'=' * 60}")
-                logger.info(f"Processing market: {market.upper()}")
-                logger.info(f"{'=' * 60}")
+                logger.info("market_processing_start", market=market.upper())
 
                 if not fetch_result.success:
-                    logger.error(f"{market} fetch failed: {fetch_result.error}", duration_seconds=fetch_result.duration_seconds)
+                    logger.error("market_fetch_failed", market=market, error=str(fetch_result.error), duration_seconds=fetch_result.duration_seconds)
                     results[market] = _optional_market_outcome(market, str(fetch_result.error))
                     continue
 
                 df = fetch_result.data
                 if frame_is_empty(df):
-                    logger.warning(f"No data fetched for {market}, skipping")
+                    logger.warning("no_data_fetched", market=market)
                     results[market] = _optional_market_outcome(market, "empty_frame")
                     continue
 
@@ -243,9 +241,7 @@ def run_daily_ingestion(
 
     else:
         for market in markets:
-            logger.info(f"\n{'=' * 60}")
-            logger.info(f"Processing market: {market.upper()}")
-            logger.info(f"{'=' * 60}")
+            logger.info("market_processing_start", market=market.upper())
 
             try:
                 with timer(f"fetch_{market}_data", market=market):
@@ -270,7 +266,7 @@ def run_daily_ingestion(
                     )
 
                 if frame_is_empty(df):
-                    logger.warning(f"No data fetched for {market}, skipping")
+                    logger.warning("no_data_fetched", market=market)
                     results[market] = _optional_market_outcome(market, "empty_frame")
                     continue
 
@@ -281,7 +277,7 @@ def run_daily_ingestion(
                 )
 
             except Exception as e:
-                logger.error(f"Error processing {market}: {e}")
+                logger.error("market_processing_error", market=market, error=str(e))
                 results[market] = _optional_market_outcome(market, str(e))
 
     return results

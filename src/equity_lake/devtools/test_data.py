@@ -13,9 +13,9 @@ Features:
 - Hive-partitioned Parquet output
 
 Usage:
-    uv run equity-generate-test-data
-    uv run equity-generate-test-data --start-date 2023-01-01 --days 365
-    uv run equity-generate-test-data --markets us --num-tickers 50
+    uv run python -m equity_lake.devtools.test_data
+    uv run python -m equity_lake.devtools.test_data --start-date 2023-01-01 --days 365
+    uv run python -m equity_lake.devtools.test_data --markets us --num-tickers 50
 """
 
 import argparse
@@ -380,7 +380,7 @@ class TestDataGenerator:
         if num_tickers and num_tickers < len(tickers):
             tickers = np.random.choice(tickers, num_tickers, replace=False).tolist()
 
-        logger.info(f"Generating data for {len(tickers)} tickers in {market}")
+        logger.info("generating_market_data", ticker_count=len(tickers), market=market)
 
         price_range = cast(tuple[float, float], config["price_range"])
         volume_range = cast(tuple[int, int], config["volume_range"])
@@ -389,23 +389,23 @@ class TestDataGenerator:
         df_list = []
         for i, ticker in enumerate(tickers):
             if (i + 1) % 10 == 0:
-                logger.info(f"  Generated {i + 1}/{len(tickers)} tickers...")
+                logger.info("ticker_progress", current=i + 1, total=len(tickers))
 
             try:
                 ticker_df = self.generate_ticker_data(ticker, dates, price_range, volume_range)
                 df_list.append(ticker_df)
             except Exception as e:
-                logger.warning(f"Failed to generate data for {ticker}: {e}")
+                logger.warning("ticker_data_generation_failed", ticker=ticker, error=str(e))
                 continue
 
         if not df_list:
-            logger.error(f"No data generated for {market}")
+            logger.error("no_data_generated", market=market)
             return pd.DataFrame()
 
         # Combine all tickers
         result = pd.concat(df_list, ignore_index=True)
 
-        logger.info(f"✅ Generated {len(result)} rows for {market}")
+        logger.info("market_data_generated", row_count=len(result), market=market)
         return result
 
 
@@ -430,7 +430,7 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
         logger.warning("Empty DataFrame, skipping write")
         return False
 
-    logger.info(f"Writing data to {output_dir}")
+    logger.info("writing_parquet", output_dir=str(output_dir))
 
     try:
         # Group by date and write each partition
@@ -438,7 +438,7 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
 
         for i, trading_date in enumerate(dates):
             if (i + 1) % 50 == 0:
-                logger.info(f"  Written {i + 1}/{len(dates)} partitions...")
+                logger.info("partition_progress", current=i + 1, total=len(dates))
 
             # Filter data for this date
             date_df = df[df[date_column] == trading_date]
@@ -452,7 +452,7 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
 
             # Skip if exists
             if output_file.exists():
-                logger.debug(f"Skipping existing file: {output_file}")
+                logger.debug("skipping_existing_file", file=str(output_file))
                 continue
 
             # Convert date to datetime for Parquet
@@ -461,11 +461,11 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
 
             date_df_write.to_parquet(output_file, index=False, compression="snappy")
 
-        logger.info(f"✅ Wrote {len(dates)} partitions to {output_dir}")
+        logger.info("parquet_write_complete", partition_count=len(dates), output_dir=str(output_dir))
         return True
 
     except Exception as e:
-        logger.error(f"Failed to write Parquet: {e}")
+        logger.error("parquet_write_failed", error=str(e))
         return False
 
 
@@ -604,14 +604,12 @@ def main() -> int:
     end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date else date.today()
     start_date = datetime.strptime(args.start_date, "%Y-%m-%d").date() if args.start_date else end_date - timedelta(days=args.days)
 
-    logger.info(f"{'=' * 60}")
-    logger.info("Test Data Generator for Equity EOD Pipeline")
-    logger.info(f"{'=' * 60}")
-    logger.info(f"Date range: {start_date} to {end_date}")
+    logger.info("test_data_generator_start")
+    logger.info("test_data_date_range", start_date=str(start_date), end_date=str(end_date))
 
     # Generate trading dates
     trading_dates = generate_trading_dates(start_date, end_date)
-    logger.info(f"Trading days: {len(trading_dates)}")
+    logger.info("trading_days_count", count=len(trading_dates))
 
     # Parse markets
     markets = [m.strip() for m in args.markets.split(",")]
@@ -619,14 +617,14 @@ def main() -> int:
     invalid = set(markets) - valid_markets
 
     if invalid:
-        logger.error(f"Invalid markets: {invalid}")
-        logger.error(f"Valid markets: {valid_markets}")
+        logger.error("invalid_markets", invalid=invalid)
+        logger.error("valid_markets", valid=valid_markets)
         sys.exit(1)
 
-    logger.info(f"Markets: {markets}")
-    logger.info(f"Max tickers per market: {args.num_tickers or 'all'}")
-    logger.info(f"Volatility: {args.volatility}")
-    logger.info(f"Trend: {args.trend}")
+    logger.info("markets", markets=markets)
+    logger.info("max_tickers_per_market", count=args.num_tickers or "all")
+    logger.info("volatility", value=args.volatility)
+    logger.info("trend", value=args.trend)
 
     # Initialize generator
     generator = TestDataGenerator(seed=args.seed, volatility=args.volatility, trend_strength=args.trend)
@@ -634,9 +632,7 @@ def main() -> int:
     # Generate data for each market
     success_count = 0
     for market in markets:
-        logger.info(f"\n{'=' * 60}")
-        logger.info(f"Processing market: {market}")
-        logger.info(f"{'=' * 60}")
+        logger.info("market_processing_start", market=market)
 
         try:
             config = MARKET_CONFIGS[market]
@@ -646,7 +642,7 @@ def main() -> int:
             df = generator.generate_market_data(market, tickers, trading_dates, num_tickers=args.num_tickers)
 
             if df.empty:
-                logger.warning(f"No data generated for {market}")
+                logger.warning("no_data_for_market", market=market)
                 continue
 
             # Write to Parquet
@@ -657,13 +653,11 @@ def main() -> int:
                 success_count += 1
 
         except Exception as e:
-            logger.error(f"Failed to generate {market} data: {e}", exc_info=True)
+            logger.error("market_generation_failed", market=market, error=str(e), exc_info=True)
 
     # Summary
-    logger.info(f"\n{'=' * 60}")
-    logger.info("Summary")
-    logger.info(f"{'=' * 60}")
-    logger.info(f"Markets processed: {success_count}/{len(markets)}")
+    logger.info("generation_summary")
+    logger.info("markets_processed", success=success_count, total=len(markets))
 
     if success_count == len(markets):
         logger.info("✅ All markets generated successfully")

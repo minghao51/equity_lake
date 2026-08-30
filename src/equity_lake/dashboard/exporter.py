@@ -6,23 +6,14 @@ import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import duckdb
 import polars as pl
 
 from equity_lake.core.config import get_settings
-from equity_lake.core.paths import (
-    CN_ASHARE_DIR,
-    DATA_DIR,
-    GOLD_FEATURES_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
-    LOGS_DIR,
-    US_EQUITY_DIR,
-)
-from equity_lake.storage.lake_reader import duckdb_scan_for
+from equity_lake.core.paths import DATA_DIR, LOGS_DIR
+from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, summarize_dataset
 
 _REDACTED = "***REDACTED***"
 _SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key)", re.IGNORECASE)
@@ -36,15 +27,6 @@ def _redact_secrets(obj: Any) -> Any:
         return [_redact_secrets(item) for item in obj]
     return obj
 
-
-MARKET_DATASETS = {
-    "us_equity": US_EQUITY_DIR,
-    "cn_ashare": CN_ASHARE_DIR,
-    "hk_sg_equity": HK_SG_EQUITY_DIR,
-    "jpx_equity": JPX_EQUITY_DIR,
-    "krx_equity": KRX_EQUITY_DIR,
-    "features": GOLD_FEATURES_DIR,
-}
 
 NAV_LINKS = [
     ("Overview", "index.html"),
@@ -111,66 +93,10 @@ class DashboardExporter:
         return self.output_dir / "index.html"
 
     def _summarize_dataset(self, name: str, dataset_dir: Path) -> dict[str, Any]:
-        if not dataset_dir.exists():
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(dataset_dir),
-            }
-
-        query = f"""
-            SELECT
-                COUNT(*) AS rows,
-                COUNT(DISTINCT ticker) AS symbols,
-                CAST(MAX(date) AS VARCHAR) AS latest_date
-            FROM {duckdb_scan_for(dataset_dir)}
-        """
-
-        try:
-            row = self.connection.execute(query).fetchone()
-        except Exception:
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(dataset_dir),
-            }
-
-        if row is None:
-            return {
-                "name": name,
-                "available": False,
-                "rows": 0,
-                "symbols": 0,
-                "latest_date": None,
-                "path": str(dataset_dir),
-            }
-
-        return {
-            "name": name,
-            "available": True,
-            "rows": int(row[0] or 0),
-            "symbols": int(row[1] or 0),
-            "latest_date": row[2],
-            "path": str(dataset_dir),
-        }
+        return summarize_dataset(self.connection, name, dataset_dir)
 
     def _load_health_report(self) -> dict[str, Any] | None:
-        health_path = self.output_dir / "health-report.json"
-        if not health_path.exists():
-            # Fall back to the canonical monitor output path.
-            health_path = LOGS_DIR / "health-report.json"
-        if not health_path.exists():
-            return None
-        try:
-            return cast(dict[str, Any], json.loads(health_path.read_text(encoding="utf-8")))
-        except json.JSONDecodeError:
-            return {"alerts": ["Health report could not be parsed."], "metrics": {}}
+        return load_health_report(self.output_dir)
 
     def _load_updates(self) -> dict[str, Any]:
         update_history_path = DATA_DIR / "update_history.parquet"
