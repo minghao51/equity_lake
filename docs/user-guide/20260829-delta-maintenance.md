@@ -27,8 +27,8 @@ retention window. Files inside the window are kept, preserving time travel.
 
 ```bash
 uv run equity delta-vacuum                          # preview only (default)
-uv run equity delta-vacuum --markets us_equity,cn_ashare --dry-run=false
-uv run equity delta-vacuum --retention-hours 336 --dry-run=false
+uv run equity delta-vacuum --markets us_equity,cn_ashare --no-dry-run
+uv run equity delta-vacuum --retention-hours 336 --no-dry-run
 ```
 
 | Flag | Default | Description |
@@ -39,14 +39,14 @@ uv run equity delta-vacuum --retention-hours 336 --dry-run=false
 | `--verbose`, `-v` | off | Debug logging |
 
 `--dry-run` defaults **on**, so a bare first run is always safe. To actually
-delete files you must pass `--dry-run=false` explicitly.
+delete files you must pass `--no-dry-run` explicitly.
 
 Output lists the effect per table:
 
 ```text
   us_equity: would remove 214 stale files
   cn_ashare: would remove 0 stale files
-Dry run — no files deleted. Use --dry-run=false to execute.
+Dry run — no files deleted. Use --no-dry-run to execute.
 ```
 
 Note the default market set is three tables (`us_equity`, `cn_ashare`,
@@ -120,7 +120,7 @@ After a multi-month backfill:
 uv run equity delta-compact --markets us_equity,cn_ashare,hk_sg_equity,jpx_equity,krx_equity
 uv run equity delta-vacuum                       # preview
 # ...after the retention window has passed:
-uv run equity delta-vacuum --dry-run=false
+uv run equity delta-vacuum --no-dry-run
 ```
 
 ## Related

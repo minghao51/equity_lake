@@ -175,13 +175,15 @@ Local equivalents of the CI gate: `uv run ruff check .`,
 
 - **Synthetic generator**: `src/equity_lake/devtools/test_data.py`
   (`uv run python -m equity_lake.devtools.test_data`) writes realistic
-  partitioned OHLCV Parquet across markets for manual experiments; see
-  `--start-date`, `--days`, `--markets`, `--num-tickers`.
+  partitioned OHLCV Parquet into the auxiliary sandbox
+  `data/sandbox/test_data/<market>/` for manual experiments — never into the
+  canonical lake; see `--start-date`, `--days`, `--markets`, `--num-tickers`.
   (`make generate-test-data` runs the curated `equity bootstrap sample`
   instead.) See [Developer Tools](../../developer-guide/devtools.md).
 - **Curated sample**: `uv run equity bootstrap sample` produces a small
   sample dataset (reusing existing lake data when available) for onboarding
-  and dashboard checks; `make demo` seeds the full demo lake via
+  and dashboard checks; `make demo` seeds the demo lake (sample-lake default,
+  production overwrite requires `--lake` + confirmation) via
   `devtools/seed_demo.py`.
 - Prefer the polars fixtures from `tests/conftest.py` for unit tests;
   generated data is for manual/visual use.

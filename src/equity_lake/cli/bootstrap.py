@@ -304,4 +304,4 @@ def cmd_sample(
     logger.info("Next steps:")
     logger.info("  equity signal scan --watchlist config/watchlist.yaml")
     logger.info("  equity backtest --strategy trend_following --tickers AAPL,MSFT --start-date ... --end-date ...")
-    logger.info("  equity query --sql 'SELECT * FROM delta_scan(\"%s/us_equity\") LIMIT 10'", out)
+    logger.info("  equity query --query latest_summary")

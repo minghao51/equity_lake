@@ -56,7 +56,7 @@ Query the lake with DuckDB:
 dotenvx run -- uv run equity query
 dotenvx run -- uv run equity query --query latest_summary
 dotenvx run -- uv run equity query --query top_volume
-dotenvx run -- uv run equity query --db equity_data.duckdb --verbose
+dotenvx run -- uv run equity query --db data/equity_data.duckdb --verbose
 ```
 
 ## Supported Pipeline Flags
@@ -73,7 +73,8 @@ dotenvx run -- uv run equity query --db equity_data.duckdb --verbose
 - `--dry-run`
 - `--allow-history-backfill`
 - `--verbose`
-- `--save-results`
+- `--save-results` — writes `logs/pipeline_results_<date>.json` (where the
+  dashboard exporter looks for it); skipped under `--dry-run`
 
 `equity ingest` currently supports:
 

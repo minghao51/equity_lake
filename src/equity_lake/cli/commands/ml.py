@@ -136,7 +136,7 @@ def ml_ablate(
     """Ablate enriched vs technical-only features, emit the enrichment-ablation card."""
     from pathlib import Path
 
-    from equity_lake.features import _load_feature_engineer
+    from equity_lake.features import load_feature_engineer
     from equity_lake.findings.writer import card_path
     from equity_lake.ml.ablation import run_ablation
 
@@ -146,7 +146,7 @@ def ml_ablate(
     end_date = date.fromisoformat(end) if end else _default_window()[1]
     base = Path(output_dir) if output_dir else None
 
-    engineer = _load_feature_engineer()()
+    engineer = load_feature_engineer()
     try:
         enriched = engineer.generate_features([selected], start_date, end_date, include_macro=True)
         technical = engineer.generate_features([selected], start_date, end_date, include_macro=False)

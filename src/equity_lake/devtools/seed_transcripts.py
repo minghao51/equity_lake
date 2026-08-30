@@ -21,6 +21,10 @@ Usage::
 
     uv run python -m equity_lake.devtools.seed_transcripts \\
         --tickers AAPL,MSFT,GOOGL
+    uv run python -m equity_lake.devtools.seed_transcripts --dry-run  # preview: no lake writes or LLM tokens
+
+Exit code: 0 only when every requested step (bronze/silver) reports ``ok=True``;
+any failure exits 1.
 
 Caveat: once the full base is in bronze, the production
 ``equity pipeline --markets us_earnings_transcripts`` would attempt to enrich *all*
@@ -121,31 +125,38 @@ def _to_bronze(hf: pl.DataFrame, fetch_ts: datetime) -> pl.DataFrame:
     return df.select(BRONZE_ARTICLE_COLUMNS)
 
 
-def seed_transcripts_bronze(hf: pl.DataFrame, fetch_ts: datetime) -> dict[str, Any]:
+def seed_transcripts_bronze(hf: pl.DataFrame, fetch_ts: datetime, *, dry_run: bool = False) -> dict[str, Any]:
     """Write the full transcript base into bronze ``01_bronze/raw_articles``.
 
     Idempotent: merges on ``article_id`` (deterministic), so re-runs upsert
-    without duplicating.
+    without duplicating. With ``dry_run=True`` nothing is written; the summary
+    previews the rows that a real run would merge.
     """
     from equity_lake.storage.delta import DeltaMergeError, merge_delta
 
     df = _to_bronze(hf, fetch_ts)
     n_tickers = df["source_metadata"].map_elements(lambda s: json.loads(s).get("ticker"), return_dtype=pl.Utf8).n_unique()
+    if dry_run:
+        summary: dict[str, Any] = {"rows": df.height, "tickers": int(n_tickers), "ok": True, "dry_run": True}
+        logger.info("seed_transcripts_bronze_dry_run", **summary)
+        return summary
     try:
         ok = merge_delta(df, BRONZE_MARKET, key_columns=["article_id"])
     except DeltaMergeError:
         ok = False
-    summary: dict[str, Any] = {"rows": df.height if ok else 0, "tickers": int(n_tickers) if ok else 0, "ok": ok}
+    summary = {"rows": df.height if ok else 0, "tickers": int(n_tickers) if ok else 0, "ok": ok}
     logger.info("seed_transcripts_bronze_complete", **summary)
     return summary
 
 
-def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: datetime) -> dict[str, Any]:
+def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: datetime, *, dry_run: bool = False) -> dict[str, Any]:
     """Enrich a ticker-scoped subset to silver ``02_silver/processed_articles``.
 
     Filtering happens on the in-memory HF frame (which carries the ticker) because
     ticker is not a bronze column — this is what keeps the DeepSeek cost scoped
-    instead of enriching the whole 33k-row base.
+    instead of enriching the whole 33k-row base. With ``dry_run=True`` the LLM
+    step and the silver merge are skipped entirely (no tokens spent); the summary
+    previews the rows a real run would process.
     """
     from equity_lake.ingestion.llm_processor import run_llm_processing
     from equity_lake.storage.delta import DeltaMergeError, merge_delta
@@ -157,7 +168,17 @@ def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: date
         return {"rows": 0, "tickers": 0, "ok": False}
 
     bronze = _to_bronze(scoped, fetch_ts)
-    logger.info("seed_transcripts_silver_processing", rows=bronze.height, tickers=sorted(wanted))
+    logger.info("seed_transcripts_silver_processing", rows=bronze.height, tickers=sorted(wanted), dry_run=dry_run)
+    if dry_run:
+        summary: dict[str, Any] = {
+            "rows": bronze.height,
+            "tickers": int(scoped["symbol"].str.to_uppercase().n_unique()),
+            "ok": True,
+            "dry_run": True,
+        }
+        logger.info("seed_transcripts_silver_dry_run", **summary)
+        return summary
+
     silver = run_llm_processing(bronze)
     if silver.is_empty():
         logger.warning("seed_transcripts_silver_no_output")
@@ -168,12 +189,12 @@ def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: date
     except DeltaMergeError:
         ok = False
     n_tickers = int(silver["ticker"].n_unique()) if "ticker" in silver.columns and ok else 0
-    summary: dict[str, Any] = {"rows": int(silver.height) if ok else 0, "tickers": n_tickers, "ok": ok}
+    summary = {"rows": int(silver.height) if ok else 0, "tickers": n_tickers, "ok": ok}
     logger.info("seed_transcripts_silver_complete", **summary)
     return summary
 
 
-def main() -> None:
+def main() -> int:
     import argparse
 
     from equity_lake.core.logging import setup_structured_logging
@@ -183,6 +204,11 @@ def main() -> None:
     parser.add_argument("--skip-bronze", action="store_true", help="Skip loading the full bronze base")
     parser.add_argument("--skip-silver", action="store_true", help="Skip scoped silver enrichment")
     parser.add_argument("--force-download", action="store_true", help="Re-download the HF parquet even if cached")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview bronze/silver scope with no lake writes or LLM tokens (a cold cache still downloads the source parquet)",
+    )
     parser.add_argument("--verbose", action="store_true", help="Debug logging")
     args = parser.parse_args()
 
@@ -197,14 +223,22 @@ def main() -> None:
 
     bronze_summary: dict[str, Any] = {}
     if not args.skip_bronze and hf is not None:
-        bronze_summary = seed_transcripts_bronze(hf, fetch_ts)
+        bronze_summary = seed_transcripts_bronze(hf, fetch_ts, dry_run=args.dry_run)
 
     silver_summary: dict[str, Any] = {}
     if not args.skip_silver and hf is not None:
         tickers = [t.strip() for t in args.tickers.split(",") if t.strip()]
-        silver_summary = seed_transcripts_silver(hf, tickers, fetch_ts)
+        silver_summary = seed_transcripts_silver(hf, tickers, fetch_ts, dry_run=args.dry_run)
 
-    logger.info("seed_transcripts_done", bronze=bronze_summary, silver=silver_summary)
+    logger.info("seed_transcripts_done", bronze=bronze_summary, silver=silver_summary, dry_run=args.dry_run)
+
+    # A requested step reporting ok=False (merge failure, empty scope, or no LLM
+    # output) must surface as a non-zero exit, not a silent success.
+    failures = [name for name, s in (("bronze", bronze_summary), ("silver", silver_summary)) if s and not s.get("ok")]
+    if failures:
+        logger.error("seed_transcripts_failed", failed_steps=failures)
+        return 1
+    return 0
 
 
 __all__ = [
@@ -214,4 +248,4 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

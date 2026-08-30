@@ -8,7 +8,7 @@ from typing import Annotated
 import typer
 
 from equity_lake.cli._app import _init_logging, app
-from equity_lake.core.paths import LOGS_DIR
+from equity_lake.core.paths import DUCKDB_DEFAULT_PATH, LOGS_DIR
 
 
 @app.command("backtest")
@@ -36,7 +36,11 @@ def backtest_cmd(
         end_date=date.fromisoformat(end_date),
         initial_cash=initial_cash,
     )
-    result = eng.run()
+    try:
+        result = eng.run()
+    except Exception as exc:  # noqa: BLE001 — surface a clean CLI error
+        typer.secho(f"backtest failed: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
     typer.echo(result.summary())
     if output:
         Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))
@@ -45,7 +49,7 @@ def backtest_cmd(
 @app.command("query")
 def query(
     query_name: Annotated[str | None, typer.Option("--query", "-q", help="Named query")] = None,
-    db_path: Annotated[str, typer.Option("--db", help="DuckDB path")] = "equity_data.duckdb",
+    db_path: Annotated[str, typer.Option("--db", help="DuckDB path (default: data/equity_data.duckdb)")] = str(DUCKDB_DEFAULT_PATH),
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Query the data lake via DuckDB."""

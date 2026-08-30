@@ -1,18 +1,23 @@
-"""Populate the canonical lake with a demo US universe for the Strategy Lab.
+"""Populate a demo US universe lake for the Strategy Lab.
 
 Offline-safe by design: generates deterministic synthetic OHLCV by default, so the
 whole showcase pipeline (arena -> FindingCards) runs with **no network or API
 keys**. With ``real=True`` it attempts a live ``yfinance`` history pull and falls
 back to synthetic on any failure.
 
-Writes to the canonical medallion bronze path (``01_bronze/market_data/us_equity``)
-so ``equity arena run`` and the production pipeline read the same data. Idempotent
-via ``mode="overwrite"``.
+Safety rails: the default target is the auxiliary sample lake
+(``data/sample/``), mirroring ``cli/bootstrap.py cmd_sample``. Writing to the
+canonical lake (``LAKE_DIR``) requires an explicit ``lake_dir`` targeting it
+**plus** ``overwrite_production_lake=True`` — the CLI additionally enforces an
+interactive confirmation (or the ``--overwrite-production-lake`` flag) before
+passing that authorization through. Idempotent via ``mode="overwrite"``.
 """
 
 from __future__ import annotations
 
+import os
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -77,6 +82,33 @@ DEMO_UNIVERSE: list[str] = [
 ]
 
 US_EQUITY_MARKET = "01_bronze/market_data/us_equity"
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    """Path equality robust to case-insensitive filesystems (``DATA/lake`` vs ``data/lake``).
+
+    When both paths exist, ``os.path.samefile`` compares the underlying store,
+    so differently-cased spellings of the same directory compare equal. Otherwise
+    fall back to a ``normcase`` string comparison (identity on case-sensitive
+    platforms, case/slash-folded on case-insensitive ones).
+    """
+    if a.exists() and b.exists():
+        try:
+            return os.path.samefile(a, b)
+        except OSError:
+            pass
+    return os.path.normcase(str(a)) == os.path.normcase(str(b))
+
+
+def _targets_production_lake(target_root: Path) -> bool:
+    """True when the target root is the canonical lake or lives underneath it."""
+    from equity_lake.core.paths import LAKE_DIR
+
+    resolved = target_root.resolve()
+    lake = LAKE_DIR.resolve()
+    if _same_path(resolved, lake):
+        return True
+    return any(_same_path(lake, parent) for parent in resolved.parents)
 
 
 def _trading_days(years: float) -> list[date]:
@@ -180,9 +212,11 @@ def seed_demo(
     real: bool = False,
     seed: int = 42,
     verbose: bool = False,
-    lake_dir: Any | None = None,
+    lake_dir: str | Path | None = None,
+    overwrite_production_lake: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Seed the canonical lake with a demo US universe.
+    """Seed a demo US universe into a lake.
 
     Args:
         years: Years of history to generate/fetch.
@@ -191,13 +225,19 @@ def seed_demo(
         real: Attempt a live yfinance pull; fall back to synthetic on failure.
         seed: Deterministic seed for synthetic generation.
         verbose: Debug logging.
-        lake_dir: Override lake root (default ``LAKE_DIR``).
+        lake_dir: Lake root override. Defaults to the auxiliary sample lake
+            (``data/sample/``); targeting the canonical ``LAKE_DIR`` (or a path
+            under it) requires ``overwrite_production_lake=True``.
+        overwrite_production_lake: Explicit authorization to overwrite the
+            canonical lake. Without it, a production-lake target raises
+            :class:`ValueError` instead of writing.
+        dry_run: Preview the seed summary without writing anything.
 
     Returns:
-        Summary dict: ``{tickers, rows, days, source, path}``.
+        Summary dict: ``{tickers, rows, days, source, path, dry_run}``.
     """
     from equity_lake.core.logging import setup_structured_logging
-    from equity_lake.core.paths import LAKE_DIR
+    from equity_lake.core.paths import DATA_DIR
     from equity_lake.storage.delta import write_delta
 
     setup_structured_logging(level="DEBUG" if verbose else "INFO")
@@ -205,6 +245,15 @@ def seed_demo(
     universe = resolve_universe(tickers)
     if not universe:
         raise ValueError("No tickers resolved for demo seed.")
+
+    target_root = Path(lake_dir) if lake_dir is not None else DATA_DIR / "sample"
+    production_target = _targets_production_lake(target_root)
+    if production_target and not overwrite_production_lake:
+        raise ValueError(
+            f"Refusing to overwrite the canonical lake at {target_root} without an explicit override. "
+            f"Seed the default sample lake ({DATA_DIR / 'sample'}) instead, or pass --lake together with "
+            "--overwrite-production-lake (or confirm interactively) to authorize the bronze overwrite."
+        )
 
     source = "synthetic"
     df: pl.DataFrame | None = None
@@ -222,15 +271,35 @@ def seed_demo(
     if df.is_empty():
         raise ValueError("Seed produced no rows.")
 
-    target_root = lake_dir or LAKE_DIR
+    if dry_run:
+        summary: dict[str, Any] = {
+            "tickers": df["ticker"].n_unique(),
+            "rows": df.height,
+            "days": df["date"].n_unique(),
+            "source": source,
+            "path": str(target_root),
+            "dry_run": True,
+        }
+        logger.info("seed_demo_dry_run", **summary)
+        return summary
+
+    if production_target:
+        logger.warning(
+            "seed_demo_overwrite_production_lake",
+            path=str(target_root),
+            table=US_EQUITY_MARKET,
+            mode="overwrite",
+        )
+
     write_delta(df, US_EQUITY_MARKET, mode="overwrite", lake_dir=target_root)
 
-    summary: dict[str, Any] = {
+    summary = {
         "tickers": df["ticker"].n_unique(),
         "rows": df.height,
         "days": df["date"].n_unique(),
         "source": source,
         "path": str(target_root),
+        "dry_run": False,
     }
     logger.info("seed_demo_complete", **summary)
     return summary

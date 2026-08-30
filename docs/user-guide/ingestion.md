@@ -72,9 +72,10 @@ dotenvx run -- uv run equity ratings --tickers AAPL,MSFT
 | `equity financials` | `02_silver/sec_financials` | Structured XBRL financials (balance sheet, income statement, ratios) — no LLM. `--lookback` default `120`. |
 | `equity macro` | `01_bronze/macro` | FRED and yfinance macro indicators (VIX, treasury yields, DXY, …); `--indicators` filters by name. Fails with a non-zero exit if nothing is fetched. |
 
-All of them share `--date`, `--tickers`/`-t`, `--dry-run`, and `--verbose`
-(`equity news` and `equity sentiment` additionally accept `--api-key` to pass
-the Finnhub key explicitly). Key requirements:
+All of them share `--date`, `--tickers`/`-t`, `--dry-run`, and `--verbose`,
+and read the Finnhub key from the `FINNHUB_API_KEY` environment variable
+(there is no `--api-key` option — keys never belong on the command line).
+Key requirements:
 
 - `FINNHUB_API_KEY` — `news`, `sentiment`, `transcripts`, `ratings`
 - `SEC_USER_AGENT` — `sec` and `financials` (EDGAR fair-access policy)

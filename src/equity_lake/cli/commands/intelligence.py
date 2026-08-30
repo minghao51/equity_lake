@@ -108,7 +108,7 @@ def signal_scan(
     watchlist: Annotated[str | None, typer.Option("--watchlist", "-w", help="Watchlist config path")] = None,
     config: Annotated[str | None, typer.Option("--config", "-c", help="Signal config path")] = None,
     output: Annotated[str | None, typer.Option("--output", "-o", help="Save output to file")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Don't save history")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Don't save history")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Scan watchlist and generate signals."""

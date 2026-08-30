@@ -29,6 +29,17 @@ def _load_feature_engineer() -> type[FeatureEngineer]:
     return FeatureEngineer
 
 
+def load_feature_engineer() -> FeatureEngineer:
+    """Instantiate the feature engineer (public accessor for CLI callers).
+
+    Defers the optional ``ml`` dependency import to call time and raises
+    :class:`RuntimeError` with an actionable message when it is missing —
+    callers outside this package (e.g. ``equity ml ablate``) must use this
+    accessor instead of importing the private loader.
+    """
+    return _load_feature_engineer()()
+
+
 def run_feature_job(
     *,
     tickers: list[str],
@@ -85,7 +96,7 @@ def run_feature_job(
     return output_df
 
 
-__all__ = ["FeatureEngineer", "run_feature_job"]
+__all__ = ["FeatureEngineer", "load_feature_engineer", "run_feature_job"]
 
 
 def __getattr__(name: str) -> Any:

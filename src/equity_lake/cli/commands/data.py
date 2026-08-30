@@ -10,6 +10,7 @@ from typing import Annotated
 import typer
 
 from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date, app
+from equity_lake.core.paths import LAKE_DIR
 
 
 def _resolve_dataset_paths(markets: list[str]) -> list[str]:
@@ -48,24 +49,41 @@ def ingest(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date YYYY-MM-DD")] = None,
     markets: Annotated[str | None, typer.Option("--markets", "-m", help="Comma-separated markets")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate without writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Simulate without writes (default: off)")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Ingest daily equity market data."""
     from equity_lake.core.config import get_settings
     from equity_lake.ingestion.orchestrator import run_daily_ingestion
+    from equity_lake.ingestion.types import REQUIRED_PRICE_MARKETS, SourceOutcome, SourceStatus
 
     _init_logging(verbose)
     trading_date = _resolve_date(date_str)
     market_list = _parse_comma_list(markets) or list(get_settings().ingestion.default_markets)
     ticker_list = _parse_comma_list(tickers)
-    run_daily_ingestion(
+    results = run_daily_ingestion(
         trading_date=trading_date,
         markets=market_list,
         dry_run=dry_run,
         parallel=True,
         explicit_tickers=ticker_list,
     )
+
+    # Surface per-market outcomes; mirror the pipeline command's failure contract:
+    # required price markets failing (or missing from the results) exits non-zero,
+    # while optional-enrichment degradation stays a warning only.
+    for market, outcome in results.items():
+        status_line = f"  {market}: {outcome.status.value}"
+        if outcome.error:
+            status_line += f" ({outcome.error})"
+        typer.echo(status_line)
+
+    required_failures = sorted(
+        m for m in market_list if m in REQUIRED_PRICE_MARKETS and not results.get(m, SourceOutcome(SourceStatus.FAILED)).succeeded
+    )
+    if required_failures:
+        typer.secho(f"Ingestion failed for required markets: {', '.join(required_failures)}", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
 
 @app.command("backfill")
@@ -74,7 +92,7 @@ def backfill(
     end: Annotated[str | None, typer.Option("--end", help="End date")] = None,
     days_back: Annotated[int | None, typer.Option("--days-back", help="Calendar days back")] = None,
     markets: Annotated[str, typer.Option("--markets", "-m", help="Comma-separated markets")] = "us,cn,hk_sg",
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="No writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="No writes (default: off)")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Backfill historical data."""
@@ -115,7 +133,7 @@ def auto_backfill(
     days_back: Annotated[int, typer.Option("--days-back", help="Days to scan for gaps")] = 90,
     markets: Annotated[str | None, typer.Option("--markets", "-m", help="Comma-separated markets")] = None,
     max_gap_days: Annotated[int, typer.Option("--max-gap-days", help="Skip gaps larger than this")] = 30,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show gaps without filling")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Show gaps without filling")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Auto-detect and fill data gaps across markets."""
@@ -154,7 +172,7 @@ def sync(
         ),
     ] = None,
     workers: Annotated[int, typer.Option("--workers", "-w", help="Download workers")] = 16,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Simulate")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Sync data lake to S3.
@@ -182,7 +200,7 @@ def sync(
         # Derive the per-market remote source from the canonical medallion path
         # so each market pulls its own tree, not the same bucket root repeatedly.
         source_url = f"{bucket_root}/{market_dir}"
-        target_dir = Path("data/lake") / market_dir
+        target_dir = LAKE_DIR / market_dir
         typer.secho(f"Syncing {market}: {source_url} -> {target_dir} ...", fg=typer.colors.CYAN)
         syncer = S3Syncer(bucket=source_url, target_dir=target_dir, workers=workers, dry_run=dry_run)
         try:
@@ -201,7 +219,7 @@ def sync(
 def macro(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     indicators: Annotated[str | None, typer.Option("--indicators", help="Comma-separated indicators")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Simulate")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Fetch macro indicators."""
@@ -242,7 +260,7 @@ def macro(
 def delta_vacuum(
     markets: Annotated[str, typer.Option("--markets", "-m", help="Comma-separated markets")] = "us_equity,cn_ashare,hk_sg_equity",
     retention_hours: Annotated[int, typer.Option("--retention-hours", help="Retention window in hours")] = 168,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview only")] = True,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Preview only (default: on; disable with --no-dry-run)")] = True,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Remove stale files from Delta Lake tables."""
@@ -255,7 +273,7 @@ def delta_vacuum(
         label = "would remove" if dry_run else "removed"
         typer.echo(f"  {market}: {label} {len(files)} stale files")
     if dry_run:
-        typer.echo("Dry run — no files deleted. Use --dry-run=false to execute.")
+        typer.echo("Dry run — no files deleted. Use --no-dry-run to execute.")
 
 
 @app.command("delta-compact")
@@ -282,7 +300,7 @@ def delta_migrate(
     markets: Annotated[str, typer.Option("--markets", "-m", help="Comma-separated markets")] = (
         "us_equity,cn_ashare,hk_sg_equity,jpx_equity,krx_equity"
     ),
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview only")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Preview only")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Migrate Hive-partitioned Parquet to Delta Lake format."""

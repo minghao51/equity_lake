@@ -12,9 +12,9 @@ import typer
 from equity_lake.cli._app import _init_logging, _parse_comma_list, app
 
 
-def _require_finnhub_api_key(api_key: str | None) -> str:
-    """Return the Finnhub API key or abort with an error message."""
-    key = api_key or os.getenv("FINNHUB_API_KEY")
+def _require_finnhub_api_key() -> str:
+    """Return the Finnhub API key from the environment or abort with an error message."""
+    key = os.getenv("FINNHUB_API_KEY")
     if not key:
         typer.secho("FINNHUB_API_KEY not set. Get one at https://finnhub.io/", fg=typer.colors.RED)
         raise typer.Exit(1)
@@ -26,7 +26,6 @@ def _run_finnhub_command(
     name: str,
     date_str: str | None,
     tickers: str | None,
-    api_key: str | None,
     dry_run: bool,
     verbose: bool,
     fetcher_factory: Callable[..., Any],
@@ -35,13 +34,17 @@ def _run_finnhub_command(
     fetch_kwargs: dict[str, Any] | None = None,
     empty_msg: str | None = None,
 ) -> None:
-    """Shared ingestion command body for all Finnhub-backed sources."""
+    """Shared ingestion command body for all Finnhub-backed sources.
+
+    The API key is read from ``FINNHUB_API_KEY`` (via dotenvx) — never accepted
+    as a CLI option, which would leak it into shell history and process lists.
+    """
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
     from equity_lake.ingestion.writers import upsert_dataset, validate_schema
 
     _init_logging(verbose)
-    key = _require_finnhub_api_key(api_key)
+    key = _require_finnhub_api_key()
     trading_date = resolve_trading_date(date_str)
     ticker_list = _parse_comma_list(tickers)
     dataset_path.mkdir(parents=True, exist_ok=True)
@@ -78,11 +81,10 @@ def news(
     sentiment_method: Annotated[str, typer.Option("--sentiment-method", help="vader or finbert")] = "vader",
     min_relevance: Annotated[float, typer.Option("--min-relevance", help="Min relevance 0.0-1.0")] = 0.0,
     max_workers: Annotated[int, typer.Option("--max-workers", help="Parallel workers")] = 1,
-    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Fetch market news with sentiment analysis."""
+    """Fetch market news with sentiment analysis (key from FINNHUB_API_KEY)."""
     from equity_lake.core.paths import US_NEWS_DIR
     from equity_lake.sources.news import FinnhubNewsFetcher
 
@@ -90,7 +92,6 @@ def news(
         name="news",
         date_str=date_str,
         tickers=tickers,
-        api_key=api_key,
         dry_run=dry_run,
         verbose=verbose,
         fetcher_factory=FinnhubNewsFetcher,
@@ -110,11 +111,10 @@ def sentiment(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     max_workers: Annotated[int, typer.Option("--max-workers", help="Parallel workers")] = 1,
-    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Analyze market sentiment."""
+    """Analyze market sentiment (key from FINNHUB_API_KEY)."""
     from equity_lake.core.paths import US_SOCIAL_SENTIMENT_DIR
     from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
@@ -122,7 +122,6 @@ def sentiment(
         name="sentiment",
         date_str=date_str,
         tickers=tickers,
-        api_key=api_key,
         dry_run=dry_run,
         verbose=verbose,
         fetcher_factory=FinnhubSocialSentimentFetcher,
@@ -136,11 +135,10 @@ def sentiment(
 def transcripts(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
-    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Fetch earnings call transcripts from Finnhub."""
+    """Fetch earnings call transcripts from Finnhub (key from FINNHUB_API_KEY)."""
     from equity_lake.core.paths import BRONZE_RAW_ARTICLES_DIR
     from equity_lake.sources.transcripts import EarningsTranscriptFetcher
 
@@ -148,7 +146,6 @@ def transcripts(
         name="transcripts",
         date_str=date_str,
         tickers=tickers,
-        api_key=api_key,
         dry_run=dry_run,
         verbose=verbose,
         fetcher_factory=EarningsTranscriptFetcher,
@@ -161,11 +158,10 @@ def transcripts(
 def ratings(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
-    api_key: Annotated[str | None, typer.Option("--api-key", help="Finnhub API key")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Fetch analyst ratings from Finnhub (structured data, no LLM needed)."""
+    """Fetch analyst ratings from Finnhub (structured data, no LLM needed; key from FINNHUB_API_KEY)."""
     from equity_lake.core.paths import SILVER_ANALYST_RATINGS_DIR
     from equity_lake.sources.analyst_ratings import AnalystRatingFetcher
 
@@ -173,7 +169,6 @@ def ratings(
         name="ratings",
         date_str=date_str,
         tickers=tickers,
-        api_key=api_key,
         dry_run=dry_run,
         verbose=verbose,
         fetcher_factory=AnalystRatingFetcher,
@@ -188,7 +183,7 @@ def sec_filings(
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     lookback_days: Annotated[int, typer.Option("--lookback", help="Filing lookback days")] = 120,
     process_silver: Annotated[bool, typer.Option("--process", help="Process bronze to silver via LLM")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Fetch SEC 10-K/10-Q filings from EDGAR and optionally process to silver."""
@@ -214,7 +209,10 @@ def sec_filings(
 
     if not dry_run:
         with timer("write_bronze"):
-            upsert_dataset(df, "01_bronze/raw_articles", trading_date)
+            bronze_ok = upsert_dataset(df, "01_bronze/raw_articles", trading_date)
+        if not bronze_ok:
+            typer.secho("Failed to write SEC bronze data", fg=typer.colors.RED)
+            raise typer.Exit(1)
 
     if process_silver and not dry_run:
         typer.echo("Processing SEC bronze to silver...")
@@ -236,7 +234,7 @@ def sec_financials(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     lookback_days: Annotated[int, typer.Option("--lookback", help="Filing lookback days")] = 120,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Skip writes")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Fetch SEC XBRL structured financials (balance sheet, income statement, ratios)."""
@@ -262,6 +260,9 @@ def sec_financials(
 
     if not dry_run:
         with timer("write_financials"):
-            upsert_dataset(df, "us_sec_financials", trading_date)
+            financials_ok = upsert_dataset(df, "us_sec_financials", trading_date)
+        if not financials_ok:
+            typer.secho("Failed to write SEC financials", fg=typer.colors.RED)
+            raise typer.Exit(1)
 
     typer.secho("SEC financials ingestion complete", fg=typer.colors.GREEN)

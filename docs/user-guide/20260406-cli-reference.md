@@ -29,7 +29,10 @@ logging, and mutating commands accept `--dry-run` to simulate without writes.
 
 ### `equity ingest`
 
-Ingest daily equity market data.
+Ingest daily equity market data. Prints a per-market outcome summary and
+exits non-zero when a required price market (`us`, `cn`, `hk_sg`, `jpx`,
+`krx`) fails or is missing from the results — optional enrichments only
+degrade with a warning (mirrors `equity pipeline`).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -121,7 +124,7 @@ Run the full EOD pipeline (ingest → features → ML).
 | `--skip-features` | flag | off | Skip Stage 2 |
 | `--skip-ml` | flag | off | Skip Stage 3 |
 | `--allow-history-backfill` | flag | off | Authorize a 120-day feature-history recovery |
-| `--save-results` | flag | off | Save JSON results to `pipeline_results_<date>.json` |
+| `--save-results` | flag | off | Save JSON results to `logs/pipeline_results_<date>.json` (skipped with `--dry-run`) |
 | `--dry-run` | flag | off | Simulate |
 
 ```bash
@@ -136,8 +139,9 @@ stage instead of starting a backfill.
 
 These commands need credentials from `.env`, so run them via
 `dotenvx run --`. The Finnhub commands (`news`, `sentiment`, `transcripts`,
-`ratings`) read `FINNHUB_API_KEY` (or take `--api-key`) and exit non-zero when
-no key is found.
+`ratings`) read `FINNHUB_API_KEY` from the environment and exit non-zero when
+no key is found. Keys are env-only by design — there is no `--api-key` option
+(avoiding shell-history/`ps` leaks).
 
 ### `equity news`
 
@@ -151,7 +155,6 @@ Fetch market news with sentiment analysis.
 | `--sentiment-method` | str | `vader` | `vader` or `finbert` |
 | `--min-relevance` | float | `0.0` | Min relevance 0.0–1.0 |
 | `--max-workers` | int | `1` | Parallel workers |
-| `--api-key` | str | `FINNHUB_API_KEY` | Finnhub API key |
 | `--dry-run` | flag | off | Skip writes |
 
 ```bash
@@ -167,7 +170,6 @@ Analyze market sentiment (Finnhub social sentiment).
 | `--date` | str | resolved trading date | Trading date |
 | `--tickers`, `-t` | str | all configured | Comma-separated tickers |
 | `--max-workers` | int | `1` | Parallel workers |
-| `--api-key` | str | `FINNHUB_API_KEY` | Finnhub API key |
 | `--dry-run` | flag | off | Skip writes |
 
 ```bash
@@ -182,7 +184,6 @@ Fetch earnings call transcripts from Finnhub.
 |---|---|---|---|
 | `--date` | str | resolved trading date | Trading date |
 | `--tickers`, `-t` | str | all configured | Comma-separated tickers |
-| `--api-key` | str | `FINNHUB_API_KEY` | Finnhub API key |
 | `--dry-run` | flag | off | Skip writes |
 
 ```bash
@@ -193,7 +194,7 @@ dotenvx run -- uv run equity transcripts --tickers AAPL
 
 Fetch analyst ratings from Finnhub (structured data, no LLM needed).
 
-Same flags as `transcripts` (`--date`, `--tickers`, `--api-key`, `--dry-run`).
+Same flags as `transcripts` (`--date`, `--tickers`, `--dry-run`).
 
 ```bash
 dotenvx run -- uv run equity ratings --tickers AAPL,MSFT
@@ -309,7 +310,7 @@ Query the data lake via DuckDB.
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--query`, `-q` | str | run all | Named query |
-| `--db` | str | `equity_data.duckdb` | DuckDB path |
+| `--db` | str | `data/equity_data.duckdb` | DuckDB path |
 
 Named queries: `latest_summary`, `top_volume`, `gainers_losers`,
 `cross_market`, `moving_avg`, `volatility`, `market_stats`, `price_range`.
@@ -426,10 +427,10 @@ table names (`us_equity`), or full medallion paths
 |---|---|---|---|
 | `--markets`, `-m` | str | `us_equity,cn_ashare,hk_sg_equity` | Comma-separated datasets |
 | `--retention-hours` | int | `168` | Retention window in hours |
-| `--dry-run` | flag | **on** | Preview only; pass `--dry-run=false` to execute |
+| `--dry-run` | flag | **on** | Preview only; pass `--no-dry-run` to execute |
 
 ```bash
-uv run equity delta-vacuum --markets us_equity --dry-run=false
+uv run equity delta-vacuum --markets us_equity --no-dry-run
 ```
 
 ### `equity delta-compact`
@@ -561,8 +562,11 @@ uv run equity bootstrap sample --days 30 --seed 42
 
 ### `equity demo seed`
 
-Seed the lake with a demo US universe (synthetic by default, offline-safe) for
-the Strategy Lab showcase.
+Seed a demo US universe (synthetic by default, offline-safe) into the auxiliary
+sample lake (`data/sample/`) for the Strategy Lab showcase. The canonical lake
+(`data/lake/`) is never touched implicitly: overwriting it requires `--lake`
+pointing at `data/lake` plus an interactive confirmation (or the explicit
+`--overwrite-production-lake` flag — the overwrite is still logged).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -570,10 +574,15 @@ the Strategy Lab showcase.
 | `--tickers`, `-t` | str | demo group | Comma-separated tickers |
 | `--real` | flag | off | Attempt live yfinance fetch (falls back to synthetic) |
 | `--seed` | int | `42` | Synthetic RNG seed |
+| `--lake` | str | `data/sample` | Target lake root (`data/lake` requires confirmation) |
+| `--overwrite-production-lake` | flag | off | Skip the confirmation prompt for `--lake data/lake` (requires `--lake`) |
+| `--dry-run` | flag | off | Preview the seed summary without writing |
 
 ```bash
 uv run equity demo seed
 uv run equity demo seed --real
+uv run equity demo seed --dry-run
+uv run equity demo seed --lake data/lake --overwrite-production-lake   # destructive, logged
 ```
 
 ### `equity api serve`

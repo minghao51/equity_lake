@@ -66,6 +66,12 @@ Flags:
 - `--skip-bronze` — skip re-merging the bronze base (use after the first run).
 - `--skip-silver` — load only the bronze base (no DeepSeek spend).
 - `--force-download` — re-fetch the HF parquet.
+- `--dry-run` — preview the bronze row count and the scoped silver enrichment
+  with no lake writes or LLM tokens; a cold cache still downloads the source
+  parquet.
+
+Exit code: 0 only when every requested step (bronze/silver) succeeds; a
+failed merge or an empty silver scope exits 1.
 
 Why silver is scoped from the in-memory HF frame (not by re-reading bronze): the
 transcript ticker is not a bronze column (it lives in `source_metadata`, mirroring

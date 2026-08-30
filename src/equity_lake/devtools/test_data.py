@@ -12,6 +12,13 @@ Features:
 - Proper schema compliance with production data
 - Hive-partitioned Parquet output
 
+Safety: output goes to the auxiliary sandbox ``data/sandbox/test_data/<market>/``
+by default — never into the canonical Delta lake directories (``data/lake/**``),
+whose Delta tables must only be written by the canonical writer + validation
+boundary. There is no flag to opt into writing the canonical lake; use
+``equity pipeline`` for real ingestion or ``equity demo seed --lake`` for the
+showcase lake.
+
 Usage:
     uv run python -m equity_lake.devtools.test_data
     uv run python -m equity_lake.devtools.test_data --start-date 2023-01-01 --days 365
@@ -29,9 +36,12 @@ import pandas as pd
 import structlog
 
 from equity_lake.core.logging import setup_structured_logging
-from equity_lake.core.paths import CN_ASHARE_DIR, HK_SG_EQUITY_DIR, US_EQUITY_DIR
+from equity_lake.core.paths import DATA_DIR
 
 logger = structlog.get_logger()
+
+# Auxiliary output root — deliberately outside the canonical lake (data/lake/**).
+TEST_DATA_SANDBOX_DIR = DATA_DIR / "sandbox" / "test_data"
 
 
 # =============================================================================
@@ -40,7 +50,7 @@ logger = structlog.get_logger()
 
 MARKET_CONFIGS = {
     "us_equity": {
-        "output_dir": US_EQUITY_DIR,
+        "output_dir": TEST_DATA_SANDBOX_DIR / "us_equity",
         "ticker_format": "uppercase",
         "tickers": [
             "AAPL",
@@ -92,7 +102,7 @@ MARKET_CONFIGS = {
         "volume_range": (1000000, 50000000),
     },
     "cn_ashare": {
-        "output_dir": CN_ASHARE_DIR,
+        "output_dir": TEST_DATA_SANDBOX_DIR / "cn_ashare",
         "ticker_format": "numeric_6",
         "tickers": [
             "600000",
@@ -136,7 +146,7 @@ MARKET_CONFIGS = {
         "volume_range": (5000000, 100000000),
     },
     "hk_sg_equity": {
-        "output_dir": HK_SG_EQUITY_DIR,
+        "output_dir": TEST_DATA_SANDBOX_DIR / "hk_sg_equity",
         "ticker_format": "suffix",
         "tickers": [
             "0700.HK",
@@ -481,20 +491,20 @@ def parse_arguments() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Generate 1 year of test data for all markets
-  uv run equity-generate-test-data --days 365
+  # Generate 1 year of test data for all markets (into data/sandbox/test_data/)
+  uv run python -m equity_lake.devtools.test_data --days 365
 
   # Generate data for specific date range
-  uv run equity-generate-test-data --start-date 2023-01-01 --end-date 2024-12-31
+  uv run python -m equity_lake.devtools.test_data --start-date 2023-01-01 --end-date 2024-12-31
 
   # Generate data for US market only
-  uv run equity-generate-test-data --markets us_equity
+  uv run python -m equity_lake.devtools.test_data --markets us_equity
 
   # Generate smaller dataset for testing
-  uv run equity-generate-test-data --days 30 --num-tickers 20
+  uv run python -m equity_lake.devtools.test_data --days 30 --num-tickers 20
 
   # Generate data with different volatility
-  uv run equity-generate-test-data --volatility 0.05 --trend 0.001
+  uv run python -m equity_lake.devtools.test_data --volatility 0.05 --trend 0.001
         """,
     )
 

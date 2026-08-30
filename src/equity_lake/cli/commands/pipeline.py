@@ -7,6 +7,7 @@ from typing import Annotated
 import typer
 
 from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date, app
+from equity_lake.core.paths import LOGS_DIR
 
 
 def _pipeline_succeeded(results: dict[str, object]) -> bool:
@@ -33,14 +34,16 @@ def pipeline(
     skip_ingestion: Annotated[bool, typer.Option("--skip-ingestion", help="Skip Stage 1")] = False,
     skip_features: Annotated[bool, typer.Option("--skip-features", help="Skip Stage 2")] = False,
     skip_ml: Annotated[bool, typer.Option("--skip-ml", help="Skip Stage 3")] = False,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Simulate")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Simulate")] = False,
     allow_history_backfill: Annotated[bool, typer.Option("--allow-history-backfill", help="Authorize a 120-day feature-history recovery")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
-    save_results: Annotated[bool, typer.Option("--save-results", help="Save JSON results")] = False,
+    save_results: Annotated[
+        bool,
+        typer.Option("--save-results", help="Save JSON results to logs/pipeline_results_<date>.json (skipped under --dry-run)"),
+    ] = False,
 ) -> None:
     """Run the full EOD pipeline (ingest -> features -> ML)."""
     import json
-    from pathlib import Path
 
     from equity_lake.pipeline import execute_eod_pipeline
 
@@ -62,9 +65,15 @@ def pipeline(
     )
 
     if save_results:
-        output_path = Path(f"pipeline_results_{trading_date}.json")
-        output_path.write_text(json.dumps(results, indent=2, default=str))
-        typer.echo(f"Results saved to {output_path}")
+        if dry_run:
+            typer.echo("--save-results skipped: dry-run persists nothing.")
+        else:
+            # The dashboard exporter reads pipeline_results_*.json from LOGS_DIR —
+            # keep the writer and the reader on the same path.
+            output_path = LOGS_DIR / f"pipeline_results_{trading_date}.json"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            output_path.write_text(json.dumps(results, indent=2, default=str))
+            typer.echo(f"Results saved to {output_path}")
 
     if not _pipeline_succeeded(results):
         raise typer.Exit(1)

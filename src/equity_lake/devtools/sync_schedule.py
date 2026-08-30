@@ -1,4 +1,8 @@
-"""Sync the GitHub Pages workflow cron with config/settings.yaml."""
+"""Sync the GitHub Pages workflow cron with config/settings.yaml.
+
+Module CLI entrypoint (``python -m``, invoked by ``.github/workflows/pages.yml``):
+uses plain ``print``/``stderr`` output instead of structlog by devtool convention.
+"""
 
 from __future__ import annotations
 
