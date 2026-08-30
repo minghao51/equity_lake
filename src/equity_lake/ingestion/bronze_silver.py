@@ -34,6 +34,8 @@ def write_silver(df: pl.DataFrame) -> bool:
             df = df.with_columns(pl.lit(None).alias(col))
 
     df = df.select(SILVER_ARTICLE_COLUMNS)
+    if not _validate_silver_articles(df, "02_silver/processed_articles"):
+        return False
     SILVER_PROCESSED_ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
     return merge_delta(df, "02_silver/processed_articles", key_columns=["article_id", "ticker"])
 
@@ -147,10 +149,33 @@ def process_unstructured_to_silver(
     return _write_silver_generic(silver_df, silver_table_name, silver_key_columns)
 
 
+def _validate_silver_articles(df: pl.DataFrame, table_name: str) -> bool:
+    """Enforce the pointblank article contract before a silver merge (ADR-0007).
+
+    Silver merges bypass ``upsert_dataset`` entirely, so this is the write
+    boundary for ``02_silver/processed_articles`` and
+    ``02_silver/sec_extractions``. Profiling stays in memory — validation
+    never persists artifacts (ADR-0006 auxiliary paths).
+    """
+    from equity_lake.validation.pipeline import ValidationPipeline
+
+    vp = ValidationPipeline()
+    result = vp.validate(df, data_type="article")
+    if not result.success:
+        logger.error("Silver quality validation failed", table=table_name, errors=result.errors)
+        return False
+    if result.warnings:
+        for w in result.warnings:
+            logger.warning("Silver quality warning", table=table_name, warning=w)
+    return True
+
+
 def _write_silver_generic(df: pl.DataFrame, table_name: str, key_columns: list[str]) -> bool:
     """Write silver DataFrame to Delta table."""
     if df.is_empty():
         logger.warning("Empty DataFrame, skipping silver write")
+        return False
+    if not _validate_silver_articles(df, table_name):
         return False
     return merge_delta(df, table_name, key_columns=key_columns)
 

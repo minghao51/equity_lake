@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
 from fastapi.testclient import TestClient
 
 from equity_lake.api import deps
 from equity_lake.api.main import create_app
 from equity_lake.findings.models import FindingCard
+from equity_lake.storage.delta import DeltaReadError
 
 
 def _fake_card() -> FindingCard:
@@ -74,6 +76,19 @@ def test_signals_endpoint_parses_date_param(monkeypatch) -> None:
     assert captured["d"] == date(2024, 1, 2)
 
 
+def test_signals_maps_delta_read_error_to_503(monkeypatch) -> None:
+    """A broken signal-history table must surface as 503, not a silent 200 []."""
+
+    def _boom(d: date) -> list[dict[str, Any]]:
+        raise DeltaReadError("signals", RuntimeError("corrupt _delta_log"))
+
+    monkeypatch.setattr(deps, "list_signals", _boom)
+    client = TestClient(create_app())
+    response = client.get("/signals")
+    assert response.status_code == 503
+    assert "unreadable" in response.json()["detail"]
+
+
 # --- models / predictions / backtests ----------------------------------------
 
 
@@ -91,6 +106,19 @@ def test_predictions_endpoint(monkeypatch) -> None:
     response = client.get("/predictions?ticker=AAPL&limit=5")
     assert response.status_code == 200
     assert response.json()[0]["ticker"] == "AAPL"
+
+
+def test_predictions_maps_delta_read_error_to_503(monkeypatch) -> None:
+    """A missing/corrupt predictions table must surface as 503, not a silent 200 []."""
+
+    def _boom(**kw: Any) -> list[dict[str, Any]]:
+        raise DeltaReadError("04_platinum/predictions", RuntimeError("table missing"))
+
+    monkeypatch.setattr(deps, "list_predictions", _boom)
+    client = TestClient(create_app())
+    response = client.get("/predictions")
+    assert response.status_code == 503
+    assert "unreadable" in response.json()["detail"]
 
 
 def test_predictions_rejects_out_of_range_limit() -> None:

@@ -26,6 +26,7 @@ from typing import Final
 import structlog
 
 from equity_lake.core.retry import build_retry_decorator
+from equity_lake.core.settings import get_settings
 
 logger = structlog.get_logger(__name__)
 UNSIGNED_FLAG: Final[str] = "--no-sign-request"
@@ -63,6 +64,7 @@ class S3Syncer:
         workers: int = 16,
         dry_run: bool = False,
         tool: str = "auto",
+        timeout_seconds: int | None = None,
     ):
         """
         Initialize S3 syncer.
@@ -73,6 +75,8 @@ class S3Syncer:
             workers: Number of parallel workers
             dry_run: If True, skip actual downloads
             tool: Sync tool ('aws', 's5cmd', or 'auto')
+            timeout_seconds: Max seconds to wait for one sync subprocess.
+                Defaults to ``EQUITY_S3_SYNC__TIMEOUT_SECONDS`` (600s).
         """
         self.bucket = bucket
         self.target_dir = target_dir
@@ -80,6 +84,7 @@ class S3Syncer:
         self.dry_run = dry_run
         self.tool = self._detect_tool(tool) if tool == "auto" else tool
         self._use_unsigned_requests = False
+        self.timeout_seconds = timeout_seconds if timeout_seconds is not None else get_settings().s3_sync.timeout_seconds
 
         logger.info("Initialized S3 syncer", tool=self.tool)
 
@@ -172,11 +177,11 @@ class S3Syncer:
                 for line in process.stdout:
                     logger.info("s5cmd", line=line.strip())
 
-            process.wait(timeout=600)
+            process.wait(timeout=self.timeout_seconds)
             return process.returncode == 0
 
         except subprocess.TimeoutExpired as exc:
-            logger.error("s5cmd sync timed out after 600s")
+            logger.error("s5cmd sync timed out", timeout_seconds=self.timeout_seconds)
             if process is not None:
                 process.terminate()
                 try:
@@ -214,7 +219,7 @@ class S3Syncer:
 
         try:
             logger.info("Running", command=" ".join(cmd))
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=self.timeout_seconds)
             logger.info("aws_cli_stdout", stdout=result.stdout)
             return True
         except subprocess.CalledProcessError as e:

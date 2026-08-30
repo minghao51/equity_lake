@@ -76,6 +76,11 @@ PLATINUM_PREDICTIONS_DIR = PLATINUM_DIR / "predictions"
 SIGNALS_DIR = DATA_DIR / "signals"
 # Research artifacts (FindingCards, backtest & risk reports) — NOT cataloged.
 FINDINGS_DIR = DATA_DIR / "findings"
+# Data-quality profiles written by the explicit `equity validate profile` CLI path
+# (in-ingest validation profiles stay in memory) — NOT cataloged.
+PROFILES_DIR = DATA_DIR / "profiles"
+# Default DuckDB scratch database for `equity query` — NOT cataloged.
+DUCKDB_DEFAULT_PATH = DATA_DIR / "equity_data.duckdb"
 
 # ---------------------------------------------------------------------------
 # Backward-compatible aliases (deprecated — use medallion constants above)
@@ -102,6 +107,7 @@ __all__ = [
     "CN_ASHARE_DIR",
     "CONFIG_DIR",
     "DATA_DIR",
+    "DUCKDB_DEFAULT_PATH",
     "FINDINGS_DIR",
     "GOLD_DIR",
     "GOLD_FEATURES_DIR",
@@ -114,6 +120,7 @@ __all__ = [
     "PLATINUM_DIR",
     "PLATINUM_PREDICTIONS_DIR",
     "PROJECT_ROOT",
+    "PROFILES_DIR",
     "SEC_EXTRACTIONS_DIR",
     "SIGNALS_DIR",
     "SILVER_ANALYST_RATINGS_DIR",

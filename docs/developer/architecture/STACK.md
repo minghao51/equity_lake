@@ -62,7 +62,7 @@ See [INTEGRATIONS.md](INTEGRATIONS.md) for the full adapter map.
 - **tenacity** (>=9.0.0): retry with exponential backoff (max 3 attempts) for all source fetchers, via the shared factory `core/retry.py::build_retry_decorator`. Never hand-roll retry loops.
 - **httpx** (>=0.28.0): HTTP client for REST APIs (Finnhub, Reddit JSON, SEC EDGAR, StockTwits).
 - **pydantic** (>=2.5.0) / **pydantic-settings** (>=2.6.1): schemas and the single `Settings(BaseSettings)` with `YamlConfigSettingsSource`, `env_prefix="EQUITY_"`, `env_nested_delimiter="__"`, `extra="forbid"` (ADR-0004).
-- **pointblank**: validation schemas at ingestion write boundaries (`validation/pipeline.py`) — behind the optional `validation` group.
+- **pointblank** (>=0.8): validation schemas enforced by default at ingestion write boundaries (`validation/pipeline.py`) — a main dependency, not an optional group.
 - **typer** (>=0.12.0) + **rich** (>=13.7.0): unified `equity` CLI and terminal output.
 - **pyyaml** (>=6.0.2): config files (`config/settings.yaml`, RSS/social source lists). **tqdm**: progress bars.
 - **Dev tooling** (in the `dev` group): pytest (>=8), pytest-cov, pytest-mock, pytest-xdist, ruff (>=0.8, line-length 150, rules E,F,UP,B,SIM,I), mypy (>=1.11, strict), pre-commit, pymarkdownlnt, pip-audit, jupyter/ipykernel, vaderSentiment.
@@ -99,15 +99,14 @@ Every optional capability is a `[dependency-groups]` entry (installed with
 | `backtesting` | `VectorBacktestEngine` (polars-backtest) + jinja2 reports — required for `equity backtest` | `uv sync --group backtesting` |
 | `agent` | sqlite-vec vector store for RAG | `uv sync --group agent` |
 | `dashboard` | streamlit dashboard UI | `uv sync --group dashboard` |
-| `validation` | pointblank data validation | `uv sync --group validation` |
 | `sentiment` | vaderSentiment + praw | `uv sync --group sentiment` |
 | `s3` | boto3 + s5cmd for S3 bootstrap/sync | `uv sync --group s3` |
 | `schedule` | croniter schedule parsing | `uv sync --group schedule` |
 | `docs` | MkDocs Material, mkdocstrings-python, mike | `uv sync --group docs` |
 
 Note: `boto3` and `s5cmd` are **not** core dependencies — they belong to the
-optional `s3` group. Likewise `pointblank` (validation), `streamlit`
-(dashboard), and `lightgbm` (ml) are optional.
+optional `s3` group. Likewise `streamlit` (dashboard) and `lightgbm` (ml) are
+optional.
 
 ## Optional vs Core Dependencies
 

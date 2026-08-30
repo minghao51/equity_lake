@@ -5,7 +5,29 @@ from unittest.mock import patch
 
 import polars as pl
 
-from equity_lake.ingestion.bronze_silver import _get_processed_ids, write_silver
+from equity_lake.ingestion.bronze_silver import _get_processed_ids, _write_silver_generic, write_silver
+
+
+def _silver_article_row(**overrides) -> dict:
+    row = {
+        "article_id": "art-1",
+        "ticker": "AAPL",
+        "source_type": "rss",
+        "source_name": "test",
+        "published_at": None,
+        "date": date(2026, 6, 14),
+        "sentiment_score": 0.7,
+        "sentiment_label": "bullish",
+        "confidence": 0.9,
+        "event_type": "product",
+        "summary": "Apple up",
+        "impact_horizon": "short",
+        "market_relevance": 0.8,
+        "key_entities": '["Tim Cook"]',
+        "source_metadata": '{"feed": "test"}',
+    }
+    row.update(overrides)
+    return row
 
 
 class TestWriteSilver:
@@ -41,6 +63,33 @@ class TestWriteSilver:
             assert call_args.kwargs["key_columns"] == ["article_id", "ticker"]
             # Regression (20260804 hygiene): silver writes must land under 02_silver/, not silver/
             assert call_args.args[1] == "02_silver/processed_articles"
+
+
+class TestSilverQualityGate:
+    """B3: silver merges enforce the pointblank article contract (ADR-0007)."""
+
+    def test_write_silver_rejects_out_of_range_sentiment(self):
+        df = pl.DataFrame([_silver_article_row(sentiment_score=5.0), _silver_article_row(article_id="art-2")])
+        with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
+            assert write_silver(df) is False
+        mock_merge.assert_not_called()
+
+    def test_write_silver_accepts_valid_rows(self):
+        df = pl.DataFrame([_silver_article_row(), _silver_article_row(article_id="art-2", ticker=None)])
+        with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
+            assert write_silver(df) is True
+        mock_merge.assert_called_once()
+
+    def test_generic_silver_rejects_null_article_id(self):
+        df = pl.DataFrame({"article_id": [None], "ticker": ["AAPL"]})
+        assert _write_silver_generic(df, "02_silver/sec_extractions", ["article_id"]) is False
+
+    def test_generic_silver_allows_null_ticker(self):
+        """Market-wide news pairs (all-null ticker) are legitimate silver rows."""
+        df = pl.DataFrame({"article_id": ["a-1", "a-2"], "ticker": [None, None]})
+        with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
+            assert _write_silver_generic(df, "02_silver/processed_articles", ["article_id", "ticker"]) is True
+        mock_merge.assert_called_once()
 
 
 class TestGetProcessedIds:

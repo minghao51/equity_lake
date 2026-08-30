@@ -61,12 +61,23 @@ class MonitoringSettings(BaseModel):
     null_threshold_pct: float = 5.0
 
 
+class S3SyncSettings(BaseModel):
+    """Subprocess limits for the S3 historical sync (``equity data sync``)."""
+
+    timeout_seconds: int = Field(
+        default=600,
+        ge=1,
+        description="Max seconds to wait for a single s5cmd/AWS sync subprocess.",
+    )
+
+
 class Settings(BaseSettings):
     project: ProjectSettings = Field(default_factory=ProjectSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
+    s3_sync: S3SyncSettings = Field(default_factory=S3SyncSettings)
 
     model_config = SettingsConfigDict(
         env_prefix="EQUITY_",

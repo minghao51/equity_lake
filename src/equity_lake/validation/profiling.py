@@ -11,6 +11,7 @@ import polars as pl
 import structlog
 from pydantic import BaseModel, Field
 
+from equity_lake.core.paths import PROFILES_DIR
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
 
 logger = structlog.get_logger()
@@ -67,18 +68,28 @@ class DataProfiler:
     for column-level profiling.
     """
 
-    def __init__(self, storage_path: str = "data/profiles") -> None:
-        self.storage_path = Path(storage_path)
+    def __init__(self, storage_path: str | Path | None = None) -> None:
+        # Defaults to the auxiliary profiles dir (ADR-0006), never CWD-relative.
+        self.storage_path = Path(storage_path) if storage_path is not None else PROFILES_DIR
         self._profiles: dict[str, ProfileView] = {}
 
-    def profile(self, df: FrameLike, name: str) -> ProfileView:
+    def profile(self, df: FrameLike, name: str, persist: bool = True) -> ProfileView:
+        """Build a profile for ``df`` under ``name``.
+
+        With ``persist=True`` (the default) the profile is also written to
+        ``<storage_path>/<name>.json`` — this is reserved for the explicit
+        ``equity validate profile``/``drift`` CLI paths. In-pipeline profiling
+        (ingest write boundary, drift baselines) passes ``persist=False`` and
+        keeps the profile in memory only, so validation never writes artifacts.
+        """
         df_polars = ensure_polars(df)
         view = self._build_profile(df_polars)
         self._profiles[name] = view
 
-        self.storage_path.mkdir(parents=True, exist_ok=True)
-        view.write(str(self.storage_path / f"{name}.json"))
-        logger.info("Created profile", name=name, rows=df_polars.height)
+        if persist:
+            self.storage_path.mkdir(parents=True, exist_ok=True)
+            view.write(str(self.storage_path / f"{name}.json"))
+        logger.info("Created profile", name=name, rows=df_polars.height, persist=persist)
         return view
 
     def load_profile(self, name: str) -> ProfileView | None:

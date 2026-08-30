@@ -245,8 +245,8 @@ writer entry point is `ingestion/writers.upsert_dataset()`.
 #### Writers (`ingestion/writers.py`)
 `upsert_dataset()` is the single canonical writer for every dataset — market
 data, macro, news, and predictions alike. It converts to Polars, runs
-`validate_schema()` (a required-column presence / all-null check), optionally
-runs pointblank quality validation (`validate_quality=True`, ADR-0007), and
+`validate_schema()` (a required-column presence / all-null check), runs
+pointblank quality validation by default (`validate_quality=True`, ADR-0007), and
 merges into the date-partitioned Delta table keyed by per-dataset dedupe
 columns. There are no per-dataset writer functions such as
 `write_market_data()` or `write_macro_data()`.
@@ -525,7 +525,7 @@ uv run equity catalog-generate -o /tmp.jsonl # custom output path
 │ 5. Validation & Write                                        │
 │    writers.validate_schema() — required-column check         │
 │    writers.upsert_dataset() — dedupe + Delta merge           │
-│      (optional pointblank validation via validate_quality)   │
+│      pointblank quality validation (enforced by default)     │
 │    Delta-aware skip-existing checks                          │
 └────────────────────────┬─────────────────────────────────────┘
                          │

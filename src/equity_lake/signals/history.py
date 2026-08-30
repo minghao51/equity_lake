@@ -44,7 +44,7 @@ def save_signals(signals: list[Signal], target_date: date) -> None:
     frame = pl.DataFrame(records)
     merge_delta(
         frame,
-        market="signals",
+        table="signals",
         key_columns=["ticker", "date", "signal_type"],
         lake_dir=DATA_DIR,
     )

@@ -95,7 +95,7 @@ def run_prediction_job(
             # stage instead of reporting success with unwritten predictions.
             persisted = merge_delta(
                 predictions_df,
-                market="04_platinum/predictions",
+                table="04_platinum/predictions",
                 key_columns=["ticker", "date"],
             )
             if not persisted:

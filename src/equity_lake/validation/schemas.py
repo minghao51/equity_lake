@@ -4,10 +4,23 @@ from __future__ import annotations
 
 from typing import Any
 
-import pointblank as pb
 import polars as pl
 
 from equity_lake.core.polars_utils import ensure_polars
+
+try:
+    import pointblank as pb
+except ImportError as _exc:  # pragma: no cover - exercised via subprocess test
+    pb = None
+    _POINTBLANK_IMPORT_ERROR: Exception | None = _exc
+else:
+    _POINTBLANK_IMPORT_ERROR = None
+
+_POINTBLANK_INSTALL_HINT = (
+    "Data-quality validation requires 'pointblank', which is not available in this "
+    "environment. Re-sync the project environment with `uv sync` (pointblank is a "
+    "core dependency of equity-lake)."
+)
 
 
 class PointblankSchema:
@@ -19,6 +32,8 @@ class PointblankSchema:
 
     @classmethod
     def validate(cls, df: Any) -> pl.DataFrame:
+        if pb is None:
+            raise RuntimeError(_POINTBLANK_INSTALL_HINT) from _POINTBLANK_IMPORT_ERROR
         df_polars = ensure_polars(df)
         if df_polars.is_empty():
             return df_polars
@@ -97,8 +112,31 @@ class NewsDataSchema(PointblankSchema):
         )
 
 
+class ArticleDataSchema(PointblankSchema):
+    """Schema for unstructured article rows (bronze raw + silver article pairs).
+
+    Only structurally-required columns are enforced (``article_id``, and
+    ``date`` when present). Enrichment columns are checked when present and
+    pass on nulls — article rows are sparse by design (null tickers for
+    market-wide news, optional LLM enrichment).
+    """
+
+    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+        v = pb.Validate(data=df, label="Article data schema").col_vals_not_null(columns="article_id")
+        if "date" in df.columns:
+            v = v.col_vals_not_null(columns="date")
+        if "sentiment_score" in df.columns:
+            v = v.col_vals_expr(expr=pl.col("sentiment_score").is_null() | pl.col("sentiment_score").is_between(-1, 1))
+        if "confidence" in df.columns:
+            v = v.col_vals_expr(expr=pl.col("confidence").is_null() | pl.col("confidence").is_between(0, 1))
+        if "market_relevance" in df.columns:
+            v = v.col_vals_expr(expr=pl.col("market_relevance").is_null() | pl.col("market_relevance").is_between(0, 1))
+        return v
+
+
 SCHEMA_REGISTRY: dict[str, type[PointblankSchema]] = {
     "price": PriceDataSchema,
     "macro": MacroDataSchema,
     "news": NewsDataSchema,
+    "article": ArticleDataSchema,
 }

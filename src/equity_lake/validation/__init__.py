@@ -4,12 +4,14 @@ from equity_lake.validation.pipeline import ValidationPipeline, ValidationResult
 from equity_lake.validation.profiling import DataProfiler, DriftReport
 from equity_lake.validation.schemas import (
     SCHEMA_REGISTRY,
+    ArticleDataSchema,
     MacroDataSchema,
     NewsDataSchema,
     PriceDataSchema,
 )
 
 __all__ = [
+    "ArticleDataSchema",
     "DataProfiler",
     "DriftReport",
     "MacroDataSchema",

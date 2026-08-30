@@ -38,8 +38,8 @@ class ValidationPipeline:
         self._baselines: dict[str, Any] = {}
 
     def set_baseline(self, name: str, df: FrameLike) -> None:
-        """Set a baseline profile for drift detection."""
-        self._baselines[name] = self.profiler.profile(df, f"baseline_{name}")
+        """Set a baseline profile for drift detection (in memory only)."""
+        self._baselines[name] = self.profiler.profile(df, f"baseline_{name}", persist=False)
 
     def validate(
         self,
@@ -73,7 +73,10 @@ class ValidationPipeline:
         drift_detected = False
         if name:
             try:
-                profile = self.profiler.profile(df_polars, name)
+                # Pipeline profiling is in-memory only: profile artifacts on disk
+                # are written exclusively by the explicit `equity validate profile`
+                # CLI path (DataProfiler.profile(persist=True)).
+                profile = self.profiler.profile(df_polars, name, persist=False)
                 metrics["quality"] = self.profiler.get_quality_metrics(profile)
 
                 if check_drift and name in self._baselines:
@@ -87,7 +90,7 @@ class ValidationPipeline:
                 warnings.append(f"Profiling failed: {exc}")
 
         # 3. Custom checks
-        errors.extend(self._custom_checks(df_polars))
+        errors.extend(self._custom_checks(df_polars, data_type))
 
         return ValidationResult(
             success=len(errors) == 0,
@@ -119,11 +122,17 @@ class ValidationPipeline:
 
         return df_fixed, self.validate(df_fixed, data_type)
 
-    def _custom_checks(self, df: pl.DataFrame) -> list[str]:
+    def _custom_checks(self, df: pl.DataFrame, data_type: str = "price") -> list[str]:
         """Run additional validation checks."""
         errors: list[str] = []
         if df.is_empty():
             errors.append("DataFrame is empty")
+            return errors
+
+        if data_type == "article":
+            # Article rows are sparse by design (null tickers for market-wide
+            # news, optional enrichment columns); their row-level contract is
+            # ArticleDataSchema, so only the emptiness check applies here.
             return errors
 
         row_count = df.height

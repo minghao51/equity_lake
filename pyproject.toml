@@ -27,6 +27,7 @@ dependencies = [
     "duckdb>=1.0.0",
     "pandas>=2.2.0",
     "polars>=1.0.0",
+    "pointblank>=0.8",
     "pyarrow>=18.0.0",
     "numpy>=1.24.0",
     "tqdm>=4.66.0",
@@ -89,9 +90,6 @@ agent = [
 ]
 dashboard = [
     "streamlit>=1.28.0",
-]
-validation = [
-    "pointblank>=0.8",
 ]
 sentiment = [
     "vaderSentiment>=3.3.2",
