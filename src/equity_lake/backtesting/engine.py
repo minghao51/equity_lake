@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import itertools
 from datetime import date
 from typing import Any, cast
 
@@ -250,76 +249,6 @@ class VectorBacktestEngine:
             return (creturn * self.initial_cash).rename("equity")
 
         return pl.Series("equity", [], dtype=pl.Float64)
-
-    def optimize(
-        self,
-        param_grid: dict[str, list[Any]],
-        target: str = "sharpe_ratio",
-    ) -> dict[str, Any]:
-        if not POLARS_BACKTEST_AVAILABLE:
-            raise ImportError("polars-backtest is required for optimization.")
-
-        logger.info(
-            "Starting parameter optimization",
-            strategy=self.strategy.name,
-            param_combinations=1,
-        )
-        for v in param_grid.values():
-            logger.info("param_combinations", n=len(v))
-
-        data = self._load_data()
-        if data.is_empty():
-            raise ValueError("No data available for optimization")
-
-        best_score = float("-inf")
-        best_params: dict[str, Any] = {}
-        param_names = list(param_grid.keys())
-        param_values = [param_grid[name] for name in param_names]
-
-        for combo in itertools.product(*param_values):
-            params = dict(zip(param_names, combo, strict=True))
-
-            strategy_class = type(self.strategy)
-            strategy = strategy_class(params=params)
-            strategy.initialize(data)
-            weights_df = strategy.generate_weights(data)
-
-            data_with_weights = data.join(weights_df, on=["date", "ticker"], how="left").with_columns(pl.col("weight").fill_null(0.0))
-
-            try:
-                report = cast(Any, data_with_weights).bt.backtest_with_report(
-                    trade_at_price="close",
-                    position=pl.col("weight").cast(pl.Float64),
-                    symbol="ticker",
-                    fee_ratio=self.fee_ratio,
-                    tax_ratio=self.tax_ratio,
-                )
-                stats = report.get_stats()
-                if stats.is_empty():
-                    continue
-
-                row = stats.row(0, named=True)
-                score = _float_scalar(row.get("daily_sharpe", 0.0))
-                if target == "total_return":
-                    score = _float_scalar(row.get("total_return", 0.0))
-
-                if score > best_score:
-                    best_score = score
-                    best_params = params.copy()
-            except Exception as e:
-                logger.warning("optimization_failed_for_params", params=params, error=str(e))
-
-            strategy.finalize()
-
-        result = {
-            "best_params": best_params,
-            f"best_{target}": best_score if best_score != float("-inf") else None,
-            "total_combinations": len(list(itertools.product(*param_values))),
-        }
-
-        logger.info("Optimization complete", best_params=best_params, best_score=best_score)
-
-        return result
 
 
 __all__ = ["VectorBacktestEngine"]

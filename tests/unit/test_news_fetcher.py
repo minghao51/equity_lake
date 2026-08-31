@@ -88,11 +88,6 @@ class TestSentimentAnalyzer:
         assert "label" in result_df.columns
         assert result_df["label"].to_list() == ["positive", "negative", "neutral"]
 
-    def test_finbert_not_implemented(self):
-        """Test that FinBERT method raises NotImplementedError."""
-        with pytest.raises(NotImplementedError):
-            SentimentAnalyzer(method="finbert")
-
 
 class TestAnalyzeSentimentScores:
     """Test suite for analyze_sentiment_scores helper function."""

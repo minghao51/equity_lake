@@ -178,7 +178,7 @@ result = engine.run()
 
 ### Momentum
 
-2. **CrossSectionalMomentumStrategy** - Rank stocks by past returns (`lookback_days` 252, `skip_days` 21, `top_pct`/`bottom_pct` 0.3, `rebalance_days` 21, `long_only`, `volatility_target` 0.15, `min_stocks` 10)
+2. **CrossSectionalMomentumStrategy** - Rank stocks by past returns (`lookback_days` 252, `skip_days` 21, `top_pct`/`bottom_pct` 0.3, `rebalance_days` 21, `long_only`, `min_stocks` 10)
 
 ### Mean Reversion
 

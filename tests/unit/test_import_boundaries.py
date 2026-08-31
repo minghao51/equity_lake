@@ -118,7 +118,6 @@ def _imported_top_packages(source: str, file_path: str) -> set[str]:
 
 # Layer -> forbidden top-level packages (upward / cross-cutting edges).
 LAYER_BOUNDARIES: dict[str, set[str]] = {
-    "agent": {"cli", "pipeline", "dashboard"},
     "api": {"cli", "pipeline"},
     "core": {"cli", "dashboard", "sources"},
     "storage": {"cli", "dashboard"},

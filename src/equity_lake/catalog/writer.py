@@ -35,7 +35,6 @@ def catalog_to_jsonl(catalog: Catalog) -> str:
 
     for dataset in catalog.datasets:
         entry = {"type": "dataset", **dataset.model_dump()}
-        entry["columns"] = [c.model_dump() for c in dataset.columns]
         lines.append(json.dumps(entry, ensure_ascii=False))
 
     for node in catalog.nodes:

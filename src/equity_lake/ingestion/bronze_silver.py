@@ -18,26 +18,9 @@ import polars as pl
 import structlog
 
 from equity_lake.core.paths import BRONZE_RAW_ARTICLES_DIR, SILVER_PROCESSED_ARTICLES_DIR
-from equity_lake.core.schemas import SILVER_ARTICLE_COLUMNS
 from equity_lake.storage.delta import merge_delta
 
 logger = structlog.get_logger()
-
-
-def write_silver(df: pl.DataFrame) -> bool:
-    if df.is_empty():
-        logger.warning("Empty DataFrame, skipping silver write")
-        return False
-
-    for col in SILVER_ARTICLE_COLUMNS:
-        if col not in df.columns:
-            df = df.with_columns(pl.lit(None).alias(col))
-
-    df = df.select(SILVER_ARTICLE_COLUMNS)
-    if not _validate_silver_articles(df, "02_silver/processed_articles"):
-        return False
-    SILVER_PROCESSED_ARTICLES_DIR.mkdir(parents=True, exist_ok=True)
-    return merge_delta(df, "02_silver/processed_articles", key_columns=["article_id", "ticker"])
 
 
 def read_bronze(trading_date: date | None = None, table_path: Path | None = None) -> pl.DataFrame:
@@ -246,5 +229,4 @@ __all__ = [
     "process_bronze_to_silver",
     "process_unstructured_to_silver",
     "read_bronze",
-    "write_silver",
 ]

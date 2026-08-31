@@ -78,7 +78,7 @@ def news(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     max_articles: Annotated[int, typer.Option("--max-articles", help="Max articles per ticker")] = 50,
-    sentiment_method: Annotated[str, typer.Option("--sentiment-method", help="vader or finbert")] = "vader",
+    sentiment_method: Annotated[str, typer.Option("--sentiment-method", help="Sentiment method (vader)")] = "vader",
     min_relevance: Annotated[float, typer.Option("--min-relevance", help="Min relevance 0.0-1.0")] = 0.0,
     max_workers: Annotated[int, typer.Option("--max-workers", help="Parallel workers")] = 1,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,

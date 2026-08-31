@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import sys
 from datetime import date
-from pathlib import Path
 
 import pytest
 
 from equity_lake.findings.models import FindingCard
-from equity_lake.ml.registry import __all__, log_comparison, log_training_run
+from equity_lake.ml.registry import __all__, log_comparison
 
 
 def _sample_card(card_id: str = "xgb-vs-lgbm") -> FindingCard:
@@ -41,33 +40,8 @@ def _no_wandb_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestExports:
-    def test_all_exports_both_functions(self) -> None:
-        assert set(__all__) == {"log_comparison", "log_training_run"}
-
-
-class TestTrainingRunNoOp:
-    def test_returns_none_without_api_key(self, tmp_path: Path) -> None:
-        meta = tmp_path / "AAPL_v1_direction.training_metadata.json"
-        meta.write_text(
-            '{"ticker":"AAPL","model_mode":"v1_direction","metrics":{"train_accuracy":0.9}}',
-            encoding="utf-8",
-        )
-        assert log_training_run(meta) is None
-
-    def test_safe_when_metadata_missing(self, tmp_path: Path) -> None:
-        missing = tmp_path / "does_not_exist.training_metadata.json"
-        # Must not raise even though WANDB_API_KEY is unset; returns None.
-        assert log_training_run(missing) is None
-
-    def test_with_shap_artifact_is_noop(self, tmp_path: Path) -> None:
-        meta = tmp_path / "model.training_metadata.json"
-        meta.write_text(
-            '{"ticker":"AAPL","model_mode":"v2_meta_label","metrics":{"val_accuracy":0.55}}',
-            encoding="utf-8",
-        )
-        shap = tmp_path / "shap.json"
-        shap.write_text("{}", encoding="utf-8")
-        assert log_training_run(meta, shap_artifact=shap) is None
+    def test_all_exports_comparison_only(self) -> None:
+        assert set(__all__) == {"log_comparison"}
 
 
 class TestComparisonNoOp:
@@ -85,7 +59,7 @@ class TestComparisonNoOp:
 class TestNoWandbTouch:
     """The no-op path must never import or touch the wandb module."""
 
-    def test_no_attribute_access_on_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_no_attribute_access_on_noop(self, monkeypatch: pytest.MonkeyPatch) -> None:
         accessed: list[str] = []
 
         class _WandbSentinel:
@@ -97,12 +71,6 @@ class TestNoWandbTouch:
         # sentinel; any attribute access (``wandb.init``…) records + raises.
         monkeypatch.setitem(sys.modules, "wandb", _WandbSentinel())
 
-        meta = tmp_path / "model.training_metadata.json"
-        meta.write_text('{"ticker":"AAPL","model_mode":"v1_direction","metrics":{}}', encoding="utf-8")
-        missing = tmp_path / "absent.training_metadata.json"
-
-        assert log_training_run(meta) is None
-        assert log_training_run(missing) is None
         assert log_comparison([_sample_card()], name="run-1") is None
         assert log_comparison([], name="empty") is None
         assert accessed == []

@@ -325,16 +325,5 @@ class CNHybridFetcher(MarketDataFetcher):
         """
         return standardize_columns(df, columns=STANDARD_COLUMNS)
 
-    def get_source_status(self) -> dict[str, bool]:
-        """Get status of available data sources.
-
-        Returns:
-            Dict mapping source names to availability status
-        """
-        return {
-            "efinance": self.enable_efinance,
-            "akshare": self.enable_akshare,
-        }
-
 
 __all__ = ["CNHybridFetcher"]

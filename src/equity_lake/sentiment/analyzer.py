@@ -1,9 +1,8 @@
-"""Sentiment analysis for financial text using VADER and FinBERT."""
+"""Sentiment analysis for financial text using VADER."""
 
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
 
 import polars as pl
 import structlog
@@ -24,7 +23,6 @@ class SentimentMethod(StrEnum):
     """Supported sentiment analysis methods."""
 
     VADER = "vader"
-    FINBERT = "finbert"
 
 
 class SentimentLabel(StrEnum):
@@ -36,9 +34,9 @@ class SentimentLabel(StrEnum):
 
 
 class SentimentAnalyzer:
-    """Analyze sentiment of financial text using VADER or FinBERT."""
+    """Analyze sentiment of financial text using VADER."""
 
-    def __init__(self, method: Literal["vader", "finbert"] = "vader"):
+    def __init__(self, method: str = "vader"):
         self.method = method
 
         if method == "vader":
@@ -46,10 +44,8 @@ class SentimentAnalyzer:
                 raise ImportError("vaderSentiment is required for VADER method. Install with: uv pip install vaderSentiment")
             self.analyzer = SentimentIntensityAnalyzer()
             logger.info("Initialized VADER sentiment analyzer")
-        elif method == "finbert":
-            raise NotImplementedError("FinBERT method not yet implemented. Use method='vader' for now.")
         else:
-            raise ValueError(f"Unknown method: {method}. Use 'vader' or 'finbert'")
+            raise ValueError(f"Unknown method: {method}. Use 'vader'")
 
     def analyze(self, text: str) -> dict[str, object]:
         """Analyze sentiment of a single text string."""
@@ -62,7 +58,7 @@ class SentimentAnalyzer:
 
         if self.method == "vader":
             return self._analyze_vader(text)
-        raise NotImplementedError(f"analyze() not implemented for method={self.method}")
+        raise ValueError(f"analyze() not implemented for method={self.method}")
 
     def analyze_batch(self, texts: list[str]) -> pl.DataFrame:
         """Analyze sentiment for multiple texts."""
@@ -113,7 +109,7 @@ class SentimentAnalyzer:
 def analyze_sentiment_scores(
     df: FrameLike,
     text_column: str = "headline",
-    method: Literal["vader", "finbert"] = "vader",
+    method: str = "vader",
 ) -> pl.DataFrame:
     """Add sentiment scores to a frame with text data."""
     frame = ensure_polars(df)

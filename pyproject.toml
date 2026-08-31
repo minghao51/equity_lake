@@ -76,24 +76,14 @@ ml = [
     "lightgbm>=4.3.0",
     "wandb[workspaces]>=0.18.0",
 ]
-viz = [
-    "matplotlib>=3.8.0",
-    "seaborn>=0.13.2",
-    "plotly>=6.5.0",
-]
 backtesting = [
     "polars-backtest>=0.1.6",
-    "jinja2>=3.1.0",
-]
-agent = [
-    "sqlite-vec>=0.1.0",
 ]
 dashboard = [
     "streamlit>=1.28.0",
 ]
 sentiment = [
     "vaderSentiment>=3.3.2",
-    "praw>=7.8.1",
 ]
 s3 = [
     "boto3>=1.34.0",
@@ -231,7 +221,6 @@ module = [
     "joblib.*",
     "hamilton.*",
     "croniter.*",
-    "praw.*",
     "vaderSentiment.*",
     "fredapi.*",
     "dotenv.*",
@@ -240,7 +229,6 @@ module = [
     "pytest.*",
     "FinDataReader.*",
     "FinanceDataReader.*",
-    "vectorbt.*",
      "polars_backtest.*",
      "typer.*",
      "pointblank.*",
@@ -248,7 +236,6 @@ module = [
      "pyarrow.*",
     "feedparser.*",
     "openai.*",
-    "sqlite_vec.*",
     "readability.*",
     "lightgbm.*",
     "wandb.*",

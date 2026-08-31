@@ -7,7 +7,6 @@ import pandas as pd
 
 from equity_lake.ml.labeling import apply_triple_barrier_labels
 from equity_lake.ml.sample_weights import (
-    compute_concurrency_matrix,
     compute_sample_uniqueness,
     compute_uniqueness_weights,
 )
@@ -35,18 +34,6 @@ def test_compute_sample_uniqueness_overlapping_window_has_lower_score() -> None:
     assert u[1] < 1.0
     assert u[2] < 1.0
     assert all(0.0 < value < 1.0 for value in u)
-
-
-def test_concurrency_matrix_diagonal_and_symmetry() -> None:
-    starts = np.array([0, 2, 8])
-    ends = np.array([3, 4, 10])
-    c = compute_concurrency_matrix(starts, ends)
-    assert c.shape == (3, 3)
-    np.testing.assert_array_equal(np.diag(c), np.ones(3))
-    np.testing.assert_allclose(c, c.T)
-    assert c[0, 1] == 1.0
-    assert c[0, 2] == 0.0
-    assert c[1, 2] == 0.0
 
 
 def test_compute_uniqueness_weights_from_labeled_frame() -> None:

@@ -17,23 +17,6 @@ import numpy as np
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
 
 
-def compute_concurrency_matrix(
-    start_indices: np.ndarray,
-    end_indices: np.ndarray,
-) -> np.ndarray:
-    """Build the symmetric concurrency matrix c_t1,t2.
-
-    ``c[i, j]`` = 1 if sample ``i`` and sample ``j`` overlap (share at
-    least one row index), else 0. The diagonal is 1 by definition.
-    """
-    n = len(start_indices)
-    concurrency = np.eye(n, dtype=np.float64)
-    for i in range(n):
-        active = (start_indices <= end_indices[i]) & (end_indices >= start_indices[i])
-        concurrency[i, active] = 1.0
-    return concurrency
-
-
 def compute_sample_uniqueness(
     start_indices: np.ndarray,
     end_indices: np.ndarray,
@@ -53,7 +36,7 @@ def compute_sample_uniqueness(
     if n == 0:
         return np.zeros(0, dtype=np.float64)
 
-    n_steps = int(end_indices.max()) + 1 if n > 0 else 0
+    n_steps = int(end_indices.max()) + 1
     if n_steps <= 0:
         return np.ones(n, dtype=np.float64)
 

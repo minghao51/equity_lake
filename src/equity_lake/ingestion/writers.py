@@ -15,8 +15,7 @@ logger = structlog.get_logger()
 
 
 def _dedupe_key_columns(market: str) -> list[str]:
-    # Medallion paths + legacy market strings both supported
-    if market in ("01_bronze/macro", "macro", "macro_indicators"):
+    if market in ("01_bronze/macro", "macro"):
         return ["indicator", "date"]
     if market in ("02_silver/news_sentiment", "us_news"):
         return ["url"]
@@ -24,7 +23,6 @@ def _dedupe_key_columns(market: str) -> list[str]:
         return ["ticker", "datetime", "source"]
     if market in (
         "01_bronze/raw_articles",
-        "bronze/raw_articles",
         "rss_news",
         "reddit_posts",
         "stocktwits_messages",
@@ -32,7 +30,7 @@ def _dedupe_key_columns(market: str) -> list[str]:
         "sec_filings_fulltext",
     ):
         return ["source_type", "source_url"]
-    if market in ("02_silver/processed_articles", "silver/processed_articles"):
+    if market == "02_silver/processed_articles":
         return ["article_id", "ticker"]
     if market in ("02_silver/analyst_ratings", "us_analyst_ratings"):
         return ["ticker", "date"]
@@ -44,21 +42,19 @@ def _dedupe_key_columns(market: str) -> list[str]:
 
 
 _NEWS_QUALITY_MARKETS = frozenset({"us_news", "us_social_sentiment", "02_silver/news_sentiment", "02_silver/social_sentiment"})
-_MACRO_QUALITY_MARKETS = frozenset({"macro", "macro_indicators", "01_bronze/macro"})
+_MACRO_QUALITY_MARKETS = frozenset({"macro", "01_bronze/macro"})
 # Datasets with no cheap pointblank schema: article-type tables are enforced at
 # the silver merge path (ingestion/bronze_silver.py), the rest rely on the
 # column-presence `validate_schema` contract only.
 _UNTYPED_QUALITY_MARKETS = frozenset(
     {
         "01_bronze/raw_articles",
-        "bronze/raw_articles",
         "rss_news",
         "reddit_posts",
         "stocktwits_messages",
         "us_earnings_transcripts",
         "sec_filings_fulltext",
         "02_silver/processed_articles",
-        "silver/processed_articles",
         "02_silver/sec_extractions",
         "us_analyst_ratings",
         "02_silver/analyst_ratings",
@@ -149,7 +145,7 @@ def upsert_dataset(
 
 def validate_schema(df: FrameLike, market: str) -> bool:
     df_pl = ensure_polars(df)
-    if market in ("macro", "macro_indicators", "01_bronze/macro"):
+    if market in ("macro", "01_bronze/macro"):
         required_cols = MACRO_COLUMNS
     elif market in ("us_news", "02_silver/news_sentiment"):
         required_cols = NEWS_COLUMNS
@@ -161,7 +157,7 @@ def validate_schema(df: FrameLike, market: str) -> bool:
         required_cols = ["ticker", "date"]
     elif market in ("us_sec_financials", "02_silver/sec_financials"):
         required_cols = ["ticker", "date", "filing_type"]
-    elif market in ("bronze/raw_articles", "silver/processed_articles", "01_bronze/raw_articles", "02_silver/processed_articles"):
+    elif market in ("01_bronze/raw_articles", "02_silver/processed_articles"):
         required_cols = ["article_id", "date"]
     elif market in ("predictions", "04_platinum/predictions"):
         required_cols = ["ticker", "date", "direction", "probability"]

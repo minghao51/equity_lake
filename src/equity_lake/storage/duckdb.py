@@ -121,26 +121,6 @@ class EquityDataDB:
             logger.error("Query failed", error=str(e))
             return pl.DataFrame()
 
-    def query_arrow(self, sql: str) -> Any:
-        """Execute SQL query and return result as PyArrow Table (zero-copy)."""
-        import pyarrow as pa
-
-        self._ensure_views()
-        try:
-            return self.con.execute(sql).fetch_arrow_table()
-        except Exception as e:
-            logger.error("Arrow query failed", error=str(e))
-            return pa.table({})
-
-    def execute(self, sql: str) -> Any:
-        """Execute SQL query and return result."""
-        self._ensure_views()
-        try:
-            return self.con.execute(sql)
-        except Exception as e:
-            logger.error("Execution failed", error=str(e))
-            raise
-
     QUERY_MAP: dict[str, str] = {
         "latest_summary": "query_1_latest_data_summary",
         "top_volume": "query_2_top_volume_stocks",

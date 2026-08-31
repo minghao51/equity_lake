@@ -82,6 +82,16 @@ class MonitoringSettings(BaseModel):
     )
 
 
+class AlertingSettings(BaseModel):
+    """Alert delivery for ``equity monitor``.
+
+    Overridable via ``EQUITY_ALERTING__*`` env vars or ``config/settings.yaml``.
+    When ``webhook_url`` is unset, alerts go to the console only.
+    """
+
+    webhook_url: str | None = Field(default=None, description="Optional webhook URL; alerts are POSTed as JSON in addition to the console.")
+
+
 class S3SyncSettings(BaseModel):
     """Subprocess limits for the S3 historical sync (``equity data sync``)."""
 
@@ -98,6 +108,7 @@ class Settings(BaseSettings):
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     dashboard: DashboardSettings = Field(default_factory=DashboardSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
+    alerting: AlertingSettings = Field(default_factory=AlertingSettings)
     s3_sync: S3SyncSettings = Field(default_factory=S3SyncSettings)
 
     model_config = SettingsConfigDict(

@@ -592,9 +592,8 @@ class TestCNHybridFetcher:
                 enable_akshare=True,
             )
 
-            status = fetcher.get_source_status()
-            assert status["efinance"] is True
-            assert status["akshare"] is True
+            assert fetcher.enable_efinance is True
+            assert fetcher.enable_akshare is True
             assert mock_efinance.call_args.kwargs["retry_attempts"] == 4
             assert mock_efinance.call_args.kwargs["retry_delay"] == 2.0
             assert fetcher.configured_ticker_count > 0
@@ -607,9 +606,8 @@ class TestCNHybridFetcher:
                 enable_akshare=False,
             )
 
-            status = fetcher.get_source_status()
-            assert status["efinance"] is True
-            assert status["akshare"] is False
+            assert fetcher.enable_efinance is True
+            assert fetcher.enable_akshare is False
 
     def test_initialization_akshare_only(self):
         """Test fetcher initialization with only akshare."""
@@ -618,17 +616,15 @@ class TestCNHybridFetcher:
             enable_akshare=True,
         )
 
-        status = fetcher.get_source_status()
-        assert status["efinance"] is False
-        assert status["akshare"] is True
+        assert fetcher.enable_efinance is False
+        assert fetcher.enable_akshare is True
 
     def test_initialization_defaults_to_akshare_primary(self):
         """Test daily default keeps efinance off the hot path."""
         fetcher = CNHybridFetcher()
 
-        status = fetcher.get_source_status()
-        assert status["efinance"] is False
-        assert status["akshare"] is True
+        assert fetcher.enable_efinance is False
+        assert fetcher.enable_akshare is True
 
     def test_initialization_fails_when_no_sources(self):
         """Test that fetcher raises error when both sources disabled."""

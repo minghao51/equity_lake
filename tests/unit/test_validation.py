@@ -345,26 +345,6 @@ def test_pipeline_drift_detection(sample_ohlcv_data: pl.DataFrame) -> None:
     assert result.drift_detected
 
 
-def test_validate_and_fix_deduplicates(sample_ohlcv_data: pl.DataFrame) -> None:
-    """validate_and_fix removes duplicate rows."""
-    dup = pl.concat([sample_ohlcv_data, sample_ohlcv_data], how="vertical")
-    vp = ValidationPipeline()
-    fixed, result = vp.validate_and_fix(dup, data_type="price")
-    assert fixed.height == sample_ohlcv_data.height
-    assert isinstance(fixed, pl.DataFrame)
-    assert result.success
-
-
-def test_validate_and_fix_polars_preserves_polars(sample_ohlcv_data: pl.DataFrame) -> None:
-    """validate_and_fix keeps Polars outputs for Polars callers."""
-    dup = pl.concat([sample_ohlcv_data, sample_ohlcv_data], how="vertical")
-    vp = ValidationPipeline()
-    fixed, result = vp.validate_and_fix(dup, data_type="price")
-    assert isinstance(fixed, pl.DataFrame)
-    assert fixed.height == sample_ohlcv_data.height
-    assert result.success
-
-
 # ---------------------------------------------------------------------------
 # DriftReport serialization test
 # ---------------------------------------------------------------------------

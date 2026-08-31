@@ -237,14 +237,6 @@ def vacuum_delta(
     return files
 
 
-def delta_table_version(table: str, lake_dir: Path | None = None) -> int | None:
-    """Return the current version of a Delta table, or None if not a Delta table."""
-    table_path = delta_table_path(table, lake_dir)
-    if not DeltaTable.is_deltatable(str(table_path)):
-        return None
-    return int(DeltaTable(str(table_path)).version())
-
-
 def migrate_parquet_to_delta(
     table: str,
     lake_dir: Path | None = None,
@@ -364,7 +356,6 @@ __all__ = [
     "DeltaWriteError",
     "compact_delta",
     "delta_table_path",
-    "delta_table_version",
     "merge_delta",
     "migrate_parquet_to_delta",
     "read_delta",

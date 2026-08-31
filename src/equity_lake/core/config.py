@@ -11,11 +11,9 @@ continue to work unchanged.
 
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar
 
-import structlog
 from pydantic import Field
 
 from equity_lake.core.config_models import (  # noqa: F401 — re-export
@@ -27,6 +25,7 @@ from equity_lake.core.config_models import (  # noqa: F401 — re-export
     ValidationConfig,
 )
 from equity_lake.core.settings import (  # noqa: F401 — re-export
+    AlertingSettings,
     DashboardSettings,
     IngestionSettings,
     MonitoringSettings,
@@ -37,18 +36,9 @@ from equity_lake.core.settings import (  # noqa: F401 — re-export
     load_settings,
 )
 
-logger = structlog.get_logger()
-
 
 def clear_settings_cache() -> None:
     get_settings.cache_clear()
-    get_ticker_config.cache_clear()
-
-
-@lru_cache(maxsize=1)
-def get_ticker_config() -> TickerConfigRoot:
-    """Return the cached ticker config loaded from the default path (mirrors get_settings)."""
-    return TickerConfigRoot.from_yaml()
 
 
 class TickerConfig(TickerConfigRoot):
@@ -56,8 +46,7 @@ class TickerConfig(TickerConfigRoot):
 
     ``TickerConfig(config_path=...)`` reads a YAML file and behaves as a
     ``TickerConfigRoot`` — all selectors are inherited, eliminating the former
-    pass-through wrapper. New code should prefer ``TickerConfigRoot.from_yaml()``
-    or the cached ``get_ticker_config()``.
+    pass-through wrapper. New code should prefer ``TickerConfigRoot.from_yaml()``.
     """
 
     DEFAULT_CONFIG_PATH: ClassVar[Path] = DEFAULT_TICKERS_PATH
@@ -76,6 +65,7 @@ class TickerConfig(TickerConfigRoot):
 
 
 __all__ = [
+    "AlertingSettings",
     "DashboardSettings",
     "GroupConfig",
     "IngestionSettings",
@@ -90,6 +80,5 @@ __all__ = [
     "ValidationConfig",
     "clear_settings_cache",
     "get_settings",
-    "get_ticker_config",
     "load_settings",
 ]

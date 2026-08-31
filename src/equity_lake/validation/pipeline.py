@@ -6,14 +6,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 import polars as pl
-import structlog
 from pydantic import BaseModel, Field
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
-from equity_lake.validation.profiling import DataProfiler, DriftReport  # noqa: F401 - re-exported
+from equity_lake.validation.profiling import DataProfiler, DriftReport
 from equity_lake.validation.schemas import SCHEMA_REGISTRY
-
-logger = structlog.get_logger()
 
 
 class ValidationResult(BaseModel):
@@ -101,26 +98,6 @@ class ValidationPipeline:
             warnings=warnings,
             metrics=metrics,
         )
-
-    def validate_and_fix(self, df: FrameLike, data_type: str = "price") -> tuple[pl.DataFrame, ValidationResult]:
-        """Validate and attempt to fix common issues."""
-        df_fixed = ensure_polars(df)
-
-        key_columns = [column for column in ("ticker", "date") if column in df_fixed.columns]
-        if key_columns:
-            before = df_fixed.height
-            df_fixed = df_fixed.unique(subset=key_columns, keep="last", maintain_order=True)
-            removed = before - df_fixed.height
-            if removed > 0:
-                logger.warning("Removed %d duplicate rows", removed)
-
-        if "close" in df_fixed.columns:
-            df_fixed = df_fixed.filter(pl.col("close") > 0)
-
-        if "volume" in df_fixed.columns:
-            df_fixed = df_fixed.with_columns(pl.col("volume").fill_null(0))
-
-        return df_fixed, self.validate(df_fixed, data_type)
 
     def _custom_checks(self, df: pl.DataFrame, data_type: str = "price") -> list[str]:
         """Run additional validation checks."""

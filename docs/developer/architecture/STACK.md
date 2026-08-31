@@ -50,7 +50,7 @@ These ship today — they are not future work.
 | finance-datareader (>=0.9.96,<1.0) | KRX (South Korea) EOD prices |
 | fredapi (>=0.5.2) | FRED macro indicators (`FRED_API_KEY`) |
 | feedparser (>=6.0.11) | RSS/Atom financial news feeds |
-| openai (>=1.50.0) | OpenAI-compatible client used for DeepSeek LLM enrichment and OpenRouter embeddings (`ingestion/llm_base.py`; raw `DEEPSEEK_API_KEY` / `OPENROUTER_API_KEY`) |
+| openai (>=1.50.0) | OpenAI-compatible client used for DeepSeek LLM enrichment (`ingestion/llm_base.py`; raw `DEEPSEEK_API_KEY`) |
 | edgartools (>=5.36.0) | SEC XBRL structured financials |
 | readability-lxml (>=0.8.1) | Clean-text extraction from SEC filings and articles |
 
@@ -95,11 +95,9 @@ Every optional capability is a `[dependency-groups]` entry (installed with
 |---|---|---|
 | `dev` | pytest suite, ruff, mypy, pre-commit, audit, notebook tooling | `uv sync --group dev` |
 | `ml` | Extended ML: lightgbm, shap, wandb, statsmodels, networkx, seaborn | `uv sync --group ml` |
-| `viz` | Plotting: matplotlib, seaborn, plotly | `uv sync --group viz` |
-| `backtesting` | `VectorBacktestEngine` (polars-backtest) + jinja2 reports — required for `equity backtest` | `uv sync --group backtesting` |
-| `agent` | sqlite-vec vector store for RAG | `uv sync --group agent` |
+| `backtesting` | `VectorBacktestEngine` (polars-backtest) — required for `equity backtest` | `uv sync --group backtesting` |
 | `dashboard` | streamlit dashboard UI | `uv sync --group dashboard` |
-| `sentiment` | vaderSentiment + praw | `uv sync --group sentiment` |
+| `sentiment` | vaderSentiment | `uv sync --group sentiment` |
 | `s3` | boto3 + s5cmd for S3 bootstrap/sync | `uv sync --group s3` |
 | `schedule` | croniter schedule parsing | `uv sync --group schedule` |
 | `docs` | MkDocs Material, mkdocstrings-python, mike | `uv sync --group docs` |
@@ -116,8 +114,8 @@ Per `AGENTS.md`, adding an optional dependency requires:
 - Lazy imports at the usage seam (`try/except ImportError`), e.g.
   `ml/backends.py` for lightgbm, `cn_hybrid.py`/`cn_efinance.py` for efinance.
 - A mypy `ignore_missing_imports` override for the module in `pyproject.toml`
-  (the override list already covers lightgbm, wandb, shap, praw, streamlit,
-  pointblank, polars-backtest, sqlite_vec, croniter, edgar, and others).
+  (the override list already covers lightgbm, wandb, shap, streamlit,
+  pointblank, polars-backtest, croniter, edgar, and others).
 
 API/SDK keys (`FRED_API_KEY`, `FINNHUB_API_KEY`, `DEEPSEEK_API_KEY`,
 `WANDB_API_KEY`, …) stay raw/unprefixed and are read via `os.getenv` at the

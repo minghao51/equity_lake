@@ -13,9 +13,9 @@ Storage follows a four-layer medallion architecture:
 - **Gold** (``03_gold/``) — feature engineering output
 - **Platinum** (``04_platinum/``) — ML predictions and signals
 
-Legacy constant names (``US_EQUITY_DIR``, ``US_NEWS_DIR``, etc.) are kept
-as aliases pointing to their new medallion locations for backward
-compatibility.
+Short aliases (``US_NEWS_DIR``, ``US_SOCIAL_SENTIMENT_DIR``,
+``SEC_EXTRACTIONS_DIR``, …) point at the same medallion locations and are
+used directly at several call sites.
 """
 
 from __future__ import annotations
@@ -83,7 +83,8 @@ PROFILES_DIR = DATA_DIR / "profiles"
 DUCKDB_DEFAULT_PATH = DATA_DIR / "equity_data.duckdb"
 
 # ---------------------------------------------------------------------------
-# Backward-compatible aliases (deprecated — use medallion constants above)
+# Short aliases for silver tables — used directly at their call sites
+# (ingest CLI, sentiment signal generator, SEC processor)
 # ---------------------------------------------------------------------------
 US_NEWS_DIR = SILVER_NEWS_SENTIMENT_DIR
 US_SOCIAL_SENTIMENT_DIR = SILVER_SOCIAL_SENTIMENT_DIR

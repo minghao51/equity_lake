@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import contextlib
 from datetime import date
-from pathlib import Path
 
 import duckdb
 import polars as pl
@@ -12,8 +11,6 @@ from equity_lake.core.paths import GOLD_FEATURES_DIR
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger(__name__)
-
-FEATURE_GLOB = str(GOLD_FEATURES_DIR / "**" / "*.parquet")
 
 
 class FeatureLoader:
@@ -48,15 +45,10 @@ class FeatureLoader:
         logger.info("duckdb_feature_view_ready")
 
     def _feature_scan(self) -> str | None:
-        if GOLD_FEATURES_DIR.exists():
-            parquet_files = list(GOLD_FEATURES_DIR.rglob("*.parquet"))
-            if parquet_files:
-                return duckdb_scan_for(GOLD_FEATURES_DIR)
-            return None
-
-        feature_root = Path(FEATURE_GLOB.split("**")[0])
-        if feature_root.exists() and list(feature_root.rglob("*.parquet")):
-            return f"read_parquet('{FEATURE_GLOB}', hive_partitioning=1, union_by_name=true)"
+        # The gold feature table is the single source; scan it only when it
+        # actually holds Parquet files (an empty dir would fail the Delta scan).
+        if GOLD_FEATURES_DIR.exists() and any(GOLD_FEATURES_DIR.rglob("*.parquet")):
+            return duckdb_scan_for(GOLD_FEATURES_DIR)
         return None
 
     def load_features(self, ticker: str, start_date: date, end_date: date) -> pl.DataFrame:

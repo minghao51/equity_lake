@@ -37,17 +37,3 @@ class FeatureModel(BaseModel):
     rsi_14: float = Field(ge=0, le=100)
     macd: float
     volume: float = Field(ge=0)
-
-
-class PredictionModel(BaseModel):
-    """Platinum boundary: validated prediction output."""
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    ticker: str
-    date: date
-    direction: str = Field(description="up | down")
-    probability: float = Field(ge=0.0, le=1.0)
-    model_version: str
-    model_mode: str = ""
-    feature_schema_version: int = 3

@@ -91,16 +91,6 @@ class MarketConfig(BaseModel):
                 result.append(ticker.symbol)
         return result
 
-    def get_tickers_by_exchange(self, exchange: str, active_only: bool = True) -> list[str]:
-        result: list[str] = []
-        exchange_normalized = exchange.upper().strip()
-        for ticker in self.tickers:
-            if active_only and not ticker.active:
-                continue
-            if ticker.exchange.upper() == exchange_normalized:
-                result.append(ticker.symbol)
-        return result
-
     def get_tickers_by_tags(self, tags: list[str], match_all: bool = False, active_only: bool = True) -> list[str]:
         tags_normalized = [tag.lower().strip() for tag in tags]
         result: list[str] = []
@@ -124,10 +114,6 @@ class GroupConfig(BaseModel):
 
 class ValidationConfig(BaseModel):
     market_formats: dict[str, str] = Field(default_factory=dict)
-    required_fields: list[str] = Field(default_factory=list)
-    valid_exchanges: dict[str, list[str]] = Field(default_factory=dict)
-    valid_sectors: list[str] = Field(default_factory=list)
-    valid_tags: list[str] = Field(default_factory=list)
 
 
 class TickerConfigRoot(BaseModel):
@@ -142,10 +128,6 @@ class TickerConfigRoot(BaseModel):
 
     def get_market_info(self, market: str) -> MarketConfig | None:
         return self.markets.get(market)
-
-    def get_market_currency(self, market: str) -> str:
-        market_info = self.get_market_info(market)
-        return market_info.currency if market_info else "USD"
 
     def get_tickers_for_market(self, market: str, active_only: bool = True, min_priority: int | None = None) -> list[str]:
         market_info = self.get_market_info(market)
@@ -174,9 +156,6 @@ class TickerConfigRoot(BaseModel):
                     return ticker
         return None
 
-    def get_all_tickers(self, active_only: bool = True) -> dict[str, list[str]]:
-        return {market: self.get_tickers_for_market(market, active_only=active_only) for market in self.get_markets()}
-
     def get_tickers_by_tag(self, tag: str, market: str | None = None, active_only: bool = True) -> list[str]:
         markets_to_search = [market] if market else self.get_markets()
         result: list[str] = []
@@ -195,15 +174,6 @@ class TickerConfigRoot(BaseModel):
                 result.extend(market_info.get_tickers_by_sector(sector, active_only=active_only))
         return result
 
-    def get_tickers_by_exchange(self, exchange: str, market: str | None = None, active_only: bool = True) -> list[str]:
-        markets_to_search = [market] if market else self.get_markets()
-        result: list[str] = []
-        for market_name in markets_to_search:
-            market_info = self.get_market_info(market_name)
-            if market_info:
-                result.extend(market_info.get_tickers_by_exchange(exchange, active_only=active_only))
-        return result
-
     def get_tickers_by_tags(self, tags: list[str], match_all: bool = False, market: str | None = None, active_only: bool = True) -> list[str]:
         markets_to_search = [market] if market else self.get_markets()
         result: list[str] = []
@@ -213,18 +183,8 @@ class TickerConfigRoot(BaseModel):
                 result.extend(market_info.get_tickers_by_tags(tags, match_all=match_all, active_only=active_only))
         return result
 
-    def get_groups(self) -> list[str]:
-        if not self.groups:
-            return []
-        return list(self.groups.keys())
-
-    def get_group_info(self, group_name: str) -> GroupConfig | None:
-        if not self.groups:
-            return None
-        return self.groups.get(group_name)
-
     def get_tickers_by_group(self, group_name: str, active_only: bool = True) -> list[str]:
-        group_info = self.get_group_info(group_name)
+        group_info = self.groups.get(group_name) if self.groups else None
         if not group_info:
             return []
         result: list[str] = []
@@ -240,54 +200,6 @@ class TickerConfigRoot(BaseModel):
                 if metadata and (not active_only or metadata.active):
                     result.append(metadata.symbol)
         return result
-
-    def list_tickers(
-        self, market: str | None = None, active_only: bool = True, include_metadata: bool = False
-    ) -> list[str] | dict[str, list[str]] | dict[str, dict[str, Any]]:
-        if include_metadata:
-            result: dict[str, dict[str, Any]] = {}
-            markets_to_search = [market] if market else self.get_markets()
-            for market_name in markets_to_search:
-                market_info = self.get_market_info(market_name)
-                if not market_info:
-                    continue
-                for ticker in market_info.tickers:
-                    if active_only and not ticker.active:
-                        continue
-                    result[ticker.symbol] = {
-                        "symbol": ticker.symbol,
-                        "name": ticker.name,
-                        "market": market_name,
-                        "exchange": ticker.exchange,
-                        "sector": ticker.sector,
-                        "tags": ticker.tags,
-                        "active": ticker.active,
-                        "priority": ticker.priority,
-                    }
-            return result
-        if market:
-            return self.get_tickers_for_market(market, active_only=active_only)
-        return {market_name: self.get_tickers_for_market(market_name, active_only=active_only) for market_name in self.get_markets()}
-
-    def get_stats(self) -> dict[str, Any]:
-        stats: dict[str, Any] = {
-            "version": self.version,
-            "total_markets": len(self.markets),
-            "total_groups": len(self.groups) if self.groups else 0,
-            "markets": {},
-        }
-        for market_name, market_config in self.markets.items():
-            active_tickers = [ticker for ticker in market_config.tickers if ticker.active]
-            inactive_tickers = [ticker for ticker in market_config.tickers if not ticker.active]
-            stats["markets"][market_name] = {
-                "currency": market_config.currency,
-                "total_tickers": len(market_config.tickers),
-                "active_tickers": len(active_tickers),
-                "inactive_tickers": len(inactive_tickers),
-                "exchanges": list({ticker.exchange for ticker in market_config.tickers}),
-                "sectors": list({ticker.sector for ticker in market_config.tickers}),
-            }
-        return stats
 
     def validate_ticker_format(self, symbol: str, market: str) -> bool:
         if not self.validation:

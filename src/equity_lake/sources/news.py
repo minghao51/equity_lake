@@ -31,7 +31,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         api_key: Finnhub API key (from FINNHUB_API_KEY env var)
         tickers: List of ticker symbols to fetch
         max_articles_per_ticker: Maximum articles to fetch per ticker (default: 50)
-        sentiment_method: Sentiment analysis method ("vader" or "finbert")
+        sentiment_method: Sentiment analysis method ("vader")
         min_relevance: Minimum relevance score (0.0 to 1.0)
     """
 
@@ -44,7 +44,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         max_articles_per_ticker: int = 50,
         retry_attempts: int = 3,
         retry_delay: float = 1.0,
-        sentiment_method: Literal["vader", "finbert"] = "vader",
+        sentiment_method: Literal["vader"] = "vader",
         min_relevance: float = 0.0,
         max_workers: int = 1,
     ):

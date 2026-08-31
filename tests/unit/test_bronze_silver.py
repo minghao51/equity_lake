@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import polars as pl
 
-from equity_lake.ingestion.bronze_silver import _get_processed_ids, _write_silver_generic, write_silver
+from equity_lake.ingestion.bronze_silver import _get_processed_ids, _write_silver_generic
 
 
 def _silver_article_row(**overrides) -> dict:
@@ -30,12 +30,14 @@ def _silver_article_row(**overrides) -> dict:
     return row
 
 
-class TestWriteSilver:
+class TestWriteSilverGeneric:
+    """The production silver write path (``_write_silver_generic``); ``write_silver`` was removed as dead code."""
+
     def test_empty_df_returns_false(self):
-        result = write_silver(pl.DataFrame())
+        result = _write_silver_generic(pl.DataFrame(), "02_silver/processed_articles", ["article_id", "ticker"])
         assert result is False
 
-    def test_writes_with_correct_columns(self):
+    def test_writes_with_correct_table_name(self):
         df = pl.DataFrame(
             {
                 "article_id": ["art-1"],
@@ -57,7 +59,7 @@ class TestWriteSilver:
         )
 
         with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
-            result = write_silver(df)
+            result = _write_silver_generic(df, "02_silver/processed_articles", ["article_id", "ticker"])
             assert result is True
             call_args = mock_merge.call_args
             assert call_args.kwargs["key_columns"] == ["article_id", "ticker"]
@@ -68,16 +70,16 @@ class TestWriteSilver:
 class TestSilverQualityGate:
     """B3: silver merges enforce the pointblank article contract (ADR-0007)."""
 
-    def test_write_silver_rejects_out_of_range_sentiment(self):
+    def test_generic_write_rejects_out_of_range_sentiment(self):
         df = pl.DataFrame([_silver_article_row(sentiment_score=5.0), _silver_article_row(article_id="art-2")])
         with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
-            assert write_silver(df) is False
+            assert _write_silver_generic(df, "02_silver/processed_articles", ["article_id", "ticker"]) is False
         mock_merge.assert_not_called()
 
-    def test_write_silver_accepts_valid_rows(self):
+    def test_generic_write_accepts_valid_rows(self):
         df = pl.DataFrame([_silver_article_row(), _silver_article_row(article_id="art-2", ticker=None)])
         with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
-            assert write_silver(df) is True
+            assert _write_silver_generic(df, "02_silver/processed_articles", ["article_id", "ticker"]) is True
         mock_merge.assert_called_once()
 
     def test_generic_silver_rejects_null_article_id(self):

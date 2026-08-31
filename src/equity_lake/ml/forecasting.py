@@ -413,7 +413,6 @@ class PriceForecaster:
                 if isinstance(opt, int | float):
                     optimized_threshold = float(opt)
         prediction_threshold = optimized_threshold if optimized_threshold is not None else 0.5
-        prediction = int(probability >= prediction_threshold)
 
         if self.model_mode == "v2_meta_label":
             candidate_row = scoring_df.row(0, named=True)
@@ -436,6 +435,8 @@ class PriceForecaster:
                 "model_mode": self.model_mode,
                 "model_version": model_path.stem if model_path else "provided_model",
             }
+
+        prediction = int(probability >= prediction_threshold)
 
         return {
             "ticker": ticker,

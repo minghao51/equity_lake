@@ -84,6 +84,7 @@ def monitor(
 ) -> None:
     """Monitor pipeline health and data quality."""
     from equity_lake.core.config import get_settings
+    from equity_lake.monitoring.alerting import build_alerter
     from equity_lake.monitoring.health import PipelineMonitor
 
     _init_logging(verbose)
@@ -96,6 +97,7 @@ def monitor(
         market_max_age_days=settings.monitoring.market_max_age_days,
         table_max_age_days=settings.monitoring.table_max_age_days,
         verbose=verbose,
+        alerter=build_alerter(settings.alerting.webhook_url),
     )
     all_healthy = monitor_inst.run_health_check()
 

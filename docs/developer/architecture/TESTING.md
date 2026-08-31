@@ -142,7 +142,7 @@ touching structure:
   check that every `equity_lake.core` module imports without
   `cli`/`dashboard`/`sources` present, and a static AST pass asserting each
   layer in `LAYER_BOUNDARIES` (`core`, `storage`, `ingestion`, `features`,
-  `agent`, `api`) imports no forbidden top-level package. Also asserts no
+  `api`) imports no forbidden top-level package. Also asserts no
   `domain/` tree and that legacy module shims stay absent. A new top-level
   package must extend `LAYER_BOUNDARIES` here.
 - `tests/unit/test_cli_unified.py` — help-scan coverage for the unified CLI

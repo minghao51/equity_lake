@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal
 
 from equity_lake.core.paths import (
     BRONZE_MACRO_DIR,
@@ -21,27 +20,8 @@ from equity_lake.core.paths import (
     US_EQUITY_DIR,
 )
 
-# Supported market identifiers
-Market = Literal[
-    "us",
-    "cn",
-    "hk_sg",
-    "jpx",
-    "krx",
-    "macro",
-    "us_news",
-    "us_social_sentiment",
-    "rss_news",
-    "reddit_posts",
-    "stocktwits_messages",
-    "us_earnings_transcripts",
-    "us_analyst_ratings",
-    "sec_filings_fulltext",
-    "us_sec_financials",
-]
-
 # Valid market set for validation
-VALID_MARKETS: set[Market] = {
+VALID_MARKETS: set[str] = {
     "us",
     "cn",
     "hk_sg",
@@ -107,6 +87,10 @@ MARKET_DIR_MAP: dict[str, str] = {
     "us_analyst_ratings": _rel(SILVER_ANALYST_RATINGS_DIR),
     "us_sec_financials": _rel(SILVER_SEC_FINANCIALS_DIR),
     # Gold
+    # NOTE: "features" / "predictions" are NOT markets (outside VALID_MARKETS) —
+    # they are gold/platinum medallion table routes kept here so callers can
+    # resolve their lake paths through the same map. Do not add them to
+    # VALID_MARKETS; see handoff 05 for the planned rename.
     "features": _rel(GOLD_FEATURES_DIR),
     # Platinum
     "predictions": _rel(PLATINUM_PREDICTIONS_DIR),
@@ -152,7 +136,6 @@ class SourceOutcome:
 
 
 __all__ = [
-    "Market",
     "VALID_MARKETS",
     "REQUIRED_PRICE_MARKETS",
     "OPTIONAL_ENRICHMENT_MARKETS",

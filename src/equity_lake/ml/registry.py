@@ -1,12 +1,10 @@
 """Weights & Biases registry adapter (best-effort).
 
-Mirrors locally-persisted training metadata and comparison :class:`FindingCard`
-objects to a public Weights & Biases project. Local artifacts —
-``*.training_metadata.json`` / ``*.training_audit.parquet`` written by
-:func:`equity_lake.ml.forecasting.PriceForecaster._save_training_metadata`, and
-the FindingCard JSONs written by :mod:`equity_lake.findings.writer` — remain the
-**source of truth**. This adapter only *logs* to W&B and MUST NEVER be a hard
-runtime dependency of training or comparison.
+Mirrors comparison :class:`FindingCard` objects to a public Weights & Biases
+project. Local artifacts — the FindingCard JSONs written by
+:mod:`equity_lake.findings.writer` — remain the **source of truth**. This
+adapter only *logs* to W&B and MUST NEVER be a hard runtime dependency of
+training or comparison.
 
 Configuration is raw/unprefixed (parent handoff §3 B3): ``WANDB_API_KEY``,
 ``WANDB_ENTITY`` and ``WANDB_PROJECT`` are read via :func:`os.getenv` at the
@@ -23,11 +21,8 @@ inside each function so a base ``uv sync`` (no ``ml`` group) keeps working.
 from __future__ import annotations
 
 import contextlib
-import json
 import os
 from collections.abc import Sequence
-from pathlib import Path
-from typing import Any
 
 import structlog
 
@@ -35,7 +30,7 @@ from equity_lake.findings.models import FindingCard
 
 logger = structlog.get_logger(__name__)
 
-__all__ = ["log_comparison", "log_training_run"]
+__all__ = ["log_comparison"]
 
 
 def log_comparison(
@@ -112,77 +107,6 @@ def log_comparison(
         return None
 
 
-def log_training_run(
-    metadata_path: Path,
-    *,
-    shap_artifact: Path | None = None,
-    project: str | None = None,
-    entity: str | None = None,
-) -> str | None:
-    """Log a single training run (config + metrics + optional SHAP artifact).
-
-    Reads the metadata JSON written by
-    :meth:`equity_lake.ml.forecasting.PriceForecaster._save_training_metadata`
-    and mirrors it to a W&B run: ``ticker``/``model_mode``/``params`` as config,
-    the flattened ``metrics`` + ``validation_metrics`` as metrics, and — when
-    ``shap_artifact`` points at an existing file — the SHAP importance dump as a
-    W&B artifact. Best-effort: returns ``None`` (logging at debug) when W&B is
-    unconfigured (``WANDB_API_KEY`` unset), the metadata file is missing, or any
-    wandb call fails. Never raises due to W&B.
-
-    Args:
-        metadata_path: Path to ``<model>.training_metadata.json``.
-        shap_artifact: Optional path to a SHAP artifact file to attach.
-        project: W&B project; defaults to the ``WANDB_PROJECT`` env var.
-        entity: W&B entity (team/user); defaults to ``WANDB_ENTITY``.
-
-    Returns:
-        The W&B run URL, or ``None`` when W&B is unconfigured.
-    """
-    if not os.getenv("WANDB_API_KEY"):
-        logger.debug("wandb_disabled_no_api_key")
-        return None
-    if not metadata_path.exists():
-        logger.debug("wandb_training_metadata_missing", path=str(metadata_path))
-        return None
-    project_name = project or os.getenv("WANDB_PROJECT")
-    entity_name = entity or os.getenv("WANDB_ENTITY")
-    try:
-        import wandb
-
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        ticker = str(metadata.get("ticker", "unknown"))
-        model_mode = str(metadata.get("model_mode", "unknown"))
-        run = wandb.init(
-            project=project_name,
-            entity=entity_name,
-            name=f"{ticker}-{model_mode}",
-            job_type="train",
-            config={
-                "ticker": ticker,
-                "model_mode": model_mode,
-                "params": metadata.get("params", {}),
-            },
-        )
-        metrics = {
-            **_flatten_numeric(metadata.get("metrics", {})),
-            **_flatten_numeric(metadata.get("validation_metrics", {})),
-        }
-        if metrics:
-            wandb.log(metrics)
-        if shap_artifact is not None and Path(shap_artifact).exists():
-            artifact = wandb.Artifact(name=f"shap-{ticker}-{model_mode}", type="shap-importance")
-            artifact.add_file(str(shap_artifact))
-            run.log_artifact(artifact)
-        url = str(run.url)
-        with contextlib.suppress(Exception):
-            run.finish()
-        return url
-    except Exception as exc:  # W&B is best-effort; never propagate.
-        logger.debug("wandb_training_run_failed", error=str(exc))
-        return None
-
-
 def _create_comparison_report(
     *,
     cards: Sequence[FindingCard],
@@ -228,24 +152,4 @@ def _create_comparison_report(
         return str(url) if url else None
     except Exception as exc:  # private API; best-effort.
         logger.debug("wandb_report_create_failed", error=str(exc))
-        return None
-
-
-def _flatten_numeric(values: dict[str, Any]) -> dict[str, float]:
-    """Coerce a metadata metrics dict into ``{str: float}`` for ``wandb.log``.
-
-    Non-numeric or nested values are dropped (W&B metrics must be scalar floats).
-    """
-    flat: dict[str, float] = {}
-    for key, value in values.items():
-        coerced = _to_float(value)
-        if coerced is not None:
-            flat[str(key)] = coerced
-    return flat
-
-
-def _to_float(value: Any) -> float | None:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
         return None

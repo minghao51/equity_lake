@@ -12,7 +12,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 
 import duckdb
 import polars as pl
@@ -77,14 +77,6 @@ class FeatureEngineer:
             sql = "CREATE OR REPLACE VIEW equity_all AS " + " UNION ALL ".join(union_parts)
             self.conn.execute(sql)
         logger.info("DuckDB views created successfully")
-
-    @staticmethod
-    def _date_scalar(value: object) -> date:
-        if isinstance(value, date) and not isinstance(value, datetime):
-            return value
-        if isinstance(value, datetime):
-            return value.date()
-        raise TypeError(f"Expected date-like value, got {type(value)!r}")
 
     def generate_features(
         self,

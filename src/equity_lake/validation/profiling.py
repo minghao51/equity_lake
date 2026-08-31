@@ -45,11 +45,6 @@ class ProfileView:
         payload = {col_name: col_profile.to_summary_dict() for col_name, col_profile in self._columns.items()}
         Path(path).write_text(json.dumps(payload), encoding="utf-8")
 
-    @classmethod
-    def read(cls, path: str) -> ProfileView:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
-        return cls(payload)
-
 
 class DriftReport(BaseModel):
     """Report on data drift between two profiles."""
@@ -91,12 +86,6 @@ class DataProfiler:
             view.write(str(self.storage_path / f"{name}.json"))
         logger.info("Created profile", name=name, rows=df_polars.height, persist=persist)
         return view
-
-    def load_profile(self, name: str) -> ProfileView | None:
-        path = self.storage_path / f"{name}.json"
-        if not path.exists():
-            return None
-        return ProfileView.read(str(path))
 
     def _build_profile(self, df: pl.DataFrame) -> ProfileView:
         summaries: dict[str, dict[str, Any]] = {}

@@ -73,8 +73,6 @@ class FeaturePipeline:
 
     TARGET_FEATURES = ["next_day_return"]
 
-    DEFAULT_FEATURES = TECHNICAL_FEATURES
-
     def __init__(self, enable_cache: bool = False):
         self.enable_cache = enable_cache
         self._driver = self._build_driver()

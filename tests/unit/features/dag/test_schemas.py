@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.features.dag.schemas import FeatureModel, OHLCVCleanModel, PredictionModel
+from equity_lake.features.dag.schemas import FeatureModel, OHLCVCleanModel
 from equity_lake.ml import validate_predictions
 
 # ---------------------------------------------------------------------------
@@ -81,33 +81,6 @@ def test_feature_model_rejects_rsi_out_of_range() -> None:
             rsi_14=150.0,
             macd=0.25,
             volume=1_000_000.0,
-        )
-
-
-# ---------------------------------------------------------------------------
-# PredictionModel (Platinum boundary)
-# ---------------------------------------------------------------------------
-
-
-def test_prediction_model_valid() -> None:
-    model = PredictionModel(
-        ticker="AAPL",
-        date=date(2024, 1, 1),
-        direction="up",
-        probability=0.65,
-        model_version="v1",
-    )
-    assert model.direction == "up"
-
-
-def test_prediction_model_rejects_invalid_probability() -> None:
-    with pytest.raises(ValidationError):
-        PredictionModel(
-            ticker="AAPL",
-            date=date(2024, 1, 1),
-            direction="up",
-            probability=1.5,
-            model_version="v1",
         )
 
 

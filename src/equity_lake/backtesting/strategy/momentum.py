@@ -15,7 +15,6 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
             "bottom_pct": 0.3,
             "rebalance_days": 21,
             "long_only": True,
-            "volatility_target": 0.15,
             "min_stocks": 10,
         }
         merged_params = {**default_params, **(params or {})}
