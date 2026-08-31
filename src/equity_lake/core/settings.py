@@ -57,8 +57,29 @@ class DashboardSettings(BaseModel):
 
 
 class MonitoringSettings(BaseModel):
+    """Freshness and quality expectations for ``equity monitor``.
+
+    Overridable via ``EQUITY_MONITORING__*`` env vars or ``config/settings.yaml``.
+    """
+
     max_age_days: int = 2
     null_threshold_pct: float = 5.0
+    market_max_age_days: dict[str, int] = Field(
+        default_factory=dict,
+        description=('Per price-market freshness overrides in days (e.g. {"krx_equity": 3}); markets absent here fall back to max_age_days.'),
+    )
+    table_max_age_days: dict[str, int] = Field(
+        default_factory=lambda: {
+            "bronze/raw_articles": 2,  # news/articles — daily
+            "silver/processed_articles": 2,  # processed news/transcripts — daily
+            "silver/sec_extractions": 95,  # SEC filings — quarterly
+        },
+        description=(
+            "Per-table freshness expectations for the unstructured check, in days "
+            "(price/news daily, SEC quarterly, transcripts monthly if split out); "
+            "unlisted tables fall back to max_age_days."
+        ),
+    )
 
 
 class S3SyncSettings(BaseModel):

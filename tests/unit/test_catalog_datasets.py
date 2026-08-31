@@ -54,6 +54,36 @@ class TestPathConventions:
         for ds in ALL_DATASETS:
             assert ds.path.endswith("/"), f"Dataset {ds.name} path doesn't end with /: {ds.path!r}"
 
+    def test_paths_derive_from_core_paths_constants(self) -> None:
+        # Entry paths must be built from core.paths constants (not duplicated
+        # literals) so layout changes can't silently drift from the catalog.
+        from pathlib import Path
+
+        from equity_lake.core import paths as core_paths
+
+        def rel(directory: Path) -> str:
+            return directory.relative_to(core_paths.PROJECT_ROOT).as_posix() + "/"
+
+        expected = {
+            rel(core_paths.US_EQUITY_DIR),
+            rel(core_paths.CN_ASHARE_DIR),
+            rel(core_paths.HK_SG_EQUITY_DIR),
+            rel(core_paths.JPX_EQUITY_DIR),
+            rel(core_paths.KRX_EQUITY_DIR),
+            rel(core_paths.BRONZE_MACRO_DIR),
+            rel(core_paths.BRONZE_RAW_ARTICLES_DIR),
+            rel(core_paths.SILVER_NEWS_SENTIMENT_DIR),
+            rel(core_paths.SILVER_SOCIAL_SENTIMENT_DIR),
+            rel(core_paths.SILVER_PROCESSED_ARTICLES_DIR),
+            rel(core_paths.SILVER_ANALYST_RATINGS_DIR),
+            rel(core_paths.SILVER_SEC_EXTRACTIONS_DIR),
+            rel(core_paths.SILVER_SEC_FINANCIALS_DIR),
+            rel(core_paths.GOLD_FEATURES_DIR),
+            rel(core_paths.PLATINUM_PREDICTIONS_DIR),
+        }
+        actual = {ds.path for ds in ALL_DATASETS}
+        assert actual == expected, f"Catalog paths drifted from core.paths constants: {actual ^ expected}"
+
 
 class TestDatasetContent:
     def test_all_datasets_have_columns(self) -> None:
@@ -64,9 +94,12 @@ class TestDatasetContent:
         for ds in ALL_DATASETS:
             assert len(ds.description) > 10, f"Dataset {ds.name} has empty/short description"
 
-    def test_all_datasets_have_parquet_format(self) -> None:
+    def test_all_datasets_declare_delta_format(self) -> None:
+        # Cataloged lake tables are Delta tables (deltalake writes with Parquet
+        # data files); declaring "parquet" here drifted from reality and only
+        # worked because duckdb_scan_for() auto-detects.
         for ds in ALL_DATASETS:
-            assert ds.format == "parquet", f"Dataset {ds.name} has format {ds.format!r}, expected 'parquet'"
+            assert ds.format == "delta", f"Dataset {ds.name} has format {ds.format!r}, expected 'delta'"
 
     def test_all_datasets_have_partition(self) -> None:
         for ds in ALL_DATASETS:

@@ -6,11 +6,12 @@ import json
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import duckdb
 import polars as pl
 
-from equity_lake.monitoring.health import PipelineMonitor, _date_scalar
+from equity_lake.monitoring.health import DEFAULT_TABLE_MAX_AGE_DAYS, PipelineMonitor, _date_scalar
 
 # Path constants patched in the health module namespace.
 HEALTH_PATHS = "equity_lake.monitoring.health"
@@ -98,9 +99,12 @@ class TestPipelineMonitorInit:
         m = PipelineMonitor()
         assert m.max_age_days == 2
         assert m.null_threshold_pct == 5.0
+        assert m.market_max_age_days == {}
+        assert m.table_max_age_days == DEFAULT_TABLE_MAX_AGE_DAYS
         assert m.verbose is False
         assert m.alerts == []
         assert m.metrics == {}
+        assert m.check_results == {}
 
     def test_custom_values(self) -> None:
         m = PipelineMonitor(max_age_days=5, null_threshold_pct=10.0, verbose=True)
@@ -113,39 +117,38 @@ class TestPipelineMonitorInit:
         m = PipelineMonitor(alerter=fake)
         assert m.alerter is fake
 
+    def test_bootstraps_delta_extension_on_connection(self) -> None:
+        """The monitor's own connection must INSTALL/LOAD delta before delta_scan queries."""
+        fake_conn = MagicMock(spec=duckdb.DuckDBPyConnection)
+        with patch("equity_lake.monitoring.health.duckdb.connect", return_value=fake_conn):
+            PipelineMonitor()
+        executed = [call.args[0] for call in fake_conn.execute.call_args_list if call.args]
+        assert "INSTALL delta; LOAD delta;" in executed
 
-# =============================================================================
-# check_pipeline_logs
-# =============================================================================
+    def test_close_and_context_manager(self) -> None:
+        fake_conn = MagicMock(spec=duckdb.DuckDBPyConnection)
+        with patch("equity_lake.monitoring.health.duckdb.connect", return_value=fake_conn), PipelineMonitor() as m:
+            assert m.conn is fake_conn
+        fake_conn.close.assert_called_once()
+
+        m2 = PipelineMonitor()
+        m2.close()
+        m2.close()  # idempotent
 
 
-class TestCheckPipelineLogs:
-    @patch(f"{HEALTH_PATHS}.LOGS_DIR", new_callable=lambda: Path("/nonexistent-logs-dir-xyz"))
-    def test_no_log_files_is_healthy(self, _mock_dir) -> None:
+class TestAlertDedupe:
+    def test_repeated_check_target_alerts_are_deduped(self) -> None:
         m = PipelineMonitor()
-        assert m.check_pipeline_logs() is True
-        assert m.alerts == []
+        m._add_alert("data_freshness", "us_equity", "stale once")
+        m._add_alert("data_freshness", "us_equity", "stale twice")
+        m._add_alert("data_freshness", "krx_equity", "other market")
+        assert m.alerts == ["stale once", "other market"]
 
-    def test_errors_make_unhealthy(self, tmp_path) -> None:
-        (tmp_path / "ingest_daily.log").write_text("line1\nERROR something broke\nERROR again\n")
-        with patch(f"{HEALTH_PATHS}.LOGS_DIR", tmp_path):
-            m = PipelineMonitor()
-            assert m.check_pipeline_logs() is False
-        assert any("2 errors" in a for a in m.alerts)
-
-    def test_many_warnings_alert_but_still_healthy(self, tmp_path) -> None:
-        (tmp_path / "sync_from_s3.log").write_text("\n".join(["WARNING x"] * 11) + "\n")
-        with patch(f"{HEALTH_PATHS}.LOGS_DIR", tmp_path):
-            m = PipelineMonitor()
-            assert m.check_pipeline_logs() is True
-        assert any("11 warnings" in a for a in m.alerts)
-
-    def test_clean_logs_healthy(self, tmp_path) -> None:
-        (tmp_path / "ingest_daily.log").write_text("INFO ok\nINFO done\n")
-        with patch(f"{HEALTH_PATHS}.LOGS_DIR", tmp_path):
-            m = PipelineMonitor()
-            assert m.check_pipeline_logs() is True
-            assert m.alerts == []
+    def test_distinct_targets_within_a_check_are_kept(self) -> None:
+        m = PipelineMonitor()
+        m._add_alert("data_quality", "us_equity close", "null close")
+        m._add_alert("data_quality", "us_equity volume", "null volume")
+        assert len(m.alerts) == 2
 
 
 # =============================================================================
@@ -187,6 +190,17 @@ class TestCheckFeatureStore:
             m = PipelineMonitor(max_age_days=2)
             assert m.check_feature_store() is False
         assert any("Features are stale" in a for a in m.alerts)
+
+    def test_corrupt_feature_store_fails_the_check(self, tmp_path) -> None:
+        # A corrupt (unreadable) feature directory must read as FAILED with an
+        # alert — never as a healthy pass.
+        part_dir = tmp_path / f"date={date.today().isoformat()}"
+        part_dir.mkdir(parents=True)
+        (part_dir / "part.parquet").write_bytes(b"not a parquet file")
+        with patch(f"{HEALTH_PATHS}.GOLD_FEATURES_DIR", tmp_path):
+            m = PipelineMonitor()
+            assert m.check_feature_store() is False
+        assert any("Feature store check failed" in a for a in m.alerts)
 
 
 # =============================================================================
@@ -252,6 +266,26 @@ class TestCheckDataFreshness:
             m = PipelineMonitor(max_age_days=2)
             assert m.check_data_freshness() is False
             assert len(m.alerts) == 5  # one per market
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_per_market_max_age_overrides(self, tmp_path) -> None:
+        # KRX gets a 5-day expectation via market_max_age_days; 3-day-old data
+        # is stale for the default markets but fresh for KRX.
+        ref = date(2024, 1, 10)
+        for sub in ("us", "cn", "hk_sg", "jpx"):
+            _write_parquet_partition(tmp_path / sub, date(2024, 1, 7), [_ohlcv_row()], schema=self._OHLCV_SCHEMA)
+        _write_parquet_partition(tmp_path / "krx", date(2024, 1, 7), [_ohlcv_row()], schema=self._OHLCV_SCHEMA)
+        now_patch, td_patch = _patch_market_clock(ref)
+        patches = self._patch_dirs(tmp_path) + [now_patch, td_patch]
+        for p in patches:
+            p.start()
+        try:
+            m = PipelineMonitor(max_age_days=2, market_max_age_days={"krx_equity": 5})
+            assert m.check_data_freshness() is False
+            assert m.metrics["data_freshness"]["fresh_markets"] == ["krx_equity"]
+            assert len(m.metrics["data_freshness"]["stale_markets"]) == 4
         finally:
             for p in patches:
                 p.stop()
@@ -378,10 +412,51 @@ class TestCheckUnstructuredFreshness:
         try:
             m = PipelineMonitor(max_age_days=2)
             assert m.check_unstructured_freshness() is False
-            assert len(m.alerts) == 3
+            # News tables are stale at 9 days; SEC extractions have a quarterly
+            # (95-day) expectation so they stay fresh — no alert for them.
+            assert len(m.alerts) == 2
+            assert all("sec_extractions" not in a for a in m.alerts)
         finally:
             for p in patches:
                 p.stop()
+
+    def test_sec_extractions_use_quarterly_expectation(self, tmp_path) -> None:
+        # SEC filings are quarterly: 26-day-old extractions must stay fresh even
+        # with max_age_days=2 (the per-table expectation is 95 days).
+        ref = date(2024, 1, 10)
+        for sub in ("bronze", "silver"):
+            _write_parquet_partition(tmp_path / sub, date(2024, 1, 9), [{"url": "x"}])
+        _write_parquet_partition(tmp_path / "sec", date(2023, 12, 15), [{"url": "x"}])  # 26 days old
+        now_patch, _ = _patch_market_clock(ref)
+        patches = self._patch_dirs(tmp_path) + [now_patch]
+        for p in patches:
+            p.start()
+        try:
+            m = PipelineMonitor(max_age_days=2)
+            assert m.check_unstructured_freshness() is True
+            assert m.metrics["unstructured_freshness"]["silver/sec_extractions"]["max_age_days"] == 95
+        finally:
+            for p in patches:
+                p.stop()
+
+    def test_corrupt_table_fails_the_check(self, tmp_path) -> None:
+        # Per-table read errors must fail the check and alert — not log at debug
+        # and silently count as fresh.
+        part_dir = tmp_path / "sec" / f"date={date.today().isoformat()}"
+        part_dir.mkdir(parents=True)
+        (part_dir / "part.parquet").write_bytes(b"not a parquet file")
+        for sub in ("bronze", "silver"):
+            _write_parquet_partition(tmp_path / sub, date.today(), [{"url": "x"}])
+        for p in self._patch_dirs(tmp_path):
+            p.start()
+        try:
+            m = PipelineMonitor()
+            assert m.check_unstructured_freshness() is False
+        finally:
+            for p in self._patch_dirs(tmp_path):
+                p.stop()
+        assert any("freshness check failed" in a for a in m.alerts)
+        assert m.metrics["unstructured_freshness"]["silver/sec_extractions"]["status"] == "error"
 
 
 # =============================================================================
@@ -419,7 +494,6 @@ class TestRunHealthCheck:
             patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
             patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
             patch(f"{HEALTH_PATHS}.GOLD_FEATURES_DIR", tmp_path / "absent_gold"),
-            patch(f"{HEALTH_PATHS}.LOGS_DIR", tmp_path / "absent_logs"),
             patch(f"{HEALTH_PATHS}.BRONZE_RAW_ARTICLES_DIR", tmp_path / "absent_bronze"),
             patch(f"{HEALTH_PATHS}.SILVER_PROCESSED_ARTICLES_DIR", tmp_path / "absent_silver"),
             patch(f"{HEALTH_PATHS}.SILVER_SEC_EXTRACTIONS_DIR", tmp_path / "absent_sec"),
@@ -440,3 +514,36 @@ class TestRunHealthCheck:
         _, severity, _ = fake.calls[0]
         assert severity == "error"
         capsys.readouterr()  # drain printed output
+
+    def test_computation_is_print_free(self, tmp_path, capsys) -> None:
+        # run_health_check computes and dispatches only — the CLI renders.
+        fake = _FakeAlerter()
+        patches = [
+            patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "absent_us"),
+            patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "absent_cn"),
+            patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "absent_hk"),
+            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
+            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
+            patch(f"{HEALTH_PATHS}.GOLD_FEATURES_DIR", tmp_path / "absent_gold"),
+            patch(f"{HEALTH_PATHS}.BRONZE_RAW_ARTICLES_DIR", tmp_path / "absent_bronze"),
+            patch(f"{HEALTH_PATHS}.SILVER_PROCESSED_ARTICLES_DIR", tmp_path / "absent_silver"),
+            patch(f"{HEALTH_PATHS}.SILVER_SEC_EXTRACTIONS_DIR", tmp_path / "absent_sec"),
+        ]
+        for p in patches:
+            p.start()
+        try:
+            m = PipelineMonitor(alerter=fake)
+            m.run_health_check()
+        finally:
+            for p in patches:
+                p.stop()
+        # No report rendering from the library — the CLI renders (structlog
+        # diagnostics may still hit stdout; the banner must not).
+        out = capsys.readouterr().out
+        assert "PIPELINE HEALTH MONITOR" not in out
+        assert "Pipeline is" not in out
+        assert "PASS" not in out
+        # Per-check outcomes are exposed for the CLI to render (missing
+        # unstructured dirs stay "fresh" by design; the other three fail).
+        assert set(m.check_results) == {"Data Freshness", "Data Quality", "Feature Store", "Unstructured Freshness"}
+        assert not all(m.check_results.values())

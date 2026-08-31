@@ -53,7 +53,10 @@ class DeltaReadError(DeltaError):
 
 
 _DATE_COL = "date"
-WriteMode = Literal["append", "overwrite", "ignore", "error"]
+# Only the modes the writer actually supports (append/overwrite). delta-rs
+# accepts "ignore"/"error" too, but no caller uses them and advertising them
+# here invites untested code paths — trim until implemented.
+WriteMode = Literal["append", "overwrite"]
 SchemaMode = Literal["merge", "overwrite"] | None
 
 
@@ -75,7 +78,7 @@ def write_delta(
     Args:
         df: Data to write. Must contain a ``date`` column.
         table: Table path relative to the lake root (e.g. ``"01_bronze/us_equity"``).
-        mode: ``"append"``, ``"overwrite"``, ``"ignore"``, or ``"error"``.
+        mode: ``"append"`` or ``"overwrite"``.
         partition_by: Partition columns. Defaults to ``["date"]``.
         schema_mode: ``"merge"`` to evolve the schema, ``"overwrite"`` to replace it.
     """

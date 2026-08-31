@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from datetime import date
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 
@@ -19,7 +19,7 @@ from equity_lake.core.paths import FINDINGS_DIR, MODELS_DIR
 from equity_lake.findings.models import FindingCard
 from equity_lake.findings.writer import load_finding_cards
 from equity_lake.signals.history import load_signals
-from equity_lake.storage.delta import read_delta
+from equity_lake.storage.delta import DeltaReadError, delta_table_path
 
 
 def list_findings() -> list[FindingCard]:
@@ -43,9 +43,32 @@ def list_models() -> list[dict[str, Any]]:
     return summaries
 
 
-def list_predictions(*, ticker: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
-    """Read recent platinum predictions, optionally filtered by ticker."""
-    frame = read_delta("04_platinum/predictions")
+def _read_predictions_frame(target_date: date | None) -> pl.DataFrame:
+    """Read the predictions table, pruned to one date partition when requested.
+
+    Predictions are partitioned by ``date``, so a date-scoped request reads only
+    that partition instead of scanning the whole table (deltalake partition
+    filter). Failures surface as :class:`DeltaReadError` exactly like
+    :func:`equity_lake.storage.delta.read_delta` so routers map them to 503.
+    """
+    from deltalake import DeltaTable
+
+    table = "04_platinum/predictions"
+    try:
+        dt = DeltaTable(str(delta_table_path(table)))
+        if target_date is None:
+            return cast(pl.DataFrame, pl.from_arrow(dt.to_pyarrow_table()))
+        return cast(pl.DataFrame, pl.from_arrow(dt.to_pyarrow_table(partitions=[("date", "=", target_date.isoformat())])))
+    except Exception as exc:
+        raise DeltaReadError(table, exc) from exc
+
+
+def list_predictions(*, target_date: date | None = None, ticker: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    """Read recent platinum predictions, newest-first, optionally filtered by date/ticker.
+
+    When *target_date* is given the Delta read is partition-pruned to that date.
+    """
+    frame = _read_predictions_frame(target_date)
     if ticker is not None and "ticker" in frame.columns:
         frame = frame.filter(pl.col("ticker") == ticker)
     if "date" in frame.columns:

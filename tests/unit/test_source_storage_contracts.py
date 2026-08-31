@@ -19,4 +19,6 @@ def test_market_destinations_match_catalog_paths() -> None:
 
 
 def test_catalog_formats_match_runtime_writer_contract() -> None:
-    assert all(dataset.format == "parquet" for dataset in ALL_DATASETS)
+    # The runtime writer contract is Delta (deltalake with Parquet data files);
+    # the catalog must not drift back to declaring raw parquet.
+    assert all(dataset.format == "delta" for dataset in ALL_DATASETS)

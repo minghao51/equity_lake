@@ -27,7 +27,6 @@ from equity_lake.core.paths import (  # noqa: F401
     HK_SG_EQUITY_DIR,
     JPX_EQUITY_DIR,
     KRX_EQUITY_DIR,
-    LOGS_DIR,
     SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
     US_EQUITY_DIR,
@@ -36,6 +35,16 @@ from equity_lake.monitoring.alerting import Alerter, build_alerter
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger()
+
+# Default per-table freshness expectations for the unstructured check (days).
+# Mirrors MonitoringSettings.table_max_age_days — news/articles refresh daily,
+# SEC filings arrive quarterly. Transcripts (when split into their own table)
+# would sit around 35 (monthly).
+DEFAULT_TABLE_MAX_AGE_DAYS: dict[str, int] = {
+    "bronze/raw_articles": 2,
+    "silver/processed_articles": 2,
+    "silver/sec_extractions": 95,
+}
 
 _MARKET_DISPLAY = {
     "us_equity": "US Equity",
@@ -80,6 +89,17 @@ def _date_scalar(value: object) -> date | None:
     return None
 
 
+def _bootstrap_delta(con: duckdb.DuckDBPyConnection) -> None:
+    """INSTALL/LOAD the delta extension on a DuckDB connection.
+
+    Local copy of the standard bootstrap (``delta_scan`` fails with a confusing
+    binder error on connections that never loaded the extension). The shared
+    helper in ``storage/lake_reader.py`` and consolidation of the other
+    bootstrap sites land separately; this keeps the monitor self-sufficient.
+    """
+    con.execute("INSTALL delta; LOAD delta;")
+
+
 class PipelineMonitor:
     """Monitor pipeline health and data quality."""
 
@@ -87,6 +107,8 @@ class PipelineMonitor:
         self,
         max_age_days: int = 2,
         null_threshold_pct: float = 5.0,
+        market_max_age_days: dict[str, int] | None = None,
+        table_max_age_days: dict[str, int] | None = None,
         verbose: bool = False,
         alerter: Alerter | None = None,
     ):
@@ -94,19 +116,58 @@ class PipelineMonitor:
         Initialize pipeline monitor.
 
         Args:
-            max_age_days: Maximum allowed data age in days
+            max_age_days: Maximum allowed data age in days (price markets and
+                the feature store; per-market/per-table maps override it).
             null_threshold_pct: Max acceptable null percentage
+            market_max_age_days: Per price-market freshness overrides
+                (e.g. ``{"krx_equity": 3}``); falls back to *max_age_days*.
+            table_max_age_days: Per-table freshness expectations for the
+                unstructured check (news/articles daily, SEC quarterly);
+                falls back to *max_age_days* for unlisted tables.
             verbose: Enable verbose logging
             alerter: Alert dispatcher (defaults to console)
         """
         self.max_age_days = max_age_days
         self.null_threshold_pct = null_threshold_pct
+        self.market_max_age_days = market_max_age_days or {}
+        self.table_max_age_days = table_max_age_days if table_max_age_days is not None else dict(DEFAULT_TABLE_MAX_AGE_DAYS)
         self.verbose = verbose
         self.alerter = alerter or build_alerter()
 
         self.conn = duckdb.connect(":memory:")
+        _bootstrap_delta(self.conn)
         self.alerts: list[str] = []
+        self._alert_keys: set[tuple[str, str]] = set()
         self.metrics: dict = {}
+        self.check_results: dict[str, bool] = {}
+
+    def close(self) -> None:
+        """Close the monitor's DuckDB connection (idempotent)."""
+        if self.conn is not None:
+            self.conn.close()
+
+    def __enter__(self) -> "PipelineMonitor":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    def _market_max_age(self, market: str) -> int:
+        """Freshness expectation for one price market (override or default)."""
+        return self.market_max_age_days.get(market, self.max_age_days)
+
+    def _add_alert(self, check: str, target: str, message: str) -> None:
+        """Record an alert, deduplicated by ``(check, target)``.
+
+        Alerts accumulate per market/table per check and are never cleared
+        between runs of a long-lived monitor — the first alert for a given
+        (check, target) pair wins so repeated runs don't pile up duplicates.
+        """
+        key = (check, target)
+        if key in self._alert_keys:
+            return
+        self._alert_keys.add(key)
+        self.alerts.append(message)
 
     @staticmethod
     def _last_trading_day(market: str) -> date:
@@ -157,7 +218,7 @@ class PipelineMonitor:
                 date_count = row["date_count"]
 
                 if latest_date is None:
-                    self.alerts.append(f"\u274c {market}: No data found")
+                    self._add_alert("data_freshness", market, f"\u274c {market}: No data found")
                     stale_markets.append(market)
                     continue
 
@@ -166,7 +227,7 @@ class PipelineMonitor:
                 reference_date = market_today if is_today_trading else self._last_trading_day(market)
                 age_days = (reference_date - latest_date).days
 
-                status = "\u2705" if age_days <= self.max_age_days else "\u26a0\ufe0f"
+                status = "\u2705" if age_days <= self._market_max_age(market) else "\u26a0\ufe0f"
                 logger.info(
                     "data_freshness_check",
                     market=market,
@@ -176,8 +237,12 @@ class PipelineMonitor:
                     status=status,
                 )
 
-                if age_days > self.max_age_days:
-                    self.alerts.append(f"\u26a0\ufe0f  {market} data is stale: {age_days} days old (latest: {latest_date})")
+                if age_days > self._market_max_age(market):
+                    self._add_alert(
+                        "data_freshness",
+                        market,
+                        f"\u26a0\ufe0f  {market} data is stale: {age_days} days old (latest: {latest_date})",
+                    )
                     stale_markets.append(market)
                 else:
                     fresh_markets.append(market)
@@ -192,7 +257,7 @@ class PipelineMonitor:
 
         except Exception as e:
             logger.error("data_freshness_check_failed", error=str(e))
-            self.alerts.append(f"❌ Data freshness check failed: {e}")
+            self._add_alert("data_freshness", "check", f"❌ Data freshness check failed: {e}")
             return False
 
     def check_data_quality(self) -> bool:
@@ -232,7 +297,7 @@ class PipelineMonitor:
                 total_rows = row["total_rows"]
 
                 if total_rows == 0:
-                    self.alerts.append(f"⚠️  {market}: No data in last 7 days")
+                    self._add_alert("data_quality", market, f"⚠️  {market}: No data in last 7 days")
                     quality_issues.append(market)
                     continue
 
@@ -249,11 +314,19 @@ class PipelineMonitor:
                     )
 
                 if null_pct_close > self.null_threshold_pct:
-                    self.alerts.append(f"⚠️  {market}: {null_pct_close:.1f}% null close prices (threshold: {self.null_threshold_pct}%)")
+                    self._add_alert(
+                        "data_quality",
+                        f"{market} close",
+                        f"⚠️  {market}: {null_pct_close:.1f}% null close prices (threshold: {self.null_threshold_pct}%)",
+                    )
                     quality_issues.append(market)
 
                 if null_pct_volume > self.null_threshold_pct:
-                    self.alerts.append(f"⚠️  {market}: {null_pct_volume:.1f}% null volume (threshold: {self.null_threshold_pct}%)")
+                    self._add_alert(
+                        "data_quality",
+                        f"{market} volume",
+                        f"⚠️  {market}: {null_pct_volume:.1f}% null volume (threshold: {self.null_threshold_pct}%)",
+                    )
                     quality_issues.append(market)
 
             self.metrics["data_quality"] = {
@@ -266,63 +339,15 @@ class PipelineMonitor:
 
         except Exception as e:
             logger.error("data_quality_check_failed", error=str(e))
-            self.alerts.append(f"❌ Data quality check failed: {e}")
+            self._add_alert("data_quality", "check", f"❌ Data quality check failed: {e}")
             return False
 
-    def check_pipeline_logs(self) -> bool:
-        """
-        Check recent logs for errors and warnings.
-
-        Returns:
-            True if logs are clean, False otherwise
-        """
-        logger.info("Checking pipeline logs...")
-
-        log_files = [
-            LOGS_DIR / "monitor_pipeline.log",
-            LOGS_DIR / "ingest_daily.log",
-            LOGS_DIR / "sync_from_s3.log",
-        ]
-
-        total_errors = 0
-        total_warnings = 0
-
-        for log_file in log_files:
-            if not log_file.exists():
-                logger.debug("log_file_not_found", file_name=log_file.name)
-                continue
-
-            try:
-                # Read last 100 lines
-                with open(log_file) as f:
-                    lines = f.readlines()[-100:]
-
-                error_count = sum(1 for line in lines if "ERROR" in line.upper())
-                warning_count = sum(1 for line in lines if "WARNING" in line.upper())
-
-                total_errors += error_count
-                total_warnings += warning_count
-
-                if self.verbose and (error_count > 0 or warning_count > 0):
-                    logger.info("log_file_summary", file_name=log_file.name, error_count=error_count, warning_count=warning_count)
-
-            except Exception as e:
-                logger.debug("log_file_read_failed", file_name=log_file.name, error=str(e))
-
-        if total_errors > 0:
-            self.alerts.append(f"❌ Found {total_errors} errors in recent logs")
-            return False
-
-        if total_warnings > 10:
-            self.alerts.append(f"⚠️  Found {total_warnings} warnings in recent logs")
-
-        self.metrics["pipeline_logs"] = {
-            "error_count": total_errors,
-            "warning_count": total_warnings,
-            "timestamp": datetime.now(tz=UTC).isoformat(),
-        }
-
-        return total_errors == 0
+    # NOTE: there is deliberately no log-file check anymore. The previous
+    # check_pipeline_logs scanned monitor_pipeline.log / ingest_daily.log /
+    # sync_from_s3.log — files that no component in this repo writes (only
+    # structlog JSON to stderr/cron redirects), so the check always passed.
+    # Alerting on artifacts nothing produces is false confidence; grep-provable
+    # removal rather than repointing at another guess.
 
     def check_feature_store(self) -> bool:
         """
@@ -336,7 +361,7 @@ class PipelineMonitor:
         feature_dir = GOLD_FEATURES_DIR
 
         if not feature_dir.exists():
-            self.alerts.append("⚠️  Feature store does not exist")
+            self._add_alert("feature_store", "feature_store", "⚠️  Feature store does not exist")
             return False
 
         # Check for recent feature files
@@ -353,20 +378,20 @@ class PipelineMonitor:
             df = self.conn.execute(query).pl()
 
             if df.is_empty() or int(df["total_rows"][0]) == 0:
-                self.alerts.append("⚠️  No features in last 7 days")
+                self._add_alert("feature_store", "feature_store", "⚠️  No features in last 7 days")
                 return False
 
             total_rows = int(df["total_rows"][0])
             unique_tickers = int(df["unique_tickers"][0])
             latest_date = _date_scalar(df["latest_date"][0])
             if latest_date is None:
-                self.alerts.append("⚠️  Feature store latest date is missing")
+                self._add_alert("feature_store", "feature_store", "⚠️  Feature store latest date is missing")
                 return False
 
             age_days = (market_now("us_equity") - latest_date).days
 
             if age_days > self.max_age_days:
-                self.alerts.append(f"⚠️  Features are stale: {age_days} days old (latest: {latest_date})")
+                self._add_alert("feature_store", "feature_store", f"⚠️  Features are stale: {age_days} days old (latest: {latest_date})")
                 return False
 
             logger.info("feature_store_status", total_rows=total_rows, unique_tickers=unique_tickers, latest_date=str(latest_date))
@@ -381,9 +406,11 @@ class PipelineMonitor:
             return True
 
         except Exception as e:
-            logger.debug("feature_store_check_failed", error=str(e))
-            # Feature store might not exist yet, which is ok
-            return True
+            # Align with check_data_freshness/check_data_quality: a corrupt or
+            # unreadable feature store must read as FAILED, never as healthy.
+            logger.error("feature_store_check_failed", error=str(e))
+            self._add_alert("feature_store", "check", f"❌ Feature store check failed: {e}")
+            return False
 
     def check_unstructured_freshness(self) -> bool:
         """Check freshness of bronze and silver unstructured tables.
@@ -402,10 +429,14 @@ class PipelineMonitor:
 
         all_fresh = True
         unstructured_metrics: dict[str, Any] = {}
+        missing_tables: list[str] = []
 
         for table_name, table_path in tables:
             if not table_path.exists():
-                logger.debug("table_directory_not_found", table_name=table_name)
+                # A missing table cannot be "fresh" — it is unverifiable. Keep the
+                # check passing (a fresh checkout should not alert), but surface
+                # the vacuous pass loudly instead of debug-only.
+                missing_tables.append(table_name)
                 unstructured_metrics[table_name] = {"status": "missing"}
                 continue
 
@@ -419,7 +450,7 @@ class PipelineMonitor:
                 df = self.conn.execute(query).pl()
 
                 if df.is_empty() or int(df["total_rows"][0]) == 0:
-                    self.alerts.append(f"⚠️  {table_name}: No data found")
+                    self._add_alert("unstructured_freshness", table_name, f"⚠️  {table_name}: No data found")
                     unstructured_metrics[table_name] = {"status": "empty"}
                     all_fresh = False
                     continue
@@ -428,9 +459,14 @@ class PipelineMonitor:
                 latest_date = _date_scalar(df["latest_date"][0])
 
                 age_days = (market_now("us_equity") - latest_date).days if latest_date else 999
+                max_age = self.table_max_age_days.get(table_name, self.max_age_days)
 
-                if age_days > self.max_age_days:
-                    self.alerts.append(f"⚠️  {table_name}: data is stale ({age_days} days old, latest: {latest_date})")
+                if age_days > max_age:
+                    self._add_alert(
+                        "unstructured_freshness",
+                        table_name,
+                        f"⚠️  {table_name}: data is stale ({age_days} days old, latest: {latest_date}; expected within {max_age})",
+                    )
                     all_fresh = False
                 else:
                     logger.info("unstructured_fresh", table_name=table_name, total_rows=total_rows, latest_date=str(latest_date))
@@ -439,14 +475,24 @@ class PipelineMonitor:
                     "total_rows": total_rows,
                     "latest_date": str(latest_date) if latest_date else None,
                     "age_days": age_days,
+                    "max_age_days": max_age,
                 }
 
             except Exception as e:
-                logger.debug("table_check_failed", table_name=table_name, error=str(e))
+                # Align with check_data_freshness/check_data_quality: a per-table
+                # read failure fails the check (and alerts) instead of being
+                # logged at debug and silently treated as fresh.
+                logger.error("table_check_failed", table_name=table_name, error=str(e))
+                self._add_alert("unstructured_freshness", f"{table_name} check", f"❌ {table_name}: freshness check failed: {e}")
                 unstructured_metrics[table_name] = {"status": "error", "error": str(e)}
+                all_fresh = False
+
+        if missing_tables:
+            logger.warning("unstructured_tables_missing", tables=missing_tables, note="check passes vacuously; no data to verify")
 
         self.metrics["unstructured_freshness"] = {
             **unstructured_metrics,
+            "missing_tables": missing_tables,
             "timestamp": datetime.now(tz=UTC).isoformat(),
         }
 
@@ -457,47 +503,27 @@ class PipelineMonitor:
     # -------------------------------------------------------------------------
 
     def run_health_check(self) -> bool:
-        """
-        Run all health checks.
+        """Run all health checks, dispatch alerts, and return overall health.
+
+        Computation and alert dispatch only — rendering the pass/fail table
+        and summary is the CLI's job (per-check outcomes land in
+        ``self.check_results``), and console output belongs to the alerter.
+        This keeps every alert printed exactly once (by the ConsoleAlerter).
 
         Returns:
             True if all checks pass, False otherwise
         """
-        print("\n" + "=" * 70)
-        print("PIPELINE HEALTH MONITOR")
-        print("=" * 70 + "\n")
+        self.check_results = {
+            "Data Freshness": self.check_data_freshness(),
+            "Data Quality": self.check_data_quality(),
+            "Feature Store": self.check_feature_store(),
+            "Unstructured Freshness": self.check_unstructured_freshness(),
+        }
 
-        checks = [
-            ("Data Freshness", self.check_data_freshness()),
-            ("Data Quality", self.check_data_quality()),
-            ("Pipeline Logs", self.check_pipeline_logs()),
-            ("Feature Store", self.check_feature_store()),
-            ("Unstructured Freshness", self.check_unstructured_freshness()),
-        ]
+        all_healthy = all(self.check_results.values())
 
-        all_healthy = True
-        for check_name, healthy in checks:
-            status = "✅ PASS" if healthy else "❌ FAIL"
-            print(f"{status:<12} {check_name}")
-            all_healthy = all_healthy and healthy
-
-        # Print alerts if any
         if self.alerts:
-            print("\n" + "-" * 70)
-            print(f"ALERTS ({len(self.alerts)})")
-            print("-" * 70)
-            for alert in self.alerts:
-                print(f"  {alert}")
-
             self.alerter.send_alert(self.alerts, severity="warning" if all_healthy else "error", metrics=self.metrics)
-
-        # Summary
-        print("\n" + "=" * 70)
-        if all_healthy:
-            print("✅ Pipeline is HEALTHY")
-        else:
-            print("⚠️  Pipeline has ISSUES")
-        print("=" * 70 + "\n")
 
         return all_healthy
 

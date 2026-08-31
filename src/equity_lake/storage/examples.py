@@ -120,7 +120,7 @@ class QueryExamples:
 
         return self.db.query(sql)
 
-    def query_4_cross_market_comparison(self, ticker: str) -> pl.DataFrame:
+    def query_4_cross_market_comparison(self, ticker: str = "AAPL") -> pl.DataFrame:
         """Query 4: Compare same ticker across markets (if available)."""
         logger.info("Running query", query="4: Cross-Market Comparison", ticker=ticker)
 
@@ -137,13 +137,9 @@ class QueryExamples:
         LIMIT 100
         """
 
-        try:
-            return self.db.con.execute(sql, [ticker.upper()]).pl()
-        except Exception as e:
-            logger.error("Query failed", query="4", error=str(e))
-            return pl.DataFrame()
+        return self.db.query(sql, [ticker.upper()])
 
-    def query_5_moving_averages(self, ticker: str, ma_days: int = 20) -> pl.DataFrame:
+    def query_5_moving_averages(self, ticker: str = "AAPL", ma_days: int = 20) -> pl.DataFrame:
         """Query 5: Moving averages for a stock."""
         ma_days = int(ma_days)
         logger.info("Running query", query="5: Moving Average", ticker=ticker, ma_days=ma_days)
@@ -175,11 +171,7 @@ class QueryExamples:
         ORDER BY date DESC
         """
 
-        try:
-            return self.db.con.execute(sql, [ticker.upper()]).pl()
-        except Exception as e:
-            logger.error("Query failed", query="5", error=str(e))
-            return pl.DataFrame()
+        return self.db.query(sql, [ticker.upper()])
 
     def query_6_volatility_analysis(self, days: int = 30) -> pl.DataFrame:
         """Query 6: Most volatile stocks."""

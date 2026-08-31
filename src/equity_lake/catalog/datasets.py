@@ -6,7 +6,27 @@ These are the "anchor" entries — Hamilton topology adds per-node detail.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from equity_lake.catalog.models import ColumnInfo, DatasetEntry
+from equity_lake.core.paths import (
+    BRONZE_MACRO_DIR,
+    BRONZE_RAW_ARTICLES_DIR,
+    CN_ASHARE_DIR,
+    GOLD_FEATURES_DIR,
+    HK_SG_EQUITY_DIR,
+    JPX_EQUITY_DIR,
+    KRX_EQUITY_DIR,
+    PLATINUM_PREDICTIONS_DIR,
+    PROJECT_ROOT,
+    SILVER_ANALYST_RATINGS_DIR,
+    SILVER_NEWS_SENTIMENT_DIR,
+    SILVER_PROCESSED_ARTICLES_DIR,
+    SILVER_SEC_EXTRACTIONS_DIR,
+    SILVER_SEC_FINANCIALS_DIR,
+    SILVER_SOCIAL_SENTIMENT_DIR,
+    US_EQUITY_DIR,
+)
 from equity_lake.core.schemas import (
     ANALYST_RATING_COLUMNS,
     BRONZE_ARTICLE_COLUMNS,
@@ -18,6 +38,16 @@ from equity_lake.core.schemas import (
     SOCIAL_COLUMNS,
     STANDARD_COLUMNS,
 )
+
+
+def _rel_path(directory: Path) -> str:
+    """Repo-relative POSIX path (with trailing slash) for a catalog entry.
+
+    Built from the canonical ``core.paths`` constants so the catalog cannot
+    silently drift from the numbered medallion layout.
+    """
+    return directory.relative_to(PROJECT_ROOT).as_posix() + "/"
+
 
 _OHLCV_DESCRIPTION = (
     "Daily open/high/low/close/volume with adjusted close. "
@@ -135,60 +165,60 @@ BRONZE_DATASETS: list[DatasetEntry] = [
     DatasetEntry(
         name="us_equity_ohlcv",
         layer="bronze",
-        path="data/lake/01_bronze/market_data/us_equity/",
+        path=_rel_path(US_EQUITY_DIR),
         description=f"US equity OHLCV ({_list_to_str(STANDARD_COLUMNS)}). {_OHLCV_DESCRIPTION}",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(STANDARD_COLUMNS),
     ),
     DatasetEntry(
         name="cn_ashare_ohlcv",
         layer="bronze",
-        path="data/lake/01_bronze/market_data/cn_ashare/",
+        path=_rel_path(CN_ASHARE_DIR),
         description=f"China A-share OHLCV ({_list_to_str(STANDARD_COLUMNS)}). {_OHLCV_DESCRIPTION}",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(STANDARD_COLUMNS),
     ),
     DatasetEntry(
         name="hk_sg_equity_ohlcv",
         layer="bronze",
-        path="data/lake/01_bronze/market_data/hk_sg_equity/",
+        path=_rel_path(HK_SG_EQUITY_DIR),
         description=f"Hong Kong/Singapore equity OHLCV ({_list_to_str(STANDARD_COLUMNS)}). {_OHLCV_DESCRIPTION}",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(STANDARD_COLUMNS),
     ),
     DatasetEntry(
         name="jpx_equity_ohlcv",
         layer="bronze",
-        path="data/lake/01_bronze/market_data/jpx_equity/",
+        path=_rel_path(JPX_EQUITY_DIR),
         description=f"Japanese equity OHLCV ({_list_to_str(STANDARD_COLUMNS)}). {_OHLCV_DESCRIPTION}",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(STANDARD_COLUMNS),
     ),
     DatasetEntry(
         name="krx_equity_ohlcv",
         layer="bronze",
-        path="data/lake/01_bronze/market_data/krx_equity/",
+        path=_rel_path(KRX_EQUITY_DIR),
         description=f"Korean equity OHLCV ({_list_to_str(STANDARD_COLUMNS)}). {_OHLCV_DESCRIPTION}",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(STANDARD_COLUMNS),
     ),
     DatasetEntry(
         name="macro_indicators",
         layer="bronze",
-        path="data/lake/01_bronze/macro/",
+        path=_rel_path(BRONZE_MACRO_DIR),
         description=f"Macro-economic indicators ({_list_to_str(MACRO_COLUMNS)}). "
         "Long-format: one row per indicator per date. "
         "Sources: yfinance (VIX, DXY), FRED (treasury, inflation).",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(MACRO_COLUMNS),
     ),
     DatasetEntry(
         name="raw_articles",
         layer="bronze",
-        path="data/lake/01_bronze/raw_articles/",
+        path=_rel_path(BRONZE_RAW_ARTICLES_DIR),
         description=f"Unstructured articles ({_list_to_str(BRONZE_ARTICLE_COLUMNS)}). "
         "RSS feeds, Reddit posts, StockTwits messages — raw text before LLM processing.",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(BRONZE_ARTICLE_COLUMNS),
     ),
 ]
@@ -201,57 +231,57 @@ SILVER_DATASETS: list[DatasetEntry] = [
     DatasetEntry(
         name="news_sentiment",
         layer="silver",
-        path="data/lake/02_silver/news_sentiment/",
+        path=_rel_path(SILVER_NEWS_SENTIMENT_DIR),
         description=f"Finnhub news articles with VADER sentiment ({_list_to_str(NEWS_COLUMNS)}). "
         "Aggregated per ticker per date for feature enrichment.",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(NEWS_COLUMNS),
     ),
     DatasetEntry(
         name="social_sentiment",
         layer="silver",
-        path="data/lake/02_silver/social_sentiment/",
+        path=_rel_path(SILVER_SOCIAL_SENTIMENT_DIR),
         description=f"Finnhub social sentiment scores ({_list_to_str(SOCIAL_COLUMNS)}). Aggregated per ticker per date for feature enrichment.",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(SOCIAL_COLUMNS),
     ),
     DatasetEntry(
         name="processed_articles",
         layer="silver",
-        path="data/lake/02_silver/processed_articles/",
+        path=_rel_path(SILVER_PROCESSED_ARTICLES_DIR),
         description=f"LLM-enriched article-ticker pairs ({_list_to_str(SILVER_ARTICLE_COLUMNS)}). "
         "DeepSeek-processed articles with ticker attribution, sentiment, event type, "
         "impact horizon, and market relevance scores.",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(SILVER_ARTICLE_COLUMNS),
     ),
     DatasetEntry(
         name="analyst_ratings",
         layer="silver",
-        path="data/lake/02_silver/analyst_ratings/",
+        path=_rel_path(SILVER_ANALYST_RATINGS_DIR),
         description=f"Analyst consensus ratings and price targets ({_list_to_str(ANALYST_RATING_COLUMNS)}). "
         "Finnhub analyst recommendations with consensus scores.",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(ANALYST_RATING_COLUMNS),
     ),
     DatasetEntry(
         name="sec_extractions",
         layer="silver",
-        path="data/lake/02_silver/sec_extractions/",
+        path=_rel_path(SILVER_SEC_EXTRACTIONS_DIR),
         description=f"LLM-extracted SEC filing insights ({_list_to_str(SEC_EXTRACTION_COLUMNS)}). "
         "DeepSeek-extracted risk sentiment, guidance direction, management tone, "
         "and key risk factors from 10-K/10-Q filings.",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(SEC_EXTRACTION_COLUMNS),
     ),
     DatasetEntry(
         name="sec_financials",
         layer="silver",
-        path="data/lake/02_silver/sec_financials/",
+        path=_rel_path(SILVER_SEC_FINANCIALS_DIR),
         description=f"SEC XBRL financial statements ({_list_to_str(SEC_FINANCIAL_COLUMNS)}). "
         "Revenue, net income, assets, liabilities, cash flow, EPS, "
         "and derived ratios (ROE, ROA, D/E, margins).",
-        format="parquet",
+        format="delta",
         columns=_columns_from_list(SEC_FINANCIAL_COLUMNS),
     ),
 ]
@@ -264,11 +294,11 @@ GOLD_DATASETS: list[DatasetEntry] = [
     DatasetEntry(
         name="technical_features",
         layer="gold",
-        path="data/lake/03_gold/features/",
+        path=_rel_path(GOLD_FEATURES_DIR),
         description="Hamilton-computed technical indicators (momentum, volatility, "
         "volume, calendar) from per-ticker OHLCV data. "
         f"{_GOLD_DESCRIPTION}",
-        format="parquet",
+        format="delta",
         columns=[
             ColumnInfo(name="ticker", dtype="string"),
             ColumnInfo(name="date", dtype="datetime"),
@@ -321,10 +351,10 @@ PLATINUM_DATASETS: list[DatasetEntry] = [
     DatasetEntry(
         name="predictions",
         layer="platinum",
-        path="data/lake/04_platinum/predictions/",
+        path=_rel_path(PLATINUM_PREDICTIONS_DIR),
         description="ML model price direction predictions with confidence scores. "
         "XGBoost model outputs with probability and direction classification.",
-        format="parquet",
+        format="delta",
         columns=[
             ColumnInfo(name="ticker", dtype="string"),
             ColumnInfo(name="date", dtype="datetime"),

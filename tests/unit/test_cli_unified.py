@@ -123,6 +123,40 @@ class TestApiSubcommands:
         result = runner.invoke(app, ["api", "serve", "--help"])
         assert result.exit_code == 0
         assert "API" in result.stdout or "api" in result.stdout.lower()
+        assert "non-loopback" in result.stdout  # guard documented in --host help
+
+
+class TestApiServeNonLoopbackGuard:
+    """--host outside loopback must warn + confirm before exposing the unauthenticated API."""
+
+    def test_loopback_host_serves_without_prompt(self):
+        with patch("uvicorn.run") as mock_run:
+            result = runner.invoke(app, ["api", "serve"])
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+        assert "WARNING" not in result.stdout
+
+    def test_non_loopback_host_aborts_without_confirmation(self):
+        with patch("uvicorn.run") as mock_run:
+            result = runner.invoke(app, ["api", "serve", "--host", "0.0.0.0"], input="n\n")
+        assert result.exit_code == 1
+        mock_run.assert_not_called()
+        assert "UNAUTHENTICATED" in result.stdout
+
+    def test_non_loopback_host_aborts_on_eof(self):
+        """Non-interactive runs (no stdin) must abort, never serve silently (safe for CI)."""
+        with patch("uvicorn.run") as mock_run:
+            result = runner.invoke(app, ["api", "serve", "--host", "0.0.0.0"], input="")
+        assert result.exit_code != 0
+        mock_run.assert_not_called()
+
+    def test_non_loopback_host_confirmed_proceeds(self):
+        with patch("uvicorn.run") as mock_run:
+            result = runner.invoke(app, ["api", "serve", "--host", "0.0.0.0"], input="y\n")
+        assert result.exit_code == 0
+        mock_run.assert_called_once()
+        kwargs = mock_run.call_args.kwargs
+        assert kwargs["host"] == "0.0.0.0"
 
 
 class TestConfigSubcommands:

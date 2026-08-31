@@ -75,7 +75,15 @@ def build_catalog() -> Catalog:
 
     Internal Hamilton wrapper nodes (``*_raw``, ``*_data_type_validator``,
     ``*_range_validator``) and self-referencing edges are filtered out.
+    Declared dataset paths that don't exist on disk log a warning (a fresh
+    checkout before its first pipeline run will warn for every dataset).
     """
+    from equity_lake.core.paths import PROJECT_ROOT
+
+    for ds in ALL_DATASETS:
+        if not (PROJECT_ROOT / ds.path).exists():
+            logger.warning("catalog_dataset_path_missing", dataset=ds.name, path=ds.path)
+
     dr = _build_driver()
     variables = dr.list_available_variables()
 

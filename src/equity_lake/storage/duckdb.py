@@ -112,11 +112,11 @@ class EquityDataDB:
         except Exception as e:
             logger.error("Failed to create unified view", error=str(e))
 
-    def query(self, sql: str) -> pl.DataFrame:
-        """Execute SQL query and return a Polars DataFrame."""
+    def query(self, sql: str, params: list[Any] | None = None) -> pl.DataFrame:
+        """Execute SQL query (optionally parameter-bound) and return a Polars DataFrame."""
         self._ensure_views()
         try:
-            return self.con.execute(sql).pl()
+            return self.con.execute(sql, params).pl() if params is not None else self.con.execute(sql).pl()
         except Exception as e:
             logger.error("Query failed", error=str(e))
             return pl.DataFrame()

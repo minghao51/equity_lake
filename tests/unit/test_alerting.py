@@ -34,12 +34,38 @@ class TestWebhookAlerter:
         assert call_kwargs.kwargs["json"]["severity"] == "critical"
         assert call_kwargs.kwargs["json"]["alerts"] == ["alert1", "alert2"]
 
-    def test_send_alert_handles_failure(self, mock_httpx_client) -> None:
+    def test_send_alert_retries_failed_delivery(self, mock_httpx_client) -> None:
+        """Delivery goes through core/retry.py tenacity: 3 attempts, then a loud error log."""
         mock_httpx_client.post.side_effect = Exception("connection error")
 
-        with patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client):
+        with (
+            patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client),
+            patch("equity_lake.monitoring.alerting.logger") as mock_logger,
+        ):
             alerter = WebhookAlerter(url="https://example.com/webhook")
-            alerter.send_alert(["alert"], severity="info")
+            alerter.send_alert(["alert"], severity="info")  # must not raise
+
+        assert mock_httpx_client.post.call_count == 3  # tenacity retries, then gives up
+        mock_logger.error.assert_called_once()
+        assert mock_logger.error.call_args.args[0] == "webhook_alert_delivery_failed"
+
+    def test_send_alert_recovers_on_retry(self, mock_httpx_client) -> None:
+        """A transient failure on attempt 1 is retried and delivers successfully."""
+        ok_response = MagicMock()
+        ok_response.status_code = 200
+        ok_response.raise_for_status = MagicMock()
+        mock_httpx_client.post.side_effect = [Exception("transient"), ok_response]
+
+        with (
+            patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client),
+            patch("equity_lake.monitoring.alerting.logger") as mock_logger,
+        ):
+            alerter = WebhookAlerter(url="https://example.com/webhook")
+            alerter.send_alert(["alert"], severity="warning")
+
+        assert mock_httpx_client.post.call_count == 2
+        mock_logger.info.assert_called_once()
+        assert mock_logger.info.call_args.args[0] == "webhook_alert_sent"
 
 
 class TestCompositeAlerter:

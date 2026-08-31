@@ -261,6 +261,41 @@ class TestDataValidation:
 class TestQueryIntegration:
     """Integration tests for query functionality."""
 
+    def test_run_all_queries_succeeds_with_defaults(self, temp_partitioned_parquet):
+        """`equity query --all` must run every named query end-to-end.
+
+        Queries 4/5 take a ticker argument; run_all_queries calls them with no
+        args, so they need sensible defaults (previously TypeError → "Query failed").
+        """
+        db = EquityDataDB(db_path=":memory:")
+        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+            db._create_unified_view()
+            results = db.run_all_queries()
+
+        assert set(results) == set(EquityDataDB.QUERY_MAP)
+        # Every query executed and returned a DataFrame (non-empty where the
+        # seeded data guarantees rows; empty is fine for filters that match none).
+        for name, result in results.items():
+            assert isinstance(result, pl.DataFrame), f"Query {name} returned {type(result)}"
+        assert not results["latest_summary"].is_empty()
+        assert not results["cross_market"].is_empty()  # default ticker AAPL exists in the seed
+
+    def test_query_supports_bound_parameters(self, db_with_data):
+        """db.query accepts optional bound params (used by queries 4/5)."""
+        result = db_with_data.query("SELECT ticker FROM us_equity WHERE ticker = ? LIMIT 1", ["AAPL"])
+        assert isinstance(result, pl.DataFrame)
+        assert not result.is_empty()
+        assert result["ticker"][0] == "AAPL"
+
+    def test_query_4_and_5_use_db_query_not_raw_connection(self, db_with_data):
+        """Queries 4/5 route through db.query() like their siblings (uniform error handling)."""
+        queries = QueryExamples(db_with_data)
+        with patch.object(db_with_data, "query", wraps=db_with_data.query) as spy:
+            queries.query_4_cross_market_comparison(ticker="AAPL")
+            queries.query_5_moving_averages(ticker="AAPL", ma_days=3)
+        assert spy.call_count == 2
+
     def test_full_query_workflow(self, temp_partitioned_parquet):
         """Test complete workflow from DB creation to query execution."""
         db = EquityDataDB(db_path=":memory:")

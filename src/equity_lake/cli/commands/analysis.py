@@ -93,10 +93,31 @@ def monitor(
     monitor_inst = PipelineMonitor(
         max_age_days=max_age_days if max_age_days is not None else settings.monitoring.max_age_days,
         null_threshold_pct=null_threshold if null_threshold is not None else settings.monitoring.null_threshold_pct,
+        market_max_age_days=settings.monitoring.market_max_age_days,
+        table_max_age_days=settings.monitoring.table_max_age_days,
         verbose=verbose,
     )
-    monitor_inst.run_health_check()
+    all_healthy = monitor_inst.run_health_check()
+
+    # Presentation lives here: the monitor computes and dispatches alerts via
+    # its alerter (console alerts print exactly once through ConsoleAlerter).
+    typer.echo("\n" + "=" * 70)
+    typer.echo("PIPELINE HEALTH MONITOR")
+    typer.echo("=" * 70 + "\n")
+    for check_name, healthy in monitor_inst.check_results.items():
+        status = "\u2705 PASS" if healthy else "\u274c FAIL"
+        typer.echo(f"{status:<12} {check_name}")
+    typer.echo("\n" + "=" * 70)
+    if all_healthy:
+        typer.echo("\u2705 Pipeline is HEALTHY")
+    else:
+        typer.echo("\u26a0\ufe0f  Pipeline has ISSUES")
+    typer.echo("=" * 70 + "\n")
+
     # Always persist to the canonical location so dashboards can render it.
     # --output-json overrides the default logs/health-report.json path.
     output_path = Path(output_json) if output_json is not None else LOGS_DIR / "health-report.json"
-    monitor_inst.save_report(output_path)
+    try:
+        monitor_inst.save_report(output_path)
+    finally:
+        monitor_inst.close()

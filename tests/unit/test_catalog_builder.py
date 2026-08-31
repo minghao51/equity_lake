@@ -86,6 +86,24 @@ class TestDatasets:
         assert layers == {"bronze", "silver", "gold", "platinum"}
 
 
+class TestCatalogDrift:
+    """data/catalog.jsonl must be exactly what build_catalog() produces.
+
+    Fails CI when someone hand-edits the JSONL or the DAG/dataset definitions
+    change without running ``uv run equity catalog-generate``. Regenerate the
+    file to fix the drift — never edit the JSONL directly.
+    """
+
+    def test_committed_jsonl_matches_builder_output(self) -> None:
+        from equity_lake.catalog.writer import catalog_to_jsonl
+        from equity_lake.core.paths import PROJECT_ROOT
+
+        on_disk = (PROJECT_ROOT / "data" / "catalog.jsonl").read_text(encoding="utf-8")
+        assert on_disk == catalog_to_jsonl(build_catalog()), (
+            "data/catalog.jsonl is stale or hand-edited — regenerate with `uv run equity catalog-generate`"
+        )
+
+
 class TestDatasetLineage:
     def test_bronze_has_no_upstream(self, catalog: Catalog) -> None:
         for ds in catalog.datasets:
