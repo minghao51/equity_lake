@@ -156,13 +156,32 @@ def run_ablation(
 ) -> FindingCard:
     """Score enriched vs technical-only features on the same OOS folds.
 
-    Both frames must be row-aligned (same dates/OHLCV); the technical arm is the
-    enriched frame regenerated with ``include_macro=False``. The same
+    Both frames must cover the same dates/OHLCV; the technical arm is the
+    enriched frame regenerated with ``include_macro=False``. Arms are aligned
+    on the shared **date set** (per-arm null filters can drop different rows,
+    so heights alone cannot align them); any date-set divergence is logged and
+    the arms are intersected onto the shared dates. The same
     :class:`PurgedEmbargoedWalkForwardSplitter` folds are applied to both arms
     so the comparison is apple-to-apple. Writes and returns the card.
     """
     enriched_df = enriched_features.sort("date").filter(pl.col("next_day_return").is_not_null())
     technical_df = technical_features.sort("date").filter(pl.col("next_day_return").is_not_null())
+
+    # Handoff 08 A8: the old min(height)+.head() alignment silently paired
+    # different dates into the same fold when the per-arm null filters dropped
+    # different rows. Align on the date column instead: log any divergence,
+    # then score both arms on the intersected date set only.
+    enriched_dates = set(enriched_df["date"].to_list())
+    technical_dates = set(technical_df["date"].to_list())
+    if enriched_dates != technical_dates:
+        logger.warning(
+            "ablation_arm_date_mismatch",
+            only_in_enriched=sorted(str(d) for d in enriched_dates - technical_dates),
+            only_in_technical=sorted(str(d) for d in technical_dates - enriched_dates),
+        )
+    shared_dates = enriched_dates & technical_dates
+    enriched_df = enriched_df.filter(pl.col("date").is_in(shared_dates))
+    technical_df = technical_df.filter(pl.col("date").is_in(shared_dates))
 
     enriched_cols = _feature_columns_for(enriched_df)
     technical_cols = _feature_columns_for(technical_df)

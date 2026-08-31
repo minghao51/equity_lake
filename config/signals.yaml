@@ -1,12 +1,12 @@
-# Backtest strategy signals
+# Backtest strategy signals — the rule is % deviation of price from an N-day SMA
+# (thresholds below); "name" describes that rule, it is not a registry strategy.
 backtest:
   enabled: true
   strategies:
-    - name: "momentum"
+    - name: "sma_deviation_20d"
       lookback_days: 20
       buy_threshold: 0.02
       sell_threshold: -0.01
-  min_win_rate: 0.55
 
 # News sentiment signals
 sentiment:

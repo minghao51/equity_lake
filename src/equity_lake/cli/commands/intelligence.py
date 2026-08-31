@@ -119,8 +119,13 @@ def signal_scan(
     watchlist_path = Path(watchlist) if watchlist else None
     config_path = Path(config) if config else None
 
-    wl = load_watchlist(watchlist_path)
-    sc = load_signal_config(config_path)
+    try:
+        wl = load_watchlist(watchlist_path)
+        sc = load_signal_config(config_path)
+    except FileNotFoundError as exc:
+        typer.secho(f"Config file not found: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
     scanner = SignalScanner(sc, wl)
     target_date = _resolve_date(date_str)
     signals = scanner.scan(target_date)

@@ -11,10 +11,9 @@ def test_backtest_generator_enabled():
     """Test generator when enabled."""
     config = {
         "enabled": True,
-        "min_win_rate": 0.55,
         "strategies": [
             {
-                "name": "momentum",
+                "name": "sma_deviation_20d",
                 "lookback_days": 20,
                 "buy_threshold": 0.02,
                 "sell_threshold": -0.01,
@@ -23,13 +22,20 @@ def test_backtest_generator_enabled():
     }
     gen = BacktestSignalGenerator(config)
     assert gen.is_enabled() is True
+    assert gen.strategies[0]["name"] == "sma_deviation_20d"
+
+
+def test_backtest_generator_no_min_win_rate():
+    """min_win_rate was dead config — the generator must not read it."""
+    gen = BacktestSignalGenerator({"enabled": True, "strategies": []})
+    assert not hasattr(gen, "min_win_rate")
 
 
 def test_backtest_generator_no_data():
     """Test generator when no price data available."""
     config = {
         "enabled": True,
-        "strategies": [{"name": "momentum", "lookback_days": 20}],
+        "strategies": [{"name": "sma_deviation_20d", "lookback_days": 20}],
     }
     gen = BacktestSignalGenerator(config)
     # Ticker with no data should return None
@@ -46,7 +52,7 @@ def test_backtest_generator_with_data():
     # This test requires actual EOD data
     config = {
         "enabled": True,
-        "strategies": [{"name": "momentum", "lookback_days": 20}],
+        "strategies": [{"name": "sma_deviation_20d", "lookback_days": 20}],
     }
     gen = BacktestSignalGenerator(config)
     signal = gen.generate("AAPL", date.today() - timedelta(days=1))

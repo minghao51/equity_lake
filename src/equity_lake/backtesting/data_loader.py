@@ -90,8 +90,12 @@ class BacktestDataLoader:
         end_date: date,
         markets: list[str] | None = None,
         columns: list[str] | None = None,
-        fill_method: str = "ffill",
     ) -> pl.DataFrame:
+        """Load long-format OHLCV data, forward-filling per-ticker gaps.
+
+        Only forward fill is supported: back fill would leak future prices into
+        past rows (lookahead bias) and is intentionally not offered.
+        """
         if markets is None:
             markets = list(self.MARKET_DIRS.keys())
 
@@ -120,7 +124,7 @@ class BacktestDataLoader:
             logger.warning("No data found for query", tickers=tickers)
             return pl.DataFrame()
 
-        data = self._clean_data(data, fill_method)
+        data = self._clean_data(data)
 
         logger.debug(
             "Returned long format",
@@ -162,9 +166,7 @@ class BacktestDataLoader:
             )
             return pl.DataFrame()
 
-        import pandas as pd
-
-        self.conn.register("selected_tickers", pd.DataFrame({"ticker": tickers}))
+        self.conn.register("selected_tickers", pl.DataFrame({"ticker": tickers}))
         sql = """
         WITH unioned AS (
             {union_all}
@@ -189,21 +191,17 @@ class BacktestDataLoader:
     def _clean_data(
         self,
         data: pl.DataFrame,
-        fill_method: str | None = "ffill",
     ) -> pl.DataFrame:
+        """Dedupe, sort, forward-fill per-ticker gaps, and drop all-null price rows."""
         if "date" in data.columns:
             data = data.with_columns(pl.col("date").cast(pl.Date))
 
         data = data.unique(subset=["ticker", "date"], keep="last")
         data = data.sort(["ticker", "date"])
 
-        if fill_method:
-            price_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in data.columns]
-            if price_cols:
-                if fill_method == "ffill":
-                    data = data.with_columns([pl.col(c).forward_fill().over("ticker") for c in price_cols])
-                elif fill_method == "bfill":
-                    data = data.with_columns([pl.col(c).backward_fill().over("ticker") for c in price_cols])
+        price_cols = [c for c in ["open", "high", "low", "close", "volume"] if c in data.columns]
+        if price_cols:
+            data = data.with_columns([pl.col(c).forward_fill().over("ticker") for c in price_cols])
 
         price_cols = [c for c in ["open", "high", "low", "close"] if c in data.columns]
         if price_cols:

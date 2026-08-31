@@ -30,11 +30,30 @@ from equity_lake.backtesting.strategy import (
 
 logger = structlog.get_logger(__name__)
 
-# Cost regimes — per-leg fee_ratio + tax_ratio. "realistic" mirrors the engine defaults.
+# Cost regimes — per-leg fee_ratio + tax_ratio. "zero" and "high" are market-agnostic;
+# "realistic" is resolved per market via MARKET_COST_DEFAULTS (single-market runs).
 COST_REGIMES: dict[str, dict[str, float]] = {
     "zero": {"fee_ratio": 0.0, "tax_ratio": 0.0},
     "realistic": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": DEFAULT_TAX_RATIO},
     "high": {"fee_ratio": 0.005, "tax_ratio": DEFAULT_TAX_RATIO},
+}
+
+# Per-market "realistic" cost defaults (sell-side tax where the venue charges one).
+# The previous blanket 0.3% sell tax is Taiwan-style and wrong for most markets here.
+#   us:    no securities transaction tax
+#   cn:    stamp duty on sells, 0.05% since 2023-08-28 (halved from 0.1%)
+#   hk_sg: HK stamp duty 0.1% per side since 2023-11-17 (Singapore has none — blended)
+#   jpx: no sell-side securities tax in these defaults
+#   krx: ~0.15% sell-side securities transaction tax (KOSPI/KOSDAQ, incl. rural
+#   development levy; on a legislated phase-down schedule — check current rates)
+# The engine applies one fee/tax pair per run, so this is a per-venue default for
+# single-market runs, not per-ticker precision — override via run_arena(market_costs=...).
+MARKET_COST_DEFAULTS: dict[str, dict[str, float]] = {
+    "us": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0},
+    "cn": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0005},
+    "hk_sg": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.001},
+    "jpx": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0},
+    "krx": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0015},
 }
 
 # Strategy registry — name -> zero-arg factory (strategies carry their own defaults).
@@ -89,6 +108,30 @@ def equal_weight_buyhold(data: pl.DataFrame, initial_cash: float = 100_000.0) ->
     )
 
 
+def _resolve_regime_costs(
+    regime_name: str,
+    markets: tuple[str, ...],
+    market_costs: dict[str, dict[str, float]],
+) -> dict[str, float]:
+    """Resolve a cost regime's fee/tax pair for the run's markets.
+
+    "realistic" uses the venue's defaults when the run covers exactly one known
+    market; multi-market or unknown-market runs fall back to the (US-style)
+    engine defaults in ``COST_REGIMES`` with a log note.
+    """
+    base = dict(COST_REGIMES[regime_name])
+    if regime_name != "realistic":
+        return base
+    if len(markets) == 1 and markets[0] in market_costs:
+        return dict(market_costs[markets[0]])
+    logger.warning(
+        "arena_realistic_costs_fallback_multi_market",
+        markets=list(markets),
+        note="using engine default fee/tax; pass market_costs= for per-venue realism",
+    )
+    return base
+
+
 def run_arena(
     tickers: list[str],
     start_date: date,
@@ -99,6 +142,7 @@ def run_arena(
     strategies: list[str] | None = None,
     cost_regimes: list[str] | None = None,
     preloaded_data: pl.DataFrame | None = None,
+    market_costs: dict[str, dict[str, float]] | None = None,
 ) -> ArenaOutcome:
     """Run strategies x cost regimes on one shared data load.
 
@@ -108,8 +152,13 @@ def run_arena(
         markets: Market codes forwarded to :class:`BacktestDataLoader`.
         initial_cash: Starting capital per run (and the benchmark scale).
         strategies: Subset of :data:`STRATEGY_REGISTRY` keys; default all.
-        cost_regimes: Subset of :data:`COST_REGIMES` keys; default all.
+        cost_regimes: Subset of :data:`COST_REGIMES` keys; default all. The
+            ``realistic`` regime resolves per-market sell-tax defaults
+            (:data:`MARKET_COST_DEFAULTS`) on single-market runs.
         preloaded_data: Pre-loaded long OHLCV frame; skips the loader if given.
+        market_costs: Optional per-market overrides for the ``realistic`` regime
+            (``{"us": {"fee_ratio": ..., "tax_ratio": ...}, ...}``); defaults to
+            :data:`MARKET_COST_DEFAULTS`.
 
     Returns:
         :class:`ArenaOutcome` with one :class:`ArenaRun` per (strategy, regime)
@@ -126,6 +175,7 @@ def run_arena(
 
     strat_names = strategies or list(STRATEGY_REGISTRY)
     regime_names = cost_regimes or list(COST_REGIMES)
+    resolved_market_costs = market_costs if market_costs is not None else MARKET_COST_DEFAULTS
 
     unknown_strats = set(strat_names) - set(STRATEGY_REGISTRY)
     if unknown_strats:
@@ -138,7 +188,7 @@ def run_arena(
     for strat_name in strat_names:
         strategy_cls = STRATEGY_REGISTRY[strat_name]
         for regime_name in regime_names:
-            config = dict(COST_REGIMES[regime_name])
+            config = _resolve_regime_costs(regime_name, markets, resolved_market_costs)
             engine = VectorBacktestEngine(
                 strategy=strategy_cls(),
                 tickers=tickers,
@@ -169,6 +219,7 @@ def run_arena(
 
 __all__ = [
     "COST_REGIMES",
+    "MARKET_COST_DEFAULTS",
     "STRATEGY_REGISTRY",
     "ArenaOutcome",
     "ArenaRun",

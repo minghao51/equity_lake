@@ -5,8 +5,10 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import polars as pl
+from structlog.testing import capture_logs
 
 from equity_lake.findings.writer import load_finding_cards
+from equity_lake.ml import ablation
 from equity_lake.ml.ablation import run_ablation
 
 
@@ -75,3 +77,51 @@ def test_ablation_card_round_trips_via_load(tmp_path) -> None:
     assert "enrichment-ablation" in loaded
     assert loaded["enrichment-ablation"].axis == card.axis
     assert loaded["enrichment-ablation"].metrics == card.metrics
+
+
+def test_run_ablation_aligns_arms_on_dates(tmp_path, monkeypatch) -> None:
+    """A8 (handoff 08): per-arm null filters can drop different rows; the old
+    ``min(height)`` + ``.head()`` alignment silently paired different dates into
+    the same OOS fold. Arms must be scored on the intersected date set."""
+    periods = 60
+    enriched = _make_features_frame(periods=periods, enriched=True)
+    technical = _make_features_frame(periods=periods, enriched=False)
+    # Nulls at different rows: after the per-arm ``next_day_return`` filter the
+    # arms keep different dates, so row-position alignment would mispair folds.
+    enriched_null_date = enriched["date"][10]
+    technical_null_date = technical["date"][40]
+    enriched = enriched.with_columns(
+        pl.when(pl.col("date") == enriched_null_date).then(None).otherwise(pl.col("next_day_return")).alias("next_day_return")
+    )
+    technical = technical.with_columns(
+        pl.when(pl.col("date") == technical_null_date).then(None).otherwise(pl.col("next_day_return")).alias("next_day_return")
+    )
+
+    scored_frames: list[pl.DataFrame] = []
+    real_score_arm = ablation._score_arm
+
+    def _capturing_score_arm(df, feature_cols, *, folds):
+        scored_frames.append(df)
+        return real_score_arm(df, feature_cols, folds=folds)
+
+    monkeypatch.setattr(ablation, "_score_arm", _capturing_score_arm)
+
+    with capture_logs() as logs:
+        run_ablation(
+            enriched_features=enriched,
+            technical_features=technical,
+            train_window=20,
+            test_window=5,
+            base=tmp_path,
+        )
+
+    assert len(scored_frames) == 2
+    enriched_scored, technical_scored = scored_frames
+    assert enriched_scored["date"].to_list() == technical_scored["date"].to_list()
+
+    expected_dates = sorted(
+        (set(enriched["date"]) & set(technical["date"])) - {enriched_null_date, technical_null_date}
+    )  # each arm filtered its own null-target row before intersection
+    assert enriched_scored["date"].to_list() == expected_dates
+    # The date-set divergence was surfaced, not silently ignored.
+    assert any(log.get("event") == "ablation_arm_date_mismatch" for log in logs)

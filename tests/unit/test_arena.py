@@ -11,7 +11,9 @@ import pytest
 
 from equity_lake.backtesting.arena import (
     COST_REGIMES,
+    MARKET_COST_DEFAULTS,
     STRATEGY_REGISTRY,
+    _resolve_regime_costs,
     equal_weight_buyhold,
     run_arena,
 )
@@ -110,6 +112,35 @@ def test_run_arena_rejects_unknown_strategies() -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Per-market realistic cost defaults (B5)
+# ---------------------------------------------------------------------------
+
+
+def test_realistic_regime_resolves_per_market_costs() -> None:
+    """US runs pay no sell tax; CN pays stamp duty; other regimes pass through."""
+    us = _resolve_regime_costs("realistic", ("us",), MARKET_COST_DEFAULTS)
+    cn = _resolve_regime_costs("realistic", ("cn",), MARKET_COST_DEFAULTS)
+    assert us["tax_ratio"] == 0.0
+    assert cn["tax_ratio"] > 0.0  # A-share stamp duty on sells
+    assert us["fee_ratio"] > 0.0
+    # zero/high regimes are market-agnostic
+    assert _resolve_regime_costs("zero", ("us",), MARKET_COST_DEFAULTS) == {"fee_ratio": 0.0, "tax_ratio": 0.0}
+    assert _resolve_regime_costs("high", ("cn",), MARKET_COST_DEFAULTS)["fee_ratio"] == 0.005
+
+
+def test_realistic_regime_multi_market_falls_back_to_engine_defaults() -> None:
+    """One engine run cannot mix per-venue taxes; multi-market runs use engine defaults."""
+    fallback = _resolve_regime_costs("realistic", ("us", "cn"), MARKET_COST_DEFAULTS)
+    assert fallback == COST_REGIMES["realistic"]
+
+
+def test_realistic_regime_accepts_market_cost_overrides() -> None:
+    custom = {"us": {"fee_ratio": 0.002, "tax_ratio": 0.001}}
+    resolved = _resolve_regime_costs("realistic", ("us",), custom)
+    assert resolved == {"fee_ratio": 0.002, "tax_ratio": 0.001}
+
+
 def test_build_finding_cards_axes_and_verdicts() -> None:
     data = _synthetic_data()
     outcome = run_arena(
@@ -125,6 +156,10 @@ def test_build_finding_cards_axes_and_verdicts() -> None:
     # scope carries ticker count + the caller's tag
     assert all(c.scope.get("synthetic") is True for c in cards)
     assert all(c.scope.get("tickers") == 12 for c in cards)
+    # B2: the Sharpe risk-free-rate convention is stated in card metadata
+    assert all(c.scope.get("sharpe_risk_free_rate") == 0.02 for c in cards)
+    # B5: benchmark lag/cost asymmetry is disclosed in card scope
+    assert all("benchmark_asymmetry" in c.scope for c in cards)
 
 
 def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
@@ -143,3 +178,25 @@ def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
     # cards were written and reload cleanly
     loaded = load_finding_cards(base=tmp_path)
     assert {c.id for c in loaded} == {c.id for c in written}
+
+
+def test_card_evidence_refs_point_at_artifacts_write_arena_actually_writes(tmp_path: Path) -> None:
+    """B5: evidence_refs must reference real per-run artifact dirs, not phantom dirs."""
+    data = _synthetic_data()
+    outcome = run_arena(
+        [f"T{i:02d}" for i in range(12)],
+        data["date"].min(),
+        data["date"].max(),
+        preloaded_data=data,
+    )
+    cards = write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4))
+    assert cards
+    written_dirs = {p.name for p in tmp_path.iterdir() if p.is_dir()}
+    written_files = {p.name for p in tmp_path.iterdir() if p.is_file()}
+    for card in cards:
+        assert card.evidence_refs, f"card {card.id} must carry evidence refs"
+        for ref in card.evidence_refs:
+            if ref.endswith("/"):
+                assert ref.rstrip("/") in written_dirs, f"{card.id} references unwritten dir {ref}"
+            else:
+                assert ref in written_files, f"{card.id} references unwritten file {ref}"

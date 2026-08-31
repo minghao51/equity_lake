@@ -56,7 +56,18 @@ def arena_run(
         typer.secho(f"arena failed: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1) from exc
 
-    cards = write_arena_artifacts(outcome, base=base, run_date=date.today())
+    cards = write_arena_artifacts(
+        outcome,
+        base=base,
+        run_date=date.today(),
+        scope={
+            "universe": (
+                f"default mega-cap universe ({_DEFAULT_TICKERS}) — survivorship-biased: today's winners picked with hindsight"
+                if tickers == _DEFAULT_TICKERS
+                else f"user-specified tickers ({tickers}) — not a random sample; selection bias possible"
+            )
+        },
+    )
     strategies_run = {run.strategy for run in outcome.runs}
     regimes_run = {run.cost_regime for run in outcome.runs}
     typer.echo(f"\nArena complete: {len(outcome.runs)} runs ({len(strategies_run)} strategies x {len(regimes_run)} regimes).")

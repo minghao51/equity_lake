@@ -33,6 +33,31 @@ logger = structlog.get_logger(__name__)
 from equity_lake.core.paths import DATA_DIR  # noqa: E402
 
 DEFAULT_MODEL_DIR = DATA_DIR / "models"
+
+
+def _canonical_training_params(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical (XGBoost-style) params shared by every ``PriceForecaster`` fit.
+
+    ``train_model`` and ``backtest`` must fit with identical parameter and
+    class-weight semantics (handoff 08 A3): ``build_estimator`` normalizes per
+    backend, so callers pass one canonical dict plus explicit overrides.
+    """
+    params: dict[str, Any] = {
+        "max_depth": 5,
+        "learning_rate": 0.05,
+        "n_estimators": 200,
+        "subsample": 0.9,
+        "colsample_bytree": 0.9,
+        "objective": "binary:logistic",
+        "eval_metric": "logloss",
+        "random_state": 42,
+        "n_jobs": -1,
+    }
+    if overrides:
+        params.update(overrides)
+    return params
+
+
 MODEL_MODES = {"v1_direction", "v2_meta_label"}
 NON_FEATURE_COLUMNS = {
     "ticker",
@@ -217,19 +242,7 @@ class PriceForecaster:
             )
             logger.info("model_validation_completed", ticker=ticker, model_mode=self.model_mode, **metrics)
 
-        default_params: dict[str, Any] = {
-            "max_depth": 5,
-            "learning_rate": 0.05,
-            "n_estimators": 200,
-            "subsample": 0.9,
-            "colsample_bytree": 0.9,
-            "objective": "binary:logistic",
-            "eval_metric": "logloss",
-            "random_state": 42,
-            "n_jobs": -1,
-        }
-        if params:
-            default_params.update(params)
+        default_params = _canonical_training_params(params)
 
         class_counts = compute_class_weights(y_train)
 
@@ -321,7 +334,21 @@ class PriceForecaster:
             embargo_window=embargo_window,
             label_horizon=label_horizon_days,
         )
-        cv = splitter if splitter.get_n_splits(X_train) > 0 else 2
+        # Never fall back to unpurged KFold (handoff 08 A2): the silent fallback
+        # fired exactly when history is short — when leakage hurts most — and
+        # deterministically shrinking the windows would silently change what the
+        # tuned model was evaluated on. Fail fast and keep the caller in control
+        # of the CV geometry instead.
+        if splitter.get_n_splits(X_train) < 1:
+            raise ValueError(
+                f"Hyperparameter tuning requires at least one purged walk-forward fold, "
+                f"but the training window has only {X_train.height} rows "
+                f"(train_window={train_window}, test_window={test_window}, "
+                f"embargo_window={embargo_window}, label_horizon_days={label_horizon_days}). "
+                f"Widen the feature date range or explicitly reduce train_window/test_window "
+                f"so one purged fold fits; refusing to fall back to unpurged KFold CV."
+            )
+        cv: Any = splitter
 
         class_counts = compute_class_weights(y_train)
         estimator_kwargs: dict[str, Any] = {
@@ -427,16 +454,28 @@ class PriceForecaster:
         train_window: int = 500,
         retrain_interval: int = 63,
     ) -> pl.DataFrame:
-        """Walk-forward backtest that retrains the model periodically."""
+        """Walk-forward backtest that retrains the model periodically.
+
+        Each retrain mirrors ``train_model``'s fit semantics (handoff 08 A3):
+        canonical params, ``scale_pos_weight`` from the training slice's class
+        balance, and a decision threshold optimized on a purged validation tail
+        (the backtest analog of the ``optimized_threshold`` live ``predict()``
+        reads back from training metadata). Rows with a null target (e.g. the
+        final row, whose ``next_day_return`` is null) are dropped, mirroring
+        ``_prepare_training_frame``'s consumers in ``train_model``.
+        """
         df = ensure_polars(self.load_features(ticker, start_date, end_date))
         training_df = self._prepare_training_frame(df)
+        target_column = "meta_label" if self.model_mode == "v2_meta_label" else "target"
+        training_df = training_df.filter(pl.col(target_column).is_not_null())
         if training_df.height < train_window + 10:
             raise ValueError(f"Not enough data for backtesting. Need at least {train_window + 10} days")
 
-        target_column = "meta_label" if self.model_mode == "v2_meta_label" else "target"
         results: list[dict[str, Any]] = []
         feature_cols = self._get_feature_columns(training_df)
         last_train_idx = 0
+        model: ModelBackend | None = None
+        backtest_threshold = float(self.v2_settings["meta_label_threshold"]) if self.model_mode == "v2_meta_label" else 0.5
 
         for i in tqdm(range(training_df.height - train_window), desc="Backtesting"):
             test_idx = i + train_window
@@ -446,27 +485,31 @@ class PriceForecaster:
             if i == 0 or (test_idx - last_train_idx) >= retrain_interval:
                 train_start = max(0, test_idx - train_window)
                 train_slice = training_df.slice(train_start, test_idx - train_start)
-                X_tr = self._prepare_training_matrix(train_slice, feature_cols)
-                y_tr = self._prepare_target_series(train_slice, target_column)
-                backtest_params: dict[str, Any] = {
-                    "max_depth": 5,
-                    "learning_rate": 0.05,
-                    "n_estimators": 200,
-                    "objective": "binary:logistic",
-                    "eval_metric": "logloss",
-                    "random_state": 42,
-                    "n_jobs": -1,
-                }
-                model = build_estimator(self.backend, backtest_params)
+                # Mirror train_model's purged 80/20 split: fit on the head,
+                # optimize the decision threshold on the validation tail.
+                split_idx = max(int(train_slice.height * 0.8), 1)
+                embargo = max(self._label_horizon_days(), 0)
+                train_end = max(split_idx - embargo, 1)
+                fit_slice = train_slice.slice(0, train_end)
+                val_slice = train_slice.slice(split_idx)
+                X_tr = self._prepare_training_matrix(fit_slice, feature_cols)
+                y_tr = self._prepare_target_series(fit_slice, target_column)
+                class_counts = compute_class_weights(y_tr)
+                model = build_estimator(self.backend, _canonical_training_params(), scale_pos_weight=class_counts["scale_pos_weight"])
                 fit_estimator(model, X_tr, y_tr.to_numpy(), verbose=False)
+                if val_slice.height > 0:
+                    X_val = self._prepare_training_matrix(val_slice, feature_cols)
+                    y_val = self._prepare_target_series(val_slice, target_column)
+                    backtest_threshold = optimize_threshold(y_val, model.predict_proba(X_val)[:, 1])
                 last_train_idx = test_idx
 
+            assert model is not None  # the loop's first iteration always retrains
             test_slice = training_df.slice(test_idx, 1)
             X_test = self._prepare_training_matrix(test_slice, feature_cols)
             test_row = training_df.row(test_idx, named=True)
             y_true = int(test_row[target_column])
             proba = float(model.predict_proba(X_test)[0][1])
-            pred = int(proba > 0.5)
+            pred = int(proba >= backtest_threshold)
             result = {
                 "date": test_row["date"],
                 "prediction": pred,

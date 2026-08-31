@@ -119,6 +119,10 @@ def analyze_sentiment_scores(
     frame = ensure_polars(df)
     if text_column not in frame.columns:
         raise ValueError(f"Column '{text_column}' not found in DataFrame")
+    if frame.is_empty():
+        # Guard (handoff 08 A8): analyze_batch([]) returns a column-less frame
+        # whose ["compound"] lookup below would KeyError.
+        return frame
 
     analyzer = SentimentAnalyzer(method=method)
     texts = frame[text_column].fill_null("").cast(pl.Utf8).to_list()

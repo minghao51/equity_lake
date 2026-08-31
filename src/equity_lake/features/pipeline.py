@@ -13,9 +13,11 @@ Callers use :meth:`compute_technical` for per-ticker indicators and
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import polars as pl
 from hamilton import base
 from hamilton.plugins import h_polars
@@ -126,9 +128,9 @@ class FeaturePipeline:
         self,
         features_df: pl.DataFrame,
         *,
-        duckdb_conn: Any,
-        start_date: Any,
-        end_date: Any,
+        duckdb_conn: duckdb.DuckDBPyConnection,
+        start_date: date,
+        end_date: date,
         enable_news_sentiment: bool = False,
         enable_social_sentiment: bool = False,
         enable_enriched_sentiment: bool = False,

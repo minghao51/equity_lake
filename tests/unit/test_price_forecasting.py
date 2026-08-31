@@ -2,9 +2,12 @@
 
 from datetime import date
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pandas as pd
 import polars as pl
+import pytest
 
 from equity_lake.ml.candidates import build_candidate_frame
 from equity_lake.ml.forecasting import PriceForecaster
@@ -32,6 +35,146 @@ def _make_training_frame(ticker: str, periods: int = 80) -> pd.DataFrame:
             "macd": [0.1 * (i % 3) for i in range(len(dates))],
         }
     )
+
+
+def test_backtest_handles_null_target_on_final_row(monkeypatch, tmp_path) -> None:
+    """A1 (handoff 08): the DAG target (``next_day_return > 0`` via shift(-1)) is
+    null on the final features row; ``backtest()`` must drop null-target rows
+    (mirroring ``_prepare_training_frame``'s consumers) instead of raising
+    ``TypeError`` on ``int(null)`` at the last loop index."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    frame = _make_training_frame("AAPL", periods=40)
+    frame.loc[frame.index[-1], "next_day_return"] = None
+
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        return frame
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
+
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        result = forecaster.backtest("AAPL", date(2024, 1, 1), date(2024, 2, 28), train_window=10)
+
+        assert not result.is_empty()
+        # The null-target final row must be excluded, not scored.
+        last_frame_date = pd.Timestamp(frame["date"].iloc[-1])
+        assert result["date"].max() < last_frame_date
+        assert result["actual"].null_count() == 0
+        assert set(result["prediction"].unique()).issubset({0, 1})
+    finally:
+        forecaster.close()
+
+
+def test_backtest_fits_with_training_scale_pos_weight(monkeypatch, tmp_path) -> None:
+    """A3 (handoff 08): ``backtest()`` retrains must use the same
+    ``scale_pos_weight`` semantics as ``train_model`` (class-weighted fit),
+    not an unweighted estimator."""
+    from equity_lake.ml.backends import build_estimator as real_build_estimator
+
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    frame = _make_training_frame("AAPL", periods=40)
+    # Imbalanced: positive only every 4th day -> fit slice (rows 0..6) has
+    # 2 positives / 5 negatives -> scale_pos_weight = 5 / 2 = 2.5.
+    frame["next_day_return"] = [0.01 if i % 4 == 0 else -0.01 for i in range(len(frame))]
+
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        return frame
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
+
+    recorded: list[float | None] = []
+
+    def _recording_build_estimator(backend, params=None, **kwargs):
+        recorded.append(kwargs.get("scale_pos_weight"))
+        return real_build_estimator(backend, params, **kwargs)
+
+    monkeypatch.setattr("equity_lake.ml.forecasting.build_estimator", _recording_build_estimator)
+
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.backtest("AAPL", date(2024, 1, 1), date(2024, 2, 28), train_window=10)
+
+        assert recorded, "backtest() must construct its estimator via build_estimator"
+        assert recorded[0] == pytest.approx(2.5)
+    finally:
+        forecaster.close()
+
+
+def test_backtest_predicts_with_optimized_threshold(monkeypatch, tmp_path) -> None:
+    """A3 (handoff 08): backtest predictions must apply the optimized decision
+    threshold (the backtest analog of live ``predict()``'s stored
+    ``optimized_threshold``), not a fixed 0.5 cut."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    frame = _make_training_frame("AAPL", periods=40)
+
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        return frame
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
+    monkeypatch.setattr("equity_lake.ml.forecasting.optimize_threshold", lambda y_true, y_proba: 0.7)
+
+    # A deterministic stub estimator: real XGBoost on this tiny synthetic
+    # frame produces near-uniform probabilities, which cannot discriminate
+    # a 0.7 threshold from a 0.5 one. The stub cycles probabilities that
+    # straddle both cuts (0.6 differs between >=0.7 and >0.5).
+    stub_probabilities = [0.2, 0.6, 0.8, 0.4]
+
+    class _StubModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def predict_proba(self, X: Any) -> np.ndarray:
+            n = int(np.asarray(X).shape[0])
+            if n == 1:
+                p = stub_probabilities[self.calls % len(stub_probabilities)]
+                self.calls += 1
+                return np.array([[1 - p, p]])
+            return np.array(
+                [[1 - stub_probabilities[i % len(stub_probabilities)], stub_probabilities[i % len(stub_probabilities)]] for i in range(n)]
+            )
+
+    monkeypatch.setattr("equity_lake.ml.forecasting.build_estimator", lambda *args, **kwargs: _StubModel())
+    monkeypatch.setattr("equity_lake.ml.forecasting.fit_estimator", lambda *args, **kwargs: None)
+
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        result = forecaster.backtest("AAPL", date(2024, 1, 1), date(2024, 2, 28), train_window=10)
+
+        expected = [int(p >= 0.7) for p in result["probability"].to_list()]
+        assert result["prediction"].to_list() == expected
+        # A fixed-0.5 threshold would disagree on the 0.6 probabilities.
+        fixed = [int(p > 0.5) for p in result["probability"].to_list()]
+        assert expected != fixed
+        assert 0.6 in result["probability"].to_list()
+    finally:
+        forecaster.close()
+
+
+def test_tune_hyperparameters_raises_when_no_purged_fold_fits(monkeypatch, tmp_path) -> None:
+    """A2 (handoff 08): short history must raise a clear error advising a longer
+    window — the old code silently fell back to unpurged ``KFold(2)``, leaking
+    test data into hyperparameter tuning exactly when history is shortest."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        x_train = pl.DataFrame({"f1": [float(i) for i in range(50)], "f2": [float(i % 7) for i in range(50)]})
+        y_train = pl.Series("target", [i % 2 for i in range(50)], dtype=pl.Int64)
+
+        with pytest.raises(ValueError, match="purged walk-forward fold"):
+            forecaster._tune_hyperparameters(
+                x_train,
+                y_train,
+                train_window=252,
+                test_window=21,
+                embargo_window=1,
+                label_horizon_days=1,
+            )
+    finally:
+        forecaster.close()
 
 
 def test_get_feature_columns_excludes_labels_and_barriers() -> None:

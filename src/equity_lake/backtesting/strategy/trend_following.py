@@ -7,6 +7,20 @@ logger = structlog.get_logger(__name__)
 
 
 class SMACrossoverStrategy(BaseStrategy):
+    """SMA/EMA crossover trend-following strategy.
+
+    Holding semantics (hold until the opposite signal — not a one-day trade):
+    a golden cross (fast MA crossing above slow MA) opens a full long position
+    that is held on every bar until the opposite event, a cross-under
+    (fast MA crossing below slow MA), closes it. The position is forward-filled
+    between those two events, mirroring ``momentum.py``'s rebalance fills, so
+    the weight forms one contiguous nonzero block per trend leg instead of a
+    single spike on the cross bar.
+
+    The engine executes at the next bar's close after each weight change
+    (no same-bar lookahead).
+    """
+
     def __init__(self, params: dict[str, object] | None = None):
         default_params = {
             "fast_period": 50,
@@ -20,6 +34,8 @@ class SMACrossoverStrategy(BaseStrategy):
         fast_period = self.get_param("fast_period")
         slow_period = self.get_param("slow_period")
         use_ema = self.get_param("use_ema")
+
+        data = data.sort(["ticker", "date"])
 
         if use_ema:
             fast_ma = data.with_columns(
@@ -45,12 +61,32 @@ class SMACrossoverStrategy(BaseStrategy):
 
     def generate_weights(self, data: pl.DataFrame) -> pl.DataFrame:
         df = self._data_with_indicators
-        golden_cross = pl.col("fast_ma") > pl.col("slow_ma")
-        prev_fast = pl.col("fast_ma").shift(1).over("ticker")
-        prev_slow = pl.col("slow_ma").shift(1).over("ticker")
-        golden_cross_now = golden_cross & (prev_fast <= prev_slow)
+        fast_above = pl.col("fast_ma") > pl.col("slow_ma")
+        prev_fast_above = (pl.col("fast_ma").shift(1).over("ticker")) > (pl.col("slow_ma").shift(1).over("ticker"))
 
-        return df.with_columns(pl.when(golden_cross_now).then(1.0).otherwise(0.0).alias("weight")).select("date", "ticker", "weight")
+        golden_cross_now = fast_above & ~prev_fast_above
+        cross_under_now = ~fast_above & prev_fast_above
+        # First bar where both MAs exist: the cross events are null there (no
+        # previous value), so seed the state with the observed regime instead.
+        first_valid = fast_above.is_not_null() & fast_above.shift(1).over("ticker").is_null()
+
+        # Enter on the golden cross, hold until the cross-under: emit the event
+        # weight and forward-fill the state between events (0.0 before the first
+        # cross and during warm-up, where the MAs are still null).
+        weight = (
+            pl.when(first_valid)
+            .then(fast_above.cast(pl.Float64))
+            .when(golden_cross_now)
+            .then(1.0)
+            .when(cross_under_now)
+            .then(0.0)
+            .otherwise(None)
+            .forward_fill()
+            .over("ticker")
+            .fill_null(0.0)
+        )
+
+        return df.with_columns(weight.alias("weight")).select("date", "ticker", "weight")
 
 
 __all__ = ["SMACrossoverStrategy"]

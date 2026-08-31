@@ -4,11 +4,14 @@ from contextlib import suppress
 from datetime import date, timedelta
 
 import duckdb
+import structlog
 
 from equity_lake.core.paths import US_NEWS_DIR
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
 from equity_lake.storage.lake_reader import duckdb_scan_for
+
+logger = structlog.get_logger(__name__)
 
 
 class SentimentSignalGenerator(SignalGenerator):
@@ -50,7 +53,8 @@ class SentimentSignalGenerator(SignalGenerator):
 
         try:
             row = self.con.execute(query, [ticker, start_date, target_date]).fetchone()
-        except Exception:
+        except Exception as exc:
+            logger.warning("sentiment_generator_query_failed", ticker=ticker, error=str(exc))
             return None
 
         if row is None:

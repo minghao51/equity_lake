@@ -57,3 +57,23 @@ def test_ohlcv_extraction() -> None:
     assert open_price(df).to_list() == [150.0, 380.0]
     assert high(df).to_list() == [155.0, 385.0]
     assert low(df).to_list() == [148.0, 378.0]
+
+
+def test_validator_metadata_single_source() -> None:
+    """A8 (handoff 08): the float-dtype check is declared once and derived into
+    both ``@check_output`` (runtime) and ``@tag(validators=...)`` (catalog), so
+    the two can no longer drift and the catalog tag stays byte-identical."""
+    from hamilton import base, driver
+    from hamilton.plugins import h_polars
+
+    from equity_lake.features.dag import raw_01
+    from equity_lake.features.dag.raw_01 import _FLOAT_CHECK_OUTPUT_KWARGS, _FLOAT_CHECK_OUTPUT_TAG
+
+    assert _FLOAT_CHECK_OUTPUT_TAG == "check_output(data_type=float)"
+    assert _FLOAT_CHECK_OUTPUT_KWARGS["data_type"] is float
+
+    adapter = base.SimplePythonGraphAdapter(h_polars.PolarsDataFrameResult())
+    dr = driver.Builder().with_modules(raw_01).with_adapter(adapter).build()
+    tags = {var.name: var.tags for var in dr.list_available_variables()}
+    assert tags["close"].get("validators") == "check_output(data_type=float)"
+    assert tags["volume"].get("validators") == "check_output(data_type=float)"

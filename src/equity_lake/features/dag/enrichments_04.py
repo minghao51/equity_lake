@@ -227,14 +227,7 @@ def _merge_news_sentiment(
     try:
         sentiment_df = conn.execute(sentiment_query, [tickers, start_date, end_date]).pl()
         if sentiment_df.is_empty():
-            return features_df.with_columns(
-                pl.lit(0.0).alias("avg_daily_sentiment"),
-                pl.lit(0).alias("news_count"),
-                pl.lit(0).alias("positive_count"),
-                pl.lit(0).alias("negative_count"),
-                pl.lit(0).alias("neutral_count"),
-                pl.lit(0.0).alias("sentiment_std"),
-            )
+            return _add_empty_news_sentiment_columns(features_df)
 
         merged_df = features_df.join(sentiment_df, on=["ticker", "date"], how="left").with_columns(
             pl.col("avg_daily_sentiment").fill_null(0.0),
@@ -252,7 +245,10 @@ def _merge_news_sentiment(
         return merged_df
     except (duckdb.Error, pl.exceptions.PolarsError) as exc:
         logger.error("news_sentiment_merge_failed", error_type=type(exc).__name__, error=str(exc))
-        return features_df
+        # Schema parity (handoff 08 A5): transient errors must not change the
+        # feature column set downstream — return the same zero-filled defaults
+        # as the no-data path, like the sibling merges do.
+        return _add_empty_news_sentiment_columns(features_df)
 
 
 def _merge_social_sentiment(
@@ -283,19 +279,7 @@ def _merge_social_sentiment(
     try:
         sentiment_df = conn.execute(sentiment_query, [tickers, start_date, end_date]).pl()
         if sentiment_df.is_empty():
-            return features_df.with_columns(
-                pl.lit(0).alias("social_mention_count"),
-                pl.lit(0.0).alias("social_sentiment_score"),
-                pl.lit(0.0).alias("social_positive_score"),
-                pl.lit(0.0).alias("social_negative_score"),
-                pl.lit(0).alias("social_reddit_mentions"),
-                pl.lit(0).alias("social_twitter_mentions"),
-                pl.lit(0.0).alias("social_momentum"),
-                pl.lit(0.0).alias("social_sentiment_momentum"),
-                pl.lit(0.0).alias("social_sentiment_ewma_3d"),
-                pl.lit(0.0).alias("social_sentiment_ewma_7d"),
-                pl.lit(0.0).alias("social_sentiment_ewma_30d"),
-            )
+            return _add_empty_social_sentiment_columns(features_df)
 
         merged_df = (
             features_df.join(sentiment_df, on=["ticker", "date"], how="left")
@@ -331,7 +315,10 @@ def _merge_social_sentiment(
         return merged_df
     except (duckdb.Error, pl.exceptions.PolarsError) as exc:
         logger.error("social_sentiment_merge_failed", error_type=type(exc).__name__, error=str(exc))
-        return features_df
+        # Schema parity (handoff 08 A5): transient errors must not change the
+        # feature column set downstream — return the same zero-filled defaults
+        # as the no-data path, like the sibling merges do.
+        return _add_empty_social_sentiment_columns(features_df)
 
 
 def _merge_enriched_sentiment(
@@ -558,10 +545,20 @@ def _add_cross_modal(features_df: pl.DataFrame) -> pl.DataFrame:
         )
 
     if "social_sentiment_score" in enriched.columns:
+        # Handoff 08 A6: ``social_sentiment_momentum_5d`` duplicated the exact
+        # ``diff(5)`` expression already computed as ``social_sentiment_momentum``
+        # (perfectly correlated twins). Reuse the computed column when present
+        # (the DAG always provides it); only compute the fallback for direct
+        # callers whose frame lacks it. Both output names stay in the schema.
+        social_momentum_5d = (
+            pl.col("social_sentiment_momentum")
+            if "social_sentiment_momentum" in enriched.columns
+            else pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0)
+        )
         expressions.extend(
             [
                 (pl.col("social_sentiment_score").fill_null(0.0) * log_volume).alias("social_sentiment_x_log_volume"),
-                pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum_5d"),
+                social_momentum_5d.alias("social_sentiment_momentum_5d"),
             ]
         )
 
@@ -641,6 +638,38 @@ def _merge_macro(
 # ---------------------------------------------------------------------------
 # Empty-column helpers
 # ---------------------------------------------------------------------------
+
+
+def _add_empty_news_sentiment_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Zero-filled news-sentiment defaults matching the populated-merge schema."""
+    return df.with_columns(
+        pl.lit(0.0).alias("avg_daily_sentiment"),
+        pl.lit(0).cast(pl.Int64).alias("news_count"),
+        pl.lit(0).cast(pl.Int64).alias("positive_count"),
+        pl.lit(0).cast(pl.Int64).alias("negative_count"),
+        pl.lit(0).cast(pl.Int64).alias("neutral_count"),
+        pl.lit(0.0).alias("sentiment_std"),
+        pl.lit(0.0).alias("sentiment_ewma_3d"),
+        pl.lit(0.0).alias("sentiment_ewma_7d"),
+        pl.lit(0.0).alias("sentiment_ewma_30d"),
+    )
+
+
+def _add_empty_social_sentiment_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Zero-filled social-sentiment defaults matching the populated-merge schema."""
+    return df.with_columns(
+        pl.lit(0).cast(pl.Int64).alias("social_mention_count"),
+        pl.lit(0.0).alias("social_sentiment_score"),
+        pl.lit(0.0).alias("social_positive_score"),
+        pl.lit(0.0).alias("social_negative_score"),
+        pl.lit(0).cast(pl.Int64).alias("social_reddit_mentions"),
+        pl.lit(0).cast(pl.Int64).alias("social_twitter_mentions"),
+        pl.lit(0.0).alias("social_momentum"),
+        pl.lit(0.0).alias("social_sentiment_momentum"),
+        pl.lit(0.0).alias("social_sentiment_ewma_3d"),
+        pl.lit(0.0).alias("social_sentiment_ewma_7d"),
+        pl.lit(0.0).alias("social_sentiment_ewma_30d"),
+    )
 
 
 def _add_empty_enriched_columns(df: pl.DataFrame) -> pl.DataFrame:

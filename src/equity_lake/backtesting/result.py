@@ -18,6 +18,7 @@ class BacktestResult:
         equity_curve: pl.Series,
         trades: list[dict[str, Any]],
         metrics: dict[str, float],
+        warnings: list[str] | None = None,
     ):
         self.strategy_name = strategy_name
         self.tickers = tickers
@@ -28,6 +29,8 @@ class BacktestResult:
         self.equity_curve = equity_curve
         self.trades = trades
         self.metrics = metrics
+        #: Human-readable runtime warnings (e.g. stats unavailable) — never stored in metrics.
+        self.warnings: list[str] = warnings or []
 
     @property
     def total_return(self) -> float:
@@ -72,6 +75,7 @@ Trading:
             "final_cash": self.final_cash,
             "metrics": self.metrics,
             "num_trades": len(self.trades),
+            "warnings": list(self.warnings),
         }
 
 

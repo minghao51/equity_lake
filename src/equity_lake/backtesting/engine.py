@@ -8,6 +8,7 @@ import polars as pl
 import structlog
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
+from equity_lake.backtesting.metrics import DEFAULT_RISK_FREE_RATE, equity_curve_metrics
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy.base import BaseStrategy
 
@@ -65,7 +66,10 @@ class VectorBacktestEngine:
         self.stop_loss = self.config.get("stop_loss", 1.0)
         self.take_profit = self.config.get("take_profit", float("inf"))
 
-        self.data_loader = BacktestDataLoader()
+        # Created lazily on first _load_data() call without preloaded_data — the
+        # loader opens a DuckDB connection, and arena runs must not pay for it.
+        self.data_loader: BacktestDataLoader | None = None
+        self._warnings: list[str] = []
 
         self._report: Any = None
         self.metrics: dict[str, Any] = {}
@@ -81,7 +85,7 @@ class VectorBacktestEngine:
 
     def run(self) -> BacktestResult:
         if not POLARS_BACKTEST_AVAILABLE:
-            raise ImportError("polars-backtest is required. Install with: uv sync --extra backtesting")
+            raise ImportError("polars-backtest is required. Install with: uv sync --group backtesting")
 
         logger.info("Starting vectorized backtest", strategy=self.strategy.name)
 
@@ -112,14 +116,15 @@ class VectorBacktestEngine:
         self._report = report
 
         try:
-            stats = report.get_stats()
-            self._compute_metrics(stats, report)
+            stats = report.get_stats(riskfree_rate=DEFAULT_RISK_FREE_RATE)
         except Exception as exc:
             logger.warning("backtest_stats_unavailable", error=str(exc))
-            self.metrics["warning"] = str(exc)
+            self._warnings.append(f"stats unavailable: {exc}")
+            stats = pl.DataFrame()
 
         trades = self._extract_trades(report)
         equity_curve = self._extract_equity_curve(report)
+        self._compute_metrics(stats, report, equity_curve)
 
         self.strategy.finalize()
 
@@ -133,6 +138,7 @@ class VectorBacktestEngine:
             equity_curve=equity_curve,
             trades=trades,
             metrics=self.metrics,
+            warnings=self._warnings,
         )
 
         logger.info(
@@ -149,6 +155,8 @@ class VectorBacktestEngine:
     def _load_data(self) -> pl.DataFrame:
         if self.preloaded_data is not None:
             return self.preloaded_data.clone()
+        if self.data_loader is None:
+            self.data_loader = BacktestDataLoader()
         return self.data_loader.load(
             tickers=self.tickers,
             start_date=self.start_date,
@@ -156,26 +164,34 @@ class VectorBacktestEngine:
             markets=self.markets,
         )
 
-    def _compute_metrics(self, stats: pl.DataFrame, report: Any) -> None:
+    def _compute_metrics(self, stats: pl.DataFrame, report: Any, equity_curve: pl.Series) -> None:
         if stats.is_empty():
             self.metrics = {}
-            return
+        else:
+            row = stats.row(0, named=True)
+            self.metrics = {
+                "total_return": _float_scalar(row.get("total_return", 0.0)),
+                "cagr": _float_scalar(row.get("cagr", 0.0)),
+                "max_drawdown": _float_scalar(row.get("max_drawdown", 0.0)),
+                "volatility": _float_scalar(row.get("daily_vol", 0.0)),
+                "sharpe_ratio": _float_scalar(row.get("daily_sharpe", 0.0)),
+                "sortino_ratio": _float_scalar(row.get("daily_sortino", 0.0)),
+            }
 
-        row = stats.row(0, named=True)
-        self.metrics = {
-            "total_return": _float_scalar(row.get("total_return", 0.0)),
-            "cagr": _float_scalar(row.get("cagr", 0.0)),
-            "max_drawdown": _float_scalar(row.get("max_drawdown", 0.0)),
-            "volatility": _float_scalar(row.get("daily_vol", 0.0)),
-            "sharpe_ratio": _float_scalar(row.get("daily_sharpe", 0.0)),
-            "sortino_ratio": _float_scalar(row.get("daily_sortino", 0.0)),
-        }
+        # Headline metrics go through the ONE shared equity-curve helper
+        # (backtesting.metrics) so engine-side and report-side numbers share a
+        # single explicit rf/annualization convention.
+        if equity_curve.len() >= 2:
+            shared = equity_curve_metrics(equity_curve, self.initial_cash)
+            self.metrics.update(shared)
 
         trades_df = report.trades
         if trades_df is not None and not trades_df.is_empty():
             pnls = trades_df["pnl"].to_list() if "pnl" in trades_df.columns else []
             if not pnls and "return" in trades_df.columns:
                 pnls = trades_df["return"].to_list()
+            # Positions still open at the end of the window carry a null return.
+            pnls = [p for p in pnls if p is not None]
             if pnls:
                 wins = sum(1 for p in pnls if p > 0)
                 self.metrics["win_rate"] = wins / len(pnls) if pnls else 0.0
@@ -291,7 +307,7 @@ class VectorBacktestEngine:
                     best_score = score
                     best_params = params.copy()
             except Exception as e:
-                logger.warning("Optimization failed for params %s: %s", params, e)
+                logger.warning("optimization_failed_for_params", params=params, error=str(e))
 
             strategy.finalize()
 

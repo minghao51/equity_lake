@@ -25,7 +25,11 @@ Edit `config/signals.yaml` to adjust thresholds:
 ```yaml
 backtest:
   enabled: true
-  min_win_rate: 0.55
+  strategies:
+    - name: "sma_deviation_20d"   # rule descriptor, not a registry strategy
+      lookback_days: 20
+      buy_threshold: 0.02
+      sell_threshold: -0.01
 
 sentiment:
   enabled: true

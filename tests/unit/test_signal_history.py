@@ -5,6 +5,7 @@ import tempfile
 from datetime import date
 from pathlib import Path
 
+import polars as pl
 import pytest
 
 from equity_lake.signals.history import (
@@ -83,3 +84,86 @@ def test_load_empty_history(temp_signals_dir):
     """Loading when no history exists returns an empty list."""
     loaded = load_signals(date(2024, 12, 1))
     assert len(loaded) == 0
+
+
+# ---------------------------------------------------------------------------
+# Closed write boundary (handoff 08, B4)
+# ---------------------------------------------------------------------------
+
+
+def test_save_ml_metadata_through_signal_record(temp_signals_dir):
+    """ML metadata round-trips through the closed model; no 'confidence' collision."""
+    from equity_lake.storage.delta import read_delta
+
+    test_date = date(2024, 12, 1)
+    save_signals(
+        [
+            Signal(
+                ticker="AAPL",
+                date=test_date,
+                signal_type="ml",
+                action="BUY",
+                confidence=75.0,
+                reasoning="ML predicts upside",
+                metadata={"prediction": 1, "probability": 0.75, "horizon_days": 5, "model_mode": "v1_direction"},
+            )
+        ],
+        test_date,
+    )
+
+    loaded = load_signals(test_date)
+    assert len(loaded) == 1
+    assert loaded[0].metadata["prediction"] == 1
+    assert loaded[0].confidence == 75.0
+
+    frame = read_delta("signals", lake_dir=temp_signals_dir.parent)
+    # whitelist keeps the Delta schema scalar-only: no dict->struct columns
+    assert all(dtype not in (pl.Struct,) for dtype in frame.dtypes)
+
+
+def test_save_meta_label_barrier_settings_stored_as_json_not_struct(temp_signals_dir):
+    """barrier_settings dict must not become a Delta struct column (schema drift)."""
+    from equity_lake.storage.delta import read_delta
+
+    test_date = date(2024, 12, 1)
+    barrier = {"vertical_barrier_days": 5, "pt_mult": 1.5, "sl_mult": 1.0}
+    save_signals(
+        [
+            Signal(
+                ticker="AAPL",
+                date=test_date,
+                signal_type="ml",
+                action="BUY",
+                confidence=80.0,
+                reasoning="meta-label accepted",
+                metadata={"candidate_action": "BUY", "barrier_settings": barrier},
+            )
+        ],
+        test_date,
+    )
+
+    loaded = load_signals(test_date)
+    assert loaded[0].metadata["barrier_settings"] == barrier
+
+    frame = read_delta("signals", lake_dir=temp_signals_dir.parent)
+    assert "barrier_settings_json" in frame.columns
+    assert not any(isinstance(dtype, pl.Struct) for dtype in frame.dtypes)
+
+
+def test_save_rejects_metadata_confidence_collision(temp_signals_dir):
+    """A metadata key colliding with the base column must fail loudly, not drift."""
+    import pytest as _pytest
+
+    from equity_lake.signals.models import SignalRecord
+
+    signal = Signal(
+        ticker="AAPL",
+        date=date(2024, 12, 1),
+        signal_type="ml",
+        action="BUY",
+        confidence=75.0,
+        reasoning="r",
+        metadata={"confidence": 75.0},
+    )
+    with _pytest.raises(ValueError, match="collides"):
+        SignalRecord.from_signal(signal)

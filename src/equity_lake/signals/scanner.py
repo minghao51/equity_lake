@@ -3,6 +3,8 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 
+import structlog
+
 from equity_lake.signals.formatters.json import JSONFormatter
 from equity_lake.signals.formatters.markdown import MarkdownFormatter
 from equity_lake.signals.formatters.terminal import TerminalFormatter
@@ -13,6 +15,8 @@ from equity_lake.signals.generators.ml import MLPredictionSignalGenerator
 from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
 from equity_lake.signals.history import save_signals
 from equity_lake.signals.models import Signal, SignalConfig, Watchlist
+
+logger = structlog.get_logger(__name__)
 
 
 class SignalScanner:
@@ -83,7 +87,7 @@ class SignalScanner:
                         all_signals.extend(ticker_signals)
                 except Exception as exc:
                     ticker = futures[future]
-                    print(f"Warning: scan failed for {ticker}: {exc}")
+                    logger.warning("signal_scan_ticker_failed", ticker=ticker, error=str(exc))
 
         return all_signals
 
@@ -106,7 +110,7 @@ class SignalScanner:
                     signals.append(signal)
             except Exception as e:
                 # Log but continue with other generators
-                print(f"Warning: {generator.__class__.__name__} failed for {ticker}: {e}")
+                logger.warning("signal_generator_failed", generator=generator.__class__.__name__, ticker=ticker, error=str(e))
                 continue
 
         return signals

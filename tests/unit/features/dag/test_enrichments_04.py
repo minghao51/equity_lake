@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 import duckdb
@@ -13,6 +13,11 @@ from hamilton import base, driver
 from hamilton.plugins import h_polars
 
 from equity_lake.features.dag import enrichments_04
+from equity_lake.features.dag.enrichments_04 import (
+    _add_cross_modal,
+    _merge_news_sentiment,
+    _merge_social_sentiment,
+)
 
 
 def _build_driver() -> driver.Driver:
@@ -164,3 +169,117 @@ def test_enrichment_chain_nodes_exposed() -> None:
         "enriched_features",
     ]:
         assert expected in node_names, f"{expected} node missing from enrichment chain"
+
+
+def _populated_news_agg() -> pl.DataFrame:
+    """Aggregated news-sentiment shape returned by the DuckDB query on success."""
+    return pl.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL", "MSFT"],
+            "date": [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 1)],
+            "avg_daily_sentiment": [0.4, -0.2, 0.1],
+            "news_count": [3, 1, 2],
+            "positive_count": [2, 0, 1],
+            "negative_count": [0, 1, 0],
+            "neutral_count": [1, 0, 1],
+            "sentiment_std": [0.1, 0.0, 0.05],
+        }
+    )
+
+
+def _populated_social_agg() -> pl.DataFrame:
+    """Aggregated social-sentiment shape returned by the DuckDB query on success."""
+    return pl.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL", "MSFT"],
+            "date": [date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 1)],
+            "social_mention_count": [10, 5, 7],
+            "social_sentiment_score": [0.3, -0.1, 0.2],
+            "social_positive_score": [4.0, 1.0, 3.0],
+            "social_negative_score": [1.0, 2.0, 0.5],
+            "social_reddit_mentions": [6, 3, 4],
+            "social_twitter_mentions": [4, 2, 3],
+        }
+    )
+
+
+def _raising_conn(exc: Exception) -> MagicMock:
+    conn = MagicMock(spec=duckdb.DuckDBPyConnection)
+    conn.execute.side_effect = exc
+    return conn
+
+
+def test_news_merge_error_path_keeps_feature_schema(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
+    """A5 (handoff 08): a transient DuckDB/Polars error must not change the news
+    feature column set — the error path returns the same zero-filled defaults
+    as the no-data path, so train/inference schemas stay stable."""
+    mock_conn.execute.return_value.pl.return_value = _populated_news_agg()
+    success = _merge_news_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
+    assert {"avg_daily_sentiment", "sentiment_ewma_3d", "sentiment_ewma_30d"}.issubset(success.columns)
+
+    mock_conn.execute.return_value.pl.return_value = pl.DataFrame()
+    no_data = _merge_news_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
+    error = _merge_news_sentiment(features_df, _raising_conn(duckdb.Error("table missing")), date(2024, 1, 1), date(2024, 1, 31))
+
+    assert error.columns == success.columns == no_data.columns
+    assert error.height == features_df.height
+    # Zero-filled defaults, not silent column loss.
+    assert set(error["news_count"].to_list()) == {0}
+
+
+def test_social_merge_error_path_keeps_feature_schema(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
+    """A5 (handoff 08): a transient error in the social merge must not change the
+    social feature column set downstream."""
+    mock_conn.execute.return_value.pl.return_value = _populated_social_agg()
+    success = _merge_social_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
+    assert {"social_sentiment_score", "social_momentum", "social_sentiment_ewma_30d"}.issubset(success.columns)
+
+    mock_conn.execute.return_value.pl.return_value = pl.DataFrame()
+    no_data = _merge_social_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
+    error = _merge_social_sentiment(features_df, _raising_conn(duckdb.Error("table missing")), date(2024, 1, 1), date(2024, 1, 31))
+
+    assert error.columns == success.columns == no_data.columns
+    assert error.height == features_df.height
+    assert set(error["social_mention_count"].to_list()) == {0}
+
+
+def test_social_momentum_5d_reuses_computed_momentum(mock_conn: MagicMock) -> None:
+    """A6 (handoff 08): ``social_sentiment_momentum_5d`` is the identical
+    ``diff(5)`` expression as ``social_sentiment_momentum`` — compute once,
+    alias for both output names. Values (and the schema) must stay unchanged."""
+    dates = [date(2024, 1, 1) + timedelta(days=i) for i in range(8)]
+    scores = [0.1 * ((i % 5) - 2) for i in range(8)]
+    features = pl.DataFrame(
+        {
+            "ticker": ["AAPL"] * 8,
+            "date": dates,
+            "close": [150.0 + i for i in range(8)],
+            "volume": [1_000_000.0] * 8,
+        }
+    )
+    agg = pl.DataFrame(
+        {
+            "ticker": ["AAPL"] * 8,
+            "date": dates,
+            "social_mention_count": [5 + i for i in range(8)],
+            "social_sentiment_score": scores,
+            "social_positive_score": [1.0] * 8,
+            "social_negative_score": [1.0] * 8,
+            "social_reddit_mentions": [3] * 8,
+            "social_twitter_mentions": [2] * 8,
+        }
+    )
+    mock_conn.execute.return_value.pl.return_value = agg
+
+    merged = _merge_social_sentiment(features, mock_conn, dates[0], dates[-1])
+    cross = _add_cross_modal(merged)
+
+    # Both output names present (schema unchanged) and perfectly correlated —
+    # aliasing keeps them bit-identical.
+    assert "social_sentiment_momentum" in cross.columns
+    assert "social_sentiment_momentum_5d" in cross.columns
+    assert cross["social_sentiment_momentum_5d"].to_list() == cross["social_sentiment_momentum"].to_list()
+
+    # Values identical to the pre-fix independent diff(5) recompute.
+    expected = pl.DataFrame({"score": scores}).with_columns(pl.col("score").diff(5).fill_null(0.0))["score"].to_list()
+    assert cross["social_sentiment_momentum_5d"].to_list() == expected

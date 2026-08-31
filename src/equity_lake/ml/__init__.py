@@ -15,15 +15,16 @@ def validate_predictions(df: pl.DataFrame) -> bool:
     """Validate prediction output before writing to Platinum.
 
     Uses pointblank to enforce:
-    - probability in [0.0, 1.0]
+    - probability in [0.0, 1.0] (inclusive: float32 ``predict_proba`` can
+      return exactly 0.0/1.0, and one boundary row must not reject the batch)
     - direction in {"up", "down"}
     - ticker and date are not null
     """
     import pointblank as pb
 
     validation = pb.Validate(data=df)
-    validation.col_vals_gt(columns="probability", value=0.0)
-    validation.col_vals_lt(columns="probability", value=1.0)
+    validation.col_vals_ge(columns="probability", value=0.0)
+    validation.col_vals_le(columns="probability", value=1.0)
     validation.col_vals_in_set(columns="direction", set=["up", "down"])
     validation.col_vals_not_null(columns="ticker")
     validation.col_vals_not_null(columns="date")
@@ -87,6 +88,13 @@ def run_prediction_job(
             from equity_lake.storage.delta import merge_delta
 
             predictions_df = pl.DataFrame(prediction_rows)
+            # float32 ``predict_proba`` can land on (or infinitesimally outside)
+            # the [0, 1] boundary; clamp before validation so a boundary row
+            # cannot reject — and silently drop — the whole batch (handoff 08 A4).
+            out_of_bounds = predictions_df.filter((pl.col("probability") < 0.0) | (pl.col("probability") > 1.0)).height
+            if out_of_bounds:
+                logger.warning("prediction_probability_clipped", rows=out_of_bounds, date=str(trading_date))
+                predictions_df = predictions_df.with_columns(pl.col("probability").clip(0.0, 1.0))
             if not validate_predictions(predictions_df):
                 logger.error("predictions_validation_failed", rows=len(prediction_rows), date=str(trading_date))
                 all_success = False

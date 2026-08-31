@@ -88,3 +88,32 @@ def test_backtest_data_loader_filters_unioned_markets(tmp_path, monkeypatch) -> 
     )
 
     assert set(data["ticker"].to_list()) == {"AAPL"}
+
+
+def test_backtest_data_loader_forward_fills_gaps_only(tmp_path, monkeypatch) -> None:
+    """B4: gaps are forward-filled (past prices carried forward); bfill is gone."""
+    us_dir = tmp_path / "us_equity"
+    for day, close in [("2026-06-01", 10.0), ("2026-06-02", None), ("2026-06-03", 12.0)]:
+        partition = us_dir / f"date={day}"
+        partition.mkdir(parents=True)
+        pl.DataFrame(
+            {"ticker": ["AAPL"], "date": [day], "open": [close], "high": [close], "low": [close], "close": [close], "volume": [100]},
+        ).write_parquet(partition / f"{day}.parquet")
+
+    monkeypatch.setattr(BacktestDataLoader, "MARKET_DIRS", {"us": us_dir})
+
+    loader = BacktestDataLoader()
+    data = loader.load(tickers=["AAPL"], start_date=date(2026, 6, 1), end_date=date(2026, 6, 3), markets=["us"])
+
+    closes = data.sort("date")["close"].to_list()
+    # the 06-02 null gap is filled with the PRIOR close (ffill), never the next one
+    assert closes[1] == pytest.approx(10.0)
+    assert closes[2] == pytest.approx(12.0)
+
+
+def test_backtest_data_loader_has_no_bfill_option(tmp_path, monkeypatch) -> None:
+    """B4: the lookahead-inducing fill_method parameter is removed from the API."""
+    monkeypatch.setattr(BacktestDataLoader, "MARKET_DIRS", {"us": tmp_path / "us_equity"})
+    loader = BacktestDataLoader()
+    with pytest.raises(TypeError):
+        loader.load(tickers=["AAPL"], start_date=date(2026, 6, 1), end_date=date(2026, 6, 2), markets=["us"], fill_method="bfill")

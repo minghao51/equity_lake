@@ -204,9 +204,11 @@ class FeatureEngineer:
         """Z-score numeric features cross-sectionally across tickers per date.
 
         For each date, compute (x - mean) / (std + eps) over all tickers.
-        Adds new columns with ``suffix`` appended; original columns are kept
-        unchanged. Skips columns that are non-numeric, contain nulls in the
-        grouping key, or have zero variance.
+        Per-date mean/std are computed on **non-null values only** (nulls never
+        bias the cross-sectional statistics); a null input is imputed to 0.0 in
+        the final z expression only. Adds new columns with ``suffix`` appended;
+        original columns are kept unchanged. Skips columns that are non-numeric
+        or absent from the frame.
         """
         frame = ensure_polars(features_df)
         if frame.is_empty():
@@ -231,8 +233,11 @@ class FeatureEngineer:
         for col_name in columns:
             if col_name not in frame.columns:
                 continue
-            mean_expr = pl.col(col_name).fill_null(0.0).mean().over("date")
-            std_expr = pl.col(col_name).fill_null(0.0).std().over("date")
+            # Aggregate the raw column (Polars aggregations skip nulls) so the
+            # cross-sectional stats are null-free; impute only the value being
+            # standardized (handoff 08 A7).
+            mean_expr = pl.col(col_name).mean().over("date")
+            std_expr = pl.col(col_name).std().over("date")
             z_expr = ((pl.col(col_name).fill_null(0.0) - mean_expr) / (std_expr + eps)).alias(f"{col_name}{suffix}")
             expressions.append(z_expr)
 

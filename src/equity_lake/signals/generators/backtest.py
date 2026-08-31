@@ -5,11 +5,14 @@ from datetime import date, timedelta
 
 import duckdb
 import polars as pl
+import structlog
 
 from equity_lake.core.paths import US_EQUITY_DIR
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
 from equity_lake.storage.lake_reader import duckdb_scan_for
+
+logger = structlog.get_logger()
 
 
 class BacktestSignalGenerator(SignalGenerator):
@@ -21,7 +24,6 @@ class BacktestSignalGenerator(SignalGenerator):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.min_win_rate = config.get("min_win_rate", 0.55)
         self.strategies = config.get("strategies", [])
 
         # Connect to DuckDB for historical data
@@ -69,7 +71,10 @@ class BacktestSignalGenerator(SignalGenerator):
 
         try:
             df = self.con.execute(query, [ticker, start_date, target_date]).pl()
-        except Exception:
+        except Exception as exc:
+            # Zero signals must stay distinguishable from a broken generator
+            # (handoff 08 review): log the failure, then degrade to None.
+            logger.warning("backtest_signal_price_query_failed", ticker=ticker, error=str(exc))
             return None
 
         if "date" in df.columns and df["date"].dtype == pl.Utf8:

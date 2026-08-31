@@ -10,7 +10,7 @@ from equity_lake.signals.scanner import SignalScanner
 def test_scanner_initialization():
     """Test scanner initializes with config."""
     config = SignalConfig(
-        backtest={"enabled": True, "min_win_rate": 0.55, "strategies": []},
+        backtest={"enabled": True, "strategies": []},
         sentiment={"enabled": False},
         ml={"enabled": False},
     )

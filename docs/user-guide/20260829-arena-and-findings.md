@@ -44,16 +44,24 @@ strategy classes (each with its own default parameters):
 | `trend_following` | `SMACrossoverStrategy` |
 
 Cost regimes are per-leg fee and tax ratios (`COST_REGIMES` in
-`src/equity_lake/backtesting/arena.py`; defaults in `engine.py`):
+`src/equity_lake/backtesting/arena.py`; defaults in `engine.py`). On
+single-market runs the `realistic` regime resolves sell-tax defaults per
+market (`MARKET_COST_DEFAULTS` in `arena.py`): US/JPX/KRX pay no transaction
+tax, CN pays A-share stamp duty (0.05% on sells), and `hk_sg` uses HK-style
+0.1%. Multi-market runs fall back to the engine defaults below (one engine run
+cannot mix per-venue taxes); pass `run_arena(market_costs=...)` for overrides.
 
 | Regime | Fee ratio | Tax ratio |
 |---|---|---|
 | `zero` | 0 | 0 |
-| `realistic` | `0.001425` (0.1425%, `DEFAULT_FEE_RATIO`) | `0.003` (0.3%, `DEFAULT_TAX_RATIO`) |
+| `realistic` | `0.001425` (0.1425%, `DEFAULT_FEE_RATIO`) | per-market (see above); engine-default fallback `0.003` (`DEFAULT_TAX_RATIO`) |
 | `high` | `0.005` (0.5%) | `0.003` (`DEFAULT_TAX_RATIO`) |
 
-`realistic` mirrors the engine defaults, so arena numbers under that regime
-match a plain `VectorBacktestEngine` run with no cost config.
+Strategy Sharpe values (engine and FindingCards alike) share one convention
+(`backtesting/metrics.py`): excess returns over a 2% annual risk-free rate,
+annualized with 252 trading days. Cards state the rf in `scope.sharpe_risk_free_rate`
+and disclose the benchmark's zero-cost/zero-lag asymmetry in
+`scope.benchmark_asymmetry`.
 
 ## `equity report backtest`
 

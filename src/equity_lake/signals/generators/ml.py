@@ -4,9 +4,13 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
+import structlog
+
 from equity_lake.ml.forecasting import PriceForecaster
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
+
+logger = structlog.get_logger(__name__)
 
 
 class MLPredictionSignalGenerator(SignalGenerator):
@@ -32,7 +36,10 @@ class MLPredictionSignalGenerator(SignalGenerator):
 
         try:
             self.forecaster = PriceForecaster(model_dir=str(self.model_dir), model_mode=self.model_mode, ml_config=config)
-        except Exception:
+        except Exception as exc:
+            # A missing/unloadable model is not a scan-fatal error, but it must be
+            # distinguishable from "no signal": zero signals ≠ broken generator.
+            logger.warning("ml_generator_forecaster_unavailable", ticker_scope="all", model_dir=str(self.model_dir), error=str(exc))
             self.forecaster = None
 
     def generate(self, ticker: str, target_date: date) -> Signal | None:
@@ -55,8 +62,8 @@ class MLPredictionSignalGenerator(SignalGenerator):
         try:
             # Generate prediction
             prediction = self.forecaster.predict(ticker=ticker, date=target_date)
-        except Exception:
-            # Prediction failed
+        except Exception as exc:
+            logger.warning("ml_generator_predict_failed", ticker=ticker, date=str(target_date), error=str(exc))
             return None
 
         if not prediction:
@@ -84,11 +91,12 @@ class MLPredictionSignalGenerator(SignalGenerator):
                 action=action,
                 confidence=confidence,
                 reasoning=(f"ML predicts next-day upside ({confidence:.0f}% confidence, p={probability:.2f})"),
+                # NOTE: no "confidence" metadata key — it duplicates the base
+                # Signal.confidence column and is rejected by SignalRecord.
                 metadata={
                     "prediction": direction,
                     "probability": probability,
                     "horizon_days": self.horizon_days,
-                    "confidence": confidence,
                     "model_mode": prediction.get("model_mode", self.model_mode),
                     "model_version": prediction.get("model_version"),
                 },
@@ -105,7 +113,6 @@ class MLPredictionSignalGenerator(SignalGenerator):
                 "prediction": direction,
                 "probability": probability,
                 "horizon_days": self.horizon_days,
-                "confidence": confidence,
                 "model_mode": prediction.get("model_mode", self.model_mode),
                 "model_version": prediction.get("model_version"),
             },

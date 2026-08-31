@@ -4,10 +4,13 @@ from pathlib import Path
 
 import yaml
 
+from equity_lake.core.paths import CONFIG_DIR
 from equity_lake.signals.models import SignalConfig, Watchlist
 
-DEFAULT_WATCHLIST_PATH = Path("config/watchlist.yaml")
-DEFAULT_SIGNALS_PATH = Path("config/signals.yaml")
+# Anchored to the project root (not the current working directory) so scans work
+# from any CWD, mirroring core.paths.
+DEFAULT_WATCHLIST_PATH = CONFIG_DIR / "watchlist.yaml"
+DEFAULT_SIGNALS_PATH = CONFIG_DIR / "signals.yaml"
 
 
 def load_watchlist(path: Path | None = None) -> Watchlist:

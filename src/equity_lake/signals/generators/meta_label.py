@@ -6,9 +6,13 @@ from datetime import date
 from pathlib import Path
 from typing import Literal, cast
 
+import structlog
+
 from equity_lake.ml.forecasting import PriceForecaster
 from equity_lake.signals.generators.base import SignalGenerator
 from equity_lake.signals.models import Signal
+
+logger = structlog.get_logger(__name__)
 
 
 class MetaLabelSignalGenerator(SignalGenerator):
@@ -27,7 +31,10 @@ class MetaLabelSignalGenerator(SignalGenerator):
                 model_mode="v2_meta_label",
                 ml_config=config,
             )
-        except Exception:
+        except Exception as exc:
+            # A missing/unloadable model is not a scan-fatal error, but it must be
+            # distinguishable from "no signal": zero signals ≠ broken generator.
+            logger.warning("meta_label_generator_forecaster_unavailable", model_dir=str(self.model_dir), error=str(exc))
             self.forecaster = None
 
     def generate(self, ticker: str, target_date: date) -> Signal | None:
@@ -37,7 +44,8 @@ class MetaLabelSignalGenerator(SignalGenerator):
 
         try:
             prediction = self.forecaster.predict(ticker=ticker, date=target_date)
-        except Exception:
+        except Exception as exc:
+            logger.warning("meta_label_generator_predict_failed", ticker=ticker, date=str(target_date), error=str(exc))
             return None
 
         if not prediction.get("should_execute", False):
@@ -47,6 +55,8 @@ class MetaLabelSignalGenerator(SignalGenerator):
         action = cast(Literal["BUY", "SELL", "HOLD"], prediction.get("candidate_action", "BUY"))
         confidence = probability * 100
         barrier_settings = prediction.get("barrier_settings", {})
+        raw_prediction = prediction.get("prediction")
+        prediction_value = int(raw_prediction) if raw_prediction is not None else None
 
         return Signal(
             ticker=ticker,
@@ -59,7 +69,7 @@ class MetaLabelSignalGenerator(SignalGenerator):
                 f"(p={probability:.2f}, threshold={self.threshold:.2f})"
             ),
             metadata={
-                "prediction": prediction.get("prediction"),
+                "prediction": prediction_value,
                 "probability": probability,
                 "execution_probability": probability,
                 "candidate_action": action,

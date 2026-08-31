@@ -19,6 +19,7 @@ import polars as pl
 import structlog
 
 from equity_lake.backtesting.arena import ArenaOutcome, ArenaRun
+from equity_lake.backtesting.metrics import DEFAULT_RISK_FREE_RATE, equity_curve_metrics
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.findings import FindingCard, write_finding_card
 
@@ -51,7 +52,13 @@ def write_backtest_report(
     drawdown = drawdown_series(equity)
     pl.DataFrame({"t": range(equity.len()), "equity": equity}).write_parquet(out_dir / "equity.parquet")
     pl.DataFrame({"t": range(drawdown.len()), "drawdown": drawdown}).write_parquet(out_dir / "drawdown.parquet")
-    meta = {"strategy": strategy or result.strategy_name, "cost_regime": cost_regime, **result.to_dict()}
+    meta = {
+        "strategy": strategy or result.strategy_name,
+        "cost_regime": cost_regime,
+        "risk_free_rate": DEFAULT_RISK_FREE_RATE,
+        "warnings": list(result.warnings),
+        **result.to_dict(),
+    }
     (out_dir / "metrics.json").write_text(json.dumps(meta, indent=2, default=str), encoding="utf-8")
     (out_dir / "trades.json").write_text(json.dumps(result.trades, indent=2, default=str), encoding="utf-8")
     logger.info("backtest_report_written", out_dir=str(out_dir), strategy=strategy, cost_regime=cost_regime)
@@ -68,17 +75,13 @@ def _run_slug(run: ArenaRun) -> str:
 
 
 def _series_metrics(equity: pl.DataFrame | pl.Series, initial_cash: float) -> dict[str, float]:
-    """Total return, annualized Sharpe (rf=0), and max drawdown from an equity curve."""
-    series = equity["equity"] if isinstance(equity, pl.DataFrame) else equity
-    if series.len() < 2:
-        return {"total_return": 0.0, "sharpe_ratio": 0.0, "max_drawdown": 0.0}
-    values = series.to_numpy()
-    total_return = float(values[-1] / initial_cash - 1.0) if initial_cash else 0.0
-    rets = np.diff(values) / values[:-1]
-    sharpe = float(np.mean(rets) / np.std(rets) * np.sqrt(252)) if np.std(rets) > 0 else 0.0
-    running_max = np.maximum.accumulate(values)
-    max_dd = float((values / running_max - 1.0).min())
-    return {"total_return": total_return, "sharpe_ratio": sharpe, "max_drawdown": max_dd}
+    """Total return, annualized Sharpe, and max drawdown from an equity curve.
+
+    Delegates to the shared :func:`equity_lake.backtesting.metrics.equity_curve_metrics`
+    so benchmark metrics use exactly the engine's convention (rf=0.02 annual,
+    252 trading days) and stay comparable with strategy Sharpe values.
+    """
+    return equity_curve_metrics(equity, initial_cash)
 
 
 def _runs_for(outcome: ArenaOutcome, strategy: str | None = None, cost_regime: str | None = None) -> list[ArenaRun]:
@@ -112,7 +115,18 @@ def build_finding_cards(
     available runs (e.g. an empty arena yields no cards).
     """
     scope = dict(scope or {})
-    base_scope = {"tickers": len(outcome.data["ticker"].unique()) if not outcome.data.is_empty() else 0, **scope}
+    base_scope = {
+        "tickers": len(outcome.data["ticker"].unique()) if not outcome.data.is_empty() else 0,
+        # Sharpe convention shared with the engine (see backtesting/metrics.py).
+        "sharpe_risk_free_rate": DEFAULT_RISK_FREE_RATE,
+        # Honesty note: the benchmark pays no costs and holds from day one,
+        # while strategies trade at the next close under their cost regime.
+        "benchmark_asymmetry": (
+            "equal-weight buy-and-hold benchmark pays zero costs and zero lag; "
+            "strategies execute one bar after signal and pay the run's fee/tax regime"
+        ),
+        **scope,
+    }
     bench = _series_metrics(outcome.benchmark, outcome.initial_cash)
     cards: list[FindingCard] = []
 
@@ -141,7 +155,7 @@ def build_finding_cards(
                     verdict=verdict,  # type: ignore[arg-type]
                     conclusion=conclusion,
                     metrics=metrics,
-                    evidence_refs=["strategy-comparison/"],
+                    evidence_refs=[*[f"{s}__realistic/" for s in sorted(strat_sharpe)], "benchmark__equity.parquet"],
                     run_date=run_date,
                     scope=base_scope,
                 )
@@ -169,7 +183,7 @@ def build_finding_cards(
                     verdict=verdict,  # type: ignore[arg-type]
                     conclusion=conclusion,
                     metrics={f"{k}.sharpe": v for k, v in by_regime.items()},
-                    evidence_refs=["cost-regime/"],
+                    evidence_refs=[f"{rep_strategy}__zero/", f"{rep_strategy}__realistic/"],
                     run_date=run_date,
                     scope={**base_scope, "strategy": rep_strategy},
                 )
@@ -203,7 +217,7 @@ def build_finding_cards(
                 verdict=verdict,  # type: ignore[arg-type]
                 conclusion=conclusion,
                 metrics=metrics_b,
-                evidence_refs=["vs-benchmark/"],
+                evidence_refs=[*[f"{r.strategy}__realistic/" for r in sorted(realistic, key=lambda r: r.strategy)], "benchmark__equity.parquet"],
                 run_date=run_date,
                 scope=base_scope,
             )

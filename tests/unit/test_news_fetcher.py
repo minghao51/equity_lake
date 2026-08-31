@@ -125,6 +125,19 @@ class TestAnalyzeSentimentScores:
         with pytest.raises(ValueError, match="Column"):
             analyze_sentiment_scores(df, text_column="headline")
 
+    def test_empty_frame_returns_early(self):
+        """A8 (handoff 08): an empty input frame must return early instead of
+        reaching ``analyze_batch([])``, whose column-less result KeyErrors on
+        the ``["compound"]`` lookup."""
+        from equity_lake.sentiment import analyze_sentiment_scores
+
+        df = pd.DataFrame({"headline": pd.Series([], dtype="object")})
+
+        result_df = analyze_sentiment_scores(df, text_column="headline")
+
+        assert result_df.is_empty()
+        assert "headline" in result_df.columns
+
 
 # =============================================================================
 # FinnhubNewsFetcher Tests
