@@ -4,6 +4,12 @@ All constants are computed from ``PROJECT_ROOT`` (derived from ``__file__``).
 No filesystem I/O happens at import time — call :func:`ensure_dirs` at
 application startup to create directories.
 
+This module is also the single home of the market vocabulary (ADR-0010):
+the :data:`PRICE_MARKETS` registry maps each price market to its directory
+constant, short alias, exchange MIC codes, and timezone. Every other module
+(calendar, ingestion routing, storage views, monitoring, backtesting, CLI)
+derives its market metadata from this registry.
+
 Medallion layers
 ----------------
 Storage follows a four-layer medallion architecture:
@@ -20,7 +26,10 @@ used directly at several call sites.
 
 from __future__ import annotations
 
+import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 CONFIG_DIR = PROJECT_ROOT / "config"
@@ -91,6 +100,91 @@ US_SOCIAL_SENTIMENT_DIR = SILVER_SOCIAL_SENTIMENT_DIR
 SEC_EXTRACTIONS_DIR = SILVER_SEC_EXTRACTIONS_DIR
 
 
+# ---------------------------------------------------------------------------
+# Market vocabulary registry (ADR-0010)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class PriceMarket:
+    """Static metadata for one price market (a :data:`PRICE_MARKETS` entry).
+
+    The bronze directory is stored as the *attribute name* of its paths
+    constant and resolved at call time by :func:`market_dir`, so runtime
+    patches of the module-level ``*_DIR`` constants keep working.
+    """
+
+    market: str  # canonical long key (also the bronze directory name)
+    alias: str  # deprecated short key, accepted at boundaries only
+    dir_attr: str  # attribute name of the bronze directory constant below
+    exchanges: tuple[str, ...]  # exchange_calendars MIC codes
+    timezone: str  # IANA timezone
+
+
+PRICE_MARKETS: dict[str, PriceMarket] = {
+    entry.market: entry
+    for entry in (
+        PriceMarket("us_equity", "us", "US_EQUITY_DIR", ("XNYS",), "America/New_York"),
+        PriceMarket("cn_ashare", "cn", "CN_ASHARE_DIR", ("XSHG",), "Asia/Shanghai"),
+        PriceMarket("hk_sg_equity", "hk_sg", "HK_SG_EQUITY_DIR", ("XHKG", "XSES"), "Asia/Hong_Kong"),
+        PriceMarket("jpx_equity", "jpx", "JPX_EQUITY_DIR", ("JPX",), "Asia/Tokyo"),
+        PriceMarket("krx_equity", "krx", "KRX_EQUITY_DIR", ("XKRX",), "Asia/Seoul"),
+    )
+}
+
+# Derived alias maps — never hand-maintained (ADR-0010 Decision 2).
+LONG_TO_SHORT: dict[str, str] = {entry.market: entry.alias for entry in PRICE_MARKETS.values()}
+SHORT_TO_LONG: dict[str, str] = {entry.alias: entry.market for entry in PRICE_MARKETS.values()}
+
+# The ten single-form dataset identifiers that share the ingestion market
+# vocabulary (VALID_MARKETS) but have no price-market duality (ADR-0010:
+# out of scope for aliasing). ``ingestion.types`` re-exports this as
+# OPTIONAL_ENRICHMENT_MARKETS; ``core.settings`` validates ``default_markets``
+# against it.
+OPTIONAL_ENRICHMENT_MARKETS: frozenset[str] = frozenset(
+    {
+        "macro",
+        "us_news",
+        "us_social_sentiment",
+        "rss_news",
+        "reddit_posts",
+        "stocktwits_messages",
+        "us_earnings_transcripts",
+        "us_analyst_ratings",
+        "sec_filings_fulltext",
+        "us_sec_financials",
+    }
+)
+
+
+def canonical_market(market: str) -> str:
+    """Return the canonical long key for a price-market identifier.
+
+    Accepts the canonical long form (``us_equity``) and the deprecated short
+    alias (``us``). Anything else — including the enrichment dataset
+    identifiers — raises ``ValueError``; a typo must fail loudly, never
+    silently map to a calendar-less no-op (the ``_subtract_trading_days``
+    infinite-loop root cause, ADR-0010).
+    """
+    if market in PRICE_MARKETS:
+        return market
+    if market in SHORT_TO_LONG:
+        return SHORT_TO_LONG[market]
+    raise ValueError(f"Unknown price market: {market!r}. Valid: {', '.join(PRICE_MARKETS)} (aliases: {', '.join(SHORT_TO_LONG)})")
+
+
+def market_dir(market: str) -> Path:
+    """Bronze directory for a price market, resolved at call time.
+
+    The registry stores the *attribute name* of the directory constant, so the
+    lookup goes through ``getattr`` on this module — runtime patches of the
+    module-level ``*_DIR`` constants (e.g. tests pointing them at tmp dirs)
+    are honoured.
+    """
+    entry = PRICE_MARKETS[canonical_market(market)]
+    return cast(Path, getattr(sys.modules[__name__], entry.dir_attr))
+
+
 def ensure_dirs() -> None:
     """Create all required runtime directories.
 
@@ -116,13 +210,18 @@ __all__ = [
     "JPX_EQUITY_DIR",
     "KRX_EQUITY_DIR",
     "LAKE_DIR",
+    "LONG_TO_SHORT",
     "LOGS_DIR",
     "MODELS_DIR",
+    "OPTIONAL_ENRICHMENT_MARKETS",
     "PLATINUM_DIR",
     "PLATINUM_PREDICTIONS_DIR",
+    "PRICE_MARKETS",
+    "PriceMarket",
     "PROJECT_ROOT",
     "PROFILES_DIR",
     "SEC_EXTRACTIONS_DIR",
+    "SHORT_TO_LONG",
     "SIGNALS_DIR",
     "SILVER_ANALYST_RATINGS_DIR",
     "SILVER_DIR",
@@ -134,5 +233,7 @@ __all__ = [
     "US_EQUITY_DIR",
     "US_NEWS_DIR",
     "US_SOCIAL_SENTIMENT_DIR",
+    "canonical_market",
     "ensure_dirs",
+    "market_dir",
 ]

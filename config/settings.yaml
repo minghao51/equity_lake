@@ -5,9 +5,9 @@ project:
 
 ingestion:
   default_markets:
-    - us
-    - cn
-    - hk_sg
+    - us_equity
+    - cn_ashare
+    - hk_sg_equity
     - macro
     - us_news
     - us_social_sentiment

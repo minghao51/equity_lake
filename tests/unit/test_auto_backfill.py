@@ -35,7 +35,7 @@ def lake(tmp_path: Path) -> Path:
     """Tmp lake: us_equity missing 2024-01-04, plus a ticker-less raw_articles table."""
     _write_table(
         tmp_path,
-        MARKET_DIR_MAP["us"],
+        MARKET_DIR_MAP["us_equity"],
         pl.DataFrame(
             {
                 "ticker": ["AAPL", "AAPL", "AAPL"],
@@ -74,7 +74,7 @@ def test_default_scans_only_price_market_dirs(lake: Path) -> None:
         results = find_and_fill_gaps(end_date=date(2024, 1, 5), days_back=5)
 
     assert sorted(scanned) == sorted(MARKET_DIR_MAP[m] for m in REQUIRED_PRICE_MARKETS)
-    assert results == {"us": 1}
+    assert results == {"us_equity": 1}
     run_daily.assert_called_once()
 
 
@@ -84,8 +84,8 @@ def test_tickerless_bronze_market_skipped_gracefully(lake: Path) -> None:
         results = find_and_fill_gaps(end_date=date(2024, 1, 5), days_back=5, markets=["rss_news", "us"])
 
     assert "rss_news" not in results
-    assert results == {"us": 1}
-    assert all(call.kwargs["markets"] == ["us"] for call in run_daily.call_args_list)
+    assert results == {"us_equity": 1}
+    assert all(call.kwargs["markets"] == ["us_equity"] for call in run_daily.call_args_list)
 
 
 def test_explicit_enrichment_market_skipped() -> None:
@@ -114,5 +114,5 @@ def test_dry_run_reports_without_ingesting(lake: Path) -> None:
     with _detector_on(lake), patch("equity_lake.ingestion.auto_backfill.run_daily_ingestion") as run_daily:
         results = find_and_fill_gaps(end_date=date(2024, 1, 5), days_back=5, markets=["us"], dry_run=True)
 
-    assert results == {"us": 1}
+    assert results == {"us_equity": 1}
     run_daily.assert_not_called()

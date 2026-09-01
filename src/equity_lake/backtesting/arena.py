@@ -40,20 +40,21 @@ COST_REGIMES: dict[str, dict[str, float]] = {
 
 # Per-market "realistic" cost defaults (sell-side tax where the venue charges one).
 # The previous blanket 0.3% sell tax is Taiwan-style and wrong for most markets here.
-#   us:    no securities transaction tax
-#   cn:    stamp duty on sells, 0.05% since 2023-08-28 (halved from 0.1%)
-#   hk_sg: HK stamp duty 0.1% per side since 2023-11-17 (Singapore has none — blended)
-#   jpx: no sell-side securities tax in these defaults
-#   krx: ~0.15% sell-side securities transaction tax (KOSPI/KOSDAQ, incl. rural
+#   us_equity:    no securities transaction tax
+#   cn_ashare:    stamp duty on sells, 0.05% since 2023-08-28 (halved from 0.1%)
+#   hk_sg_equity: HK stamp duty 0.1% per side since 2023-11-17 (Singapore has none — blended)
+#   jpx_equity: no sell-side securities tax in these defaults
+#   krx_equity: ~0.15% sell-side securities transaction tax (KOSPI/KOSDAQ, incl. rural
 #   development levy; on a legislated phase-down schedule — check current rates)
 # The engine applies one fee/tax pair per run, so this is a per-venue default for
 # single-market runs, not per-ticker precision — override via run_arena(market_costs=...).
+# Keys are the canonical long market keys (ADR-0010).
 MARKET_COST_DEFAULTS: dict[str, dict[str, float]] = {
-    "us": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0},
-    "cn": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0005},
-    "hk_sg": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.001},
-    "jpx": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0},
-    "krx": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0015},
+    "us_equity": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0},
+    "cn_ashare": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0005},
+    "hk_sg_equity": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.001},
+    "jpx_equity": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0},
+    "krx_equity": {"fee_ratio": DEFAULT_FEE_RATIO, "tax_ratio": 0.0015},
 }
 
 # Strategy registry — name -> zero-arg factory (strategies carry their own defaults).
@@ -137,7 +138,7 @@ def run_arena(
     start_date: date,
     end_date: date,
     *,
-    markets: tuple[str, ...] = ("us",),
+    markets: tuple[str, ...] = ("us_equity",),
     initial_cash: float = 100_000.0,
     strategies: list[str] | None = None,
     cost_regimes: list[str] | None = None,
@@ -157,7 +158,7 @@ def run_arena(
             (:data:`MARKET_COST_DEFAULTS`) on single-market runs.
         preloaded_data: Pre-loaded long OHLCV frame; skips the loader if given.
         market_costs: Optional per-market overrides for the ``realistic`` regime
-            (``{"us": {"fee_ratio": ..., "tax_ratio": ...}, ...}``); defaults to
+            (``{"us_equity": {"fee_ratio": ..., "tax_ratio": ...}, ...}``); defaults to
             :data:`MARKET_COST_DEFAULTS`.
 
     Returns:

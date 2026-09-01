@@ -9,7 +9,7 @@ command (see ``cli/commands/data.py``).
 Usage:
     uv run equity backfill --start 2023-04-06 --end 2026-04-05
     uv run equity backfill --days-back 1095
-    uv run equity backfill --days-back 365 --markets us
+    uv run equity backfill --days-back 365 --markets us_equity
 """
 
 from datetime import date, timedelta
@@ -17,11 +17,13 @@ from datetime import date, timedelta
 import structlog
 
 from equity_lake.core.config import TickerConfig, get_settings
+from equity_lake.core.paths import PRICE_MARKETS
 
 logger = structlog.get_logger()
 SETTINGS = get_settings()
 
-DEFAULT_MARKETS = ["us", "cn", "hk_sg", "jpx", "krx"]
+# Registry-derived (ADR-0010): all five price markets, canonical long keys.
+DEFAULT_MARKETS = sorted(PRICE_MARKETS)
 
 
 def backfill_date_range(

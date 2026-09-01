@@ -3,6 +3,7 @@
 from datetime import date
 
 import exchange_calendars as xc
+import pytest
 
 from equity_lake.core.calendar import (
     count_trading_days,
@@ -100,3 +101,33 @@ class TestMarketNow:
     def test_returns_date(self) -> None:
         result = market_now("us_equity")
         assert isinstance(result, date)
+
+
+class TestResolveTradingDateGuard:
+    """ADR-0010 loop guard: unknown market keys raise, never hang.
+
+    The historical ``_subtract_trading_days`` infinite loop happened when a
+    market key resolved to no trading calendar; ``resolve_trading_date`` now
+    normalizes the market through ``canonical_market`` first, so every key that
+    reaches the loop has a real calendar.
+    """
+
+    def test_unknown_market_raises_instead_of_hanging(self) -> None:
+        from equity_lake.core.dates import resolve_trading_date
+
+        with pytest.raises(ValueError, match="Unknown price market"):
+            resolve_trading_date(None, days_back=1, today=date(2026, 6, 2), market="cn_ashar")
+
+    def test_dataset_identifier_raises(self) -> None:
+        """Enrichment ids have no trading calendar — a loud error, not a silent hang."""
+        from equity_lake.core.dates import resolve_trading_date
+
+        with pytest.raises(ValueError, match="Unknown price market"):
+            resolve_trading_date(None, days_back=1, today=date(2026, 6, 2), market="us_news")
+
+    def test_short_alias_resolves_on_that_market_calendar(self) -> None:
+        from equity_lake.core.dates import resolve_trading_date
+
+        # Both vocabularies resolve identically on the CN calendar.
+        kwargs = {"days_back": 1, "today": date(2026, 6, 8)}
+        assert resolve_trading_date(None, market="cn", **kwargs) == resolve_trading_date(None, market="cn_ashare", **kwargs)

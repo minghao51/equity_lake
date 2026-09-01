@@ -147,7 +147,7 @@ Authorizing recovery is deliberately explicit, per the AGENTS.md guardrails —
 a backfill is a network-touching, multi-day ingestion, so it must be scoped:
 
 ```bash
-dotenvx run -- uv run equity pipeline --markets us \
+dotenvx run -- uv run equity pipeline --markets us_equity \
     --tickers AAPL,MSFT,NVDA --allow-history-backfill
 ```
 

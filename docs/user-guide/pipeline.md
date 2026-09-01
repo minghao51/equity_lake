@@ -23,8 +23,8 @@ Run daily ingestion:
 ```bash
 dotenvx run -- uv run equity ingest
 dotenvx run -- uv run equity ingest --date 2026-06-06
-dotenvx run -- uv run equity ingest --markets us,cn
-dotenvx run -- uv run equity ingest --tickers AAPL,MSFT,NVDA --markets us
+dotenvx run -- uv run equity ingest --markets us_equity,cn_ashare
+dotenvx run -- uv run equity ingest --tickers AAPL,MSFT,NVDA --markets us_equity
 dotenvx run -- uv run equity ingest --dry-run --verbose
 ```
 
@@ -34,7 +34,7 @@ Run the full pipeline:
 dotenvx run -- uv run equity pipeline
 dotenvx run -- uv run equity pipeline --dry-run --verbose
 dotenvx run -- uv run equity pipeline --date 2026-06-06
-dotenvx run -- uv run equity pipeline --markets us
+dotenvx run -- uv run equity pipeline --markets us_equity
 dotenvx run -- uv run equity pipeline --tickers AAPL,MSFT,NVDA
 dotenvx run -- uv run equity pipeline --skip-ingestion
 dotenvx run -- uv run equity pipeline --skip-ingestion --skip-features

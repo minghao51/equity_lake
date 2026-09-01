@@ -58,5 +58,5 @@ class TestFetchMarketDataWithFetcherError:
         mock_fetcher.fetch.side_effect = RuntimeError("API down")
         mock_make.return_value = mock_fetcher
 
-        result = fetch_market_data("us", date(2026, 6, 2))
+        result = fetch_market_data("us_equity", date(2026, 6, 2))
         assert result is None

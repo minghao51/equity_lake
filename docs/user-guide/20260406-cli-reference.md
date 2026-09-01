@@ -42,8 +42,8 @@ degrade with a warning (mirrors `equity pipeline`).
 | `--dry-run` | flag | off | Simulate without writes |
 
 ```bash
-dotenvx run -- uv run equity ingest --date 2026-07-10 --markets us,cn
-dotenvx run -- uv run equity ingest --dry-run --markets us --tickers AAPL
+dotenvx run -- uv run equity ingest --date 2026-07-10 --markets us_equity,cn_ashare
+dotenvx run -- uv run equity ingest --dry-run --markets us_equity --tickers AAPL
 ```
 
 ### `equity backfill`
@@ -61,7 +61,7 @@ time.
 | `--dry-run` | flag | off | No writes |
 
 ```bash
-dotenvx run -- uv run equity backfill --days-back 30 --markets us
+dotenvx run -- uv run equity backfill --days-back 30 --markets us_equity
 ```
 
 ### `equity auto-backfill`
@@ -128,8 +128,8 @@ Run the full EOD pipeline (ingest → features → ML).
 | `--dry-run` | flag | off | Simulate |
 
 ```bash
-dotenvx run -- uv run equity pipeline --markets us --tickers AAPL,MSFT
-dotenvx run -- uv run equity pipeline --markets us --tickers AAPL --allow-history-backfill
+dotenvx run -- uv run equity pipeline --markets us_equity --tickers AAPL,MSFT
+dotenvx run -- uv run equity pipeline --markets us_equity --tickers AAPL --allow-history-backfill
 ```
 
 Without `--allow-history-backfill`, missing warm-up history fails the feature
@@ -298,7 +298,7 @@ dotenvx run -- uv run equity ml train --ticker AAPL --backend lightgbm --model-m
 
 `ml compare` and `ml ablate` require feature history under `03_gold/features`;
 when it is missing they exit non-zero and point at
-`equity pipeline --markets us --tickers <t> --allow-history-backfill` rather
+`equity pipeline --markets us_equity --tickers <t> --allow-history-backfill` rather
 than auto-backfilling.
 
 ## Analysis
@@ -367,7 +367,7 @@ per-run artifacts.
 | `--tickers`, `-t` | str | `AAPL,MSFT,GOOGL,AMZN,NVDA` | Comma-separated tickers |
 | `--start-date` | str | **required** | `YYYY-MM-DD` |
 | `--end-date` | str | **required** | `YYYY-MM-DD` |
-| `--markets` | str | `us` | Comma-separated market codes |
+| `--markets` | str | `us_equity` | Comma-separated market codes |
 | `--initial-cash` | float | `100000` | Initial capital |
 | `--strategies` | str | all | Comma-separated strategy names |
 | `--cost-regimes` | str | all | Comma-separated regimes (`zero`, `realistic`, `high`) |
@@ -390,7 +390,7 @@ FindingCard.
 | `--tickers`, `-t` | str | `AAPL,MSFT,GOOGL,AMZN,NVDA` | Comma-separated tickers |
 | `--start-date` | str | **required** | `YYYY-MM-DD` |
 | `--end-date` | str | **required** | `YYYY-MM-DD` |
-| `--markets` | str | `us` | Comma-separated market codes |
+| `--markets` | str | `us_equity` | Comma-separated market codes |
 | `--cost-regime` | str | `realistic` | `zero`, `realistic`, or `high` |
 | `--initial-cash` | float | `100000` | Initial capital |
 | `--output-dir`, `-o` | str | `data/findings` | Findings dir |

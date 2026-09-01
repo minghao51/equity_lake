@@ -11,8 +11,8 @@ map are the executable source of truth.
 Use explicit tickers for targeted runs:
 
 ```bash
-dotenvx run -- uv run equity ingest --markets us --tickers AAPL,MSFT
-dotenvx run -- uv run equity pipeline --markets us --tickers AAPL,MSFT
+dotenvx run -- uv run equity ingest --markets us_equity --tickers AAPL,MSFT
+dotenvx run -- uv run equity pipeline --markets us_equity --tickers AAPL,MSFT
 ```
 
 Credentials are read from the environment. Use `dotenvx run --` for commands
@@ -27,9 +27,9 @@ enrichments. `data/lake/03_gold/features/` and
 `data/lake/04_platinum/predictions/` contain derived outputs.
 
 ```bash
-dotenvx run -- uv run equity ingest --date 2026-07-10 --markets us,cn
-dotenvx run -- uv run equity ingest --dry-run --markets us --tickers AAPL
-dotenvx run -- uv run equity backfill --days-back 30 --markets us
+dotenvx run -- uv run equity ingest --date 2026-07-10 --markets us_equity,cn_ashare
+dotenvx run -- uv run equity ingest --dry-run --markets us_equity --tickers AAPL
+dotenvx run -- uv run equity backfill --days-back 30 --markets us_equity
 ```
 
 Dry-run performs no persistence. Fetchers use configured retries and ingestion
@@ -39,7 +39,7 @@ Feature history recovery is separate from ordinary ingestion and must be
 authorized:
 
 ```bash
-dotenvx run -- uv run equity pipeline --markets us --tickers AAPL \
+dotenvx run -- uv run equity pipeline --markets us_equity --tickers AAPL \
   --allow-history-backfill
 ```
 

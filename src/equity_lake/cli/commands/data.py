@@ -9,45 +9,44 @@ from typing import Annotated
 
 import typer
 
-from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date, app
+from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, _resolve_run_date, app
 from equity_lake.core.paths import LAKE_DIR
 
 
 def _resolve_dataset_paths(markets: list[str]) -> list[str]:
     """Resolve delta-maintenance dataset identifiers to canonical medallion paths.
 
-    Accepts short names (``us``), long table names (``us_equity``), or full
-    medallion paths (``01_bronze/market_data/us_equity``) and returns the
-    canonical path used by the Delta writer. Runtime data lives under the
-    numbered medallion layout; without this resolution the delta-* commands
-    would silently target ``data/lake/<name>`` (a nonexistent table).
+    Accepts short names (``us``), canonical long keys (``us_equity``), table
+    routes (``features``/``predictions``), or full medallion paths
+    (``01_bronze/market_data/us_equity``) and returns the canonical path used
+    by the Delta writer. Runtime data lives under the numbered medallion
+    layout; without this resolution the delta-* commands would silently target
+    ``data/lake/<name>`` (a nonexistent table).
     """
+    from equity_lake.core.paths import PRICE_MARKETS, SHORT_TO_LONG, canonical_market
     from equity_lake.ingestion.types import MARKET_DIR_MAP
-
-    # Reverse lookup: long table name suffix (e.g. ``us_equity``) -> short key.
-    long_to_short: dict[str, str] = {}
-    for short_key, medallion_path in MARKET_DIR_MAP.items():
-        long_name = medallion_path.rsplit("/", 1)[-1]
-        long_to_short[long_name] = short_key
 
     resolved: list[str] = []
     for market in markets:
-        if market in MARKET_DIR_MAP:
-            resolved.append(MARKET_DIR_MAP[market])
-        elif market in long_to_short:
-            resolved.append(MARKET_DIR_MAP[long_to_short[market]])
+        if market in PRICE_MARKETS or market in SHORT_TO_LONG:
+            # Price market in either vocabulary -> canonical key -> medallion path.
+            resolved.append(MARKET_DIR_MAP[canonical_market(market)])
         else:
-            # Already a medallion path (e.g. ``01_bronze/market_data/us_equity``)
-            # or an unknown identifier — pass it through so the storage layer can
-            # report a missing/unknown table rather than silently mis-targeting.
-            resolved.append(market)
+            # Dataset identifier / table route already in the map, or a full
+            # medallion path / unknown identifier — pass it through so the
+            # storage layer can report a missing/unknown table rather than
+            # silently mis-targeting.
+            resolved.append(MARKET_DIR_MAP.get(market, market))
     return resolved
 
 
 @app.command("ingest")
 def ingest(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date YYYY-MM-DD")] = None,
-    markets: Annotated[str | None, typer.Option("--markets", "-m", help="Comma-separated markets")] = None,
+    markets: Annotated[
+        str | None,
+        typer.Option("--markets", "-m", help="Comma-separated markets (long keys like us_equity; short aliases like us accepted)"),
+    ] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Simulate without writes (default: off)")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
@@ -58,8 +57,8 @@ def ingest(
     from equity_lake.ingestion.types import REQUIRED_PRICE_MARKETS, SourceOutcome, SourceStatus
 
     _init_logging(verbose)
-    trading_date = _resolve_date(date_str)
-    market_list = _parse_comma_list(markets) or list(get_settings().ingestion.default_markets)
+    market_list = _parse_markets(markets) or list(get_settings().ingestion.default_markets)
+    trading_date = _resolve_run_date(date_str, 1, market_list)
     ticker_list = _parse_comma_list(tickers)
     results = run_daily_ingestion(
         trading_date=trading_date,
@@ -91,7 +90,10 @@ def backfill(
     start: Annotated[str | None, typer.Option("--start", help="Start date")] = None,
     end: Annotated[str | None, typer.Option("--end", help="End date")] = None,
     days_back: Annotated[int | None, typer.Option("--days-back", help="Calendar days back")] = None,
-    markets: Annotated[str, typer.Option("--markets", "-m", help="Comma-separated markets")] = "us,cn,hk_sg",
+    markets: Annotated[
+        str,
+        typer.Option("--markets", "-m", help="Comma-separated markets (long keys like us_equity; short aliases like us accepted)"),
+    ] = "us_equity,cn_ashare,hk_sg_equity",
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="No writes (default: off)")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
@@ -116,7 +118,7 @@ def backfill(
     config_path = Path(settings.ingestion.ticker_config_path)
     ticker_config = TickerConfig(config_path=config_path)
 
-    market_list = [m.strip() for m in markets.split(",")]
+    market_list = _parse_markets(markets) or []
     total = backfill_date_range(
         start_date=start_date,
         end_date=end_date,
@@ -131,7 +133,10 @@ def backfill(
 @app.command("auto-backfill")
 def auto_backfill(
     days_back: Annotated[int, typer.Option("--days-back", help="Days to scan for gaps")] = 90,
-    markets: Annotated[str | None, typer.Option("--markets", "-m", help="Comma-separated markets")] = None,
+    markets: Annotated[
+        str | None,
+        typer.Option("--markets", "-m", help="Comma-separated markets (long keys like us_equity; short aliases like us accepted)"),
+    ] = None,
     max_gap_days: Annotated[int, typer.Option("--max-gap-days", help="Skip gaps larger than this")] = 30,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Show gaps without filling")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
@@ -140,7 +145,7 @@ def auto_backfill(
     from equity_lake.ingestion.auto_backfill import find_and_fill_gaps
 
     _init_logging(verbose)
-    market_list = _parse_comma_list(markets)
+    market_list = _parse_markets(markets)
     results = find_and_fill_gaps(
         days_back=days_back,
         markets=market_list,
@@ -182,6 +187,7 @@ def sync(
     canonical local directory, so s5cmd can parallelize per market and partial
     failures don't abort the rest.
     """
+    from equity_lake.core.paths import PRICE_MARKETS
     from equity_lake.ingestion.types import MARKET_DIR_MAP
     from equity_lake.storage.s3_sync import S3Syncer
 
@@ -192,10 +198,9 @@ def sync(
         raise typer.Exit(1)
 
     bucket_root = bucket_url.rstrip("/")
-    # Equity market-data directories (Bronze layer).
-    equity_markets = ["us", "cn", "hk_sg", "jpx", "krx"]
     failed: list[str] = []
-    for market in equity_markets:
+    # Equity market-data directories (Bronze layer), straight from the registry.
+    for market in PRICE_MARKETS:
         market_dir = MARKET_DIR_MAP[market]
         # Derive the per-market remote source from the canonical medallion path
         # so each market pulls its own tree, not the same bucket root repeatedly.

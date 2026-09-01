@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import structlog
 
-from equity_lake.core.paths import CN_ASHARE_DIR, HK_SG_EQUITY_DIR, US_EQUITY_DIR
+from equity_lake.core.paths import market_dir
 
 logger = structlog.get_logger()
 
@@ -30,11 +30,10 @@ SAMPLE_TICKERS = {
     "hk_sg_equity": ["0700.HK", "9988.HK", "D05.SI", "0005.HK", "O39.SI"],
 }
 
-MARKET_DIRS = {
-    "us_equity": US_EQUITY_DIR,
-    "cn_ashare": CN_ASHARE_DIR,
-    "hk_sg_equity": HK_SG_EQUITY_DIR,
-}
+# Derived from the core/paths.py price-market registry (ADR-0010) — no private
+# market->directory copy. Resolved at import alongside SAMPLE_TICKERS, which
+# defines the (three-market) bootstrap scope.
+MARKET_DIRS = {market: market_dir(market) for market in SAMPLE_TICKERS}
 
 
 # ---------------------------------------------------------------------------

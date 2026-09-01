@@ -171,11 +171,29 @@ class TestConfigSubcommands:
 
 class TestNativeCommands:
     def test_ingest_command_invokes_business_logic(self):
-        outcomes = {"us": SourceOutcome(SourceStatus.WRITTEN), "cn": SourceOutcome(SourceStatus.WRITTEN)}
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.WRITTEN), "cn_ashare": SourceOutcome(SourceStatus.WRITTEN)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes) as mock_ingest:
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--dry-run", "--markets", "us,cn"])
             assert result.exit_code == 0
             mock_ingest.assert_called_once()
+            # Short flag values are canonicalized at parse (ADR-0010).
+            assert mock_ingest.call_args.kwargs["markets"] == ["us_equity", "cn_ashare"]
+
+    def test_ingest_command_accepts_long_market_keys(self):
+        """Both vocabularies are accepted at the CLI boundary and canonicalized."""
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.WRITTEN)}
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes) as mock_ingest:
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--dry-run", "--markets", "us_equity"])
+            assert result.exit_code == 0
+            assert mock_ingest.call_args.kwargs["markets"] == ["us_equity"]
+
+    def test_ingest_command_rejects_unknown_market(self):
+        """A typo'd --markets value exits 1 instead of becoming a silent no-op."""
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion") as mock_ingest:
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "uss"])
+        assert result.exit_code == 1
+        assert "Unknown market" in result.stdout
+        mock_ingest.assert_not_called()
 
     def test_ingest_resolves_default_markets_when_omitted(self):
         """Regression test (P0): ingest without --markets must fall back to settings defaults.
@@ -231,7 +249,7 @@ class TestNativeCommands:
     def test_pipeline_command_exits_zero_on_stage_success(self):
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
-            return_value={"ingestion": {"us": True}, "features": {"success": True, "rows": 1}, "ml": {"success": True, "results": {}}},
+            return_value={"ingestion": {"us_equity": True}, "features": {"success": True, "rows": 1}, "ml": {"success": True, "results": {}}},
         ):
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
             assert result.exit_code == 0
@@ -484,21 +502,21 @@ class TestIngestFailureContract:
     def test_ingest_exits_nonzero_on_required_market_failure(self):
         """Mirror of the pipeline command: required price markets failing exit 1."""
         outcomes = {
-            "us": SourceOutcome(SourceStatus.FAILED, error="boom"),
-            "cn": SourceOutcome(SourceStatus.WRITTEN),
+            "us_equity": SourceOutcome(SourceStatus.FAILED, error="boom"),
+            "cn_ashare": SourceOutcome(SourceStatus.WRITTEN),
         }
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "us,cn"])
         assert result.exit_code == 1
-        assert "us: failed (boom)" in result.stdout
-        assert "Ingestion failed for required markets: us" in result.stdout
+        assert "us_equity: failed (boom)" in result.stdout
+        assert "Ingestion failed for required markets: us_equity" in result.stdout
 
     def test_ingest_exits_zero_when_required_markets_skip_existing(self):
-        outcomes = {"us": SourceOutcome(SourceStatus.SKIPPED_EXISTING)}
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.SKIPPED_EXISTING)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "us"])
         assert result.exit_code == 0
-        assert "us: skipped_existing" in result.stdout
+        assert "us_equity: skipped_existing" in result.stdout
 
     def test_ingest_exits_zero_for_optional_enrichment_failure(self):
         outcomes = {"us_news": SourceOutcome(SourceStatus.FAILED, error="no key")}
@@ -573,6 +591,64 @@ class TestSecWriteFailureContract:
             result = runner.invoke(app, ["financials", "--date", "2024-01-01"])
         assert result.exit_code == 1
         assert "Failed to write SEC financials" in result.stdout
+
+
+class TestPerMarketDateResolution:
+    """ADR-0010 Decision 5: single-market runs resolve the run date on that market's calendar.
+
+    Uses a mocked calendar (deterministic session sets, no exchange_calendars
+    holiday drift): XSHG is closed Oct 1-8 (Golden Week), XNYS trades throughout.
+    """
+
+    CN_SESSIONS = {date(2026, 9, 30), date(2026, 10, 9)}
+    US_SESSIONS = {date(2026, 9, 30)} | {date(2026, 10, d) for d in range(1, 10)}
+
+    @staticmethod
+    def _mocked_calendar():
+        from equity_lake.core.paths import canonical_market
+
+        def fake_is_trading_day(market: str, d: date) -> bool:
+            sessions = TestPerMarketDateResolution.CN_SESSIONS if canonical_market(market) == "cn_ashare" else TestPerMarketDateResolution.US_SESSIONS
+            return d in sessions
+
+        class _FixedToday(date):
+            @classmethod
+            def today(cls) -> date:
+                return date(2026, 10, 9)
+
+        return (
+            patch("equity_lake.core.calendar.is_trading_day", side_effect=fake_is_trading_day),
+            patch("equity_lake.core.dates.date", _FixedToday),
+        )
+
+    def test_single_cn_market_resolves_cn_trading_date(self):
+        cal_patch, today_patch = self._mocked_calendar()
+        with cal_patch, today_patch, patch("equity_lake.pipeline.execute_eod_pipeline", return_value={}) as mock_pipeline:
+            result = runner.invoke(app, ["pipeline", "--markets", "cn_ashare"])
+        assert result.exit_code == 0
+        # XSHG last session before 2026-10-09 is 2026-09-30 (Golden Week), not 2026-10-08.
+        assert mock_pipeline.call_args.kwargs["trading_date"] == date(2026, 9, 30)
+
+    def test_single_market_short_alias_resolves_same_calendar(self):
+        cal_patch, today_patch = self._mocked_calendar()
+        with cal_patch, today_patch, patch("equity_lake.pipeline.execute_eod_pipeline", return_value={}) as mock_pipeline:
+            result = runner.invoke(app, ["pipeline", "--markets", "cn"])
+        assert result.exit_code == 0
+        assert mock_pipeline.call_args.kwargs["trading_date"] == date(2026, 9, 30)
+
+    def test_multi_market_run_falls_back_to_us_calendar_with_warning(self):
+        cal_patch, today_patch = self._mocked_calendar()
+        with (
+            cal_patch,
+            today_patch,
+            patch("equity_lake.cli._app.logger") as mock_logger,
+            patch("equity_lake.pipeline.execute_eod_pipeline", return_value={}) as mock_pipeline,
+        ):
+            result = runner.invoke(app, ["pipeline", "--markets", "us,cn"])
+        assert result.exit_code == 0
+        # No single price-market context: the US calendar resolves Oct 8, with a logged warning.
+        assert mock_pipeline.call_args.kwargs["trading_date"] == date(2026, 10, 8)
+        assert mock_logger.warning.call_args.args[0] == "run_date_resolved_with_us_calendar"
 
 
 class TestBacktestCleanError:

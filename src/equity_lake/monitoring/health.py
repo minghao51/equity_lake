@@ -7,7 +7,6 @@ Sends alerts on issues. Driven via the ``equity monitor`` Typer command.
 """
 
 import json
-import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -17,19 +16,15 @@ import structlog
 
 from equity_lake.core.calendar import is_trading_day, market_now
 
-# Price-market path constants are resolved reflectively by _price_market_paths()
-# (via getattr on this module) so runtime patches are honoured; they are not
-# referenced by name in the query f-strings.
-from equity_lake.core.paths import (  # noqa: F401
+# Unstructured/feature tables are referenced by name in the query f-strings;
+# price-market bronze paths come from the registry via _price_market_paths().
+from equity_lake.core.paths import (
     BRONZE_RAW_ARTICLES_DIR,
-    CN_ASHARE_DIR,
     GOLD_FEATURES_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
+    PRICE_MARKETS,
     SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
-    US_EQUITY_DIR,
+    market_dir,
 )
 from equity_lake.monitoring.alerting import Alerter, build_alerter
 from equity_lake.storage.lake_reader import duckdb_scan_for
@@ -54,29 +49,20 @@ _MARKET_DISPLAY = {
     "krx_equity": "KRX Equity",
 }
 
-# Price-market registry: bronze directory name -> module attribute holding its
-# Path constant. Iterating this drives both the freshness and quality checks, so
-# every market classified as a required price market is monitored automatically.
-# Attribute names (not captured Path objects) so runtime patches of the
-# module-level constants — e.g. tests pointing them at tmp dirs — are honoured.
-_PRICE_MARKET_PATH_ATTRS: dict[str, str] = {
-    "us_equity": "US_EQUITY_DIR",
-    "cn_ashare": "CN_ASHARE_DIR",
-    "hk_sg_equity": "HK_SG_EQUITY_DIR",
-    "jpx_equity": "JPX_EQUITY_DIR",
-    "krx_equity": "KRX_EQUITY_DIR",
-}
+# Price-market registry: iterating ``core.paths.PRICE_MARKETS`` drives both the
+# freshness and quality checks, so every market classified as a required price
+# market is monitored automatically (ADR-0010).
 
 
 def _price_market_paths() -> dict[str, Path]:
     """Resolve price-market -> bronze parquet path at call time.
 
-    Reads the module-level ``*_EQUITY_DIR`` / ``*_ASHARE_DIR`` constants fresh on
-    each call (via ``getattr``) so runtime patches are honoured, matching the
-    previous inline-f-string behaviour.
+    Reads the registry and resolves each entry's directory via
+    ``core.paths.market_dir`` (which looks up the module-level ``*_DIR``
+    constants via ``getattr``) fresh on each call, so runtime patches of those
+    constants — e.g. tests pointing them at tmp dirs — are honoured.
     """
-    module = sys.modules[__name__]
-    return {market: getattr(module, attr) for market, attr in _PRICE_MARKET_PATH_ATTRS.items()}
+    return {market: market_dir(market) for market in PRICE_MARKETS}
 
 
 def _date_scalar(value: object) -> date | None:

@@ -55,7 +55,7 @@ class VectorBacktestEngine:
         self.start_date = start_date
         self.end_date = end_date
         self.initial_cash = initial_cash
-        self.markets = markets or ["us", "cn", "hk_sg"]
+        self.markets = markets or ["us_equity", "cn_ashare", "hk_sg_equity"]
         self.config = config or {}
         self.preloaded_data = preloaded_data
 

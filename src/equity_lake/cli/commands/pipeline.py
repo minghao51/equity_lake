@@ -6,7 +6,7 @@ from typing import Annotated
 
 import typer
 
-from equity_lake.cli._app import _init_logging, _parse_comma_list, _resolve_date, app
+from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, _resolve_run_date, app
 from equity_lake.core.paths import LOGS_DIR
 
 
@@ -29,7 +29,10 @@ def _pipeline_succeeded(results: dict[str, object]) -> bool:
 def pipeline(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date YYYY-MM-DD")] = None,
     days_back: Annotated[int, typer.Option("--days-back", help="Days back")] = 1,
-    markets: Annotated[str | None, typer.Option("--markets", "-m", help="Comma-separated markets")] = None,
+    markets: Annotated[
+        str | None,
+        typer.Option("--markets", "-m", help="Comma-separated markets (long keys like us_equity; short aliases like us accepted)"),
+    ] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     skip_ingestion: Annotated[bool, typer.Option("--skip-ingestion", help="Skip Stage 1")] = False,
     skip_features: Annotated[bool, typer.Option("--skip-features", help="Skip Stage 2")] = False,
@@ -48,9 +51,9 @@ def pipeline(
     from equity_lake.pipeline import execute_eod_pipeline
 
     _init_logging(verbose)
-    trading_date = _resolve_date(date_str, days_back)
-    market_list = _parse_comma_list(markets)
+    market_list = _parse_markets(markets)
     ticker_list = _parse_comma_list(tickers)
+    trading_date = _resolve_run_date(date_str, days_back, market_list)
 
     results = execute_eod_pipeline(
         trading_date=trading_date,

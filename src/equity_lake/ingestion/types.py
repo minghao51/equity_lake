@@ -1,79 +1,57 @@
-"""Type definitions for the ingestion module."""
+"""Type definitions for the ingestion module.
 
+Market vocabulary: the five price markets are keyed by their canonical long
+form (ADR-0010), derived from the :data:`equity_lake.core.paths.PRICE_MARKETS`
+registry together with their directory mapping. The ten enrichment dataset
+identifiers keep their single literal form. Short price-market aliases are
+accepted only at boundaries (CLI flags, settings) and normalized there via
+:func:`normalize_markets` / ``canonical_market``.
+"""
+
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from equity_lake.core.paths import (
     BRONZE_MACRO_DIR,
     BRONZE_RAW_ARTICLES_DIR,
-    CN_ASHARE_DIR,
     GOLD_FEATURES_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
     LAKE_DIR,
+    OPTIONAL_ENRICHMENT_MARKETS,
     PLATINUM_PREDICTIONS_DIR,
+    PRICE_MARKETS,
+    SHORT_TO_LONG,
     SILVER_ANALYST_RATINGS_DIR,
     SILVER_NEWS_SENTIMENT_DIR,
     SILVER_SEC_FINANCIALS_DIR,
     SILVER_SOCIAL_SENTIMENT_DIR,
-    US_EQUITY_DIR,
+    canonical_market,
+    market_dir,
 )
 
-# Valid market set for validation
-VALID_MARKETS: set[str] = {
-    "us",
-    "cn",
-    "hk_sg",
-    "jpx",
-    "krx",
-    "macro",
-    "us_news",
-    "us_social_sentiment",
-    "rss_news",
-    "reddit_posts",
-    "stocktwits_messages",
-    "us_earnings_transcripts",
-    "us_analyst_ratings",
-    "sec_filings_fulltext",
-    "us_sec_financials",
-}
+# Valid market set for validation. Price entries are the canonical long keys
+# derived from the registry; enrichment entries are single-form dataset ids.
+VALID_MARKETS: set[str] = set(PRICE_MARKETS) | set(OPTIONAL_ENRICHMENT_MARKETS)
 
 # Canonical market classification — single source of truth for pipeline routing.
 # REQUIRED_PRICE_MARKETS block features/ML on failure; OPTIONAL_ENRICHMENT_MARKETS
 # only degrade enrichment. Together they partition VALID_MARKETS.
-REQUIRED_PRICE_MARKETS: frozenset[str] = frozenset({"us", "cn", "hk_sg", "jpx", "krx"})
-OPTIONAL_ENRICHMENT_MARKETS: frozenset[str] = frozenset(
-    {
-        "macro",
-        "us_news",
-        "us_social_sentiment",
-        "rss_news",
-        "reddit_posts",
-        "stocktwits_messages",
-        "us_earnings_transcripts",
-        "us_analyst_ratings",
-        "sec_filings_fulltext",
-        "us_sec_financials",
-    }
-)
+REQUIRED_PRICE_MARKETS: frozenset[str] = frozenset(PRICE_MARKETS)
 
 
-def _rel(path) -> str:
+def _rel(path: Path) -> str:
     """Relative medallion path string for a lake directory (single source: paths.py)."""
     return str(path.relative_to(LAKE_DIR))
 
 
 # Market to directory mapping (medallion paths).
-# Derived from ``equity_lake.core.paths`` constants so there is one canonical
-# source of truth for where each market is stored.
+# Price-market entries are derived from the ``core/paths.py`` registry so there
+# is one canonical source of truth for where each market is stored; enrichment
+# entries stay literal (they are dataset->path routes, not market vocabulary).
 MARKET_DIR_MAP: dict[str, str] = {
-    # Bronze — market data
-    "us": _rel(US_EQUITY_DIR),
-    "cn": _rel(CN_ASHARE_DIR),
-    "hk_sg": _rel(HK_SG_EQUITY_DIR),
-    "jpx": _rel(JPX_EQUITY_DIR),
-    "krx": _rel(KRX_EQUITY_DIR),
+    # Bronze — market data (registry-derived)
+    **{market: _rel(market_dir(market)) for market in PRICE_MARKETS},
     "macro": _rel(BRONZE_MACRO_DIR),
     # Bronze — unstructured
     "rss_news": _rel(BRONZE_RAW_ARTICLES_DIR),
@@ -90,7 +68,7 @@ MARKET_DIR_MAP: dict[str, str] = {
     # NOTE: "features" / "predictions" are NOT markets (outside VALID_MARKETS) —
     # they are gold/platinum medallion table routes kept here so callers can
     # resolve their lake paths through the same map. Do not add them to
-    # VALID_MARKETS; see handoff 05 for the planned rename.
+    # VALID_MARKETS.
     "features": _rel(GOLD_FEATURES_DIR),
     # Platinum
     "predictions": _rel(PLATINUM_PREDICTIONS_DIR),
@@ -99,6 +77,25 @@ MARKET_DIR_MAP: dict[str, str] = {
 # Reverse lookup (medallion path -> market key), derived from MARKET_DIR_MAP so
 # it cannot drift from the forward mapping.
 MARKET_DIR_REVERSE: dict[str, str] = {v: k for k, v in MARKET_DIR_MAP.items()}
+
+
+def normalize_markets(markets: Iterable[str]) -> list[str]:
+    """Canonicalize market identifiers at the pipeline boundary (ADR-0010).
+
+    Short price-market aliases (``us``) are mapped to their canonical long keys
+    (``us_equity``); long price keys and enrichment dataset identifiers pass
+    through. Unknown keys raise ``ValueError`` so a typo fails loudly instead
+    of silently fetching nothing.
+    """
+    normalized: list[str] = []
+    for market in markets:
+        if market in SHORT_TO_LONG:
+            normalized.append(SHORT_TO_LONG[market])
+        elif market in VALID_MARKETS:
+            normalized.append(market)
+        else:
+            normalized.append(canonical_market(market))  # raises ValueError on unknown keys
+    return normalized
 
 
 class SourceStatus(str, Enum):
@@ -143,4 +140,5 @@ __all__ = [
     "MARKET_DIR_REVERSE",
     "SourceStatus",
     "SourceOutcome",
+    "normalize_markets",
 ]

@@ -33,8 +33,8 @@ class TestEquityDataDB:
         """Test creating market view from Parquet files."""
         db = EquityDataDB(db_path=":memory:")
 
-        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+        with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet)
 
         assert "us_equity" in db.available_views
         result = db.query("SELECT COUNT(*) as cnt FROM us_equity")
@@ -46,8 +46,8 @@ class TestEquityDataDB:
         db = EquityDataDB(db_path=":memory:")
 
         # Create view
-        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+        with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet)
 
         # Execute simple query
         sql = "SELECT COUNT(*) as count FROM us_equity"
@@ -60,8 +60,8 @@ class TestEquityDataDB:
         """Test executing SQL query returns Polars DataFrame."""
         db = EquityDataDB(db_path=":memory:")
 
-        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+        with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet)
 
         result = db.query("SELECT COUNT(*) as count FROM us_equity")
 
@@ -87,8 +87,8 @@ def db_with_data(temp_partitioned_parquet):
     """Create a reusable database with test data."""
     db = EquityDataDB(db_path=":memory:")
 
-    with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
-        db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+    with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
+        db._create_market_view("us_equity", temp_partitioned_parquet)
         db._create_unified_view()
 
     return db
@@ -268,8 +268,8 @@ class TestQueryIntegration:
         args, so they need sensible defaults (previously TypeError → "Query failed").
         """
         db = EquityDataDB(db_path=":memory:")
-        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+        with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet)
             db._create_unified_view()
             results = db.run_all_queries()
 
@@ -300,8 +300,8 @@ class TestQueryIntegration:
         """Test complete workflow from DB creation to query execution."""
         db = EquityDataDB(db_path=":memory:")
 
-        with patch("equity_lake.storage.duckdb.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet, "us")
+        with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
+            db._create_market_view("us_equity", temp_partitioned_parquet)
             db._create_unified_view()
 
         queries = QueryExamples(db)

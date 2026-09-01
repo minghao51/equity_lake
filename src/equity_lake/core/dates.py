@@ -7,6 +7,12 @@ from datetime import date, datetime, timedelta
 
 def _subtract_trading_days(base: date, days_back: int, market: str = "us_equity") -> date:
     from equity_lake.core.calendar import is_trading_day
+    from equity_lake.core.paths import canonical_market
+
+    # Unknown/non-price market keys raise here (ADR-0010): every registry
+    # market has a real trading calendar, so the loop below always terminates.
+    # This is the loop guard for the historical infinite-loop bug.
+    market = canonical_market(market)
 
     current = base
     remaining = max(days_back, 0)

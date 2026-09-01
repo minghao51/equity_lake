@@ -50,3 +50,31 @@ schedule:
 
     with pytest.raises(ValueError):
         load_settings(settings_file)
+
+
+# =============================================================================
+# ADR-0010: default_markets vocabulary
+# =============================================================================
+
+
+class TestDefaultMarketsNormalization:
+    def test_default_is_canonical_long_keys(self) -> None:
+        from equity_lake.core.settings import IngestionSettings
+
+        assert IngestionSettings().default_markets == ["us_equity", "cn_ashare", "hk_sg_equity"]
+
+    def test_short_aliases_normalize_to_long_keys(self) -> None:
+        """Existing YAML/env input with short keys keeps loading (boundary alias)."""
+        from equity_lake.core.settings import IngestionSettings
+
+        settings = IngestionSettings(default_markets=["us", "cn", "hk_sg", "macro", "us_news"])
+        assert settings.default_markets == ["us_equity", "cn_ashare", "hk_sg_equity", "macro", "us_news"]
+
+    def test_unknown_market_is_rejected(self) -> None:
+        """A config typo must fail loudly, not become a silent pipeline no-op."""
+        from pydantic import ValidationError
+
+        from equity_lake.core.settings import IngestionSettings
+
+        with pytest.raises(ValidationError, match="Unknown market"):
+            IngestionSettings(default_markets=["uss"])

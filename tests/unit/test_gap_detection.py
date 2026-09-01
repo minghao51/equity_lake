@@ -108,8 +108,8 @@ def test_calendar_key_resolves_via_market_map() -> None:
     Substring derivation turned ``02_silver/analyst_ratings`` into the bogus
     calendar key ``analyst_ratings`` (zero trading days → silent no-op).
     """
-    assert _calendar_key(MARKET_DIR_MAP["us"]) == "us"
-    assert _calendar_key(MARKET_DIR_MAP["hk_sg"]) == "hk_sg"
+    assert _calendar_key(MARKET_DIR_MAP["us_equity"]) == "us_equity"
+    assert _calendar_key(MARKET_DIR_MAP["hk_sg_equity"]) == "hk_sg_equity"
     # Direct market keys pass through unchanged.
     assert _calendar_key("us_equity") == "us_equity"
     # Non-price tables resolve to their market key, which has no calendar.
@@ -120,7 +120,7 @@ def test_calendar_key_resolves_via_market_map() -> None:
 
 def test_find_missing_dates_accepts_medallion_dir_path(tmp_path) -> None:
     """auto_backfill passes full medallion dirs (e.g. 01_bronze/market_data/us_equity) — these must resolve to a calendar."""
-    market_rel = MARKET_DIR_MAP["us"]
+    market_rel = MARKET_DIR_MAP["us_equity"]
     market_dir = tmp_path / market_rel
     market_dir.mkdir(parents=True)
     df = pl.DataFrame(
@@ -200,7 +200,7 @@ def test_hk_sg_intersection_removes_false_gaps_for_si_tickers(tmp_path) -> None:
     XHKG-only expected dates, a Singapore ticker present on every common session
     was falsely flagged as missing 2024-08-09.
     """
-    market_dir = tmp_path / MARKET_DIR_MAP["hk_sg"]
+    market_dir = tmp_path / MARKET_DIR_MAP["hk_sg_equity"]
     market_dir.mkdir(parents=True)
     common_sessions = [date(2024, 8, 5), date(2024, 8, 6), date(2024, 8, 7), date(2024, 8, 8), date(2024, 8, 12)]
     df = pl.DataFrame(
@@ -214,7 +214,7 @@ def test_hk_sg_intersection_removes_false_gaps_for_si_tickers(tmp_path) -> None:
 
     with GapDetector(lake_path=tmp_path) as det:
         missing = det.find_missing_dates(
-            MARKET_DIR_MAP["hk_sg"],
+            MARKET_DIR_MAP["hk_sg_equity"],
             ticker=None,
             start_date=date(2024, 8, 5),
             end_date=date(2024, 8, 12),

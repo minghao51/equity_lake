@@ -119,25 +119,25 @@ def test_run_arena_rejects_unknown_strategies() -> None:
 
 def test_realistic_regime_resolves_per_market_costs() -> None:
     """US runs pay no sell tax; CN pays stamp duty; other regimes pass through."""
-    us = _resolve_regime_costs("realistic", ("us",), MARKET_COST_DEFAULTS)
-    cn = _resolve_regime_costs("realistic", ("cn",), MARKET_COST_DEFAULTS)
+    us = _resolve_regime_costs("realistic", ("us_equity",), MARKET_COST_DEFAULTS)
+    cn = _resolve_regime_costs("realistic", ("cn_ashare",), MARKET_COST_DEFAULTS)
     assert us["tax_ratio"] == 0.0
     assert cn["tax_ratio"] > 0.0  # A-share stamp duty on sells
     assert us["fee_ratio"] > 0.0
     # zero/high regimes are market-agnostic
-    assert _resolve_regime_costs("zero", ("us",), MARKET_COST_DEFAULTS) == {"fee_ratio": 0.0, "tax_ratio": 0.0}
-    assert _resolve_regime_costs("high", ("cn",), MARKET_COST_DEFAULTS)["fee_ratio"] == 0.005
+    assert _resolve_regime_costs("zero", ("us_equity",), MARKET_COST_DEFAULTS) == {"fee_ratio": 0.0, "tax_ratio": 0.0}
+    assert _resolve_regime_costs("high", ("cn_ashare",), MARKET_COST_DEFAULTS)["fee_ratio"] == 0.005
 
 
 def test_realistic_regime_multi_market_falls_back_to_engine_defaults() -> None:
     """One engine run cannot mix per-venue taxes; multi-market runs use engine defaults."""
-    fallback = _resolve_regime_costs("realistic", ("us", "cn"), MARKET_COST_DEFAULTS)
+    fallback = _resolve_regime_costs("realistic", ("us_equity", "cn_ashare"), MARKET_COST_DEFAULTS)
     assert fallback == COST_REGIMES["realistic"]
 
 
 def test_realistic_regime_accepts_market_cost_overrides() -> None:
-    custom = {"us": {"fee_ratio": 0.002, "tax_ratio": 0.001}}
-    resolved = _resolve_regime_costs("realistic", ("us",), custom)
+    custom = {"us_equity": {"fee_ratio": 0.002, "tax_ratio": 0.001}}
+    resolved = _resolve_regime_costs("realistic", ("us_equity",), custom)
     assert resolved == {"fee_ratio": 0.002, "tax_ratio": 0.001}
 
 

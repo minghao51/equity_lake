@@ -19,13 +19,7 @@ import duckdb
 import polars as pl
 import structlog
 
-from equity_lake.core.paths import (
-    CN_ASHARE_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
-    US_EQUITY_DIR,
-)
+from equity_lake.core.paths import PRICE_MARKETS, market_dir
 from equity_lake.storage.examples import QueryExamples
 
 logger = structlog.get_logger(__name__)
@@ -40,16 +34,10 @@ class EquityDataDB:
     """DuckDB connection manager for equity data queries.
 
     All market tables are expected to be Delta Lake tables scanned via
-    ``delta_scan()``.
+    ``delta_scan()``. Market views are created from the ``core/paths.py``
+    price-market registry (ADR-0010): one view per registry market, keyed and
+    labelled by its canonical long key.
     """
-
-    MARKET_VIEWS = [
-        ("us_equity", US_EQUITY_DIR, "us"),
-        ("cn_ashare", CN_ASHARE_DIR, "cn"),
-        ("hk_sg_equity", HK_SG_EQUITY_DIR, "hk_sg"),
-        ("jpx_equity", JPX_EQUITY_DIR, "jpx"),
-        ("krx_equity", KRX_EQUITY_DIR, "krx"),
-    ]
 
     def __init__(self, db_path: str | Path | None = ":memory:"):
         self.db_path = db_path if db_path is not None else ":memory:"
@@ -64,8 +52,8 @@ class EquityDataDB:
         logger.info("Setting up unified views")
         self.con.execute("INSTALL delta; LOAD delta;")
 
-        for view_name, data_dir, market_label in self.MARKET_VIEWS:
-            self._create_market_view(view_name, data_dir, market_label)
+        for market in PRICE_MARKETS:
+            self._create_market_view(market, market_dir(market))
 
         self._create_unified_view()
         logger.info("Views created successfully")
@@ -81,7 +69,7 @@ class EquityDataDB:
     def __exit__(self, *args: object) -> None:
         self.close()
 
-    def _create_market_view(self, view_name: str, data_dir: Path, market_label: str) -> None:
+    def _create_market_view(self, view_name: str, data_dir: Path) -> None:
         if not data_dir.exists():
             logger.warning("Data directory not found", path=str(data_dir))
             return
@@ -89,7 +77,8 @@ class EquityDataDB:
         from equity_lake.storage.lake_reader import duckdb_scan_for
 
         scan_expr = duckdb_scan_for(data_dir)
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT *, '{market_label}' as market FROM {scan_expr}"
+        # The unified ``market`` column carries the canonical long key (ADR-0010).
+        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT *, '{view_name}' as market FROM {scan_expr}"
 
         try:
             self.con.execute(sql)

@@ -8,6 +8,7 @@ from typing import Any
 import structlog
 
 from equity_lake.core.config import TickerConfig, get_settings
+from equity_lake.core.paths import LONG_TO_SHORT
 from equity_lake.features import NoFeatureHistoryError, run_feature_job
 from equity_lake.ingestion.backfill import backfill_date_range
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
@@ -16,6 +17,7 @@ from equity_lake.ingestion.types import (
     REQUIRED_PRICE_MARKETS,
     SourceOutcome,
     SourceStatus,
+    normalize_markets,
 )
 from equity_lake.ml import run_prediction_job
 
@@ -283,8 +285,12 @@ def execute_eod_pipeline(
     """Execute the full EOD pipeline: ingestion -> features -> ML."""
     settings = get_settings()
     ticker_config = ticker_config or TickerConfig()
-    markets = markets or list(settings.ingestion.default_markets)
-    tickers = tickers or [t for m in markets for t in ticker_config.get_tickers_for_market(m, active_only=True)][:10]
+    # ADR-0010: canonicalize short price-market aliases to long keys once, at
+    # the pipeline boundary. Unknown keys raise here (loud failure).
+    markets = normalize_markets(markets) if markets is not None else list(settings.ingestion.default_markets)
+    # Ticker-config sections still use the short keys (config/tickers.yaml is a
+    # separate vocabulary, out of ADR-0010 scope) — bridge via the registry alias.
+    tickers = tickers or [t for m in markets for t in ticker_config.get_tickers_for_market(LONG_TO_SHORT.get(m, m), active_only=True)][:10]
 
     results: dict[str, Any] = {}
     feature_output_tickers = tickers

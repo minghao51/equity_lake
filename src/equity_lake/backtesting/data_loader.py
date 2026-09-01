@@ -7,26 +7,17 @@ import duckdb
 import polars as pl
 import structlog
 
-from equity_lake.core.paths import (
-    CN_ASHARE_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
-    US_EQUITY_DIR,
-)
+from equity_lake.core.paths import PRICE_MARKETS, market_dir
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger(__name__)
 
 
 class BacktestDataLoader:
-    MARKET_DIRS = {
-        "us": US_EQUITY_DIR,
-        "cn": CN_ASHARE_DIR,
-        "hk_sg": HK_SG_EQUITY_DIR,
-        "jpx": JPX_EQUITY_DIR,
-        "krx": KRX_EQUITY_DIR,
-    }
+    """Loads OHLCV data from the price-market registry directories (ADR-0010).
+
+    View and market keys are the canonical long forms (``backtest_us_equity``).
+    """
 
     def __init__(
         self,
@@ -47,7 +38,8 @@ class BacktestDataLoader:
         logger.debug("Setting up market views...")
         self.conn.execute("INSTALL delta; LOAD delta;")
 
-        for market_label, data_dir in self.MARKET_DIRS.items():
+        for market_label in PRICE_MARKETS:
+            data_dir = market_dir(market_label)
             if not data_dir.exists():
                 logger.warning(
                     "Data directory not found, skipping view",
@@ -97,7 +89,7 @@ class BacktestDataLoader:
         past rows (lookahead bias) and is intentionally not offered.
         """
         if markets is None:
-            markets = list(self.MARKET_DIRS.keys())
+            markets = list(PRICE_MARKETS)
 
         if columns is None:
             columns = [
@@ -145,9 +137,9 @@ class BacktestDataLoader:
         union_queries = []
         for market in markets:
             view_name = f"backtest_{market}"
-            data_dir = self.MARKET_DIRS.get(market)
+            data_dir = market_dir(market) if market in PRICE_MARKETS else None
 
-            if market in ["jpx", "krx"] and (not data_dir or not data_dir.exists()):
+            if market in ("jpx_equity", "krx_equity") and (not data_dir or not data_dir.exists()):
                 logger.warning(
                     "Market data directory not found",
                     market=market,
@@ -162,7 +154,7 @@ class BacktestDataLoader:
             logger.error(
                 "No valid markets with data found",
                 requested_markets=markets,
-                available_markets=[m for m, d in self.MARKET_DIRS.items() if d.exists()],
+                available_markets=[m for m in PRICE_MARKETS if market_dir(m).exists()],
             )
             return pl.DataFrame()
 

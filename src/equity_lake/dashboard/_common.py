@@ -7,22 +7,17 @@ from pathlib import Path
 from typing import Any
 
 from equity_lake.core.paths import (
-    CN_ASHARE_DIR,
     GOLD_FEATURES_DIR,
-    HK_SG_EQUITY_DIR,
-    JPX_EQUITY_DIR,
-    KRX_EQUITY_DIR,
     LOGS_DIR,
-    US_EQUITY_DIR,
+    PRICE_MARKETS,
+    market_dir,
 )
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
+# Price-market entries derived from the core/paths.py registry (ADR-0010);
+# "features" is a gold medallion table route, not a market.
 MARKET_DATASETS: dict[str, Path] = {
-    "us_equity": US_EQUITY_DIR,
-    "cn_ashare": CN_ASHARE_DIR,
-    "hk_sg_equity": HK_SG_EQUITY_DIR,
-    "jpx_equity": JPX_EQUITY_DIR,
-    "krx_equity": KRX_EQUITY_DIR,
+    **{market: market_dir(market) for market in PRICE_MARKETS},
     "features": GOLD_FEATURES_DIR,
 }
 

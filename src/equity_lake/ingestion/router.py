@@ -335,14 +335,16 @@ def _make_sec_financials_fetcher(
 
 
 # Single source of truth: market identifier -> fetcher factory name.
+# Price markets use the canonical long keys (ADR-0010); normalize_markets()
+# at the orchestrator boundary canonicalizes short aliases before routing.
 # Factories are resolved by name at call time (via ``globals()``) so they remain
 # patchable in tests (e.g. ``patch("...router._make_us_fetcher")``).
 MARKET_REGISTRY: dict[str, str] = {
-    "us": "_make_us_fetcher",
-    "cn": "_make_cn_fetcher",
-    "hk_sg": "_make_hk_sg_fetcher",
-    "jpx": "_make_jpx_fetcher",
-    "krx": "_make_krx_fetcher",
+    "us_equity": "_make_us_fetcher",
+    "cn_ashare": "_make_cn_fetcher",
+    "hk_sg_equity": "_make_hk_sg_fetcher",
+    "jpx_equity": "_make_jpx_fetcher",
+    "krx_equity": "_make_krx_fetcher",
     "macro": "_make_macro_fetcher",
     "us_news": "_make_news_fetcher",
     "us_social_sentiment": "_make_sentiment_fetcher",
@@ -373,7 +375,7 @@ def fetch_market_data_with_config(
     when not supplied explicitly.
 
     Args:
-        market: Market identifier (e.g. 'us', 'cn', 'macro', 'us_news')
+        market: Market identifier (e.g. 'us_equity', 'cn_ashare', 'macro', 'us_news')
         trading_date: Date to fetch
         retry_attempts: Override the configured retry attempt count
         retry_delay: Override the configured retry backoff base

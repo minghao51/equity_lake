@@ -193,7 +193,7 @@ class TestPipelineIntegration:
         with patch("equity_lake.sources.cn_hybrid.CNHybridFetcher") as mock_fetcher:
             mock_fetcher.return_value.fetch.return_value = sample
 
-            result = fetch_market_data("cn", date(2024, 1, 1))
+            result = fetch_market_data("cn_ashare", date(2024, 1, 1))
 
         mock_fetcher.assert_called_once()
         assert result is not None
@@ -210,9 +210,11 @@ class TestPipelineIntegration:
             ):
                 results = run_daily_ingestion(date(2024, 1, 1), ["us"], dry_run=True)
 
-        assert "us" in results
-        assert results["us"].succeeded is True
-        assert results["us"].status is SourceStatus.WRITTEN  # dry-run fetch path
+        # Results are keyed by the canonical long key (ADR-0010): short input is
+        # normalized at the orchestrator boundary.
+        assert "us_equity" in results
+        assert results["us_equity"].succeeded is True
+        assert results["us_equity"].status is SourceStatus.WRITTEN  # dry-run fetch path
 
     def test_skip_existing_marks_already_present_as_success(self, tmp_path, sample_ohlcv_data):
         """Regression test (P0): an idempotent rerun must not drop already-present markets.
@@ -246,10 +248,10 @@ class TestPipelineIntegration:
                 parallel=False,
             )
 
-        assert results["us"].succeeded is True  # already-present, not re-fetched
-        assert results["us"].status is SourceStatus.SKIPPED_EXISTING
-        assert results["cn"].succeeded is True  # newly fetched
-        assert results["cn"].status is SourceStatus.WRITTEN
+        assert results["us_equity"].succeeded is True  # already-present, not re-fetched
+        assert results["us_equity"].status is SourceStatus.SKIPPED_EXISTING
+        assert results["cn_ashare"].succeeded is True  # newly fetched
+        assert results["cn_ashare"].status is SourceStatus.WRITTEN
 
     def test_corrupt_partition_not_treated_as_present(self, tmp_path, sample_ohlcv_data):
         """A partition that exists but fails schema validation must be re-fetched.
@@ -280,9 +282,9 @@ class TestPipelineIntegration:
             )
 
         # Both markets were re-fetched (not skipped), both report WRITTEN.
-        assert "us" not in {m for m in results if results[m].status is SourceStatus.SKIPPED_EXISTING}
-        assert results["us"].status is SourceStatus.WRITTEN
-        assert results["cn"].status is SourceStatus.WRITTEN
+        assert "us_equity" not in {m for m in results if results[m].status is SourceStatus.SKIPPED_EXISTING}
+        assert results["us_equity"].status is SourceStatus.WRITTEN
+        assert results["cn_ashare"].status is SourceStatus.WRITTEN
 
     def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
         """Test that Delta table is created on write."""

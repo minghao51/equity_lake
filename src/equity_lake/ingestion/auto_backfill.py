@@ -14,13 +14,9 @@ import structlog
 from equity_lake.core.config import TickerConfig
 from equity_lake.ingestion.gap_detection import GapDetector
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
-from equity_lake.ingestion.types import MARKET_DIR_MAP, MARKET_DIR_REVERSE, REQUIRED_PRICE_MARKETS, SourceOutcome, SourceStatus
+from equity_lake.ingestion.types import MARKET_DIR_MAP, REQUIRED_PRICE_MARKETS, SourceOutcome, SourceStatus, normalize_markets
 
 logger = structlog.get_logger(__name__)
-
-
-def _market_dir_to_short(market_dir: str) -> str | None:
-    return MARKET_DIR_REVERSE.get(market_dir)
 
 
 def find_and_fill_gaps(
@@ -33,8 +29,9 @@ def find_and_fill_gaps(
 ) -> dict[str, int]:
     """Detect missing dates per market and backfill them.
 
-    Gap-filling applies only to the required price markets (``us``, ``cn``,
-    ``hk_sg``, ``jpx``, ``krx``): a gap is a missing ticker/date row measured
+    Gap-filling applies only to the required price markets (``us_equity``,
+    ``cn_ashare``, ``hk_sg_equity``, ``jpx_equity``, ``krx_equity``): a gap is
+    a missing ticker/date row measured
     against an exchange trading calendar, and only these markets have one.
     Enrichment markets are excluded — several share ticker-less tables (e.g.
     ``01_bronze/raw_articles``) with no per-ticker-per-trading-day expectation,
@@ -45,6 +42,7 @@ def find_and_fill_gaps(
     """
     end_date = end_date or date.today()
     start_date = end_date - timedelta(days=days_back)
+    markets = normalize_markets(markets) if markets is not None else None
     target_markets = markets or sorted(REQUIRED_PRICE_MARKETS)
     results: dict[str, int] = {}
 
@@ -59,7 +57,6 @@ def find_and_fill_gaps(
                 continue
 
             market_dir = MARKET_DIR_MAP.get(market, market)
-            market_short = _market_dir_to_short(market_dir) or market
 
             try:
                 missing = detector.find_missing_dates(
@@ -110,7 +107,7 @@ def find_and_fill_gaps(
             )
 
             if dry_run:
-                results[market_short] = len(all_missing)
+                results[market] = len(all_missing)
                 continue
 
             filled = 0
@@ -140,7 +137,7 @@ def find_and_fill_gaps(
                         error=str(exc),
                     )
 
-            results[market_short] = filled
+            results[market] = filled
             logger.info(
                 "auto_backfill_complete",
                 market=market,

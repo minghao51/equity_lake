@@ -17,9 +17,9 @@ def test_execute_eod_pipeline_dry_run_skips_writes_and_processors(monkeypatch):
 
     def fake_run_daily_ingestion(*, trading_date, markets, dry_run, parallel, ticker_config, filters, explicit_tickers, skip_existing):
         assert trading_date == date(2024, 1, 2)
-        assert markets == ["us", "cn"]
+        assert markets == ["us_equity", "cn_ashare"]
         assert dry_run is True
-        return {"us": _WRITTEN, "cn": _FAILED}
+        return {"us_equity": _WRITTEN, "cn_ashare": _FAILED}
 
     monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", fake_run_daily_ingestion)
     monkeypatch.setattr(
@@ -37,7 +37,7 @@ def test_execute_eod_pipeline_dry_run_skips_writes_and_processors(monkeypatch):
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us", "cn"],
+        markets=["us_equity", "cn_ashare"],
         tickers=["AAPL"],
         dry_run=True,
         skip_features=True,
@@ -57,7 +57,7 @@ def test_missing_history_requires_explicit_authorization(monkeypatch):
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us"],
+        markets=["us_equity"],
         tickers=["AAPL"],
         skip_ingestion=True,
         skip_ml=True,
@@ -86,7 +86,7 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us"],
+        markets=["us_equity"],
         tickers=["AAPL"],
         dry_run=False,
         skip_ingestion=True,
@@ -99,7 +99,7 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
         {
             "start_date": date(2023, 9, 4),
             "end_date": date(2024, 1, 2),
-            "markets": ["us"],
+            "markets": ["us_equity"],
             "ticker_config": backfill_calls[0]["ticker_config"],
             "dry_run": False,
             "explicit_tickers": ["AAPL"],
@@ -114,19 +114,19 @@ def test_backfill_feature_history_scopes_tickers_only_callers(monkeypatch):
     monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or 3)
 
     # Tickers-only caller: previously forwarded explicit_tickers=None → unscoped 120-day all-ticker backfill.
-    written = _backfill_feature_history(date(2024, 1, 2), ["MSFT", "NVDA"], ["us"], TickerConfig())
+    written = _backfill_feature_history(date(2024, 1, 2), ["MSFT", "NVDA"], ["us_equity"], TickerConfig())
     assert written == 3
     assert backfill_calls[0]["explicit_tickers"] == ["MSFT", "NVDA"]
 
     # Explicit tickers still take precedence when provided.
-    _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us"], TickerConfig(), explicit_tickers=["TSLA"])
+    _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us_equity"], TickerConfig(), explicit_tickers=["TSLA"])
     assert backfill_calls[1]["explicit_tickers"] == ["TSLA"]
 
     # An empty list is forwarded as [] (no fall-back to tickers) at this seam.
     # Downstream, run_daily_ingestion keeps it a list, but the router's
     # ``not explicit_tickers`` fallback treats it like an unscoped request, so []
     # must not be relied on as a scoping mechanism by callers.
-    _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us"], TickerConfig(), explicit_tickers=[])
+    _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us_equity"], TickerConfig(), explicit_tickers=[])
     assert backfill_calls[2]["explicit_tickers"] == []
 
 
@@ -142,14 +142,14 @@ def test_authorized_history_recovery_scopes_backfill_to_price_markets(monkeypatc
 
     execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us", "rss_news"],
+        markets=["us_equity", "rss_news"],
         tickers=["AAPL"],
         skip_ingestion=True,
         skip_ml=True,
         allow_history_backfill=True,
     )
 
-    assert backfill_calls[0]["markets"] == ["us"]
+    assert backfill_calls[0]["markets"] == ["us_equity"]
 
 
 def test_authorized_history_recovery_records_failure_when_backfill_raises(monkeypatch):
@@ -169,7 +169,7 @@ def test_authorized_history_recovery_records_failure_when_backfill_raises(monkey
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us"],
+        markets=["us_equity"],
         tickers=["AAPL"],
         skip_ingestion=True,
         skip_ml=True,
@@ -185,11 +185,11 @@ def test_authorized_history_recovery_records_failure_when_backfill_raises(monkey
 def test_required_price_failure_blocks_features_and_ml(monkeypatch):
     """A required price failure prevents derived writes."""
 
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _FAILED})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _FAILED})
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: (_ for _ in ()).throw(AssertionError("features called")))
     monkeypatch.setattr("equity_lake.pipeline.run_prediction_job", lambda **_: (_ for _ in ()).throw(AssertionError("ML called")))
 
-    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us"], tickers=["AAPL"])
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=["AAPL"])
 
     assert results["ingestion"]["success"] is False
     assert results["features"]["reason"] == "required price source failed"
@@ -201,10 +201,10 @@ def test_optional_ingestion_failure_keeps_core_features_eligible(monkeypatch):
 
     import polars as pl
 
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "us_news": _FAILED})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "us_news": _FAILED})
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: pl.DataFrame({"ticker": ["AAPL"]}))
 
-    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "us_news"], tickers=["AAPL"], skip_ml=True)
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity", "us_news"], tickers=["AAPL"], skip_ml=True)
 
     assert results["ingestion"]["success"] is True
     assert results["ingestion"]["partial"] is True
@@ -223,12 +223,12 @@ def test_idempotent_rerun_does_not_block_features(monkeypatch):
 
     # Simulates the post-P0-#2 behavior: every requested market is reported as success,
     # including ones that were skipped because the partition already existed.
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "cn": _WRITTEN})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "cn_ashare": _WRITTEN})
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: pl.DataFrame({"ticker": ["AAPL"]}))
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us", "cn"],
+        markets=["us_equity", "cn_ashare"],
         tickers=["AAPL"],
         skip_ml=True,
     )
@@ -243,7 +243,7 @@ def test_bronze_to_silver_failure_only_disables_article_enrichment(monkeypatch):
 
     import polars as pl
 
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "rss_news": _WRITTEN})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "rss_news": _WRITTEN})
     monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_: False)
     feature_kwargs = {}
 
@@ -253,7 +253,7 @@ def test_bronze_to_silver_failure_only_disables_article_enrichment(monkeypatch):
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
 
-    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "rss_news"], tickers=["AAPL"], skip_ml=True)
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity", "rss_news"], tickers=["AAPL"], skip_ml=True)
 
     assert results["ingestion"]["bronze_to_silver"]["success"] is False
     assert results["features"]["success"] is True
@@ -265,7 +265,7 @@ def test_sec_processing_failure_only_disables_sec_enrichment(monkeypatch):
 
     import polars as pl
 
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
     monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_: False)
     feature_kwargs = {}
 
@@ -275,7 +275,7 @@ def test_sec_processing_failure_only_disables_sec_enrichment(monkeypatch):
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
 
-    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "sec_filings_fulltext"], tickers=["AAPL"], skip_ml=True)
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity", "sec_filings_fulltext"], tickers=["AAPL"], skip_ml=True)
 
     assert results["ingestion"]["sec_to_silver"]["success"] is False
     assert results["features"]["success"] is True
@@ -287,7 +287,7 @@ def test_bronze_to_silver_success_enables_article_enrichment(monkeypatch):
 
     import polars as pl
 
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "rss_news": _WRITTEN})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "rss_news": _WRITTEN})
     monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_: True)
     feature_kwargs = {}
 
@@ -297,7 +297,7 @@ def test_bronze_to_silver_success_enables_article_enrichment(monkeypatch):
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
 
-    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "rss_news"], tickers=["AAPL"], skip_ml=True)
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity", "rss_news"], tickers=["AAPL"], skip_ml=True)
 
     assert results["ingestion"]["bronze_to_silver"]["success"] is True
     assert results["features"]["success"] is True
@@ -310,7 +310,7 @@ def test_sec_processing_success_enables_sec_enrichment(monkeypatch):
 
     import polars as pl
 
-    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
     monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_: True)
     feature_kwargs = {}
 
@@ -320,7 +320,7 @@ def test_sec_processing_success_enables_sec_enrichment(monkeypatch):
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
 
-    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us", "sec_filings_fulltext"], tickers=["AAPL"], skip_ml=True)
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity", "sec_filings_fulltext"], tickers=["AAPL"], skip_ml=True)
 
     assert results["ingestion"]["sec_to_silver"]["success"] is True
     assert results["features"]["success"] is True
@@ -349,7 +349,7 @@ def test_execute_eod_pipeline_feature_stage(monkeypatch):
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us"],
+        markets=["us_equity"],
         tickers=["AAPL", "MSFT"],
         skip_ingestion=True,
         skip_ml=True,
@@ -382,7 +382,7 @@ def test_execute_eod_pipeline_ml_stage(monkeypatch):
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us"],
+        markets=["us_equity"],
         tickers=["AAPL"],
         skip_ingestion=True,
         skip_features=True,
@@ -405,7 +405,7 @@ def test_execute_eod_pipeline_feature_failure_skips_ml(monkeypatch):
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
-        markets=["us"],
+        markets=["us_equity"],
         tickers=["AAPL"],
         skip_ingestion=True,
     )

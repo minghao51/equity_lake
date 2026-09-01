@@ -13,7 +13,10 @@ import polars as pl
 
 from equity_lake.monitoring.health import DEFAULT_TABLE_MAX_AGE_DAYS, PipelineMonitor, _date_scalar
 
-# Path constants patched in the health module namespace.
+# Path constants patched where the registry resolves them: price-market dirs are
+# looked up on the core.paths module at call time (ADR-0010); the unstructured/
+# feature dirs are still module constants of the health module.
+CORE_PATHS = "equity_lake.core.paths"
 HEALTH_PATHS = "equity_lake.monitoring.health"
 
 
@@ -52,19 +55,18 @@ class TestPriceMarketRegistry:
     def test_registry_covers_all_required_price_markets(self) -> None:
         # Monitoring must cover every market classified as a required price
         # market. Hardcoding three would silently drop JPX/KRX freshness/quality.
+        # Since ADR-0010 the monitor iterates core.paths.PRICE_MARKETS directly.
         from equity_lake.ingestion.types import REQUIRED_PRICE_MARKETS
+        from equity_lake.monitoring.health import _price_market_paths
 
-        # The registry key suffix mirrors the bronze directory name (us -> us_equity).
-        expected = {
-            "us": "us_equity",
-            "cn": "cn_ashare",
-            "hk_sg": "hk_sg_equity",
-            "jpx": "jpx_equity",
-            "krx": "krx_equity",
-        }
-        from equity_lake.monitoring.health import _PRICE_MARKET_PATH_ATTRS
+        assert set(_price_market_paths()) == set(REQUIRED_PRICE_MARKETS)
 
-        assert set(_PRICE_MARKET_PATH_ATTRS) == {expected[m] for m in REQUIRED_PRICE_MARKETS}
+    def test_price_market_paths_resolve_at_call_time(self) -> None:
+        """Patching a core.paths dir constant must be honoured (monkeypatch contract)."""
+        from equity_lake.monitoring.health import _price_market_paths
+
+        with patch("equity_lake.core.paths.US_EQUITY_DIR", Path("/tmp/patched-us")):
+            assert _price_market_paths()["us_equity"] == Path("/tmp/patched-us")
 
 
 # =============================================================================
@@ -231,11 +233,11 @@ class TestCheckDataFreshness:
 
     def _patch_dirs(self, tmp_path):
         return [
-            patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "us"),
-            patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "cn"),
-            patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "hk_sg"),
-            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "jpx"),
-            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "krx"),
+            patch(f"{CORE_PATHS}.US_EQUITY_DIR", tmp_path / "us"),
+            patch(f"{CORE_PATHS}.CN_ASHARE_DIR", tmp_path / "cn"),
+            patch(f"{CORE_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "hk_sg"),
+            patch(f"{CORE_PATHS}.JPX_EQUITY_DIR", tmp_path / "jpx"),
+            patch(f"{CORE_PATHS}.KRX_EQUITY_DIR", tmp_path / "krx"),
         ]
 
     def test_fresh_data_is_healthy(self, tmp_path) -> None:
@@ -321,11 +323,11 @@ class TestCheckDataQuality:
 
     def _patch_dirs(self, tmp_path):
         return [
-            patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "us"),
-            patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "cn"),
-            patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "hk_sg"),
-            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "jpx"),
-            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "krx"),
+            patch(f"{CORE_PATHS}.US_EQUITY_DIR", tmp_path / "us"),
+            patch(f"{CORE_PATHS}.CN_ASHARE_DIR", tmp_path / "cn"),
+            patch(f"{CORE_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "hk_sg"),
+            patch(f"{CORE_PATHS}.JPX_EQUITY_DIR", tmp_path / "jpx"),
+            patch(f"{CORE_PATHS}.KRX_EQUITY_DIR", tmp_path / "krx"),
         ]
 
     def test_clean_data_is_healthy(self, tmp_path) -> None:
@@ -488,11 +490,11 @@ class TestRunHealthCheck:
         # Force every check to fail by pointing all paths at a missing dir.
         fake = _FakeAlerter()
         patches = [
-            patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "absent_us"),
-            patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "absent_cn"),
-            patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "absent_hk"),
-            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
-            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
+            patch(f"{CORE_PATHS}.US_EQUITY_DIR", tmp_path / "absent_us"),
+            patch(f"{CORE_PATHS}.CN_ASHARE_DIR", tmp_path / "absent_cn"),
+            patch(f"{CORE_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "absent_hk"),
+            patch(f"{CORE_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
+            patch(f"{CORE_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
             patch(f"{HEALTH_PATHS}.GOLD_FEATURES_DIR", tmp_path / "absent_gold"),
             patch(f"{HEALTH_PATHS}.BRONZE_RAW_ARTICLES_DIR", tmp_path / "absent_bronze"),
             patch(f"{HEALTH_PATHS}.SILVER_PROCESSED_ARTICLES_DIR", tmp_path / "absent_silver"),
@@ -519,11 +521,11 @@ class TestRunHealthCheck:
         # run_health_check computes and dispatches only — the CLI renders.
         fake = _FakeAlerter()
         patches = [
-            patch(f"{HEALTH_PATHS}.US_EQUITY_DIR", tmp_path / "absent_us"),
-            patch(f"{HEALTH_PATHS}.CN_ASHARE_DIR", tmp_path / "absent_cn"),
-            patch(f"{HEALTH_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "absent_hk"),
-            patch(f"{HEALTH_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
-            patch(f"{HEALTH_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
+            patch(f"{CORE_PATHS}.US_EQUITY_DIR", tmp_path / "absent_us"),
+            patch(f"{CORE_PATHS}.CN_ASHARE_DIR", tmp_path / "absent_cn"),
+            patch(f"{CORE_PATHS}.HK_SG_EQUITY_DIR", tmp_path / "absent_hk"),
+            patch(f"{CORE_PATHS}.JPX_EQUITY_DIR", tmp_path / "absent_jpx"),
+            patch(f"{CORE_PATHS}.KRX_EQUITY_DIR", tmp_path / "absent_krx"),
             patch(f"{HEALTH_PATHS}.GOLD_FEATURES_DIR", tmp_path / "absent_gold"),
             patch(f"{HEALTH_PATHS}.BRONZE_RAW_ARTICLES_DIR", tmp_path / "absent_bronze"),
             patch(f"{HEALTH_PATHS}.SILVER_PROCESSED_ARTICLES_DIR", tmp_path / "absent_silver"),

@@ -25,7 +25,7 @@ from equity_lake.ingestion.router import (
     fetch_market_data,
     fetch_market_data_with_config,
 )
-from equity_lake.ingestion.types import MARKET_DIR_MAP, OPTIONAL_ENRICHMENT_MARKETS, SourceOutcome, SourceStatus
+from equity_lake.ingestion.types import MARKET_DIR_MAP, OPTIONAL_ENRICHMENT_MARKETS, SourceOutcome, SourceStatus, normalize_markets
 from equity_lake.ingestion.writers import upsert_dataset
 
 __all__ = [
@@ -157,6 +157,10 @@ def run_daily_ingestion(
     if explicit_tickers and isinstance(explicit_tickers, str):
         explicit_ticker_list = [t.strip() for t in explicit_tickers.split(",")]
 
+    # ADR-0010: canonicalize short price-market aliases to long keys once, at
+    # the orchestrator boundary. Unknown keys raise here (loud failure).
+    markets = normalize_markets(markets)
+
     if skip_existing:
         markets_to_fetch, already_present = _filter_markets_with_gaps(markets, trading_date)
         if already_present:
@@ -190,7 +194,7 @@ def run_daily_ingestion(
                                 explicit_list
                                 if mkt
                                 in (
-                                    "us",
+                                    "us_equity",
                                     "stocktwits_messages",
                                     "us_earnings_transcripts",
                                     "us_analyst_ratings",
@@ -254,7 +258,7 @@ def run_daily_ingestion(
                             explicit_ticker_list
                             if market
                             in (
-                                "us",
+                                "us_equity",
                                 "stocktwits_messages",
                                 "us_earnings_transcripts",
                                 "us_analyst_ratings",

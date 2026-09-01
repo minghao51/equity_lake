@@ -17,7 +17,7 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
-from equity_lake.core.paths import CONFIG_DIR
+from equity_lake.core.paths import CONFIG_DIR, OPTIONAL_ENRICHMENT_MARKETS, PRICE_MARKETS, SHORT_TO_LONG
 
 
 class ProjectSettings(BaseModel):
@@ -27,10 +27,34 @@ class ProjectSettings(BaseModel):
 
 
 class IngestionSettings(BaseModel):
-    default_markets: list[str] = Field(default_factory=lambda: ["us", "cn", "hk_sg"])
+    default_markets: list[str] = Field(default_factory=lambda: ["us_equity", "cn_ashare", "hk_sg_equity"])
     ticker_config_path: str = "config/tickers.yaml"
     retry_attempts: int = 3
     retry_delay: float = 1.0
+
+    @field_validator("default_markets")
+    @classmethod
+    def _normalize_default_markets(cls, value: list[str]) -> list[str]:
+        """Canonicalize deprecated short price-market aliases to long keys (ADR-0010).
+
+        Only the five known aliases are rewritten; canonical long price keys and
+        the ten single-form dataset identifiers pass through unchanged. Any
+        other key raises so a config typo fails loudly at load time instead of
+        becoming a silent pipeline no-op.
+        """
+        normalized: list[str] = []
+        for market in value:
+            if market in SHORT_TO_LONG:
+                normalized.append(SHORT_TO_LONG[market])
+            elif market in PRICE_MARKETS or market in OPTIONAL_ENRICHMENT_MARKETS:
+                normalized.append(market)
+            else:
+                raise ValueError(
+                    f"Unknown market in ingestion.default_markets: {market!r}. "
+                    f"Valid price markets: {', '.join(PRICE_MARKETS)} (aliases: {', '.join(SHORT_TO_LONG)}); "
+                    f"dataset identifiers: {', '.join(sorted(OPTIONAL_ENRICHMENT_MARKETS))}"
+                )
+        return normalized
 
 
 class ScheduleSettings(BaseModel):

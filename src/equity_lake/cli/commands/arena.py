@@ -18,7 +18,7 @@ from typing import Annotated
 
 import typer
 
-from equity_lake.cli._app import _init_logging, _parse_comma_list, arena_app, report_app
+from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, arena_app, report_app
 
 _DEFAULT_TICKERS = "AAPL,MSFT,GOOGL,AMZN,NVDA"
 
@@ -28,7 +28,10 @@ def arena_run(
     tickers: Annotated[str, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = _DEFAULT_TICKERS,
     start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
-    markets: Annotated[str, typer.Option("--markets", help="Comma-separated market codes")] = "us",
+    markets: Annotated[
+        str,
+        typer.Option("--markets", help="Comma-separated market keys (long keys like us_equity; short aliases like us accepted)"),
+    ] = "us_equity",
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
     strategies: Annotated[str | None, typer.Option("--strategies", help="Comma-separated strategy names (default: all)")] = None,
     cost_regimes: Annotated[str | None, typer.Option("--cost-regimes", help="Comma-separated regimes (default: all)")] = None,
@@ -47,7 +50,7 @@ def arena_run(
             _parse_comma_list(tickers) or [],
             date.fromisoformat(start_date),
             date.fromisoformat(end_date),
-            markets=tuple(_parse_comma_list(markets) or ["us"]),
+            markets=tuple(_parse_markets(markets) or ["us_equity"]),
             initial_cash=initial_cash,
             strategies=_parse_comma_list(strategies),
             cost_regimes=_parse_comma_list(cost_regimes),
@@ -87,7 +90,10 @@ def report_backtest(
     tickers: Annotated[str, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = _DEFAULT_TICKERS,
     start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
-    markets: Annotated[str, typer.Option("--markets", help="Comma-separated market codes")] = "us",
+    markets: Annotated[
+        str,
+        typer.Option("--markets", help="Comma-separated market keys (long keys like us_equity; short aliases like us accepted)"),
+    ] = "us_equity",
     cost_regime: Annotated[str, typer.Option("--cost-regime", help="Cost regime: zero|realistic|high")] = "realistic",
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
     output_dir: Annotated[str | None, typer.Option("--output-dir", "-o", help="Findings dir (default: data/findings)")] = None,
@@ -113,7 +119,7 @@ def report_backtest(
         start_date=date.fromisoformat(start_date),
         end_date=date.fromisoformat(end_date),
         initial_cash=initial_cash,
-        markets=_parse_comma_list(markets) or ["us"],
+        markets=_parse_markets(markets) or ["us_equity"],
         config=dict(COST_REGIMES[cost_regime]),
     )
     try:

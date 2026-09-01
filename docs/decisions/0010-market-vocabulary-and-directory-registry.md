@@ -1,6 +1,6 @@
 # ADR-0010: Market vocabulary and directory registry
 
-**Status:** Proposed
+**Status:** Accepted
 **Recorded:** 2026-08-30
 
 ## Context

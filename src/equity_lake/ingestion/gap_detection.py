@@ -26,8 +26,8 @@ def _calendar_key(market: str) -> str:
 
     Resolution goes through the canonical market map (``MARKET_DIR_REVERSE``)
     instead of substring slicing: ``"01_bronze/market_data/us_equity"`` resolves
-    to the ``"us"`` market key, while ``"02_silver/analyst_ratings"`` resolves to
-    ``"us_analyst_ratings"`` instead of the bogus calendar key
+    to the ``"us_equity"`` market key, while ``"02_silver/analyst_ratings"`` resolves
+    to ``"us_analyst_ratings"`` instead of the bogus calendar key
     ``"analyst_ratings"``. Only the required price markets map to a trading
     calendar; any other key intentionally yields no sessions. Tables shared
     by several markets (e.g. ``01_bronze/raw_articles``) resolve to one of

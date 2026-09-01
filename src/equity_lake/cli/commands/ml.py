@@ -18,7 +18,7 @@ with sufficient feature history is used (override with ``--ticker``).
 
 Backfill guardrail: feature history must already exist under
 ``03_gold/features``. If it is missing, these commands exit non-zero and point at
-``equity pipeline --markets us --tickers <demo subset> --allow-history-backfill``
+``equity pipeline --markets us_equity --tickers <demo subset> --allow-history-backfill``
 rather than auto-backfilling.
 """
 
@@ -55,7 +55,7 @@ def _missing_features_exit(ticker: str) -> None:
     typer.secho(
         f"No feature history found for {ticker} under 03_gold/features.\n"
         "Generate it first, e.g.:\n"
-        f"  dotenvx run -- uv run equity pipeline --markets us --tickers {ticker} --allow-history-backfill",
+        f"  dotenvx run -- uv run equity pipeline --markets us_equity --tickers {ticker} --allow-history-backfill",
         fg=typer.colors.RED,
     )
     raise typer.Exit(1)

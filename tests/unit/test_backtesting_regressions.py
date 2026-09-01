@@ -73,18 +73,16 @@ def test_backtest_data_loader_filters_unioned_markets(tmp_path, monkeypatch) -> 
         {"ticker": ["OTHER"], "date": ["2026-06-01"], "open": [2], "high": [2], "low": [2], "close": [2], "volume": [2]},
     ).write_parquet(cn_dir / "date=2026-06-01" / "2026-06-01.parquet")
 
-    monkeypatch.setattr(
-        BacktestDataLoader,
-        "MARKET_DIRS",
-        {"us": us_dir, "cn": cn_dir},
-    )
+    # The loader resolves registry dirs via core.paths at call time (ADR-0010).
+    monkeypatch.setattr("equity_lake.core.paths.US_EQUITY_DIR", us_dir)
+    monkeypatch.setattr("equity_lake.core.paths.CN_ASHARE_DIR", cn_dir)
 
     loader = BacktestDataLoader()
     data = loader.load(
         tickers=["AAPL"],
         start_date=date(2026, 6, 1),
         end_date=date(2026, 6, 1),
-        markets=["us", "cn"],
+        markets=["us_equity", "cn_ashare"],
     )
 
     assert set(data["ticker"].to_list()) == {"AAPL"}
@@ -100,10 +98,10 @@ def test_backtest_data_loader_forward_fills_gaps_only(tmp_path, monkeypatch) -> 
             {"ticker": ["AAPL"], "date": [day], "open": [close], "high": [close], "low": [close], "close": [close], "volume": [100]},
         ).write_parquet(partition / f"{day}.parquet")
 
-    monkeypatch.setattr(BacktestDataLoader, "MARKET_DIRS", {"us": us_dir})
+    monkeypatch.setattr("equity_lake.core.paths.US_EQUITY_DIR", us_dir)
 
     loader = BacktestDataLoader()
-    data = loader.load(tickers=["AAPL"], start_date=date(2026, 6, 1), end_date=date(2026, 6, 3), markets=["us"])
+    data = loader.load(tickers=["AAPL"], start_date=date(2026, 6, 1), end_date=date(2026, 6, 3), markets=["us_equity"])
 
     closes = data.sort("date")["close"].to_list()
     # the 06-02 null gap is filled with the PRIOR close (ffill), never the next one
@@ -113,7 +111,7 @@ def test_backtest_data_loader_forward_fills_gaps_only(tmp_path, monkeypatch) -> 
 
 def test_backtest_data_loader_has_no_bfill_option(tmp_path, monkeypatch) -> None:
     """B4: the lookahead-inducing fill_method parameter is removed from the API."""
-    monkeypatch.setattr(BacktestDataLoader, "MARKET_DIRS", {"us": tmp_path / "us_equity"})
+    monkeypatch.setattr("equity_lake.core.paths.US_EQUITY_DIR", tmp_path / "us_equity")
     loader = BacktestDataLoader()
     with pytest.raises(TypeError):
-        loader.load(tickers=["AAPL"], start_date=date(2026, 6, 1), end_date=date(2026, 6, 2), markets=["us"], fill_method="bfill")
+        loader.load(tickers=["AAPL"], start_date=date(2026, 6, 1), end_date=date(2026, 6, 2), markets=["us_equity"], fill_method="bfill")
