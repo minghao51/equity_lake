@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import structlog
 
-from equity_lake.ml.backends import ModelBackend
+from equity_lake.ml.backends import ModelBackend, scale_pos_weight
 
 logger = structlog.get_logger(__name__)
 
@@ -17,12 +17,12 @@ def compute_class_weights(y: pl.Series) -> dict[str, Any]:
         return {"positive_count": 0, "negative_count": 0, "scale_pos_weight": 1.0}
     pos_count = int((values == 1).sum())
     neg_count = int((values == 0).sum())
-    if pos_count == 0 or neg_count == 0:
-        return {"positive_count": pos_count, "negative_count": neg_count, "scale_pos_weight": 1.0}
     return {
         "positive_count": pos_count,
         "negative_count": neg_count,
-        "scale_pos_weight": float(neg_count) / float(pos_count),
+        # Single imbalance-ratio implementation (backends seam); 1.0 for a
+        # single-class split, matching the previous inline guard.
+        "scale_pos_weight": scale_pos_weight(values),
     }
 
 

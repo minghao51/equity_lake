@@ -100,28 +100,25 @@ def report_backtest(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Run a single backtest and write its report artifacts (no FindingCard)."""
-    from equity_lake.backtesting.arena import COST_REGIMES, STRATEGY_REGISTRY
-    from equity_lake.backtesting.engine import VectorBacktestEngine
+    from equity_lake.backtesting.factory import build_backtest_engine
     from equity_lake.backtesting.report import write_backtest_report
     from equity_lake.core.paths import FINDINGS_DIR
 
     _init_logging(verbose)
-    if strategy not in STRATEGY_REGISTRY:
-        typer.secho(f"Unknown strategy: {strategy}. Available: {', '.join(STRATEGY_REGISTRY)}", fg=typer.colors.RED)
-        raise typer.Exit(1)
-    if cost_regime not in COST_REGIMES:
-        typer.secho(f"Unknown cost regime: {cost_regime}. Available: {', '.join(COST_REGIMES)}", fg=typer.colors.RED)
-        raise typer.Exit(1)
+    try:
+        engine = build_backtest_engine(
+            strategy=strategy,
+            tickers=_parse_comma_list(tickers) or [],
+            start_date=date.fromisoformat(start_date),
+            end_date=date.fromisoformat(end_date),
+            initial_cash=initial_cash,
+            markets=_parse_markets(markets) or ["us_equity"],
+            cost_regime=cost_regime,
+        )
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
 
-    engine = VectorBacktestEngine(
-        strategy=STRATEGY_REGISTRY[strategy](),
-        tickers=_parse_comma_list(tickers) or [],
-        start_date=date.fromisoformat(start_date),
-        end_date=date.fromisoformat(end_date),
-        initial_cash=initial_cash,
-        markets=_parse_markets(markets) or ["us_equity"],
-        config=dict(COST_REGIMES[cost_regime]),
-    )
     try:
         result = engine.run()
     except Exception as exc:  # noqa: BLE001 — surface a clean CLI error

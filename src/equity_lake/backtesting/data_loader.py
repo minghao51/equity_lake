@@ -8,7 +8,7 @@ import polars as pl
 import structlog
 
 from equity_lake.core.paths import PRICE_MARKETS, market_dir
-from equity_lake.storage.lake_reader import duckdb_scan_for
+from equity_lake.storage.lake_reader import create_market_views
 
 logger = structlog.get_logger(__name__)
 
@@ -36,44 +36,11 @@ class BacktestDataLoader:
 
     def _setup_views(self) -> None:
         logger.debug("Setting up market views...")
-        self.conn.execute("INSTALL delta; LOAD delta;")
-
-        for market_label in PRICE_MARKETS:
-            data_dir = market_dir(market_label)
-            if not data_dir.exists():
-                logger.warning(
-                    "Data directory not found, skipping view",
-                    market=market_label,
-                    path=str(data_dir),
-                )
-                continue
-
-            view_name = f"backtest_{market_label}"
-            scan_from = duckdb_scan_for(data_dir)
-
-            sql = f"""
-            CREATE OR REPLACE VIEW {view_name} AS
-            SELECT
-                ticker,
-                date,
-                open,
-                high,
-                low,
-                close,
-                volume,
-                '{market_label}' as market
-            FROM {scan_from}
-            """
-
-            try:
-                self.conn.execute(sql)
-                logger.debug("Created market view", market=market_label)
-            except Exception as e:
-                logger.error(
-                    "Failed to create view",
-                    market=market_label,
-                    error=str(e),
-                )
+        create_market_views(
+            self.conn,
+            view_prefix="backtest_",
+            columns=["ticker", "date", "open", "high", "low", "close", "volume"],
+        )
 
     def load(
         self,

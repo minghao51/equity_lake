@@ -79,9 +79,7 @@ class SentimentSignalGenerator(SignalGenerator):
         Returns:
             Signal with action based on sentiment score
         """
-        if not self.is_enabled():
-            return None
-
+        # Enablement is gated once, at scanner construction time.
         # Calculate date range for news lookup
         start_date = target_date - timedelta(days=self.lookback_days)
 

@@ -102,7 +102,5 @@ __all__ = ["FeatureEngineer", "load_feature_engineer", "run_feature_job"]
 def __getattr__(name: str) -> Any:
     """Defer optional ML imports until the symbol is actually used."""
     if name == "FeatureEngineer":
-        from equity_lake.features.engineering import FeatureEngineer
-
-        return FeatureEngineer
+        return _load_feature_engineer()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

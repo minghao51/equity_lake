@@ -44,6 +44,9 @@ def run_prediction_job(
     (``data/lake/04_platinum/predictions/``) as a Delta table.
     """
     try:
+        # Single source for the schema version stamped on prediction rows when a
+        # model's metadata predates the field (features/pipeline owns it).
+        from equity_lake.features.pipeline import FEATURE_SCHEMA_VERSION
         from equity_lake.ml.forecasting import PriceForecaster
     except ImportError as exc:
         raise RuntimeError(
@@ -71,7 +74,7 @@ def run_prediction_job(
                         "probability": prediction.get("probability", 0.0),
                         "model_mode": prediction.get("model_mode", "unknown"),
                         "model_version": prediction.get("model_version", "unknown"),
-                        "feature_schema_version": prediction.get("feature_schema_version", 3),
+                        "feature_schema_version": prediction.get("feature_schema_version", FEATURE_SCHEMA_VERSION),
                     }
                 )
             except Exception as exc:  # pragma: no cover - reported by caller

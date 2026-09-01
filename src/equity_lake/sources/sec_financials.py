@@ -22,6 +22,7 @@ import httpx
 import polars as pl
 import structlog
 
+from equity_lake.core.polars_utils import ensure_columns
 from equity_lake.core.schemas import SEC_FINANCIAL_COLUMNS
 from equity_lake.sources.base import MarketDataFetcher, TransientError, _empty_frame
 
@@ -88,11 +89,7 @@ class SECFinancialsFetcher(MarketDataFetcher):
             return _empty_frame()
 
         df = pl.DataFrame(all_rows)
-        for col in SEC_FINANCIAL_COLUMNS:
-            if col not in df.columns:
-                df = df.with_columns(pl.lit(None).alias(col))
-
-        df = df.select(SEC_FINANCIAL_COLUMNS)
+        df = ensure_columns(df, SEC_FINANCIAL_COLUMNS)
         logger.info("Fetched SEC financials", count=df.height)
         return df
 

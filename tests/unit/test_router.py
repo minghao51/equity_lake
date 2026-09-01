@@ -52,11 +52,14 @@ class TestFetchMarketDataSentimentMissingKey:
 
 
 class TestFetchMarketDataWithFetcherError:
-    @patch("equity_lake.ingestion.router._make_us_fetcher")
-    def test_fetcher_exception_returns_none(self, mock_make) -> None:
+    def test_fetcher_exception_returns_none(self) -> None:
         mock_fetcher = MagicMock()
         mock_fetcher.fetch.side_effect = RuntimeError("API down")
-        mock_make.return_value = mock_fetcher
-
-        result = fetch_market_data("us_equity", date(2026, 6, 2))
+        # MARKET_REGISTRY now holds the factory callables directly, so patch the
+        # registry entry rather than the module-level function object.
+        with patch.dict(
+            "equity_lake.ingestion.router.MARKET_REGISTRY",
+            {"us_equity": lambda **kw: mock_fetcher},
+        ):
+            result = fetch_market_data("us_equity", date(2026, 6, 2))
         assert result is None

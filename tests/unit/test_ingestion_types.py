@@ -20,6 +20,8 @@ from equity_lake.ingestion.types import (
     MARKET_DIR_MAP,
     OPTIONAL_ENRICHMENT_MARKETS,
     REQUIRED_PRICE_MARKETS,
+    SEC_FILINGS_MARKETS,
+    UNSTRUCTURED_MARKETS,
     VALID_MARKETS,
     SourceOutcome,
     SourceStatus,
@@ -46,6 +48,16 @@ def test_required_price_markets_is_stable():
 def test_enrichment_markets_are_derived_from_core_registry():
     """OPTIONAL_ENRICHMENT_MARKETS is re-exported from core/paths.py — one definition."""
     assert OPTIONAL_ENRICHMENT_MARKETS is CORE_ENRICHMENT_MARKETS
+
+
+def test_unstructured_and_sec_filing_markets_are_defined():
+    """The pipeline's unstructured/SEC taxonomy lives beside the other market sets."""
+    assert frozenset({"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"}) == UNSTRUCTURED_MARKETS
+    assert frozenset({"sec_filings_fulltext"}) == SEC_FILINGS_MARKETS
+    # The two taxonomy buckets are disjoint and sit within the valid market set.
+    assert UNSTRUCTURED_MARKETS.isdisjoint(SEC_FILINGS_MARKETS)
+    assert UNSTRUCTURED_MARKETS <= VALID_MARKETS
+    assert SEC_FILINGS_MARKETS <= VALID_MARKETS
 
 
 def test_market_dir_map_price_entries_are_registry_derived():

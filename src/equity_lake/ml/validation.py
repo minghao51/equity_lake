@@ -10,7 +10,7 @@ import polars as pl
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
-from equity_lake.ml.backends import DEFAULT_BACKEND, build_estimator, fit_estimator
+from equity_lake.ml.backends import DEFAULT_BACKEND, build_estimator, canonical_training_params, fit_estimator, scale_pos_weight
 
 
 @dataclass(frozen=True)
@@ -70,6 +70,10 @@ def run_purged_walk_forward_validation(
     fold_recalls: list[float] = []
 
     y_np = y.to_numpy()
+    # Canonical production params, minus row/column subsampling: walk-forward
+    # folds fit deterministically, and ``None`` values are dropped by
+    # ``normalize_params`` (so no backend receives a subsample setting).
+    fold_params = canonical_training_params({"subsample": None, "colsample_bytree": None})
 
     for train_idx, test_idx in splitter.split(X_pl):
         X_tr = X_pl.slice(train_idx[0], train_idx[-1] - train_idx[0] + 1)
@@ -77,19 +81,7 @@ def run_purged_walk_forward_validation(
         X_te = X_pl.slice(test_idx[0], test_idx[-1] - test_idx[0] + 1)
         y_te = y_np[test_idx]
 
-        pos_count = int((y_tr == 1).sum())
-        neg_count = int((y_tr == 0).sum())
-        scale_pos_weight = neg_count / pos_count if pos_count > 0 and neg_count > 0 else 1.0
-        model_kwargs: dict = {
-            "max_depth": 5,
-            "learning_rate": 0.05,
-            "n_estimators": 200,
-            "objective": "binary:logistic",
-            "eval_metric": "logloss",
-            "random_state": 42,
-            "n_jobs": -1,
-        }
-        model = build_estimator(backend, model_kwargs, scale_pos_weight=scale_pos_weight)
+        model = build_estimator(backend, fold_params, scale_pos_weight=scale_pos_weight(y_tr))
         fit_estimator(model, X_tr, y_tr, verbose=False)
         preds = (model.predict_proba(X_te)[:, 1] >= 0.5).astype(int)
         fold_accuracies.append(float(accuracy_score(y_te, preds)))

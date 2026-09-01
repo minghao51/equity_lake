@@ -27,6 +27,7 @@ from equity_lake.ingestion.router import (
 )
 from equity_lake.ingestion.types import MARKET_DIR_MAP, OPTIONAL_ENRICHMENT_MARKETS, SourceOutcome, SourceStatus, normalize_markets
 from equity_lake.ingestion.writers import upsert_dataset
+from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
 
 __all__ = [
     "fetch_market_data",
@@ -35,6 +36,20 @@ __all__ = [
 ]
 
 logger = structlog.get_logger()
+
+# Markets whose fetchers honor explicit per-ticker overrides (Finnhub/SEC sources
+# that are ticker-scoped rather than broad-market pulls). Considered in both the
+# parallel and serial fetch branches below; kept here so the set is defined once.
+EXPLICIT_TICKER_MARKETS: frozenset[str] = frozenset(
+    {
+        "us_equity",
+        "stocktwits_messages",
+        "us_earnings_transcripts",
+        "us_analyst_ratings",
+        "sec_filings_fulltext",
+        "us_sec_financials",
+    }
+)
 
 
 def _optional_market_outcome(market: str, error: str) -> SourceOutcome:
@@ -63,7 +78,7 @@ def _market_has_date(market_dir: str, trading_date: date, con: duckdb.DuckDBPyCo
             active_con = con if con is not None else duckdb.connect(":memory:")
             try:
                 if own_connection:
-                    active_con.execute("INSTALL delta; LOAD delta;")
+                    ensure_delta_extension(active_con)
                 row = active_con.execute(
                     f"SELECT COUNT(*) FROM delta_scan('{market_path}') WHERE date = ?",
                     [trading_date],
@@ -86,7 +101,6 @@ def _partition_is_valid(market: str, market_dir: str, trading_date: date, con: d
     cheap — column presence and all-null detection don't need a full scan.
     """
     from equity_lake.ingestion.writers import validate_schema
-    from equity_lake.storage.lake_reader import duckdb_scan_for
 
     market_path = LAKE_DIR / market_dir
     if not market_path.exists():
@@ -122,7 +136,7 @@ def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> tuple[l
             market_dir = MARKET_DIR_MAP.get(market, market)
             if shared_con is None:
                 shared_con = duckdb.connect(":memory:")
-                shared_con.execute("INSTALL delta; LOAD delta;")
+                ensure_delta_extension(shared_con)
             if _market_has_date(market_dir, trading_date, con=shared_con) and _partition_is_valid(market, market_dir, trading_date, con=shared_con):
                 logger.debug("market_data_exists", market=market, date=str(trading_date))
                 already_present.add(market)
@@ -190,19 +204,7 @@ def run_daily_ingestion(
                             date,
                             ticker_config=config,
                             filters=fltrs,
-                            explicit_tickers=(
-                                explicit_list
-                                if mkt
-                                in (
-                                    "us_equity",
-                                    "stocktwits_messages",
-                                    "us_earnings_transcripts",
-                                    "us_analyst_ratings",
-                                    "sec_filings_fulltext",
-                                    "us_sec_financials",
-                                )
-                                else None
-                            ),
+                            explicit_tickers=explicit_list if mkt in EXPLICIT_TICKER_MARKETS else None,
                         )
 
                     return fetch_func
@@ -254,19 +256,7 @@ def run_daily_ingestion(
                         trading_date,
                         ticker_config=ticker_config,
                         filters=filters,
-                        explicit_tickers=(
-                            explicit_ticker_list
-                            if market
-                            in (
-                                "us_equity",
-                                "stocktwits_messages",
-                                "us_earnings_transcripts",
-                                "us_analyst_ratings",
-                                "sec_filings_fulltext",
-                                "us_sec_financials",
-                            )
-                            else None
-                        ),
+                        explicit_tickers=explicit_ticker_list if market in EXPLICIT_TICKER_MARKETS else None,
                     )
 
                 if frame_is_empty(df):

@@ -52,9 +52,8 @@ class MLPredictionSignalGenerator(SignalGenerator):
         Returns:
             Signal with action based on predicted direction
         """
-        if not self.is_enabled():
-            return None
-
+        # Enablement is gated once, at scanner construction time (SignalScanner
+        # only builds generators whose config enables them).
         if self.forecaster is None:
             # Model not available
             return None
@@ -83,32 +82,16 @@ class MLPredictionSignalGenerator(SignalGenerator):
         if confidence < self.min_confidence:
             return None
 
-        if action == "BUY":
-            return Signal(
-                ticker=ticker,
-                date=target_date,
-                signal_type="ml",
-                action=action,
-                confidence=confidence,
-                reasoning=(f"ML predicts next-day upside ({confidence:.0f}% confidence, p={probability:.2f})"),
-                # NOTE: no "confidence" metadata key — it duplicates the base
-                # Signal.confidence column and is rejected by SignalRecord.
-                metadata={
-                    "prediction": direction,
-                    "probability": probability,
-                    "horizon_days": self.horizon_days,
-                    "model_mode": prediction.get("model_mode", self.model_mode),
-                    "model_version": prediction.get("model_version"),
-                },
-            )
-
+        outlook = "upside" if action == "BUY" else "downside"
         return Signal(
             ticker=ticker,
             date=target_date,
             signal_type="ml",
             action=action,
             confidence=confidence,
-            reasoning=(f"ML predicts next-day downside ({confidence:.0f}% confidence, p={probability:.2f})"),
+            reasoning=(f"ML predicts next-day {outlook} ({confidence:.0f}% confidence, p={probability:.2f})"),
+            # NOTE: no "confidence" metadata key — it duplicates the base
+            # Signal.confidence column and is rejected by SignalRecord.
             metadata={
                 "prediction": direction,
                 "probability": probability,

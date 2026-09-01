@@ -39,6 +39,13 @@ VALID_MARKETS: set[str] = set(PRICE_MARKETS) | set(OPTIONAL_ENRICHMENT_MARKETS)
 # only degrade enrichment. Together they partition VALID_MARKETS.
 REQUIRED_PRICE_MARKETS: frozenset[str] = frozenset(PRICE_MARKETS)
 
+# Unstructured (LLM-processed) and SEC-filing enrichment markets that trigger the
+# optional bronze→silver processing stages in the EOD pipeline
+# (``pipeline._run_ingestion_stage``). Defined beside the price/enrichment
+# classification so the taxonomy lives in one place.
+UNSTRUCTURED_MARKETS: frozenset[str] = frozenset({"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"})
+SEC_FILINGS_MARKETS: frozenset[str] = frozenset({"sec_filings_fulltext"})
+
 
 def _rel(path: Path) -> str:
     """Relative medallion path string for a lake directory (single source: paths.py)."""
@@ -136,6 +143,8 @@ __all__ = [
     "VALID_MARKETS",
     "REQUIRED_PRICE_MARKETS",
     "OPTIONAL_ENRICHMENT_MARKETS",
+    "UNSTRUCTURED_MARKETS",
+    "SEC_FILINGS_MARKETS",
     "MARKET_DIR_MAP",
     "MARKET_DIR_REVERSE",
     "SourceStatus",

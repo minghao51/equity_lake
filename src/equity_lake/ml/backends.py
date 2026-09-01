@@ -14,6 +14,11 @@ Callers keep one *canonical* (XGBoost-style) parameter dict and let
 ``build_estimator`` / ``normalize_params`` translate per backend, so the XGBoost
 path is behaviorally identical to the previous direct construction and existing
 ``_xgboost_`` model files keep loading (``DEFAULT_BACKEND == "xgboost"``).
+
+Because every fit path already imports this module, it is also the single home
+for the canonical parameter base (:data:`DEFAULT_XGB_PARAMS`,
+:func:`canonical_training_params`) and the class-imbalance ratio
+(:func:`scale_pos_weight`), which used to be copied per call site.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from equity_lake.ml._intel import configure_intel_runtime, intel_thread_count
 # heavy imports below read their thread settings. No-op on non-Intel CPUs.
 _INTEL_INFO = configure_intel_runtime()
 
+import numpy as np  # noqa: E402  (must follow the Intel env preset)
 import xgboost as xgb  # noqa: E402  (must follow the Intel env preset)  # core dependency; LightGBM is imported lazily below.
 
 logger = structlog.get_logger(__name__)
@@ -65,6 +71,59 @@ _LGBM_DROP_KEYS: Final[frozenset[str]] = frozenset({"eval_metric"})
 _LGBM_OBJECTIVE_MAP: Final[dict[str, str]] = {
     "binary:logistic": "binary",
 }
+
+#: Canonical (XGBoost-style) params shared by *every* fit path in the package.
+#: The two parameter homes derive from this base and restate only their
+#: intentional divergence in tree depth / learning rate / boosting rounds:
+#: :func:`canonical_training_params` (production fits, tuned) and
+#: ``_metrics.DEFAULT_FIT_PARAMS`` (comparison/ablation harness, deliberately
+#: cheap). Lives here because ``backends`` is the seam every fit path imports.
+DEFAULT_XGB_PARAMS: Final[dict[str, Any]] = {
+    "subsample": 0.9,
+    "colsample_bytree": 0.9,
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "random_state": 42,
+    "n_jobs": -1,
+}
+
+#: Production-fit divergence from :data:`DEFAULT_XGB_PARAMS`.
+_TRAINING_PARAM_OVERRIDES: Final[dict[str, Any]] = {
+    "max_depth": 5,
+    "learning_rate": 0.05,
+    "n_estimators": 200,
+}
+
+
+def canonical_training_params(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Canonical (XGBoost-style) params shared by every production fit.
+
+    ``forecasting.PriceForecaster.train_model`` / ``.backtest`` and
+    ``validation.run_purged_walk_forward_validation`` must fit with identical
+    parameter and class-weight semantics (handoff 08 A3): :func:`build_estimator`
+    normalizes per backend, so callers pass one canonical dict plus explicit
+    overrides. An override value of ``None`` *drops* the base key (``None`` is
+    stripped by :func:`normalize_params`).
+    """
+    params: dict[str, Any] = {**_TRAINING_PARAM_OVERRIDES, **DEFAULT_XGB_PARAMS}
+    if overrides:
+        params.update(overrides)
+    return params
+
+
+def scale_pos_weight(y_train: np.ndarray) -> float:
+    """Class-imbalance ratio (negatives / positives) for :func:`build_estimator`.
+
+    Single implementation for every fit path: ``trainer.compute_class_weights``,
+    the walk-forward validator, and the comparison/ablation harnesses (which
+    reach it via ``_metrics``). Returns ``1.0`` for an empty or single-class
+    split so the estimator keeps its unweighted default.
+    """
+    pos = int((y_train == 1).sum())
+    neg = int((y_train == 0).sum())
+    if pos <= 0 or neg <= 0:
+        return 1.0
+    return float(neg) / float(pos)
 
 
 @runtime_checkable
@@ -274,13 +333,16 @@ def fit_estimator(
 
 __all__ = [
     "DEFAULT_BACKEND",
+    "DEFAULT_XGB_PARAMS",
     "SUPPORTED_BACKENDS",
     "BackendName",
     "ModelBackend",
     "backend_of",
     "build_estimator",
     "build_fit_kwargs",
+    "canonical_training_params",
     "fit_estimator",
     "normalize_params",
+    "scale_pos_weight",
     "validate_backend",
 ]

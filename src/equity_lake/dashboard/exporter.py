@@ -9,11 +9,13 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
-import polars as pl
 
 from equity_lake.core.config import get_settings
-from equity_lake.core.paths import DATA_DIR, LOGS_DIR
-from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, summarize_dataset
+from equity_lake.core.paths import LOGS_DIR
+from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, load_update_history, summarize_dataset
+
+# Update-history rows rendered on the static Updates page.
+_EXPORT_HISTORY_LIMIT = 20
 
 _REDACTED = "***REDACTED***"
 _SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key)", re.IGNORECASE)
@@ -99,13 +101,7 @@ class DashboardExporter:
         return load_health_report(self.output_dir)
 
     def _load_updates(self) -> dict[str, Any]:
-        update_history_path = DATA_DIR / "update_history.parquet"
-        update_rows: list[dict[str, Any]] = []
-        if update_history_path.exists():
-            frame = pl.read_parquet(update_history_path)
-            if not frame.is_empty():
-                recent = frame.sort("updated_at", descending=True).head(20)
-                update_rows = recent.to_dicts()
+        update_rows = load_update_history(_EXPORT_HISTORY_LIMIT)
 
         pipeline_results = []
         for result_path in sorted(LOGS_DIR.glob("pipeline_results_*.json"), reverse=True)[:10]:

@@ -12,29 +12,22 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from equity_lake.core.paths import (
-    DATA_DIR,
-)
-from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, summarize_dataset
+from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, load_update_history, summarize_dataset
 from equity_lake.storage.lake_reader import duckdb_scan_for
+
+# Update-history rows rendered on the Streamlit page.
+_APP_HISTORY_LIMIT = 50
 
 
 def _load_update_history() -> list[dict[str, Any]]:
-    """Load update history from parquet."""
-    update_history_path = DATA_DIR / "update_history.parquet"
-    if not update_history_path.exists():
-        return []
+    """Load update history from parquet (never fails the page render)."""
     try:
-        frame = pd.read_parquet(update_history_path)
-        if frame.empty:
-            return []
-        recent = frame.sort_values("updated_at", ascending=False).head(50)
-        return cast(list[dict[str, Any]], recent.to_dict(orient="records"))
+        return load_update_history(_APP_HISTORY_LIMIT)
     except Exception:
         return []
 

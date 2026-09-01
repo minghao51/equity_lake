@@ -334,14 +334,15 @@ class TestCheckDataQuality:
         recent = date.today()
         for sub in ("us", "cn", "hk_sg", "jpx", "krx"):
             _write_parquet_partition(tmp_path / sub, recent, [_ohlcv_row(), _ohlcv_row("MSFT")], schema=self._OHLCV_SCHEMA)
-        for p in self._patch_dirs(tmp_path):
+        patchers = list(self._patch_dirs(tmp_path))
+        for p in patchers:
             p.start()
         try:
             m = PipelineMonitor(null_threshold_pct=5.0)
             assert m.check_data_quality() is True
             assert m.metrics["data_quality"]["issues_found"] == 0
         finally:
-            for p in self._patch_dirs(tmp_path):
+            for p in patchers:
                 p.stop()
 
     def test_high_nulls_are_flagged(self, tmp_path) -> None:
@@ -350,7 +351,8 @@ class TestCheckDataQuality:
         rows = [_ohlcv_row(f"T{i}") for i in range(4)] + [_ohlcv_row(f"T{i}", close=None) for i in range(6)]
         for sub in ("us", "cn", "hk_sg", "jpx", "krx"):
             _write_parquet_partition(tmp_path / sub, recent, rows, schema=self._OHLCV_SCHEMA)
-        for p in self._patch_dirs(tmp_path):
+        patchers = list(self._patch_dirs(tmp_path))
+        for p in patchers:
             p.start()
         try:
             m = PipelineMonitor(null_threshold_pct=5.0)
@@ -358,7 +360,7 @@ class TestCheckDataQuality:
             # Each of the 5 markets contributes a null-close alert.
             assert sum(1 for a in m.alerts if "null close" in a) == 5
         finally:
-            for p in self._patch_dirs(tmp_path):
+            for p in patchers:
                 p.stop()
 
 
@@ -377,7 +379,8 @@ class TestCheckUnstructuredFreshness:
 
     def test_missing_dirs_are_treated_as_fresh(self, tmp_path) -> None:
         # Missing dirs log debug + record "missing" status but do NOT flip all_fresh.
-        for p in self._patch_dirs(tmp_path):
+        patchers = list(self._patch_dirs(tmp_path))
+        for p in patchers:
             p.start()
         try:
             m = PipelineMonitor()
@@ -385,7 +388,7 @@ class TestCheckUnstructuredFreshness:
             uf = m.metrics["unstructured_freshness"]
             assert uf["bronze/raw_articles"]["status"] == "missing"
         finally:
-            for p in self._patch_dirs(tmp_path):
+            for p in patchers:
                 p.stop()
 
     def test_fresh_data_is_healthy(self, tmp_path) -> None:
@@ -449,13 +452,14 @@ class TestCheckUnstructuredFreshness:
         (part_dir / "part.parquet").write_bytes(b"not a parquet file")
         for sub in ("bronze", "silver"):
             _write_parquet_partition(tmp_path / sub, date.today(), [{"url": "x"}])
-        for p in self._patch_dirs(tmp_path):
+        patchers = list(self._patch_dirs(tmp_path))
+        for p in patchers:
             p.start()
         try:
             m = PipelineMonitor()
             assert m.check_unstructured_freshness() is False
         finally:
-            for p in self._patch_dirs(tmp_path):
+            for p in patchers:
                 p.stop()
         assert any("freshness check failed" in a for a in m.alerts)
         assert m.metrics["unstructured_freshness"]["silver/sec_extractions"]["status"] == "error"

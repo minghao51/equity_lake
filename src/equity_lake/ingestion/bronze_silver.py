@@ -19,6 +19,7 @@ import structlog
 
 from equity_lake.core.paths import BRONZE_RAW_ARTICLES_DIR, SILVER_PROCESSED_ARTICLES_DIR
 from equity_lake.storage.delta import merge_delta
+from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
 
 logger = structlog.get_logger()
 
@@ -34,12 +35,10 @@ def read_bronze(trading_date: date | None = None, table_path: Path | None = None
     try:
         import duckdb
 
-        from equity_lake.storage.lake_reader import duckdb_scan_for
-
         scan = duckdb_scan_for(path)
         con = duckdb.connect(":memory:")
         try:
-            con.execute("INSTALL delta; LOAD delta;")
+            ensure_delta_extension(con)
             query = f"SELECT * FROM {scan}"
             if trading_date:
                 query = query + " WHERE date = ?"
@@ -172,12 +171,10 @@ def _get_processed_ids(silver_path: Path, trading_date: date) -> set[str]:
     try:
         import duckdb
 
-        from equity_lake.storage.lake_reader import duckdb_scan_for
-
         scan = duckdb_scan_for(silver_path)
         con = duckdb.connect(":memory:")
         try:
-            con.execute("INSTALL delta; LOAD delta;")
+            ensure_delta_extension(con)
             rows = con.execute(
                 f"SELECT DISTINCT article_id FROM {scan}",
             ).fetchall()

@@ -27,7 +27,7 @@ from equity_lake.core.paths import (
     market_dir,
 )
 from equity_lake.monitoring.alerting import Alerter, build_alerter
-from equity_lake.storage.lake_reader import duckdb_scan_for
+from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
 
 logger = structlog.get_logger()
 
@@ -75,17 +75,6 @@ def _date_scalar(value: object) -> date | None:
     return None
 
 
-def _bootstrap_delta(con: duckdb.DuckDBPyConnection) -> None:
-    """INSTALL/LOAD the delta extension on a DuckDB connection.
-
-    Local copy of the standard bootstrap (``delta_scan`` fails with a confusing
-    binder error on connections that never loaded the extension). The shared
-    helper in ``storage/lake_reader.py`` and consolidation of the other
-    bootstrap sites land separately; this keeps the monitor self-sufficient.
-    """
-    con.execute("INSTALL delta; LOAD delta;")
-
-
 class PipelineMonitor:
     """Monitor pipeline health and data quality."""
 
@@ -121,7 +110,7 @@ class PipelineMonitor:
         self.alerter = alerter or build_alerter()
 
         self.conn = duckdb.connect(":memory:")
-        _bootstrap_delta(self.conn)
+        ensure_delta_extension(self.conn)
         self.alerts: list[str] = []
         self._alert_keys: set[tuple[str, str]] = set()
         self.metrics: dict = {}

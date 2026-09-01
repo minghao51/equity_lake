@@ -19,8 +19,8 @@ import duckdb
 import polars as pl
 import structlog
 
-from equity_lake.core.paths import PRICE_MARKETS, market_dir
 from equity_lake.storage.examples import QueryExamples
+from equity_lake.storage.lake_reader import create_market_views
 
 logger = structlog.get_logger(__name__)
 
@@ -50,10 +50,7 @@ class EquityDataDB:
             return
         self._views_initialized = True
         logger.info("Setting up unified views")
-        self.con.execute("INSTALL delta; LOAD delta;")
-
-        for market in PRICE_MARKETS:
-            self._create_market_view(market, market_dir(market))
+        self.available_views = create_market_views(self.con)
 
         self._create_unified_view()
         logger.info("Views created successfully")

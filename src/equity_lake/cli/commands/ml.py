@@ -25,6 +25,7 @@ rather than auto-backfilling.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
@@ -32,6 +33,18 @@ import typer
 from equity_lake.cli._app import _init_logging, ml_app
 
 _DEFAULT_LOOKBACK_DAYS = 730
+
+# ``ml compare`` and ``ml ablate`` share one option surface — the aliases below
+# are the single definition of those flags (names + help text) for both commands.
+UniverseOption = Annotated[str, typer.Option("--universe", help="Config ticker group (default: demo)")]
+TickerOption = Annotated[str | None, typer.Option("--ticker", "-t", help="Run on a specific ticker (default: first of universe)")]
+StartOption = Annotated[str | None, typer.Option("--start", help="Start date YYYY-MM-DD (default: ~2y ago)")]
+EndOption = Annotated[str | None, typer.Option("--end", help="End date YYYY-MM-DD (default: today)")]
+OutputDirOption = Annotated[str | None, typer.Option("--output-dir", "-o", help="Findings dir (default: data/findings)")]
+TrainWindowOption = Annotated[int, typer.Option("--train-window", help="Walk-forward train window (rows)")]
+TestWindowOption = Annotated[int, typer.Option("--test-window", help="Walk-forward test window (rows)")]
+EmbargoWindowOption = Annotated[int, typer.Option("--embargo-window", help="Post-test embargo (rows)")]
+VerboseOption = Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")]
 
 
 def _resolve_ticker(universe: str, ticker_override: str | None) -> tuple[str, list[str]]:
@@ -67,30 +80,45 @@ def _default_window() -> tuple[date, date]:
     return start, end
 
 
+def _prepare_run(
+    universe: str,
+    ticker: str | None,
+    start: str | None,
+    end: str | None,
+    output_dir: str | None,
+    verbose: bool,
+) -> tuple[str, date, date, Path | None]:
+    """Shared ``ml compare``/``ml ablate`` preamble.
+
+    Returns ``(selected_ticker, start_date, end_date, findings_base)``.
+    """
+    _init_logging(verbose)
+    selected, _ = _resolve_ticker(universe, ticker)
+    default_start, default_end = _default_window()
+    start_date = date.fromisoformat(start) if start else default_start
+    end_date = date.fromisoformat(end) if end else default_end
+    base = Path(output_dir) if output_dir else None
+    return selected, start_date, end_date, base
+
+
 @ml_app.command("compare")
 def ml_compare(
-    universe: Annotated[str, typer.Option("--universe", help="Config ticker group (default: demo)")] = "demo",
-    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Run on a specific ticker (default: first of universe)")] = None,
-    start: Annotated[str | None, typer.Option("--start", help="Start date YYYY-MM-DD (default: ~2y ago)")] = None,
-    end: Annotated[str | None, typer.Option("--end", help="End date YYYY-MM-DD (default: today)")] = None,
-    output_dir: Annotated[str | None, typer.Option("--output-dir", "-o", help="Findings dir (default: data/findings)")] = None,
-    train_window: Annotated[int, typer.Option("--train-window", help="Walk-forward train window (rows)")] = 252,
-    test_window: Annotated[int, typer.Option("--test-window", help="Walk-forward test window (rows)")] = 21,
-    embargo_window: Annotated[int, typer.Option("--embargo-window", help="Post-test embargo (rows)")] = 1,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+    universe: UniverseOption = "demo",
+    ticker: TickerOption = None,
+    start: StartOption = None,
+    end: EndOption = None,
+    output_dir: OutputDirOption = None,
+    train_window: TrainWindowOption = 252,
+    test_window: TestWindowOption = 21,
+    embargo_window: EmbargoWindowOption = 1,
+    verbose: VerboseOption = False,
 ) -> None:
     """Compare v1 vs v2 labeling and XGBoost vs LightGBM, emit 2 FindingCards."""
-    from pathlib import Path
-
     from equity_lake.findings.writer import card_path
     from equity_lake.ml.comparison import run_comparison
     from equity_lake.ml.feature_loader import FeatureLoader
 
-    _init_logging(verbose)
-    selected, _ = _resolve_ticker(universe, ticker)
-    start_date = date.fromisoformat(start) if start else _default_window()[0]
-    end_date = date.fromisoformat(end) if end else _default_window()[1]
-    base = Path(output_dir) if output_dir else None
+    selected, start_date, end_date, base = _prepare_run(universe, ticker, start, end, output_dir, verbose)
 
     loader = FeatureLoader()
     try:
@@ -123,28 +151,22 @@ def ml_compare(
 
 @ml_app.command("ablate")
 def ml_ablate(
-    universe: Annotated[str, typer.Option("--universe", help="Config ticker group (default: demo)")] = "demo",
-    ticker: Annotated[str | None, typer.Option("--ticker", "-t", help="Run on a specific ticker (default: first of universe)")] = None,
-    start: Annotated[str | None, typer.Option("--start", help="Start date YYYY-MM-DD (default: ~2y ago)")] = None,
-    end: Annotated[str | None, typer.Option("--end", help="End date YYYY-MM-DD (default: today)")] = None,
-    output_dir: Annotated[str | None, typer.Option("--output-dir", "-o", help="Findings dir (default: data/findings)")] = None,
-    train_window: Annotated[int, typer.Option("--train-window", help="Walk-forward train window (rows)")] = 252,
-    test_window: Annotated[int, typer.Option("--test-window", help="Walk-forward test window (rows)")] = 21,
-    embargo_window: Annotated[int, typer.Option("--embargo-window", help="Post-test embargo (rows)")] = 1,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+    universe: UniverseOption = "demo",
+    ticker: TickerOption = None,
+    start: StartOption = None,
+    end: EndOption = None,
+    output_dir: OutputDirOption = None,
+    train_window: TrainWindowOption = 252,
+    test_window: TestWindowOption = 21,
+    embargo_window: EmbargoWindowOption = 1,
+    verbose: VerboseOption = False,
 ) -> None:
     """Ablate enriched vs technical-only features, emit the enrichment-ablation card."""
-    from pathlib import Path
-
     from equity_lake.features import load_feature_engineer
     from equity_lake.findings.writer import card_path
     from equity_lake.ml.ablation import run_ablation
 
-    _init_logging(verbose)
-    selected, _ = _resolve_ticker(universe, ticker)
-    start_date = date.fromisoformat(start) if start else _default_window()[0]
-    end_date = date.fromisoformat(end) if end else _default_window()[1]
-    base = Path(output_dir) if output_dir else None
+    selected, start_date, end_date, base = _prepare_run(universe, ticker, start, end, output_dir, verbose)
 
     engineer = load_feature_engineer()
     try:
@@ -186,7 +208,7 @@ def ml_train(
         typer.Option("--model-mode", help="v1_direction or v2_meta_label"),
     ] = "v1_direction",
     tune: Annotated[bool, typer.Option("--tune", help="Hyperparameter tuning")] = False,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+    verbose: VerboseOption = False,
 ) -> None:
     """Train one backend classifier (canonical entrypoint; ``intelligence forecast --mode train`` is the legacy alias)."""
     from equity_lake.ml.forecasting import PriceForecaster

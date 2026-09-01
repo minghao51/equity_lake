@@ -8,6 +8,7 @@ import httpx
 import polars as pl
 import structlog
 
+from equity_lake.core.polars_utils import ensure_columns
 from equity_lake.core.schemas import SOCIAL_COLUMNS
 from equity_lake.ingestion.parallel import fetch_items_parallel
 from equity_lake.sources.base import MarketDataFetcher
@@ -105,12 +106,7 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         # Convert to DataFrame
         df = pl.DataFrame(all_metrics)
 
-        # Ensure all columns present
-        for col in SOCIAL_COLUMNS:
-            if col not in df.columns:
-                df = df.with_columns(pl.lit("mention_count").alias(col)) if col == "social_metric" else df.with_columns(pl.lit(None).alias(col))
-
-        df = df.select(SOCIAL_COLUMNS)
+        df = ensure_columns(df, SOCIAL_COLUMNS)
 
         logger.info(
             "Returning %s social sentiment records for %s",

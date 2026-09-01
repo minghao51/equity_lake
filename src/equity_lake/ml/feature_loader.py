@@ -8,7 +8,7 @@ import polars as pl
 import structlog
 
 from equity_lake.core.paths import GOLD_FEATURES_DIR
-from equity_lake.storage.lake_reader import duckdb_scan_for
+from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
 
 logger = structlog.get_logger(__name__)
 
@@ -17,7 +17,7 @@ class FeatureLoader:
     def __init__(self) -> None:
         self.conn = duckdb.connect(":memory:")
         with contextlib.suppress(Exception):
-            self.conn.execute("INSTALL delta; LOAD delta;")
+            ensure_delta_extension(self.conn)
         self._setup_feature_view()
 
     def _setup_feature_view(self) -> None:

@@ -22,7 +22,7 @@ from tqdm import tqdm
 from equity_lake.core.paths import LAKE_DIR
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
 from equity_lake.features.pipeline import FeaturePipeline
-from equity_lake.storage.lake_reader import duckdb_scan_for
+from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
 
 logger = structlog.get_logger()
 
@@ -55,7 +55,7 @@ class FeatureEngineer:
         self.close()
 
     def _setup_views(self) -> None:
-        self.conn.execute("INSTALL delta; LOAD delta;")
+        ensure_delta_extension(self.conn)
 
         markets = [
             ("us", "01_bronze/market_data/us_equity"),

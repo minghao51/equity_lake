@@ -49,9 +49,7 @@ class BacktestSignalGenerator(SignalGenerator):
         Returns:
             Signal with action (BUY/SELL/HOLD) and confidence
         """
-        if not self.is_enabled():
-            return None
-
+        # Enablement is gated once, at scanner construction time.
         if not self.strategies:
             return None
 

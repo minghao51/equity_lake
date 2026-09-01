@@ -15,6 +15,8 @@ from equity_lake.ingestion.orchestrator import run_daily_ingestion
 from equity_lake.ingestion.types import (
     OPTIONAL_ENRICHMENT_MARKETS,
     REQUIRED_PRICE_MARKETS,
+    SEC_FILINGS_MARKETS,
+    UNSTRUCTURED_MARKETS,
     SourceOutcome,
     SourceStatus,
     normalize_markets,
@@ -99,8 +101,8 @@ def _run_ingestion_stage(
             logger.warning("ingestion_partial_failure", results=markets_payload)
 
     # Optional bronze-to-silver processing
-    unstructured_markets = {"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"}
-    sec_markets = {"sec_filings_fulltext"}
+    unstructured_markets = UNSTRUCTURED_MARKETS
+    sec_markets = SEC_FILINGS_MARKETS
 
     if any(m in markets for m in unstructured_markets):
         stage["bronze_to_silver"] = _process_bronze_to_silver(trading_date)

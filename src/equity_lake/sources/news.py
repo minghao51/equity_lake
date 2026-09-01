@@ -8,6 +8,7 @@ import httpx
 import polars as pl
 import structlog
 
+from equity_lake.core.polars_utils import ensure_columns
 from equity_lake.core.schemas import NEWS_COLUMNS
 from equity_lake.ingestion.parallel import fetch_items_parallel
 from equity_lake.sentiment import SentimentAnalyzer
@@ -131,14 +132,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         if self.sentiment_analyzer and not df.is_empty():
             df = self._add_sentiment_analysis(df)
 
-        for col in NEWS_COLUMNS:
-            if col not in df.columns:
-                if col == "category":
-                    df = df.with_columns(pl.lit("general").alias(col))
-                elif col == "relevance_score":
-                    df = df.with_columns(pl.lit(1.0).alias(col))
-                else:
-                    df = df.with_columns(pl.lit(None).alias(col))
+        df = ensure_columns(df, NEWS_COLUMNS)
 
         if self.min_relevance > 0:
             df = df.filter(pl.col("relevance_score") >= self.min_relevance)
@@ -147,8 +141,6 @@ class FinnhubNewsFetcher(MarketDataFetcher):
                 df.height,
                 self.min_relevance,
             )
-
-        df = df.select([col for col in NEWS_COLUMNS if col in df.columns])
 
         logger.info(
             "Returning %s articles for %s",

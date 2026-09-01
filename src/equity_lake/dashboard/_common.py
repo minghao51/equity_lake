@@ -6,7 +6,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+import polars as pl
+
 from equity_lake.core.paths import (
+    DATA_DIR,
     GOLD_FEATURES_DIR,
     LOGS_DIR,
     PRICE_MARKETS,
@@ -59,6 +62,22 @@ def summarize_dataset(conn: Any, name: str, path: Path) -> dict[str, Any]:
         "latest_date": row[2],
         "path": str(path),
     }
+
+
+def load_update_history(limit: int) -> list[dict[str, Any]]:
+    """Load the most recent ``limit`` update-history rows (newest first).
+
+    Single loader for both dashboards (the static exporter and the Streamlit
+    app); the row limit is the caller's presentation choice. Read errors are the
+    caller's to handle.
+    """
+    update_history_path = DATA_DIR / "update_history.parquet"
+    if not update_history_path.exists():
+        return []
+    frame = pl.read_parquet(update_history_path)
+    if frame.is_empty():
+        return []
+    return frame.sort("updated_at", descending=True).head(limit).to_dicts()
 
 
 def load_health_report(output_dir: Path | None = None) -> dict[str, Any] | None:

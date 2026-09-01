@@ -16,6 +16,7 @@ import numpy as np
 import polars as pl
 from sklearn.metrics import accuracy_score, precision_score
 
+from equity_lake.ml.backends import DEFAULT_XGB_PARAMS, scale_pos_weight
 from equity_lake.ml.forecasting import NON_FEATURE_COLUMNS
 
 if TYPE_CHECKING:
@@ -29,32 +30,24 @@ EXCLUDE_COLUMNS: frozenset[str] = frozenset(
     NON_FEATURE_COLUMNS | {"target", "barrier_start_idx", "barrier_end_idx"},
 )
 
-#: Canonical (XGBoost-style) params reused for every fold; ``build_estimator``
-#: normalizes per backend. Kept modest so the harness is fast on small frames.
-DEFAULT_FIT_PARAMS: dict[str, object] = {
+#: Harness divergence from :data:`~equity_lake.ml.backends.DEFAULT_XGB_PARAMS`:
+#: a smaller, cheaper model than the tuned production fit so the per-fold
+#: harness stays fast on small frames.
+_HARNESS_PARAM_OVERRIDES: dict[str, object] = {
     "max_depth": 3,
     "learning_rate": 0.1,
     "n_estimators": 50,
-    "subsample": 0.9,
-    "colsample_bytree": 0.9,
-    "objective": "binary:logistic",
-    "eval_metric": "logloss",
-    "random_state": 42,
-    "n_jobs": -1,
 }
+
+#: Canonical (XGBoost-style) params reused for every fold; ``build_estimator``
+#: normalizes per backend. Derived from the shared backend base so only the
+#: three harness-specific knobs above are restated here.
+DEFAULT_FIT_PARAMS: dict[str, object] = {**_HARNESS_PARAM_OVERRIDES, **DEFAULT_XGB_PARAMS}
 
 
 def feature_columns(df: pl.DataFrame) -> list[str]:
     """Return model feature columns, excluding labels/identifiers/bookkeeping."""
     return [col for col in df.columns if col not in EXCLUDE_COLUMNS]
-
-
-def scale_pos_weight(y_train: np.ndarray) -> float:
-    pos = int((y_train == 1).sum())
-    neg = int((y_train == 0).sum())
-    if pos <= 0 or neg <= 0:
-        return 1.0
-    return float(neg) / float(pos)
 
 
 def aggregate_oos(labels: np.ndarray, probs: np.ndarray, folds: int) -> dict[str, float]:

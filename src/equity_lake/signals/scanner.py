@@ -34,7 +34,10 @@ class SignalScanner:
         self.watchlist = watchlist
         self.max_workers = max_workers
 
-        # Initialize generators
+        # Initialize generators. This is the *only* enablement gate: a disabled
+        # generator is never constructed, so it never loads a model or opens a
+        # connection, and `self.generators` is the complete truth about what the
+        # scan will run. Generators therefore do not re-check `is_enabled()`.
         self.generators: list[SignalGenerator] = []
         if config.is_generator_enabled("backtest"):
             self.generators.append(BacktestSignalGenerator(config.backtest))

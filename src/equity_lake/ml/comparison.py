@@ -14,9 +14,10 @@ emits cards; it performs no lake I/O and is unit-testable with synthetic data.
 Reuse contract (parent §4 B4/B5 — do not reimplement):
 
 * :class:`equity_lake.ml.validation.PurgedEmbargoedWalkForwardSplitter` — call
-  ``.split()`` directly to get per-fold OOS index pairs (the aggregate
-  ``run_purged_walk_forward_validation`` is XGBoost-locked and returns no
-  per-fold rows).
+  ``.split()`` directly to get per-fold OOS index pairs. The sibling
+  ``run_purged_walk_forward_validation`` is backend-parameterized but only
+  returns fold-averaged aggregates, so it cannot supply the pooled per-fold
+  predictions these cards score.
 * :func:`equity_lake.ml.backends.build_estimator` / :func:`fit_estimator` /
   :func:`backend_of` — the single backend seam.
 * :func:`equity_lake.ml.candidates.build_candidate_frame` and

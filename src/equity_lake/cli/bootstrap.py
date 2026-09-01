@@ -10,30 +10,38 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import structlog
 
 from equity_lake.core.paths import market_dir
+from equity_lake.devtools.seeding import (
+    SAMPLE_TICKERS,
+    OhlcvProfile,
+    synthetic_ohlcv,
+    trailing_business_days,
+)
 
 logger = structlog.get_logger()
 
 # US ticker format regex (from validators.py)
 US_TICKER_PATTERN = re.compile(r"^[A-Z]{1,5}(-[A-Z]{1,2})?$")
 
-# ---------------------------------------------------------------------------
-# Curated sample tickers (small subset from each market)
-# ---------------------------------------------------------------------------
-
-SAMPLE_TICKERS = {
-    "us_equity": ["AAPL", "MSFT", "GOOGL", "NVDA", "JPM"],
-    "cn_ashare": ["600519", "000001", "601318", "601398", "000858"],
-    "hk_sg_equity": ["0700.HK", "9988.HK", "D05.SI", "0005.HK", "O39.SI"],
-}
-
+# Curated sample tickers and the synthetic generator live in devtools/seeding.py
+# (shared with ``equity demo seed``); SAMPLE_TICKERS is re-exported here because
+# it defines the (three-market) bootstrap scope.
+#
 # Derived from the core/paths.py price-market registry (ADR-0010) — no private
-# market->directory copy. Resolved at import alongside SAMPLE_TICKERS, which
-# defines the (three-market) bootstrap scope.
+# market->directory copy.
 MARKET_DIRS = {market: market_dir(market) for market in SAMPLE_TICKERS}
+
+# Per-market synthetic tuning for the sample lake (price/volume levels only —
+# the random walk itself is shared).
+SAMPLE_PROFILES: dict[str, OhlcvProfile] = {
+    "us_equity": OhlcvProfile(price_range=(50, 500), volume_range=(2_000_000, 80_000_000)),
+    "cn_ashare": OhlcvProfile(price_range=(5, 200), volume_range=(5_000_000, 100_000_000)),
+    "hk_sg_equity": OhlcvProfile(price_range=(5, 300), volume_range=(1_000_000, 50_000_000)),
+}
+_DEFAULT_SAMPLE_PROFILE = OhlcvProfile(price_range=(10, 500), volume_range=(1_000_000, 50_000_000))
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +54,7 @@ def _try_load_real_data(
     market: str,
     start_date: date,
     end_date: date,
-) -> pd.DataFrame | None:
+) -> pl.DataFrame | None:
     """Try to load real data from the lake for a ticker/date range."""
     lake_dir = MARKET_DIRS.get(market)
     if lake_dir is None or not lake_dir.exists():
@@ -67,9 +75,9 @@ def _try_load_real_data(
               AND date <= ?
             ORDER BY date
         """
-        result = conn.execute(query, [ticker, str(start_date), str(end_date)]).fetchdf()
+        result = conn.execute(query, [ticker, str(start_date), str(end_date)]).pl()
         conn.close()
-        if result.empty:
+        if result.is_empty():
             return None
         return result
     except Exception:
@@ -79,7 +87,7 @@ def _try_load_real_data(
 def _load_sample_from_lake(
     days: int,
     tickers_override: dict[str, list[str]] | None = None,
-) -> tuple[pd.DataFrame, dict[str, list[str]], bool]:
+) -> tuple[pl.DataFrame, dict[str, list[str]], bool]:
     """Attempt to load sample data from the existing lake.
 
     Returns:
@@ -94,90 +102,22 @@ def _load_sample_from_lake(
     for market, ticker_list in tickers.items():
         for ticker in ticker_list:
             real_data = _try_load_real_data(ticker, market, start_date, end_date)
-            if real_data is not None and not real_data.empty:
+            if real_data is not None and not real_data.is_empty():
                 # Limit to the requested number of trading days
-                trading_days = real_data["date"].nunique()
+                trading_days = real_data["date"].n_unique()
                 if trading_days > days:
-                    unique_dates = sorted(real_data["date"].unique())[-days:]
-                    real_data = real_data[real_data["date"].isin(unique_dates)]
+                    unique_dates = real_data["date"].unique().sort().to_list()[-days:]
+                    real_data = real_data.filter(pl.col("date").is_in(unique_dates))
                 frames.append(real_data)
-                logger.info("Loaded real data for %s (%s rows)", ticker, len(real_data))
+                logger.info("Loaded real data for %s (%s rows)", ticker, real_data.height)
             else:
                 logger.debug("No real data for %s, will generate synthetic", ticker)
 
     if frames:
-        combined = pd.concat(frames, ignore_index=True)
+        combined = pl.concat(frames, how="diagonal_relaxed")
         return combined, tickers, True
 
-    return pd.DataFrame(), tickers, False
-
-
-# ---------------------------------------------------------------------------
-# Synthetic data generation (fallback)
-# ---------------------------------------------------------------------------
-
-
-class _SyntheticGenerator:
-    """Generate realistic OHLCV data when real data is unavailable."""
-
-    def __init__(self, seed: int = 42):
-        self.seed = seed
-        self.rng = np.random.default_rng(seed)
-
-    def generate_ticker(
-        self,
-        ticker: str,
-        dates: list[date],
-        price_range: tuple[float, float] = (10, 500),
-        volume_range: tuple[int, int] = (1_000_000, 50_000_000),
-    ) -> pd.DataFrame:
-        num_days = len(dates)
-        start_price = self.rng.uniform(*price_range)
-
-        returns = self.rng.normal(0.0001, 0.02, num_days)
-        prices = start_price * np.exp(np.cumsum(returns))
-
-        closes = np.maximum(prices, 0.01)
-        opens = np.roll(closes, 1)
-        opens[0] = start_price
-        daily_range = np.abs(self.rng.normal(0, 0.01, num_days))
-        highs = np.maximum.reduce([opens, closes]) * (1 + daily_range)
-        lows = np.minimum.reduce([opens, closes]) * (1 - daily_range)
-        lows = np.maximum(lows, 0.01)
-
-        base_vol = self.rng.uniform(*volume_range)
-        volumes = self.rng.lognormal(np.log(base_vol), 0.5, num_days).astype(np.int64)
-        volumes = np.clip(volumes, *volume_range)
-
-        df = pd.DataFrame(
-            {
-                "ticker": ticker,
-                "date": dates,
-                "open": np.round(opens, 2),
-                "high": np.round(highs, 2),
-                "low": np.round(lows, 2),
-                "close": np.round(closes, 2),
-                "volume": volumes,
-                "adj_close": np.round(closes, 2),
-            }
-        )
-        return df
-
-
-# ---------------------------------------------------------------------------
-# Trading date generation
-# ---------------------------------------------------------------------------
-
-
-def _trading_dates(start: date, end: date) -> list[date]:
-    """Generate trading dates (Mon-Fri only)."""
-    dates = []
-    current = start
-    while current <= end:
-        if current.weekday() < 5:
-            dates.append(current)
-        current += timedelta(days=1)
-    return dates
+    return pl.DataFrame(), tickers, False
 
 
 # ---------------------------------------------------------------------------
@@ -241,39 +181,25 @@ def cmd_sample(
     logger.info("Checking existing lake for sample data...")
     combined_data, tickers_used, used_real = _load_sample_from_lake(days, ticker_override)
 
-    if not combined_data.empty and used_real:
-        logger.info("✅ Loaded real data from lake (%s rows)", len(combined_data))
+    if not combined_data.is_empty() and used_real:
+        logger.info("✅ Loaded real data from lake (%s rows)", combined_data.height)
     else:
         logger.info("No real data found in lake — generating synthetic data")
-        generator = _SyntheticGenerator(seed=seed)
 
-        end_date = date.today() - timedelta(days=1)
-        start_date = end_date - timedelta(days=days * 2)
-        trading = _trading_dates(start_date, end_date)
         # Limit to exactly `days` trading days
-        trading = trading[-days:]
+        trading = trailing_business_days(days * 2)[-days:]
 
-        price_configs = {
-            "us_equity": (50, 500),
-            "cn_ashare": (5, 200),
-            "hk_sg_equity": (5, 300),
-        }
-        volume_configs = {
-            "us_equity": (2_000_000, 80_000_000),
-            "cn_ashare": (5_000_000, 100_000_000),
-            "hk_sg_equity": (1_000_000, 50_000_000),
-        }
-
+        # One RNG for the whole run so each market continues the same stream.
+        rng = np.random.default_rng(seed)
         frames = []
         for market, ticker_list in (ticker_override or tickers_used).items():
-            p_range = price_configs.get(market, (10, 500))
-            v_range = volume_configs.get(market, (1_000_000, 50_000_000))
+            profile = SAMPLE_PROFILES.get(market, _DEFAULT_SAMPLE_PROFILE)
             for t in ticker_list:
-                df = generator.generate_ticker(t, trading, p_range, v_range)
+                df = synthetic_ohlcv([t], trading, profile=profile, rng=rng)
                 frames.append(df)
-                logger.info("Generated synthetic data for %s (%s rows)", t, len(df))
+                logger.info("Generated synthetic data for %s (%s rows)", t, df.height)
 
-        combined_data = pd.concat(frames, ignore_index=True)
+        combined_data = pl.concat(frames)
 
     # Write Delta tables (one per market) via the canonical writer.
     from equity_lake.storage.delta import write_delta
@@ -281,15 +207,15 @@ def cmd_sample(
     logger.info("Writing Delta tables to %s", out)
 
     for market, ticker_list in tickers_used.items():
-        market_data = combined_data[combined_data["ticker"].isin(ticker_list)]
-        if market_data.empty:
+        market_data = combined_data.filter(pl.col("ticker").is_in(ticker_list))
+        if market_data.is_empty():
             continue
         write_delta(market_data, market, mode="overwrite", lake_dir=out)
 
     # Summary
-    total_rows = len(combined_data)
-    unique_tickers = combined_data["ticker"].nunique()
-    unique_days = combined_data["date"].nunique()
+    total_rows = combined_data.height
+    unique_tickers = combined_data["ticker"].n_unique()
+    unique_days = combined_data["date"].n_unique()
 
     logger.info("")
     logger.info("=" * 60)

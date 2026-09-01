@@ -8,6 +8,8 @@ the ingestion pipeline.
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
 from datetime import date
 from typing import Any
 
@@ -20,6 +22,40 @@ from equity_lake.ingestion.writers import validate_schema
 from equity_lake.sources.base import MarketDataFetcher
 
 logger = structlog.get_logger()
+
+
+def _require_finnhub_key(what: str) -> str:
+    """Return the Finnhub API key or raise (loudly) if unset.
+
+    Shared by the Finnhub-backed factories (news, social sentiment, transcripts,
+    analyst ratings) so the "missing key" contract lives in one place.
+    """
+    api_key = os.getenv("FINNHUB_API_KEY")
+    if not api_key:
+        logger.error("FINNHUB_API_KEY not set, cannot fetch %s", what)
+        raise OSError("FINNHUB_API_KEY not set")
+    return api_key
+
+
+def _default_us_tickers(
+    ticker_config: TickerConfig | None,
+    *,
+    max_tickers: int | None = None,
+) -> list[str] | None:
+    """Default US ticker list for Finnhub factories when none is passed explicitly.
+
+    Mirrors the per-factory default: pull active US tickers from the config,
+    optionally capped (news/social sentiment cap at 100 to stay within API
+    limits), and return ``None`` when there is no config or no tickers.
+    """
+    if not ticker_config:
+        return None
+    tickers = ticker_config.get_tickers_for_market("us", active_only=True)
+    if not tickers:
+        return None
+    if max_tickers is not None:
+        tickers = tickers[:max_tickers]
+    return tickers
 
 
 def _make_us_fetcher(
@@ -138,18 +174,12 @@ def _make_news_fetcher(
     filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
-    import os
-
-    api_key = os.getenv("FINNHUB_API_KEY")
-    if not api_key:
-        logger.error("FINNHUB_API_KEY not set, cannot fetch news")
-        raise OSError("FINNHUB_API_KEY not set")
+    api_key = _require_finnhub_key("news")
 
     from equity_lake.sources.news import FinnhubNewsFetcher
 
-    if not explicit_tickers and ticker_config:
-        all_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
-        explicit_tickers = all_tickers[:100] if all_tickers else None
+    if not explicit_tickers:
+        explicit_tickers = _default_us_tickers(ticker_config, max_tickers=100)
 
     return FinnhubNewsFetcher(
         api_key=api_key,
@@ -167,18 +197,12 @@ def _make_sentiment_fetcher(
     filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
-    import os
-
-    api_key = os.getenv("FINNHUB_API_KEY")
-    if not api_key:
-        logger.error("FINNHUB_API_KEY not set, cannot fetch social sentiment")
-        raise OSError("FINNHUB_API_KEY not set")
+    api_key = _require_finnhub_key("social sentiment")
 
     from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
-    if not explicit_tickers and ticker_config:
-        all_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
-        explicit_tickers = all_tickers[:100] if all_tickers else None
+    if not explicit_tickers:
+        explicit_tickers = _default_us_tickers(ticker_config, max_tickers=100)
 
     return FinnhubSocialSentimentFetcher(
         api_key=api_key,
@@ -246,17 +270,12 @@ def _make_transcript_fetcher(
     filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
-    import os
-
-    api_key = os.getenv("FINNHUB_API_KEY")
-    if not api_key:
-        logger.error("FINNHUB_API_KEY not set, cannot fetch transcripts")
-        raise OSError("FINNHUB_API_KEY not set")
+    api_key = _require_finnhub_key("transcripts")
 
     from equity_lake.sources.transcripts import EarningsTranscriptFetcher
 
-    if not explicit_tickers and ticker_config:
-        explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
+    if not explicit_tickers:
+        explicit_tickers = _default_us_tickers(ticker_config)
 
     return EarningsTranscriptFetcher(
         api_key=api_key,
@@ -274,17 +293,12 @@ def _make_analyst_rating_fetcher(
     filters: dict | None,
     explicit_tickers: list[str] | None,
 ) -> MarketDataFetcher:
-    import os
-
-    api_key = os.getenv("FINNHUB_API_KEY")
-    if not api_key:
-        logger.error("FINNHUB_API_KEY not set, cannot fetch analyst ratings")
-        raise OSError("FINNHUB_API_KEY not set")
+    api_key = _require_finnhub_key("analyst ratings")
 
     from equity_lake.sources.analyst_ratings import AnalystRatingFetcher
 
-    if not explicit_tickers and ticker_config:
-        explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
+    if not explicit_tickers:
+        explicit_tickers = _default_us_tickers(ticker_config)
 
     return AnalystRatingFetcher(
         api_key=api_key,
@@ -334,27 +348,28 @@ def _make_sec_financials_fetcher(
     )
 
 
-# Single source of truth: market identifier -> fetcher factory name.
+# Single source of truth: market identifier -> fetcher factory callable.
 # Price markets use the canonical long keys (ADR-0010); normalize_markets()
 # at the orchestrator boundary canonicalizes short aliases before routing.
-# Factories are resolved by name at call time (via ``globals()``) so they remain
-# patchable in tests (e.g. ``patch("...router._make_us_fetcher")``).
-MARKET_REGISTRY: dict[str, str] = {
-    "us_equity": "_make_us_fetcher",
-    "cn_ashare": "_make_cn_fetcher",
-    "hk_sg_equity": "_make_hk_sg_fetcher",
-    "jpx_equity": "_make_jpx_fetcher",
-    "krx_equity": "_make_krx_fetcher",
-    "macro": "_make_macro_fetcher",
-    "us_news": "_make_news_fetcher",
-    "us_social_sentiment": "_make_sentiment_fetcher",
-    "rss_news": "_make_rss_fetcher",
-    "reddit_posts": "_make_reddit_fetcher",
-    "stocktwits_messages": "_make_stocktwits_fetcher",
-    "us_earnings_transcripts": "_make_transcript_fetcher",
-    "us_analyst_ratings": "_make_analyst_rating_fetcher",
-    "sec_filings_fulltext": "_make_sec_filing_fetcher",
-    "us_sec_financials": "_make_sec_financials_fetcher",
+# Referencing the factory functions directly (rather than by string name) makes
+# a typo a loud import-time error instead of a silent runtime miss (the previous
+# ``globals()`` lookup).
+MARKET_REGISTRY: dict[str, Callable[..., Any]] = {
+    "us_equity": _make_us_fetcher,
+    "cn_ashare": _make_cn_fetcher,
+    "hk_sg_equity": _make_hk_sg_fetcher,
+    "jpx_equity": _make_jpx_fetcher,
+    "krx_equity": _make_krx_fetcher,
+    "macro": _make_macro_fetcher,
+    "us_news": _make_news_fetcher,
+    "us_social_sentiment": _make_sentiment_fetcher,
+    "rss_news": _make_rss_fetcher,
+    "reddit_posts": _make_reddit_fetcher,
+    "stocktwits_messages": _make_stocktwits_fetcher,
+    "us_earnings_transcripts": _make_transcript_fetcher,
+    "us_analyst_ratings": _make_analyst_rating_fetcher,
+    "sec_filings_fulltext": _make_sec_filing_fetcher,
+    "us_sec_financials": _make_sec_financials_fetcher,
 }
 
 
@@ -392,14 +407,13 @@ def fetch_market_data_with_config(
     if retry_delay is None:
         retry_delay = ingestion.retry_delay
 
-    factory_name = MARKET_REGISTRY.get(market)
-    if factory_name is None:
+    factory = MARKET_REGISTRY.get(market)
+    if factory is None:
         logger.error("Unknown market: %s", market)
         return None
 
     # Factory construction is intentionally OUTSIDE the try/except so that
     # configuration errors (e.g. missing API keys) propagate to the caller.
-    factory = globals()[factory_name]
     fetcher: Any = factory(
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,

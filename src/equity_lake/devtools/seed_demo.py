@@ -16,72 +16,30 @@ passing that authorization through. Idempotent via ``mode="overwrite"``.
 from __future__ import annotations
 
 import os
-from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import polars as pl
 import structlog
 
+from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, synthetic_ohlcv, trailing_business_days
+
 logger = structlog.get_logger(__name__)
 
-# Built-in demo universe — every symbol is defined & active in
-# config/tickers.yaml (markets.us), so the `demo` config group resolves to these.
-DEMO_UNIVERSE: list[str] = [
-    "AAPL",
-    "MSFT",
-    "GOOGL",
-    "AMZN",
-    "META",
-    "NVDA",
-    "TSLA",
-    "BRK-B",
-    "JPM",
-    "V",
-    "MA",
-    "BAC",
-    "WFC",
-    "UNH",
-    "JNJ",
-    "LLY",
-    "TMO",
-    "MRK",
-    "ABT",
-    "AVGO",
-    "WMT",
-    "PG",
-    "KO",
-    "PEP",
-    "COST",
-    "HD",
-    "MCD",
-    "NKE",
-    "DIS",
-    "NFLX",
-    "XOM",
-    "CVX",
-    "COP",
-    "CAT",
-    "BA",
-    "GE",
-    "HON",
-    "UNP",
-    "ADBE",
-    "CRM",
-    "ORCL",
-    "AMD",
-    "INTC",
-    "CSCO",
-    "QCOM",
-    "IBM",
-    "VZ",
-    "CMCSA",
-    "DHR",
-    "LIN",
-]
+# The built-in 50-symbol demo universe lives in devtools/seeding.py (shared with
+# ``equity bootstrap sample``) and is re-exported here for callers/tests.
 
 US_EQUITY_MARKET = "01_bronze/market_data/us_equity"
+
+# Demo-lake synthetic tuning; the random walk itself is shared.
+DEMO_PROFILE = OhlcvProfile(
+    price_range=(50.0, 500.0),
+    drift=0.0002,
+    volatility=0.015,
+    range_scale=0.008,
+    volume_mu=16.0,
+    include_adj_close=False,
+)
 
 
 def _same_path(a: Path, b: Path) -> bool:
@@ -109,49 +67,6 @@ def _targets_production_lake(target_root: Path) -> bool:
     if _same_path(resolved, lake):
         return True
     return any(_same_path(lake, parent) for parent in resolved.parents)
-
-
-def _trading_days(years: float) -> list[date]:
-    """Business days (Mon-Fri) ending yesterday, spanning ~`years` years."""
-    end = date.today() - timedelta(days=1)
-    start = end - timedelta(days=int(years * 365))
-    days: list[date] = []
-    cur = start
-    while cur <= end:
-        if cur.weekday() < 5:
-            days.append(cur)
-        cur += timedelta(days=1)
-    return days
-
-
-def _synthetic_frame(tickers: list[str], days: list[date], seed: int) -> pl.DataFrame:
-    """Deterministic long OHLCV frame (geometric random walk per ticker)."""
-    rng = np.random.default_rng(seed)
-    frames: list[pl.DataFrame] = []
-    for t in tickers:
-        start_px = rng.uniform(50.0, 500.0)
-        rets = rng.normal(0.0002, 0.015, len(days))
-        close = start_px * np.exp(np.cumsum(rets))
-        open_ = np.roll(close, 1)
-        open_[0] = start_px
-        span = np.abs(rng.normal(0.0, 0.008, len(days)))
-        high = np.maximum(open_, close) * (1 + span)
-        low = np.minimum(open_, close) * (1 - span)
-        vol = rng.lognormal(16.0, 0.5, len(days)).astype(np.int64)
-        frames.append(
-            pl.DataFrame(
-                {
-                    "ticker": t,
-                    "date": days,
-                    "open": np.round(open_, 2),
-                    "high": np.round(high, 2),
-                    "low": np.round(low, 2),
-                    "close": np.round(close, 2),
-                    "volume": vol,
-                }
-            )
-        )
-    return pl.concat(frames)
 
 
 def _try_real_fetch(tickers: list[str], years: float) -> pl.DataFrame | None:
@@ -264,8 +179,8 @@ def seed_demo(
             source = "real"
 
     if df is None:
-        days = _trading_days(years)
-        df = _synthetic_frame(universe, days, seed)
+        days = trailing_business_days(int(years * 365))
+        df = synthetic_ohlcv(universe, days, profile=DEMO_PROFILE, seed=seed)
         logger.info("seed_demo_synthetic", tickers=len(universe), days=len(days))
 
     if df.is_empty():

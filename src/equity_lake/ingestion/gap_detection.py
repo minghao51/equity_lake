@@ -17,6 +17,7 @@ import structlog
 from equity_lake.core.calendar import trading_days_between
 from equity_lake.core.paths import LAKE_DIR
 from equity_lake.ingestion.types import MARKET_DIR_REVERSE
+from equity_lake.storage.lake_reader import ensure_delta_extension
 
 logger = structlog.get_logger(__name__)
 
@@ -61,7 +62,7 @@ class GapDetector:
         self.con: duckdb.DuckDBPyConnection | None = duckdb.connect(":memory:")
         with contextlib.suppress(Exception):
             if self.con is not None:
-                self.con.execute("INSTALL delta; LOAD delta;")
+                ensure_delta_extension(self.con)
 
     def close(self) -> None:
         """Close the underlying DuckDB connection."""

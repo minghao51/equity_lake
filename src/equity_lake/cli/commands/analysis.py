@@ -21,21 +21,20 @@ def backtest_cmd(
     output: Annotated[str | None, typer.Option("--output", "-o", help="Output JSON")] = None,
 ) -> None:
     """Backtest trading strategies (shares the strategy registry with ``equity report backtest``)."""
-    from equity_lake.backtesting import VectorBacktestEngine
-    from equity_lake.backtesting.arena import STRATEGY_REGISTRY
+    from equity_lake.backtesting.factory import build_backtest_engine
 
-    if strategy not in STRATEGY_REGISTRY:
-        typer.secho(f"Unknown strategy: {strategy}. Available: {', '.join(STRATEGY_REGISTRY)}", fg=typer.colors.RED)
-        raise typer.Exit(1)
+    try:
+        eng = build_backtest_engine(
+            strategy=strategy,
+            tickers=tickers.split(","),
+            start_date=date.fromisoformat(start_date),
+            end_date=date.fromisoformat(end_date),
+            initial_cash=initial_cash,
+        )
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
 
-    strategy_inst = STRATEGY_REGISTRY[strategy]()
-    eng = VectorBacktestEngine(
-        strategy=strategy_inst,
-        tickers=tickers.split(","),
-        start_date=date.fromisoformat(start_date),
-        end_date=date.fromisoformat(end_date),
-        initial_cash=initial_cash,
-    )
     try:
         result = eng.run()
     except Exception as exc:  # noqa: BLE001 — surface a clean CLI error

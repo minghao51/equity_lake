@@ -17,6 +17,7 @@ import httpx
 import polars as pl
 import structlog
 
+from equity_lake.core.polars_utils import ensure_columns
 from equity_lake.core.schemas import BRONZE_ARTICLE_COLUMNS
 from equity_lake.sources.base import MarketDataFetcher, _empty_frame
 
@@ -86,11 +87,7 @@ class StockTwitsFetcher(MarketDataFetcher):
 
         df = pl.DataFrame(all_messages)
 
-        for col in BRONZE_ARTICLE_COLUMNS:
-            if col not in df.columns:
-                df = df.with_columns(pl.lit(None).alias(col))
-
-        df = df.select(BRONZE_ARTICLE_COLUMNS)
+        df = ensure_columns(df, BRONZE_ARTICLE_COLUMNS)
         logger.info("Fetched StockTwits messages", count=df.height)
         return df
 

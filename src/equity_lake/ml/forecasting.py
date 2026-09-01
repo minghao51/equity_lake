@@ -20,7 +20,15 @@ from sklearn.model_selection import GridSearchCV
 from tqdm import tqdm
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
-from equity_lake.ml.backends import DEFAULT_BACKEND, ModelBackend, backend_of, build_estimator, fit_estimator, validate_backend
+from equity_lake.ml.backends import (
+    DEFAULT_BACKEND,
+    ModelBackend,
+    backend_of,
+    build_estimator,
+    canonical_training_params,
+    fit_estimator,
+    validate_backend,
+)
 from equity_lake.ml.candidates import DEFAULT_BACKTEST_STRATEGY, build_candidate_frame
 from equity_lake.ml.feature_loader import FeatureLoader
 from equity_lake.ml.labeling import apply_triple_barrier_labels
@@ -33,29 +41,6 @@ logger = structlog.get_logger(__name__)
 from equity_lake.core.paths import DATA_DIR  # noqa: E402
 
 DEFAULT_MODEL_DIR = DATA_DIR / "models"
-
-
-def _canonical_training_params(overrides: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Canonical (XGBoost-style) params shared by every ``PriceForecaster`` fit.
-
-    ``train_model`` and ``backtest`` must fit with identical parameter and
-    class-weight semantics (handoff 08 A3): ``build_estimator`` normalizes per
-    backend, so callers pass one canonical dict plus explicit overrides.
-    """
-    params: dict[str, Any] = {
-        "max_depth": 5,
-        "learning_rate": 0.05,
-        "n_estimators": 200,
-        "subsample": 0.9,
-        "colsample_bytree": 0.9,
-        "objective": "binary:logistic",
-        "eval_metric": "logloss",
-        "random_state": 42,
-        "n_jobs": -1,
-    }
-    if overrides:
-        params.update(overrides)
-    return params
 
 
 MODEL_MODES = {"v1_direction", "v2_meta_label"}
@@ -242,7 +227,7 @@ class PriceForecaster:
             )
             logger.info("model_validation_completed", ticker=ticker, model_mode=self.model_mode, **metrics)
 
-        default_params = _canonical_training_params(params)
+        default_params = canonical_training_params(params)
 
         class_counts = compute_class_weights(y_train)
 
@@ -496,7 +481,7 @@ class PriceForecaster:
                 X_tr = self._prepare_training_matrix(fit_slice, feature_cols)
                 y_tr = self._prepare_target_series(fit_slice, target_column)
                 class_counts = compute_class_weights(y_tr)
-                model = build_estimator(self.backend, _canonical_training_params(), scale_pos_weight=class_counts["scale_pos_weight"])
+                model = build_estimator(self.backend, canonical_training_params(), scale_pos_weight=class_counts["scale_pos_weight"])
                 fit_estimator(model, X_tr, y_tr.to_numpy(), verbose=False)
                 if val_slice.height > 0:
                     X_val = self._prepare_training_matrix(val_slice, feature_cols)

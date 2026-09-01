@@ -39,7 +39,8 @@ class MetaLabelSignalGenerator(SignalGenerator):
 
     def generate(self, ticker: str, target_date: date) -> Signal | None:
         """Generate signal only when a candidate entry exists and clears the v2 threshold."""
-        if not self.is_enabled() or self.forecaster is None:
+        # Enablement is gated once, at scanner construction time.
+        if self.forecaster is None:
             return None
 
         try:

@@ -1,7 +1,5 @@
 """Terminal table signal formatter."""
 
-from collections import defaultdict
-
 try:
     from tabulate import tabulate
 
@@ -9,7 +7,7 @@ try:
 except ImportError:
     TABULATE_AVAILABLE = False
 
-from equity_lake.signals.formatters.base import SignalFormatter
+from equity_lake.signals.formatters.base import SignalFormatter, summarize
 from equity_lake.signals.models import Signal
 
 
@@ -35,15 +33,9 @@ class TerminalFormatter(SignalFormatter):
         lines.append("=" * 80)
         lines.append("")
 
-        # Group by action for summary
-        by_action: defaultdict[str, list[Signal]] = defaultdict(list)
-        for signal in signals:
-            by_action[signal.action].append(signal)
-
         # Summary
         lines.append("SUMMARY:")
-        for action in ["BUY", "SELL", "HOLD"]:
-            count = len(by_action.get(action, []))
+        for action, count in summarize(signals).items():
             lines.append(f"  {action}: {count}")
         lines.append("")
 

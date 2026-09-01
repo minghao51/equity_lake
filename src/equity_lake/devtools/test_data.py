@@ -6,11 +6,16 @@ Generates realistic OHLCV (Open, High, Low, Close, Volume) test data
 for development and testing purposes.
 
 Features:
-- Realistic price movements with trends and volatility
+- Realistic price movements with trends, volatility, and occasional gaps
 - Support for multiple markets (US, CN, HK, SG)
 - Configurable date ranges and ticker sets
 - Proper schema compliance with production data
 - Hive-partitioned Parquet output
+
+Generation itself is delegated to :mod:`equity_lake.devtools.seeding` (shared
+with ``equity bootstrap sample`` and ``equity demo seed``); what is unique here
+is the large per-market universes, the CLI knobs, and the Hive-partitioned
+Parquet writer.
 
 Safety: output goes to the auxiliary sandbox ``data/sandbox/test_data/<market>/``
 by default — never into the canonical Delta lake directories (``data/lake/**``),
@@ -25,6 +30,8 @@ Usage:
     uv run python -m equity_lake.devtools.test_data --markets us --num-tickers 50
 """
 
+from __future__ import annotations
+
 import argparse
 import sys
 from datetime import date, datetime, timedelta
@@ -32,16 +39,20 @@ from pathlib import Path
 from typing import cast
 
 import numpy as np
-import pandas as pd
+import polars as pl
 import structlog
 
 from equity_lake.core.logging import setup_structured_logging
 from equity_lake.core.paths import DATA_DIR
+from equity_lake.devtools.seeding import TEST_DATA_TICKERS, OhlcvProfile, business_days, synthetic_ohlcv
 
 logger = structlog.get_logger()
 
 # Auxiliary output root — deliberately outside the canonical lake (data/lake/**).
 TEST_DATA_SANDBOX_DIR = DATA_DIR / "sandbox" / "test_data"
+
+# Probability of an extra +/-5% return shock (not exposed as a CLI flag).
+GAP_PROBABILITY = 0.1
 
 
 # =============================================================================
@@ -52,129 +63,21 @@ MARKET_CONFIGS = {
     "us_equity": {
         "output_dir": TEST_DATA_SANDBOX_DIR / "us_equity",
         "ticker_format": "uppercase",
-        "tickers": [
-            "AAPL",
-            "MSFT",
-            "GOOGL",
-            "AMZN",
-            "NVDA",
-            "META",
-            "TSLA",
-            "BRK-B",
-            "JPM",
-            "V",
-            "JNJ",
-            "WMT",
-            "MA",
-            "PG",
-            "UNH",
-            "HD",
-            "CVX",
-            "MRK",
-            "KO",
-            "PEP",
-            "COST",
-            "CRM",
-            "NFLX",
-            "AMD",
-            "TMO",
-            "LIN",
-            "ABT",
-            "ORCL",
-            "ADBE",
-            "CMCSA",
-            "WFC",
-            "COP",
-            "QCOM",
-            "INTC",
-            "DHR",
-            "VZ",
-            "IBM",
-            "GE",
-            "DIS",
-            "BA",
-            "NKE",
-            "CAT",
-            "XOM",
-            "CSCO",
-        ],
+        "tickers": TEST_DATA_TICKERS["us_equity"],
         "price_range": (10, 500),
         "volume_range": (1000000, 50000000),
     },
     "cn_ashare": {
         "output_dir": TEST_DATA_SANDBOX_DIR / "cn_ashare",
         "ticker_format": "numeric_6",
-        "tickers": [
-            "600000",
-            "600036",
-            "601318",
-            "601398",
-            "601857",
-            "601988",
-            "601939",
-            "601288",
-            "601328",
-            "601601",
-            "601668",
-            "601628",
-            "601766",
-            "601818",
-            "601933",
-            "601985",
-            "601988",
-            "602008",
-            "000001",
-            "000002",
-            "000063",
-            "000066",
-            "000069",
-            "000100",
-            "000157",
-            "000166",
-            "000333",
-            "000338",
-            "000651",
-            "000725",
-            "000858",
-            "000895",
-            "002008",
-            "002415",
-            "002594",
-            "002714",
-        ],
+        "tickers": TEST_DATA_TICKERS["cn_ashare"],
         "price_range": (3, 200),
         "volume_range": (5000000, 100000000),
     },
     "hk_sg_equity": {
         "output_dir": TEST_DATA_SANDBOX_DIR / "hk_sg_equity",
         "ticker_format": "suffix",
-        "tickers": [
-            "0700.HK",
-            "9988.HK",
-            "0941.HK",
-            "1299.HK",
-            "2318.HK",
-            "0939.HK",
-            "1398.HK",
-            "0883.HK",
-            "0857.HK",
-            "1038.HK",
-            "0027.HK",
-            "0016.HK",
-            "0005.HK",
-            "0388.HK",
-            "0011.HK",
-            "D05.SI",
-            "O39.SI",
-            "U11.SI",
-            "Z74.SI",
-            "C6L.SI",
-            "S68.SI",
-            "V03.SI",
-            "BS6.SI",
-            "G13.SI",
-            "S63.SI",
-        ],
+        "tickers": TEST_DATA_TICKERS["hk_sg_equity"],
         "price_range": (1, 300),
         "volume_range": (1000000, 50000000),
     },
@@ -182,241 +85,58 @@ MARKET_CONFIGS = {
 
 
 # =============================================================================
-# Data Generation Engine
+# Data Generation
 # =============================================================================
 
 
-class TestDataGenerator:
-    """Generate realistic OHLCV test data."""
+def market_profile(market: str, volatility: float, trend_strength: float) -> OhlcvProfile:
+    """Build the market's :class:`OhlcvProfile` from its configured ranges."""
+    if market not in MARKET_CONFIGS:
+        raise ValueError(f"Unknown market: {market}")
+    config = MARKET_CONFIGS[market]
+    return OhlcvProfile(
+        price_range=cast(tuple[float, float], config["price_range"]),
+        volume_range=cast(tuple[int, int], config["volume_range"]),
+        drift=trend_strength,
+        volatility=volatility,
+        range_scale=volatility * 0.5,
+        gap_probability=GAP_PROBABILITY,
+    )
 
-    def __init__(
-        self,
-        seed: int = 42,
-        volatility: float = 0.02,
-        trend_strength: float = 0.0001,
-        gap_probability: float = 0.1,
-    ):
-        """
-        Initialize the data generator.
 
-        Args:
-            seed: Random seed for reproducibility
-            volatility: Daily price volatility (standard deviation)
-            trend_strength: Strength of upward trend (0 = no trend)
-            gap_probability: Probability of price gaps (0-1)
-        """
-        self.seed = seed
-        self.volatility = volatility
-        self.trend_strength = trend_strength
-        self.gap_probability = gap_probability
-        np.random.seed(seed)
+def generate_market_data(
+    market: str,
+    dates: list[date],
+    *,
+    volatility: float,
+    trend_strength: float,
+    rng: np.random.Generator,
+    num_tickers: int | None = None,
+) -> pl.DataFrame:
+    """Generate test data for an entire market.
 
-    def generate_price_series(self, start_price: float, num_days: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Generate realistic price series using geometric Brownian motion.
+    Args:
+        market: Market identifier ('us_equity', 'cn_ashare', 'hk_sg_equity')
+        dates: List of trading dates
+        volatility: Daily price volatility (standard deviation)
+        trend_strength: Mean daily return
+        rng: Shared random generator (deterministic per seed)
+        num_tickers: Limit number of tickers (for faster generation)
 
-        Args:
-            start_price: Initial price
-            num_days: Number of trading days
+    Returns:
+        DataFrame with all tickers' data
+    """
+    profile = market_profile(market, volatility, trend_strength)
+    tickers = cast(list[str], MARKET_CONFIGS[market]["tickers"])
 
-        Returns:
-            Tuple of (open, high, low, close) arrays
-        """
-        # Generate daily returns with trend
-        returns = np.random.normal(self.trend_strength, self.volatility, num_days)
+    # Sample tickers if limit specified
+    if num_tickers and num_tickers < len(tickers):
+        tickers = rng.choice(tickers, num_tickers, replace=False).tolist()
 
-        # Add occasional price gaps
-        gaps = np.random.rand(num_days) < self.gap_probability
-        returns[gaps] += np.random.choice([-0.05, 0.05], size=gaps.sum())
-
-        # Calculate prices
-        prices = start_price * np.exp(np.cumsum(returns))
-        prices = np.concatenate([[start_price], prices[:-1]])
-
-        # Generate OHLC from close prices
-        opens = np.roll(prices, 1)
-        opens[0] = start_price
-
-        closes = prices.copy()
-
-        # Generate intraday high/low
-        daily_ranges = np.abs(np.random.normal(0, self.volatility * 0.5, num_days))
-        highs = np.maximum(opens, closes) + daily_ranges
-        lows = np.minimum(opens, closes) - daily_ranges
-
-        # Ensure high >= open/close and low <= open/close
-        highs = np.maximum.reduce([highs, opens, closes])
-        lows = np.minimum.reduce([lows, opens, closes])
-
-        return opens, highs, lows, closes
-
-    def generate_volume(self, num_days: int, base_volume: int, volume_range: tuple[int, int]) -> np.ndarray:
-        """
-        Generate realistic volume series with random variation.
-
-        Args:
-            num_days: Number of days
-            base_volume: Base volume level
-            volume_range: (min, max) volume range
-
-        Returns:
-            Array of volume values
-        """
-        # Generate volume with lognormal distribution
-        volume_std = np.log(volume_range[1] / volume_range[0]) / 4
-        volume_mean = np.log(base_volume)
-
-        volumes = np.random.lognormal(volume_mean, volume_std, num_days)
-
-        # Clip to range
-        volumes = np.clip(volumes, volume_range[0], volume_range[1])
-
-        # Round to integers
-        return volumes.astype(np.int64)
-
-    def generate_ticker_data(
-        self,
-        ticker: str,
-        dates: list[date],
-        price_range: tuple[float, float],
-        volume_range: tuple[int, int],
-        price_override: float | None = None,
-    ) -> pd.DataFrame:
-        """
-        Generate test data for a single ticker.
-
-        Args:
-            ticker: Ticker symbol
-            dates: List of trading dates
-            price_range: (min, max) price range
-            volume_range: (min, max) volume range
-            price_override: Override starting price
-
-        Returns:
-            DataFrame with OHLCV data
-        """
-        num_days = len(dates)
-
-        # Determine starting price
-        start_price = price_override or np.random.uniform(*price_range)
-
-        # Generate price series
-        opens, highs, lows, closes = self.generate_price_series(start_price, num_days)
-
-        # Generate volume
-        base_volume = int(np.random.uniform(*volume_range))
-        volumes = self.generate_volume(num_days, base_volume, volume_range)
-
-        # Create DataFrame
-        df = pd.DataFrame(
-            {
-                "ticker": ticker,
-                "date": dates,
-                "open": opens,
-                "high": highs,
-                "low": lows,
-                "close": closes,
-                "volume": volumes,
-                "adj_close": closes,  # Same as close for simplicity
-            }
-        )
-
-        # Round prices to 2 decimal places
-        price_cols = ["open", "high", "low", "close", "adj_close"]
-        df[price_cols] = df[price_cols].round(2)
-
-        # Ensure data quality
-        df = self._ensure_data_quality(df)
-
-        return df
-
-    def _ensure_data_quality(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Ensure data quality and remove unrealistic values.
-
-        Args:
-            df: Input DataFrame
-
-        Returns:
-            Cleaned DataFrame
-        """
-        # Ensure high >= low
-        df = df[df["high"] >= df["low"]]
-
-        # Ensure high >= open, close
-        df = df[df["high"] >= df["open"]]
-        df = df[df["high"] >= df["close"]]
-
-        # Ensure low <= open, close
-        df = df[df["low"] <= df["open"]]
-        df = df[df["low"] <= df["close"]]
-
-        # Remove negative prices or volume
-        df = df[df["close"] > 0]
-        df = df[df["volume"] > 0]
-
-        # Remove zero prices
-        price_cols = ["open", "high", "low", "close", "adj_close"]
-        for col in price_cols:
-            df = df[df[col] > 0]
-
-        return df
-
-    def generate_market_data(
-        self,
-        market: str,
-        tickers: list[str],
-        dates: list[date],
-        num_tickers: int | None = None,
-    ) -> pd.DataFrame:
-        """
-        Generate test data for an entire market.
-
-        Args:
-            market: Market identifier ('us_equity', 'cn_ashare', 'hk_sg_equity')
-            tickers: List of ticker symbols
-            dates: List of trading dates
-            num_tickers: Limit number of tickers (for faster generation)
-
-        Returns:
-            DataFrame with all tickers' data
-        """
-        if market not in MARKET_CONFIGS:
-            raise ValueError(f"Unknown market: {market}")
-
-        config = MARKET_CONFIGS[market]
-
-        # Sample tickers if limit specified
-        if num_tickers and num_tickers < len(tickers):
-            tickers = np.random.choice(tickers, num_tickers, replace=False).tolist()
-
-        logger.info("generating_market_data", ticker_count=len(tickers), market=market)
-
-        price_range = cast(tuple[float, float], config["price_range"])
-        volume_range = cast(tuple[int, int], config["volume_range"])
-
-        # Generate data for each ticker
-        df_list = []
-        for i, ticker in enumerate(tickers):
-            if (i + 1) % 10 == 0:
-                logger.info("ticker_progress", current=i + 1, total=len(tickers))
-
-            try:
-                ticker_df = self.generate_ticker_data(ticker, dates, price_range, volume_range)
-                df_list.append(ticker_df)
-            except Exception as e:
-                logger.warning("ticker_data_generation_failed", ticker=ticker, error=str(e))
-                continue
-
-        if not df_list:
-            logger.error("no_data_generated", market=market)
-            return pd.DataFrame()
-
-        # Combine all tickers
-        result = pd.concat(df_list, ignore_index=True)
-
-        logger.info("market_data_generated", row_count=len(result), market=market)
-        return result
+    logger.info("generating_market_data", ticker_count=len(tickers), market=market)
+    result = synthetic_ohlcv(tickers, dates, profile=profile, rng=rng)
+    logger.info("market_data_generated", row_count=result.height, market=market)
+    return result
 
 
 # =============================================================================
@@ -424,7 +144,7 @@ class TestDataGenerator:
 # =============================================================================
 
 
-def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: str = "date") -> bool:
+def write_partitioned_parquet(df: pl.DataFrame, output_dir: Path, date_column: str = "date") -> bool:
     """
     Write DataFrame to Hive-partitioned Parquet by date.
 
@@ -436,7 +156,7 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
     Returns:
         True if successful
     """
-    if df.empty:
+    if df.is_empty():
         logger.warning("Empty DataFrame, skipping write")
         return False
 
@@ -444,14 +164,11 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
 
     try:
         # Group by date and write each partition
-        dates = df[date_column].unique()
+        dates = df[date_column].unique().to_list()
 
         for i, trading_date in enumerate(dates):
             if (i + 1) % 50 == 0:
                 logger.info("partition_progress", current=i + 1, total=len(dates))
-
-            # Filter data for this date
-            date_df = df[df[date_column] == trading_date]
 
             # Create partition directory
             partition_dir = output_dir / f"date={trading_date}"
@@ -465,11 +182,9 @@ def write_partitioned_parquet(df: pd.DataFrame, output_dir: Path, date_column: s
                 logger.debug("skipping_existing_file", file=str(output_file))
                 continue
 
-            # Convert date to datetime for Parquet
-            date_df_write = date_df.copy()
-            date_df_write[date_column] = pd.to_datetime(date_df_write[date_column])
-
-            date_df_write.to_parquet(output_file, index=False, compression="snappy")
+            # Filter data for this date; store the partition column as a timestamp.
+            date_df = df.filter(pl.col(date_column) == trading_date).with_columns(pl.col(date_column).cast(pl.Datetime("us")))
+            date_df.write_parquet(output_file, compression="snappy")
 
         logger.info("parquet_write_complete", partition_count=len(dates), output_dir=str(output_dir))
         return True
@@ -579,29 +294,6 @@ Examples:
     return parser.parse_args()
 
 
-def generate_trading_dates(start_date: date, end_date: date) -> list[date]:
-    """
-    Generate list of trading dates (exclude weekends).
-
-    Args:
-        start_date: Start date
-        end_date: End date
-
-    Returns:
-        List of trading dates (Monday-Friday only)
-    """
-    dates = []
-    current = start_date
-
-    while current <= end_date:
-        # Exclude weekends (5 = Saturday, 6 = Sunday)
-        if current.weekday() < 5:
-            dates.append(current)
-        current += timedelta(days=1)
-
-    return dates
-
-
 def main() -> int:
     """Main entry point."""
     args = parse_arguments()
@@ -618,7 +310,7 @@ def main() -> int:
     logger.info("test_data_date_range", start_date=str(start_date), end_date=str(end_date))
 
     # Generate trading dates
-    trading_dates = generate_trading_dates(start_date, end_date)
+    trading_dates = business_days(start_date, end_date)
     logger.info("trading_days_count", count=len(trading_dates))
 
     # Parse markets
@@ -636,8 +328,8 @@ def main() -> int:
     logger.info("volatility", value=args.volatility)
     logger.info("trend", value=args.trend)
 
-    # Initialize generator
-    generator = TestDataGenerator(seed=args.seed, volatility=args.volatility, trend_strength=args.trend)
+    # One RNG for the whole run so each market continues the same stream.
+    rng = np.random.default_rng(args.seed)
 
     # Generate data for each market
     success_count = 0
@@ -645,18 +337,21 @@ def main() -> int:
         logger.info("market_processing_start", market=market)
 
         try:
-            config = MARKET_CONFIGS[market]
-            tickers = cast(list[str], config["tickers"])
+            df = generate_market_data(
+                market,
+                trading_dates,
+                volatility=args.volatility,
+                trend_strength=args.trend,
+                rng=rng,
+                num_tickers=args.num_tickers,
+            )
 
-            # Generate data
-            df = generator.generate_market_data(market, tickers, trading_dates, num_tickers=args.num_tickers)
-
-            if df.empty:
+            if df.is_empty():
                 logger.warning("no_data_for_market", market=market)
                 continue
 
             # Write to Parquet
-            output_dir = cast(Path, config["output_dir"])
+            output_dir = cast(Path, MARKET_CONFIGS[market]["output_dir"])
             success = write_partitioned_parquet(df, output_dir)
 
             if success:
