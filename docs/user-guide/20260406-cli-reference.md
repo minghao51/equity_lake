@@ -405,7 +405,9 @@ uv run equity report backtest --strategy mean_reversion --cost-regime high \
 ### `equity monitor`
 
 Monitor pipeline health and data quality. Always writes a report (default
-`logs/health-report.json`) so dashboards can render it.
+`logs/health-report.json`) so dashboards can render it. **Exits 1 when the
+pipeline is unhealthy** (cron/schedulers branch on the exit code; the report
+is still written).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|

@@ -241,6 +241,8 @@ class MarketDataFetcher:
                 requests.exceptions.ConnectionError,
                 requests.exceptions.Timeout,
                 requests.exceptions.ChunkedEncodingError,
+                # urllib3 adapter-level retries exhausted inside a single call.
+                requests.exceptions.RetryError,
             ) as exc:
                 raise TransientError(str(exc)) from exc
             except urllib.error.HTTPError as exc:

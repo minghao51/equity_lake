@@ -725,3 +725,52 @@ class TestQueryDefaults:
         result = runner.invoke(app, ["query", "--help"])
         assert result.exit_code == 0
         assert DUCKDB_DEFAULT_PATH.name in result.stdout
+
+
+def _iter_command_paths():
+    """Enumerate every command path registered on the unified CLI.
+
+    Reads the live Typer registry, so new commands are covered automatically.
+    """
+
+    def walk(group, prefix=()):
+        for cmd in group.registered_commands:
+            if cmd.name:
+                yield (*prefix, cmd.name)
+        for sub in group.registered_groups:
+            if sub.name:
+                yield from walk(sub.typer_instance, (*prefix, sub.name))
+
+    yield from walk(app)
+
+
+class TestFullHelpScan:
+    """Every registered command must render --help cleanly (handoff 04 §7 debt)."""
+
+    @pytest.mark.parametrize("cmd", sorted(_iter_command_paths()), ids=lambda c: " ".join(c))
+    def test_command_help_renders(self, cmd):
+        result = runner.invoke(app, [*cmd, "--help"])
+        assert result.exit_code == 0, f"{' '.join(cmd)} --help failed:\n{result.stdout}"
+        assert result.stdout.strip(), f"{' '.join(cmd)} --help produced no help text"
+
+
+class TestMonitorExitCode:
+    """`equity monitor` must fail (exit 1) when the pipeline is unhealthy."""
+
+    def _invoke_monitor(self, healthy: bool):
+        with patch("equity_lake.monitoring.health.PipelineMonitor") as monitor_cls:
+            inst = monitor_cls.return_value
+            inst.run_health_check.return_value = healthy
+            inst.check_results = {"tables_exist": healthy, "freshness": healthy}
+            result = runner.invoke(app, ["monitor"])
+        return result
+
+    def test_exits_zero_when_healthy(self):
+        result = self._invoke_monitor(healthy=True)
+        assert result.exit_code == 0
+        assert "HEALTHY" in result.stdout
+
+    def test_exits_one_when_unhealthy(self):
+        result = self._invoke_monitor(healthy=False)
+        assert result.exit_code == 1
+        assert "ISSUES" in result.stdout

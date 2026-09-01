@@ -81,7 +81,7 @@ def monitor(
     output_json: Annotated[str | None, typer.Option("--output-json", help="Save full report. Defaults to logs/health-report.json")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Monitor pipeline health and data quality."""
+    """Monitor pipeline health and data quality. Exits 1 when unhealthy."""
     from equity_lake.core.config import get_settings
     from equity_lake.monitoring.alerting import build_alerter
     from equity_lake.monitoring.health import PipelineMonitor
@@ -114,6 +114,11 @@ def monitor(
     else:
         typer.echo("\u26a0\ufe0f  Pipeline has ISSUES")
     typer.echo("=" * 70 + "\n")
+
+    # Cron/schedulers branch on the exit code: unhealthy data must fail the
+    # command even though the report itself was produced successfully.
+    if not all_healthy:
+        raise typer.Exit(1)
 
     # Always persist to the canonical location so dashboards can render it.
     # --output-json overrides the default logs/health-report.json path.

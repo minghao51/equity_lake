@@ -1,9 +1,11 @@
 # RAG corpus seeding (Phase 2C)
 
-Runbook to (re)generate the silver corpus that the Phase 2C RAG agent retrieves
-over: SEC filing extractions (`02_silver/sec_extractions`) and earnings-call
-transcript articles (`02_silver/processed_articles`). A full transcript **bronze
-base** is loaded once and expanded per ticker; silver enrichment is scoped per
+Runbook to (re)generate the silver corpus for RAG retrieval over: SEC filing
+extractions (`02_silver/sec_extractions`) and earnings-call transcript articles
+(`02_silver/processed_articles`). The Phase 2C RAG agent itself was removed in
+the 2026-08 dead-code sweep (never wired); the corpus remains generatable for
+whenever a retrieval consumer lands. A full transcript **bronze base** is loaded
+once and expanded per ticker; silver enrichment is scoped per
 run to bound DeepSeek cost.
 
 | Table | Layer | Producer | Keys / cost |
