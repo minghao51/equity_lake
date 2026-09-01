@@ -96,3 +96,21 @@ uv run pytest -n auto && uv run ruff check . && uv run mypy
 ## Out of scope
 
 Alert routing/retry infrastructure beyond tenacity-on-webhook; auth for the API.
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `624b182`.
+- Monitoring: failure semantics fixed (corrupt tables now fail + alert);
+  monitor bootstraps the delta extension locally (shared-helper consolidation
+  remains 07's); phantom log-check removed; per-table/market freshness via
+  `EQUITY_MONITORING__*` (SEC quarterly — permanent false alert gone); alerts
+  deduped by (check, target); double-print split (monitor returns data, CLI
+  renders); webhook delivery retried via tenacity.
+- API: predictions partition-pruned by `target_date` (handoff assumed the param
+  existed — it was added); signals default to the last trading day;
+  non-loopback `serve` guard (warn + confirm, EOF-safe).
+- Catalog: all 15 entries `format="delta"`; paths from `core.paths`; CI drift
+  test pins `catalog.jsonl` to build output (regenerated); missing-path warning.
+- `equity query` run-all fixed (query_4/5 defaults + `db.query`);
+  `WriteMode` trimmed; `PipelineMonitor.close()` + context manager; CLI closes
+  in `finally`; missing unstructured tables logged as vacuous passes.

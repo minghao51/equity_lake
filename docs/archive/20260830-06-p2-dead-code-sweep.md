@@ -103,3 +103,18 @@ on 2026-08-30; re-run the grep before each deletion to confirm nothing landed in
 ```bash
 uv run pytest -n auto && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `f41c886`.
+- Owner decisions executed: `agent/` package + boundary entry + `sqlite-vec`
+  group deleted; `WebhookAlerter` wired via `EQUITY_ALERTING__WEBHOOK_URL`
+  (Settings nested model); `log_training_run` deleted (resurrect from git if
+  needed); FinBERT stub removed; `PredictionModel` removed.
+- Full deletion list per the brief (each re-verified zero-reference at execute
+  time); pyproject: `viz` group, `jinja2`, `praw`, stale mypy overrides removed;
+  `uv.lock` regenerated; canonical docs aligned.
+- Flags for the owner (not actioned): `seaborn` unused in `ml` group;
+  `docs/plans/20260614-*` + `technical_roadmap.md` keep historical references
+  (allowed); RAG seeding guide references the deleted Phase-2C agent as future
+  consumer.

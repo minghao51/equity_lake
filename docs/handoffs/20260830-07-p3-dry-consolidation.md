@@ -104,3 +104,34 @@ picks an existing home rather than creating one.
 uv run equity catalog-generate   # only if feature DAG changed (worker 2)
 uv run pytest -n auto && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
+
+## Scope update (2026-08-31 — read before starting)
+
+Written before hands 05/06/08/09 landed. **Already done elsewhere — skip:**
+- Sharpe/metrics unification → landed in 08 (`backtesting/metrics.py`).
+- Momentum duplicate-expression dedup → landed in 08 (schema-stable).
+- Market→directory registry consolidation (worker-1 item) → superseded by
+  ADR-0010 / handoff 05 (`core/paths.PRICE_MARKETS`; private copies deleted).
+- Dead code that shrank several items below → landed in 06.
+
+**Still live (re-verify line numbers against current code):**
+- Worker 1: `ensure_columns` adoption in the ~9 fetchers; shared
+  `ensure_delta_extension()` in `storage/lake_reader.py` replacing the
+  remaining `INSTALL delta; LOAD delta` sites (incl. `monitoring/health.py`'s
+  local `_bootstrap_delta`); DuckDB view-setup dedup (`duckdb.py` vs
+  `backtesting/data_loader.py` vs signal generators); orchestrator
+  explicit-tickers tuple + market-taxonomy dedup (re-check what 05 already
+  normalized); router Finnhub factory helpers + `MARKET_REGISTRY` dict
+  dispatch (re-check post-05).
+- Worker 2: one XGBoost param dict (4 copies), one `scale_pos_weight` (3), one
+  non-feature-column registry (3), single `FEATURE_SCHEMA_VERSION` (3),
+  `features/__init__` guarded-import dedup, stale `ml/comparison.py` docstring.
+- Worker 3: one synthetic-seeding module (bootstrap/seed_demo/test_data —
+  note 04 redirected outputs; `test_data.py` keep-or-delete decision rolls into
+  this), shared backtest command factory (analysis vs arena), dashboard
+  update-history loading → `_common.py`, `ml compare`/`ml ablate` option
+  dedup, generators/ml.py BUY/SELL construction dedup, formatters
+  `summarize()`, scanner double-enablement check.
+
+Same rules as the brief: consolidation only, no behavior change, change-matrix
+companions where applicable, full gate before handing off.

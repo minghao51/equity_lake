@@ -145,3 +145,24 @@ uv run pytest tests/unit tests/integration -k "ml or forecast or backtest or str
 uv run equity catalog-generate   # if DAG outputs changed
 uv run pytest -n auto && uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `a46f0fc`.
+- Worker A: backtest() drops null-target rows, fits with train parity
+  (`scale_pos_weight` + purged-tail optimized threshold, not fixed 0.5);
+  KFold(2) unpurged fallback removed (raises); inclusive prediction bounds +
+  clip-with-warning; enrichment error paths schema-stable; momentum duplicate
+  expression deduped schema-stable (catalog unchanged); z-score stats on
+  non-null values; ablation aligned on the shared date set; empty-frame guard;
+  real types in features.pipeline; raw_01 single-source validator spec.
+- Worker B: trend/mean-reversion hold-until-opposite-signal (+ weight-shape
+  tests, next-bar execution asserted); one shared Sharpe helper
+  (`backtesting/metrics.py`, rf=0.02) surfaced on cards; engine lazy loader,
+  typed warnings, `--group` hint, structlog kv; `bfill` removed; pandas dropped;
+  closed `SignalRecord` write boundary (whitelisted metadata, no struct
+  columns); scanner structlog; generator failures log; arena per-market cost
+  defaults (KRX sell-tax corrected in review), asymmetry + survivorship
+  caveats, evidence_refs point at real artifacts.
+- FindingCard values will differ from pre-fix runs by design (multi-day holds,
+  US 0-tax, rf-consistent benchmark).

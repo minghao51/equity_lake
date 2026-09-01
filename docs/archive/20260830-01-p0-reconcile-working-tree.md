@@ -78,3 +78,14 @@ Everything else in the index. Do not "improve" refactored files beyond the three
   assert both directions).
 - No caller of `execute_eod_pipeline` can trigger an unscoped 120-day backfill.
 - No unrelated diffs smuggled into the commit.
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `f904276` (includes the in-flight Phase-3 refactor it reconciled).
+- All three defects fixed: nested `results["ingestion"]` gate lookups (enrichment
+  nodes reachable again), scoped history backfill (`explicit_tickers or tickers`
+  forwarding), `_pipeline_succeeded` + CLI test mocks aligned to the nested shape.
+- Beyond the brief: required-market failures now log at error level; gate
+  flip-**on** tests added post-review (reviewer warning); `explicit_tickers=[]`
+  semantics pinned by test.
+- Note: this commit also swept in pre-existing uncommitted docs/plans material.

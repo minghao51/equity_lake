@@ -105,3 +105,20 @@ uv run pytest -n auto && uv run ruff check . && uv run mypy
 
 Writer-boundary validation policy (handoff 03), market vocabulary (05), router factory
 dedup (07).
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `9d8b0be`.
+- A1 retry now covers requests/urllib (HTTPError before URLError; 5xx/408/429
+  only). Residual: `requests.RetryError` and yfinance-internal exceptions remain
+  unconverted (accepted; transport errors are the reachable path).
+- A2 flat multi-ticker batches discarded (pre-existing tests that codified the
+  bug were reshaped to MultiIndex mocks — assertions strengthened).
+- A3 `cn.py` re-raises (aligned with `cn_efinance.py`). A4 all hygiene items
+  done; StockTwits kept query-param auth (documented as the endpoint's only
+  supported scheme); rss errors propagate as TransientError instead of
+  swallowing (5xx retried — review fix); adaptive-throttle removed.
+- Worker B: gap-filling scoped to `REQUIRED_PRICE_MARKETS` + per-market
+  isolation; calendar keys via `MARKET_DIR_REVERSE` (superseded later by 05's
+  registry); `trading_days_between` intersection semantics with documented
+  trade-off; parallel durations fixed.

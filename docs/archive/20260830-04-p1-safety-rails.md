@@ -89,3 +89,18 @@ uv run pytest -n auto && uv run ruff check . && uv run mypy
 
 Consolidating the three synthetic-data generators (handoff 07 item 8) — only redirect
 their outputs here.
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `b74b713`.
+- `equity demo seed` defaults to `data/sample`; production lake requires
+  `--lake` + confirmation or `--overwrite-production-lake` (case-insensitive-
+  safe path comparison); `--dry-run` writes nothing.
+- `test_data.py` kept (owner call deferred in 07) but redirected to
+  `data/sandbox/test_data/`; orphaned script docs fixed.
+- `--save-results`: skipped on dry-run, written to `LOGS_DIR` (dashboard aligned).
+- All four `--api-key` options removed (env-only); devtools exit codes + `--dry-run`.
+- Beyond the brief: review found `typer.Option("--dry-run", ...)` creates no
+  `--no-dry-run` negation — swept and fixed at **16 sites** (`delta-vacuum`
+  could never execute for real); seed_demo lake guard hardened.
+- Deferred: section 7 help-scan test debt (~20 commands) — still open.

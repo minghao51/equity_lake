@@ -110,3 +110,22 @@ uv run pytest -n auto && uv run ruff check . && uv run mypy
 
 API router changes beyond mapping the new read error to 503 (handoff 09 owns the rest),
 monitoring fixes (09).
+
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `502060b`.
+- `merge_delta` append fallback removed; schema errors now evolve the table
+  (seed-overwrite + single re-merge) or fail closed; `test_delta_schema.py`
+  rewritten to pin key-uniqueness idempotency.
+- `read_delta` raises `DeltaReadError`; the 503 mapping landed in the routers
+  (not `deps.py` — its documented contract is FastAPI-free).
+- pointblank **promoted to main dependencies** (optional `validation` group
+  deleted) + guarded import with friendly error; `validate_quality` flipped to
+  default-True at ingestion write boundaries via `_quality_data_type()` routing
+  + new `ArticleDataSchema` on the silver merge path (ADR-0007 now actually
+  enforced); devtools opt-out preserved.
+- Dry-run reordered before validation/profiling (side-effect free); profiles to
+  `data/profiles` via `PROFILES_DIR`, in-memory during ingest.
+- `market`→`table` rename across delta API; s3 timeout configurable
+  (`EQUITY_S3_SYNC__TIMEOUT_SECONDS`, landed in `core/settings.py`, not
+  `config_models.py`); migration reordered write-then-cleanup.

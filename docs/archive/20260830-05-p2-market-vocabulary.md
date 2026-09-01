@@ -73,3 +73,22 @@ Consequences already felt:
 uv run pytest tests/unit/test_source_storage_contracts.py tests/unit/test_import_boundaries.py -q
 uv run pytest -n auto && uv run ruff check . && uv run mypy
 ```
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `63a5301`, implementing ADR-0010 (flipped to **Accepted** in the
+  same commit; drafted in `71e1c1d`).
+- All seven migration steps implemented: `PRICE_MARKETS` registry +
+  `canonical_market()`/`SHORT_TO_LONG` in `core/paths.py`; calendar maps
+  derived (dual-form stopgap rows deleted); long-key settings + alias-only
+  validator (typos raise); `MARKET_DIR_MAP` price entries registry-derived with
+  `MARKET_REGISTRY` in lockstep; normalization at every entry boundary; CLI
+  both-vocabulary flags + per-market `_resolve_run_date` (multi-market falls
+  back to US with a logged assumption); all five private registries deleted.
+- Tests: registry-derived vocabulary contract, AST no-market-dict-literal
+  outside the registry, mocked-calendar per-market date resolution,
+  both-vocabulary CLI tests; contracts long-keyed.
+- Notes: `config/tickers.yaml` keeps its short-key sections (separate
+  vocabulary, out of ADR scope — coupling documented at the pipeline seam);
+  payload `results["ingestion"]["markets"]` now long keys (consumers verified);
+  the rewrite typed `_rel`, clearing the long-standing mypy baseline
+  (`mypy src/` now 0 errors).
