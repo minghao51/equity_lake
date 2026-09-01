@@ -35,7 +35,9 @@ architecture pages and guides.
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
 - [archive/](archive/) for superseded implementation notes and spent scripts
-- [technical_roadmap.md](technical_roadmap.md) for phased enhancement plan
+- [plans/20260804-portfolio-roadmap.md](plans/20260804-portfolio-roadmap.md) for the
+  active roadmap (the archived `technical_roadmap.md` and its coverage map are
+  superseded — see `archive/`)
 
 ## Notes
 
