@@ -99,6 +99,7 @@ Every optional capability is a `[dependency-groups]` entry (installed with
 | `dashboard` | streamlit dashboard UI | `uv sync --group dashboard` |
 | `sentiment` | vaderSentiment | `uv sync --group sentiment` |
 | `s3` | boto3 + s5cmd for S3 bootstrap/sync | `uv sync --group s3` |
+| `intel` | scikit-learn-intelex — Intel oneAPI acceleration for CPU training (auto-applied on Intel CPUs via `ml/_intel.py`; no-op elsewhere) | `uv sync --group intel` |
 | `schedule` | croniter schedule parsing | `uv sync --group schedule` |
 | `docs` | MkDocs Material, mkdocstrings-python, mike | `uv sync --group docs` |
 

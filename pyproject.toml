@@ -89,6 +89,9 @@ s3 = [
     "boto3>=1.34.0",
     "s5cmd>=0.3.3",
 ]
+intel = [
+    "scikit-learn-intelex>=2025.0",
+]
 schedule = [
     "croniter>=6.2.2",
 ]
@@ -238,6 +241,8 @@ module = [
     "openai.*",
     "readability.*",
     "lightgbm.*",
+    "sklearnex",
+    "sklearnex.*",
     "wandb.*",
     "shap.*",
     "statsmodels.*",

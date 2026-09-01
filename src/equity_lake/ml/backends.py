@@ -21,7 +21,14 @@ from __future__ import annotations
 from typing import Any, Final, Literal, Protocol, cast, runtime_checkable
 
 import structlog
-import xgboost as xgb  # core dependency; LightGBM is imported lazily below.
+
+from equity_lake.ml._intel import configure_intel_runtime, intel_thread_count
+
+# Preset the Intel runtime (OMP/MKL env + optional sklearnex patch) BEFORE the
+# heavy imports below read their thread settings. No-op on non-Intel CPUs.
+_INTEL_INFO = configure_intel_runtime()
+
+import xgboost as xgb  # noqa: E402  (must follow the Intel env preset)  # core dependency; LightGBM is imported lazily below.
 
 logger = structlog.get_logger(__name__)
 
@@ -170,6 +177,15 @@ def build_estimator(
     normalized = normalize_params(backend, params or {})
     if scale_pos_weight is not None and float(scale_pos_weight) != 1.0:
         normalized["scale_pos_weight"] = scale_pos_weight
+
+    # Intel runtime: pin backend thread pools explicitly (user-passed values win).
+    # XGBoost uses ``nthread``; LightGBM uses ``num_threads``. No-op otherwise.
+    threads = intel_thread_count(_INTEL_INFO)
+    if threads is not None:
+        if backend == "xgboost":
+            normalized.setdefault("nthread", threads)
+        else:
+            normalized.setdefault("num_threads", threads)
 
     if backend == "xgboost":
         return cast("ModelBackend", xgb.XGBClassifier(**normalized))
