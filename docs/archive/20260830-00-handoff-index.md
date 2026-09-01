@@ -5,7 +5,7 @@ parallel review agents (per-module + cross-cutting sweep). Key findings re-verif
 hand before execution. Executed 2026-08-30 → 2026-08-31 via the worker → reviewer →
 full-gate → commit loop, one commit per workstream.
 
-## Status: 8 of 9 workstreams LANDED — 07 (DRY consolidation) is the only one open
+## Status: ALL 9 WORKSTREAMS LANDED — suite complete and archived (2026-08-31)
 
 | ID | Handoff | Status | Commit |
 |----|---------|--------|--------|
@@ -15,7 +15,7 @@ full-gate → commit loop, one commit per workstream.
 | 04 | Safety rails (devtools, CLI, secrets) | ✅ Landed | `b74b713` |
 | 05 | Market vocabulary + registry (ADR-0010) | ✅ Landed | `63a5301` |
 | 06 | Dead-code sweep | ✅ Landed | `f41c886` |
-| 07 | DRY consolidation | **OPEN — scope updated in-file** | — |
+| 07 | DRY consolidation | ✅ Landed | `c1035c0` |
 | 08 | ML & backtest integrity | ✅ Landed | `a46f0fc` |
 | 09 | Monitoring, API, catalog | ✅ Landed | `624b182` |
 
@@ -23,16 +23,13 @@ Related: `71e1c1d` (ADR-0010 proposal) · `be7567b`→`2aa238c` (Intel oneAPI ru
 preset — post-audit addition, `ml/_intel.py` + `intel` dependency group).
 
 Completed briefs (each with an **Outcome** section recording the landed commit and
-deviations from the plan) moved to **`docs/archive/`**: `20260830-01`, `-02`, `-03`,
-`-04`, `-05`, `-06`, `-08`, `-09`.
+deviations from the plan) all live in **`docs/archive/`**: `20260830-01` through `-09`.
+This index is the suite's completion record.
 
-## Open work: 07
+## Open work: none
 
-`20260830-07-p3-dry-consolidation.md` — read its **Scope update (2026-08-31)**
-section first: several items were absorbed by 05/06/08 and must be skipped; the live
-remainder is grouped by the original three worker scopes. Rules from the original
-brief still bind: consolidation only (no behavior change), smallest diff, change-matrix
-companions where applicable, full gate before hand-off.
+All nine workstreams are landed. The owner's loose-ends list below is the only
+unclaimed remainder (deliberately unscheduled behavior/feature calls, not defects).
 
 ## Loose ends flagged during execution (owner's list, not scheduled)
 

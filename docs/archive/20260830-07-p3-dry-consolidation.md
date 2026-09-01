@@ -135,3 +135,21 @@ Written before hands 05/06/08/09 landed. **Already done elsewhere — skip:**
 
 Same rules as the brief: consolidation only, no behavior change, change-matrix
 companions where applicable, full gate before handing off.
+## Outcome (closed 2026-08-31)
+
+- **Landed:** `c1035c0`. Executed per the scope update above; the two
+  abort-prone workers (2/3) had landed their edits before dying — verified
+  marker-by-marker and reviewed inline (reviewer subagent kept hitting rate
+  limits).
+- Review notes: the validation-fold param risk (subsample/colsample entering
+  fold fits) was handled correctly — explicit `None` overrides dropped by
+  `normalize_params`, fold params stay 7-key equivalent; news/sentiment
+  special fills verified dead (parsers always emit the columns);
+  `test_data.py` verdict: kept as a thin caller (unique per-market
+  universes + CLI knobs); `_create_market_view` seam retained in duckdb.py
+  for custom-data-dir callers (integration test dependency).
+- Shared homes created: `ensure_delta_extension` + `create_market_views`
+  (lake_reader), `DEFAULT_XGB_PARAMS` + `canonical_training_params`
+  (backends), `build_backtest_engine` (backtesting/factory.py),
+  `devtools/seeding.py`, `dashboard/_common.load_update_history`,
+  `signals/formatters/base.summarize`.
