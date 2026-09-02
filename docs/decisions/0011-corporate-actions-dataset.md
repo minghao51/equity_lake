@@ -1,6 +1,6 @@
 # ADR-0011: Corporate Actions as a First-Class Dataset
 
-**Status:** Proposed
+**Status:** Accepted (2026-08-31)
 **Date:** 2026-08-31
 **Deciders:** Repository owner
 **Related:** ADR-0001 (medallion layout + generated catalog), ADR-0003 (Polars-first),

@@ -30,4 +30,4 @@ enforced contracts when guidance conflicts.
 | [0008](0008-vector-backtest-engine-default.md) | `VectorBacktestEngine` as default backtesting engine | Accepted |
 | [0009](0009-decisions-and-archive-directories.md) | `docs/decisions/` and `docs/archive/` directory model | Accepted |
 | [0010](0010-market-vocabulary-and-directory-registry.md) | Canonical long market keys, single registry in `core/paths.py` | Accepted |
-| [0011](0011-corporate-actions-dataset.md) | Corporate actions as an explicit dataset, point-in-time adjustment at read | **Proposed** |
+| [0011](0011-corporate-actions-dataset.md) | Corporate actions as an explicit dataset, point-in-time adjustment at read | Accepted |
