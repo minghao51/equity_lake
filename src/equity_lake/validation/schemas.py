@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 import polars as pl
 
 from equity_lake.core.polars_utils import ensure_polars
+from equity_lake.core.schemas import CORPORATE_ACTION_TYPES
 
 try:
     import pointblank as pb
@@ -40,7 +42,7 @@ class PointblankSchema:
         validation = cls()._build_validation(df_polars).interrogate()
         failed_steps = [s for s in validation.validation_info if not s.all_passed]
         if failed_steps:
-            msgs = [f"- {s.autobrief} ({s.n_failed} failed)" for s in failed_steps]
+            msgs = [f"- {s.brief or s.autobrief} ({s.n_failed} failed)" for s in failed_steps]
             raise ValueError("Schema validation failed:\n" + "\n".join(msgs))
         return df_polars
 
@@ -134,9 +136,42 @@ class ArticleDataSchema(PointblankSchema):
         return v
 
 
+class CorporateActionSchema(PointblankSchema):
+    """Schema for corporate action rows (ADR-0011: dividends and splits).
+
+    One row per (ticker, ex_date, action); ``value`` is a non-negative cash
+    dividend per share or a strictly positive split ratio, and ``ex_date``
+    is never in the future.
+    """
+
+    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+        return (
+            pb.Validate(data=df, label="Corporate action data schema")
+            .col_vals_not_null(columns="ticker")
+            .col_vals_not_null(columns="ex_date")
+            .col_vals_not_null(columns="action")
+            .col_vals_not_null(columns="value")
+            .col_vals_in_set(columns="action", set=CORPORATE_ACTION_TYPES)
+            .col_vals_ge(columns="value", value=0)
+            .col_vals_expr(
+                expr=(pl.col("action") != "split") | (pl.col("value") > 0),
+                brief="Split rows must have a strictly positive ratio (value > 0)",
+            )
+            .col_vals_expr(
+                expr=pl.col("ex_date") <= date.today(),
+                brief="ex_date must not be in the future",
+            )
+            .col_vals_expr(
+                expr=~pl.struct("ticker", "ex_date", "action").is_duplicated(),
+                brief="(ticker, ex_date, action) rows must be unique",
+            )
+        )
+
+
 SCHEMA_REGISTRY: dict[str, type[PointblankSchema]] = {
     "price": PriceDataSchema,
     "macro": MacroDataSchema,
     "news": NewsDataSchema,
     "article": ArticleDataSchema,
+    "corporate_action": CorporateActionSchema,
 }

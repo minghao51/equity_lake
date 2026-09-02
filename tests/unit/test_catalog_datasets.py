@@ -33,8 +33,11 @@ class TestLayerStructure:
             assert ds.layer in VALID_LAYERS, f"Dataset {ds.name} has invalid layer: {ds.layer!r}"
 
     def test_no_duplicate_dataset_names(self) -> None:
-        names = [ds.name for ds in ALL_DATASETS]
-        assert len(names) == len(set(names)), f"Duplicate names: {names}"
+        # Dataset names are unique within a layer; a bronze/silver pair may
+        # intentionally share a name (corporate_actions, ADR-0011) since all
+        # lineage is layer-scoped.
+        keys = [(ds.layer, ds.name) for ds in ALL_DATASETS]
+        assert len(keys) == len(set(keys)), f"Duplicate (layer, name): {keys}"
 
     def test_all_lists_concatenate_correctly(self) -> None:
         assert ALL_DATASETS == BRONZE_DATASETS + SILVER_DATASETS + GOLD_DATASETS + PLATINUM_DATASETS
@@ -72,12 +75,14 @@ class TestPathConventions:
             rel(core_paths.KRX_EQUITY_DIR),
             rel(core_paths.BRONZE_MACRO_DIR),
             rel(core_paths.BRONZE_RAW_ARTICLES_DIR),
+            rel(core_paths.BRONZE_CORPORATE_ACTIONS_DIR),
             rel(core_paths.SILVER_NEWS_SENTIMENT_DIR),
             rel(core_paths.SILVER_SOCIAL_SENTIMENT_DIR),
             rel(core_paths.SILVER_PROCESSED_ARTICLES_DIR),
             rel(core_paths.SILVER_ANALYST_RATINGS_DIR),
             rel(core_paths.SILVER_SEC_EXTRACTIONS_DIR),
             rel(core_paths.SILVER_SEC_FINANCIALS_DIR),
+            rel(core_paths.SILVER_CORPORATE_ACTIONS_DIR),
             rel(core_paths.GOLD_FEATURES_DIR),
             rel(core_paths.PLATINUM_PREDICTIONS_DIR),
         }
@@ -123,7 +128,7 @@ class TestColumnDtypes:
             assert not unknowns, f"Silver dataset {ds.name} has unknown-dtype columns: {unknowns}"
 
     def test_all_dtypes_are_valid_polars_types(self) -> None:
-        valid = {"string", "datetime", "float64", "int64", "int32", "int16", "int8"}
+        valid = {"string", "date", "datetime", "float64", "int64", "int32", "int16", "int8"}
         for ds in ALL_DATASETS:
             for col in ds.columns:
                 assert col.dtype in valid, f"{ds.name}.{col.name} has unrecognized dtype {col.dtype!r}"

@@ -47,6 +47,20 @@ MACRO_COLUMNS = [
     "updated_at",
 ]
 
+# Corporate actions (ADR-0011): one row per (ticker, ex_date, action).
+# ``value`` is the cash dividend per share (``dividend``) or the split ratio
+# (``split``, e.g. 0.5 for a 2-for-1 split).
+CORPORATE_ACTION_COLUMNS = [
+    "ticker",
+    "ex_date",
+    "action",
+    "value",
+    "source",
+    "ingested_at",
+]
+
+CORPORATE_ACTION_TYPES = ("dividend", "split")
+
 MACRO_INDICATOR_CONFIG = {
     "dxy": {"source": "yfinance", "ticker": "^DXY"},
     "treasury_10y": {"source": "yfinance", "ticker": "^TNX"},
@@ -155,6 +169,8 @@ SEC_FINANCIAL_COLUMNS = [
 __all__ = [
     "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
+    "CORPORATE_ACTION_COLUMNS",
+    "CORPORATE_ACTION_TYPES",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",
     "NEWS_COLUMNS",

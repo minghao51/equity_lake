@@ -9,7 +9,7 @@ from datetime import date
 import structlog
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
-from equity_lake.core.schemas import MACRO_COLUMNS, NEWS_COLUMNS, SOCIAL_COLUMNS
+from equity_lake.core.schemas import CORPORATE_ACTION_COLUMNS, MACRO_COLUMNS, NEWS_COLUMNS, SOCIAL_COLUMNS
 
 logger = structlog.get_logger()
 
@@ -36,6 +36,8 @@ def _dedupe_key_columns(market: str) -> list[str]:
         return ["ticker", "date"]
     if market in ("02_silver/sec_financials", "us_sec_financials"):
         return ["ticker", "date", "filing_type"]
+    if market in ("01_bronze/corporate_actions", "02_silver/corporate_actions", "corporate_actions"):
+        return ["ticker", "ex_date", "action"]
     if market in ("04_platinum/predictions", "predictions"):
         return ["ticker", "date"]
     return ["ticker", "date"]
@@ -43,6 +45,7 @@ def _dedupe_key_columns(market: str) -> list[str]:
 
 _NEWS_QUALITY_MARKETS = frozenset({"us_news", "us_social_sentiment", "02_silver/news_sentiment", "02_silver/social_sentiment"})
 _MACRO_QUALITY_MARKETS = frozenset({"macro", "01_bronze/macro"})
+_CORPORATE_ACTION_QUALITY_MARKETS = frozenset({"corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions"})
 # Datasets with no cheap pointblank schema: article-type tables are enforced at
 # the silver merge path (ingestion/bronze_silver.py), the rest rely on the
 # column-presence `validate_schema` contract only.
@@ -72,6 +75,8 @@ def _quality_data_type(market: str) -> str | None:
         return "news"
     if market in _MACRO_QUALITY_MARKETS:
         return "macro"
+    if market in _CORPORATE_ACTION_QUALITY_MARKETS:
+        return "corporate_action"
     if market in _UNTYPED_QUALITY_MARKETS:
         return None
     return "price"
@@ -84,6 +89,7 @@ def upsert_dataset(
     dry_run: bool = False,
     validate_quality: bool = True,
     skip_schema_validation: bool = False,
+    partition_by: list[str] | None = None,
 ) -> bool:
     """Upsert a DataFrame into a date-partitioned Delta table.
 
@@ -97,6 +103,9 @@ def upsert_dataset(
             quality validation before writing; batches that fail their schema
             contract do not land. Pass False to opt out for devtools/backfills.
         skip_schema_validation: If True, bypass column-level schema checks.
+        partition_by: Optional partition columns for tables that are not
+            date-partitioned (e.g. ``["ex_date"]`` for corporate actions).
+            None keeps the default ``["date"]`` layout.
     """
     df_polars = ensure_polars(df)
 
@@ -138,7 +147,7 @@ def upsert_dataset(
 
     key_columns = _dedupe_key_columns(market)
     try:
-        return merge_delta(df_polars, market, key_columns=key_columns)
+        return merge_delta(df_polars, market, key_columns=key_columns, partition_by=partition_by)
     except DeltaError:
         return False
 
@@ -157,6 +166,8 @@ def validate_schema(df: FrameLike, market: str) -> bool:
         required_cols = ["ticker", "date"]
     elif market in ("us_sec_financials", "02_silver/sec_financials"):
         required_cols = ["ticker", "date", "filing_type"]
+    elif market in ("corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions"):
+        required_cols = CORPORATE_ACTION_COLUMNS
     elif market in ("01_bronze/raw_articles", "02_silver/processed_articles"):
         required_cols = ["article_id", "date"]
     elif market in ("predictions", "04_platinum/predictions"):

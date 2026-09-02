@@ -10,6 +10,7 @@ from pathlib import Path
 
 from equity_lake.catalog.models import ColumnInfo, DatasetEntry
 from equity_lake.core.paths import (
+    BRONZE_CORPORATE_ACTIONS_DIR,
     BRONZE_MACRO_DIR,
     BRONZE_RAW_ARTICLES_DIR,
     CN_ASHARE_DIR,
@@ -20,6 +21,7 @@ from equity_lake.core.paths import (
     PLATINUM_PREDICTIONS_DIR,
     PROJECT_ROOT,
     SILVER_ANALYST_RATINGS_DIR,
+    SILVER_CORPORATE_ACTIONS_DIR,
     SILVER_NEWS_SENTIMENT_DIR,
     SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
@@ -30,6 +32,7 @@ from equity_lake.core.paths import (
 from equity_lake.core.schemas import (
     ANALYST_RATING_COLUMNS,
     BRONZE_ARTICLE_COLUMNS,
+    CORPORATE_ACTION_COLUMNS,
     MACRO_COLUMNS,
     NEWS_COLUMNS,
     SEC_EXTRACTION_COLUMNS,
@@ -64,6 +67,7 @@ _DTYPE_MAP: dict[str, str] = {
     # Identifiers & categorical text
     "ticker": "string",
     "source": "string",
+    "action": "string",
     "indicator": "string",
     "category": "string",
     "sentiment_label": "string",
@@ -99,6 +103,8 @@ _DTYPE_MAP: dict[str, str] = {
     "fetched_at": "datetime",
     "updated_at": "datetime",
     "filing_date": "datetime",
+    "ingested_at": "datetime",
+    "ex_date": "date",
     # Counts / integers
     "mention_count": "int64",
     "strong_buy": "int64",
@@ -221,6 +227,16 @@ BRONZE_DATASETS: list[DatasetEntry] = [
         format="delta",
         columns=_columns_from_list(BRONZE_ARTICLE_COLUMNS),
     ),
+    DatasetEntry(
+        name="corporate_actions_raw",
+        layer="bronze",
+        path=_rel_path(BRONZE_CORPORATE_ACTIONS_DIR),
+        description=f"Corporate actions — dividends and splits ({_list_to_str(CORPORATE_ACTION_COLUMNS)}). "
+        "Raw vendor rows, one per ticker per ex-date per action; value is the cash "
+        "dividend per share or the split ratio. Source: yfinance. Partitioned by ex_date.",
+        format="delta",
+        columns=_columns_from_list(CORPORATE_ACTION_COLUMNS),
+    ),
 ]
 
 # ---------------------------------------------------------------------------
@@ -283,6 +299,16 @@ SILVER_DATASETS: list[DatasetEntry] = [
         "and derived ratios (ROE, ROA, D/E, margins).",
         format="delta",
         columns=_columns_from_list(SEC_FINANCIAL_COLUMNS),
+    ),
+    DatasetEntry(
+        name="corporate_actions",
+        layer="silver",
+        path=_rel_path(SILVER_CORPORATE_ACTIONS_DIR),
+        description=f"Validated corporate actions ({_list_to_str(CORPORATE_ACTION_COLUMNS)}). "
+        "Typed, deduplicated dividend and split rows gated by the pointblank "
+        "corporate-action schema; input for read-time price adjustment (ADR-0011).",
+        format="delta",
+        columns=_columns_from_list(CORPORATE_ACTION_COLUMNS),
     ),
 ]
 

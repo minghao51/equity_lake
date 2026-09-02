@@ -58,6 +58,9 @@ JPX_EQUITY_DIR = BRONZE_MARKET_DATA_DIR / "jpx_equity"
 KRX_EQUITY_DIR = BRONZE_MARKET_DATA_DIR / "krx_equity"
 BRONZE_RAW_ARTICLES_DIR = BRONZE_DIR / "raw_articles"
 BRONZE_MACRO_DIR = BRONZE_DIR / "macro"
+# Corporate actions (ADR-0011) — market subdirectories nest underneath
+# (e.g. .../corporate_actions/us_equity), resolved by Session B's router.
+BRONZE_CORPORATE_ACTIONS_DIR = BRONZE_DIR / "corporate_actions"
 
 # ---------------------------------------------------------------------------
 # Silver layer (02_silver/) — validated, cleaned, deduped
@@ -68,6 +71,7 @@ SILVER_PROCESSED_ARTICLES_DIR = SILVER_DIR / "processed_articles"
 SILVER_SEC_EXTRACTIONS_DIR = SILVER_DIR / "sec_extractions"
 SILVER_ANALYST_RATINGS_DIR = SILVER_DIR / "analyst_ratings"
 SILVER_SEC_FINANCIALS_DIR = SILVER_DIR / "sec_financials"
+SILVER_CORPORATE_ACTIONS_DIR = SILVER_DIR / "corporate_actions"
 
 # ---------------------------------------------------------------------------
 # Gold layer (03_gold/) — feature engineering output
@@ -195,6 +199,7 @@ def ensure_dirs() -> None:
 
 
 __all__ = [
+    "BRONZE_CORPORATE_ACTIONS_DIR",
     "BRONZE_DIR",
     "BRONZE_MACRO_DIR",
     "BRONZE_MARKET_DATA_DIR",
@@ -224,6 +229,7 @@ __all__ = [
     "SHORT_TO_LONG",
     "SIGNALS_DIR",
     "SILVER_ANALYST_RATINGS_DIR",
+    "SILVER_CORPORATE_ACTIONS_DIR",
     "SILVER_DIR",
     "SILVER_NEWS_SENTIMENT_DIR",
     "SILVER_PROCESSED_ARTICLES_DIR",

@@ -79,7 +79,7 @@ class TestEdges:
 
 class TestDatasets:
     def test_dataset_count(self, catalog: Catalog) -> None:
-        assert len(catalog.datasets) == 15
+        assert len(catalog.datasets) == 17
 
     def test_all_layers_present(self, catalog: Catalog) -> None:
         layers = {ds.layer for ds in catalog.datasets}

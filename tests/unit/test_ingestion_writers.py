@@ -196,3 +196,52 @@ def test_quality_data_type_mapping() -> None:
         assert writers._quality_data_type(untyped) is None, untyped
     assert writers._quality_data_type("us_equity") == "price"
     assert writers._quality_data_type("01_bronze/market_data/jpx_equity") == "price"
+
+
+# ---------------------------------------------------------------------------
+# Wave A1 (ADR-0011): corporate actions routing + partition_by passthrough
+# ---------------------------------------------------------------------------
+
+
+def _valid_corporate_actions() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "ticker": ["AAPL", "MSFT"],
+            "ex_date": [date(2024, 2, 9), date(2024, 3, 14)],
+            "action": ["dividend", "dividend"],
+            "value": [0.25, 0.83],
+            "source": ["yahoo", "yahoo"],
+            "ingested_at": [datetime(2026, 6, 2, 12, 0)] * 2,
+        }
+    )
+
+
+def test_quality_data_type_corporate_actions() -> None:
+    """Corporate-actions datasets route to the corporate_action pointblank schema."""
+    for market in ("corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions"):
+        assert writers._quality_data_type(market) == "corporate_action", market
+
+
+def test_upsert_dataset_corporate_actions_partitions_on_ex_date(tmp_path) -> None:
+    """partition_by passthrough lands an ex_date-partitioned table; keyed upserts stay idempotent."""
+    df = _valid_corporate_actions()
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(df, "corporate_actions", date(2026, 6, 2), partition_by=["ex_date"])
+        assert writers.upsert_dataset(df, "corporate_actions", date(2026, 6, 2), partition_by=["ex_date"])
+
+    from deltalake import DeltaTable
+
+    table_path = tmp_path / "corporate_actions"
+    dt = DeltaTable(str(table_path))
+    assert dt.metadata().partition_columns == ["ex_date"]
+    partition_dirs = {d.name for d in table_path.iterdir() if d.is_dir() and d.name.startswith("ex_date=")}
+    assert partition_dirs == {"ex_date=2024-02-09", "ex_date=2024-03-14"}
+    assert len(dt.to_pandas()) == df.height
+
+
+def test_upsert_dataset_refuses_invalid_corporate_actions(tmp_path) -> None:
+    """A negative dividend violates CorporateActionSchema: the batch does not land."""
+    df = _valid_corporate_actions().with_columns(pl.lit(-0.25).alias("value"))
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(df, "corporate_actions", date(2026, 6, 2), partition_by=["ex_date"]) is False
+    assert list(tmp_path.rglob("*")) == []

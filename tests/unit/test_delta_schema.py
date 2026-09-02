@@ -99,6 +99,69 @@ class TestMergeDeltaSchemaEvolution:
         assert read_delta("fresh", lake_dir=tmp_path).height == 1
 
 
+class TestMergeDeltaPartitionBy:
+    """partition_by passthrough: non-date-partitioned tables (e.g. corporate actions on ex_date)."""
+
+    def test_partitioned_create_and_idempotent_merge(self, tmp_path: Path) -> None:
+        df = pl.DataFrame(
+            {
+                "ticker": ["AAPL"],
+                "ex_date": [date(2024, 2, 9)],
+                "action": ["dividend"],
+                "value": [0.25],
+            }
+        )
+        keys = ["ticker", "ex_date", "action"]
+        assert merge_delta(df, "corporate_actions", key_columns=keys, lake_dir=tmp_path, partition_by=["ex_date"]) is True
+        assert merge_delta(df, "corporate_actions", key_columns=keys, lake_dir=tmp_path, partition_by=["ex_date"]) is True
+
+        out = read_delta("corporate_actions", lake_dir=tmp_path)
+        assert out.height == 1  # keyed upsert stayed idempotent
+        assert out["value"].to_list() == [0.25]
+
+        table_path = tmp_path / "corporate_actions"
+        assert DeltaTable(str(table_path)).metadata().partition_columns == ["ex_date"]
+        partition_dirs = [d.name for d in table_path.iterdir() if d.is_dir() and d.name.startswith("ex_date=")]
+        assert partition_dirs == ["ex_date=2024-02-09"]
+
+    def test_default_partitioning_is_unchanged(self, tmp_path: Path) -> None:
+        """partition_by=None keeps the hardcoded ["date"] behavior for existing callers."""
+        df = pl.DataFrame({"ticker": ["AAPL"], "date": [date(2024, 1, 2)], "close": [150.0]})
+        assert merge_delta(df, "prices", key_columns=["ticker", "date"], lake_dir=tmp_path) is True
+        assert DeltaTable(str(tmp_path / "prices")).metadata().partition_columns == ["date"]
+
+    def test_partitioned_schema_evolution_preserves_partitioning(self, tmp_path: Path) -> None:
+        """Evolving a partitioned table must not silently re-partition it to date."""
+        # Target predates the `action` key column, so the merge predicate fails
+        # with a schema error and the evolution path rewrites the table.
+        existing = pl.DataFrame(
+            {
+                "ticker": ["AAPL"],
+                "ex_date": [date(2024, 2, 9)],
+                "value": [0.25],
+            }
+        )
+        keys = ["ticker", "ex_date", "action"]
+        assert merge_delta(existing, "ca", key_columns=keys, lake_dir=tmp_path, partition_by=["ex_date"]) is True
+
+        batch = pl.DataFrame(
+            {
+                "ticker": ["MSFT"],
+                "ex_date": [date(2024, 3, 14)],
+                "action": ["dividend"],
+                "value": [0.83],
+            }
+        )
+        assert merge_delta(batch, "ca", key_columns=keys, lake_dir=tmp_path, partition_by=["ex_date"]) is True
+
+        table_path = tmp_path / "ca"
+        assert DeltaTable(str(table_path)).metadata().partition_columns == ["ex_date"]
+        out = read_delta("ca", lake_dir=tmp_path).sort("ticker")
+        assert out.height == 2  # pre-evolution row preserved + inserted, not duplicated
+        assert out["ticker"].to_list() == ["AAPL", "MSFT"]
+        assert out["action"].to_list() == [None, "dividend"]  # old row null-filled by evolution
+
+
 class TestMergeDeltaNeverAppends:
     """Mock-level pin: the append fallback is gone for keyed upserts."""
 

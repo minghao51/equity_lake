@@ -112,20 +112,22 @@ def merge_delta(
     table: str,
     key_columns: list[str] | None = None,
     lake_dir: Path | None = None,
+    partition_by: list[str] | None = None,
 ) -> bool:
     """Upsert *df* into an existing Delta table, matching on *key_columns*.
 
-    If the table does not yet exist it is created.  On a schema mismatch the
+    If the table does not yet exist it is created, partitioned by
+    *partition_by* (``["date"]`` when None).  On a schema mismatch the
     target table is evolved to the incoming schema (all existing rows are
-    preserved) and the merge is retried — rows are never appended on top of
-    existing keys, so keyed upserts stay idempotent.
+    preserved, same partitioning) and the merge is retried — rows are never
+    appended on top of existing keys, so keyed upserts stay idempotent.
     """
     table_path = delta_table_path(table, lake_dir)
     keys = key_columns or ["ticker", _DATE_COL]
     df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
 
     if not DeltaTable.is_deltatable(str(table_path)):
-        return write_delta(df_polars, table, mode="append", lake_dir=lake_dir)
+        return write_delta(df_polars, table, mode="append", lake_dir=lake_dir, partition_by=partition_by)
 
     predicate = " AND ".join(f"target.{k} = source.{k}" for k in keys)
 
@@ -142,7 +144,7 @@ def merge_delta(
             action="evolve schema and re-merge",
         )
         try:
-            _evolve_table_schema(table, df_polars, lake_dir)
+            _evolve_table_schema(table, df_polars, lake_dir, partition_by=partition_by)
             _execute_merge(DeltaTable(str(table_path)), df_polars, predicate)
         except Exception as retry_exc:
             logger.exception("delta_merge_failed_after_evolution", table=table)
@@ -175,18 +177,20 @@ def _is_schema_mismatch(exc: Exception) -> bool:
     return "schema" in lowered or "column" in lowered
 
 
-def _evolve_table_schema(table: str, df_polars: pl.DataFrame, lake_dir: Path | None) -> None:
+def _evolve_table_schema(table: str, df_polars: pl.DataFrame, lake_dir: Path | None, partition_by: list[str] | None = None) -> None:
     """Rewrite the table under the incoming schema, preserving every existing row.
 
     Seed-overwrite evolution: existing rows are re-written with the incoming
     (superset) schema — new columns are null-filled, conflicting types are
     widened to a common supertype — so the caller can re-run the keyed merge.
-    The replacement is a single atomic Delta commit.
+    The replacement is a single atomic Delta commit.  The rewrite keeps the
+    table's *partition_by* layout (``["date"]`` when None), so evolving a
+    partitioned table never silently re-partitions it.
     """
     table_path = delta_table_path(table, lake_dir)
     existing = cast(pl.DataFrame, pl.from_arrow(DeltaTable(str(table_path)).to_pyarrow_table()))
     seed = pl.concat([existing, df_polars.head(0)], how="diagonal_relaxed")
-    write_delta(seed, table, mode="overwrite", schema_mode="overwrite", lake_dir=lake_dir)
+    write_delta(seed, table, mode="overwrite", schema_mode="overwrite", lake_dir=lake_dir, partition_by=partition_by)
 
 
 def read_delta(

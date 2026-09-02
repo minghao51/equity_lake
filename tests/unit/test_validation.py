@@ -74,7 +74,7 @@ def test_validation_reexports_match_schemas_modules() -> None:
 
     assert ReExportedDataProfiler is profiling.DataProfiler
     assert ArticleDataSchema is schemas.ArticleDataSchema
-    assert set(schemas.SCHEMA_REGISTRY) == {"price", "macro", "news", "article"}
+    assert set(schemas.SCHEMA_REGISTRY) == {"price", "macro", "news", "article", "corporate_action"}
 
 
 # ---------------------------------------------------------------------------
