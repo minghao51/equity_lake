@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Self, cast
+from typing import Any, Literal, Self, cast
 
 import duckdb
 import polars as pl
 import structlog
 
 from equity_lake.core.paths import PRICE_MARKETS, market_dir
-from equity_lake.storage.lake_reader import create_market_views
+from equity_lake.storage.lake_reader import create_market_views, with_price_adjustment
 
 logger = structlog.get_logger(__name__)
+
+AdjustmentMode = Literal["none", "splits", "total_return"]
+_ADJUST_METHODS: dict[str, Literal["split_only", "total_return"]] = {
+    "splits": "split_only",
+    "total_return": "total_return",
+}
 
 
 class BacktestDataLoader:
@@ -49,11 +55,18 @@ class BacktestDataLoader:
         end_date: date,
         markets: list[str] | None = None,
         columns: list[str] | None = None,
+        adjust: AdjustmentMode = "none",
     ) -> pl.DataFrame:
         """Load long-format OHLCV data, forward-filling per-ticker gaps.
 
         Only forward fill is supported: back fill would leak future prices into
         past rows (lookahead bias) and is intentionally not offered.
+
+        ``adjust`` (ADR-0011) back-adjusts OHLC for corporate actions at read
+        time: ``"splits"`` fixes split discontinuities; ``"total_return"``
+        additionally reinvests dividends. ``"none"`` (default) returns the
+        stored raw prices unchanged. Adjustment is a no-op (with a warning)
+        when the market has no corporate-actions table yet.
         """
         if markets is None:
             markets = list(PRICE_MARKETS)
@@ -85,6 +98,9 @@ class BacktestDataLoader:
 
         data = self._clean_data(data)
 
+        if adjust != "none":
+            data = self._apply_adjustment(data, markets, adjust)
+
         logger.debug(
             "Returned long format",
             shape=data.shape,
@@ -92,6 +108,34 @@ class BacktestDataLoader:
         )
 
         return data
+
+    def _apply_adjustment(self, data: pl.DataFrame, markets: list[str], adjust: AdjustmentMode) -> pl.DataFrame:
+        """Back-adjust loaded OHLC for corporate actions (ADR-0011, opt-in)."""
+        if not {"ticker", "date", "close"}.issubset(data.columns):
+            logger.warning("adjustment_skipped_missing_columns", columns=data.columns)
+            return data
+        actions = self._load_corporate_actions(markets)
+        if actions is None or actions.is_empty():
+            logger.warning("corporate_actions_table_missing_adjustment_noop", adjust=adjust, markets=markets)
+            return data
+        method: Literal["split_only", "total_return"] = _ADJUST_METHODS[adjust]
+        return with_price_adjustment(data, actions, method=method)
+
+    @staticmethod
+    def _load_corporate_actions(markets: list[str]) -> pl.DataFrame | None:
+        """Union the per-market silver corporate-actions tables (missing → None)."""
+        from equity_lake.ingestion.corporate_actions import corporate_actions_table
+        from equity_lake.storage.delta import DeltaReadError, read_delta
+
+        frames: list[pl.DataFrame] = []
+        for market in markets:
+            try:
+                frames.append(read_delta(corporate_actions_table(market, "silver")))
+            except DeltaReadError:
+                logger.debug("corporate_actions_table_absent", market=market)
+        if not frames:
+            return None
+        return pl.concat(frames, how="vertical")
 
     def _query_data(
         self,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, cast
 
 import typer
 
@@ -18,10 +18,15 @@ def backtest_cmd(
     start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
+    adjust: Annotated[str, typer.Option("--adjust", help="Corporate-action price adjustment (ADR-0011): none, splits, total_return")] = "none",
     output: Annotated[str | None, typer.Option("--output", "-o", help="Output JSON")] = None,
 ) -> None:
     """Backtest trading strategies (shares the strategy registry with ``equity report backtest``)."""
     from equity_lake.backtesting.factory import build_backtest_engine
+
+    if adjust not in ("none", "splits", "total_return"):
+        typer.secho(f"Unknown --adjust value: {adjust} (expected none, splits, total_return)", fg=typer.colors.RED)
+        raise typer.Exit(1)
 
     try:
         eng = build_backtest_engine(
@@ -30,6 +35,7 @@ def backtest_cmd(
             start_date=date.fromisoformat(start_date),
             end_date=date.fromisoformat(end_date),
             initial_cash=initial_cash,
+            adjust=cast("Literal['none', 'splits', 'total_return']", adjust),
         )
     except ValueError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
@@ -40,6 +46,8 @@ def backtest_cmd(
     except Exception as exc:  # noqa: BLE001 — surface a clean CLI error
         typer.secho(f"backtest failed: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1) from exc
+    if adjust != "none":
+        typer.echo(f"Price adjustment: {adjust} (corporate actions applied at read time; ADR-0011)")
     typer.echo(result.summary())
     if output:
         Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))

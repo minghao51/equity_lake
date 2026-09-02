@@ -371,10 +371,14 @@ Backtest trading strategies (shares the strategy registry with
 | `--start-date` | str | **required** | `YYYY-MM-DD` |
 | `--end-date` | str | **required** | `YYYY-MM-DD` |
 | `--initial-cash` | float | `100000` | Initial capital |
+| `--adjust` | str | `none` | Corporate-action price adjustment (ADR-0011): `none` (raw stored prices), `splits` (fix split discontinuities), or `total_return` (also reinvests dividends). When enabled, the chosen method is disclosed above the summary. Requires `equity corporate-actions` data for the market; without it the run warns and falls back to raw prices. |
 | `--output`, `-o` | str | stdout only | Output JSON |
 
 ```bash
 uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
+  --start-date 2025-01-01 --end-date 2025-12-31
+uv run equity corporate-actions                      # refresh splits/dividends first
+uv run equity backtest --adjust splits --tickers AAPL,MSFT \
   --start-date 2025-01-01 --end-date 2025-12-31
 ```
 

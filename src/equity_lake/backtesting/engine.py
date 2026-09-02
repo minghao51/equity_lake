@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import polars as pl
 import structlog
@@ -49,6 +49,7 @@ class VectorBacktestEngine:
         markets: list[str] | None = None,
         config: dict[str, Any] | None = None,
         preloaded_data: pl.DataFrame | None = None,
+        adjust: Literal["none", "splits", "total_return"] = "none",
     ):
         self.strategy = strategy
         self.tickers = tickers
@@ -58,6 +59,7 @@ class VectorBacktestEngine:
         self.markets = markets or ["us_equity", "cn_ashare", "hk_sg_equity"]
         self.config = config or {}
         self.preloaded_data = preloaded_data
+        self.adjust: Literal["none", "splits", "total_return"] = adjust
 
         self.fee_ratio = self.config.get("fee_ratio", DEFAULT_FEE_RATIO)
         self.tax_ratio = self.config.get("tax_ratio", DEFAULT_TAX_RATIO)
@@ -161,6 +163,7 @@ class VectorBacktestEngine:
             start_date=self.start_date,
             end_date=self.end_date,
             markets=self.markets,
+            adjust=self.adjust,
         )
 
     def _compute_metrics(self, stats: pl.DataFrame, report: Any, equity_curve: pl.Series) -> None:

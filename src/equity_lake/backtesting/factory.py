@@ -14,7 +14,7 @@ renders it (``typer.secho`` + exit 1). No ``typer`` import in this layer.
 from __future__ import annotations
 
 from datetime import date
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from equity_lake.backtesting.arena import COST_REGIMES, STRATEGY_REGISTRY
 
@@ -31,6 +31,7 @@ def build_backtest_engine(
     initial_cash: float = 100_000.0,
     markets: list[str] | None = None,
     cost_regime: str | None = None,
+    adjust: Literal["none", "splits", "total_return"] = "none",
 ) -> VectorBacktestEngine:
     """Validate the strategy/cost-regime names and build the backtest engine.
 
@@ -43,6 +44,8 @@ def build_backtest_engine(
         markets: Already-parsed market keys; ``None`` keeps the engine default.
         cost_regime: Key into :data:`~equity_lake.backtesting.arena.COST_REGIMES`;
             ``None`` keeps the engine's default fee/tax pair.
+        adjust: Corporate-action price adjustment (ADR-0011); forwarded to
+            the data loader. ``"none"`` keeps stored raw prices.
 
     Raises:
         ValueError: Unknown strategy or cost regime (message is CLI-ready).
@@ -64,6 +67,7 @@ def build_backtest_engine(
         initial_cash=initial_cash,
         markets=markets,
         config=dict(COST_REGIMES[cost_regime]) if cost_regime is not None else None,
+        adjust=adjust,
     )
     return cast("VectorBacktestEngine", engine)
 
