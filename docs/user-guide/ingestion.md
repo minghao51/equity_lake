@@ -97,6 +97,32 @@ Limits and degradation behavior verified in `src/equity_lake/sources/`:
 | SEC EDGAR | Hard rate limit of 10 req/s; the fetcher throttles inter-document requests. `SEC_USER_AGENT` must be set to `CompanyName AdminEmail@example.com` or the fetcher refuses to run. |
 | `sec_filings_fulltext` vs `us_sec_financials` | Two distinct SEC sources: `equity sec` fetches filing **text** into bronze (`01_bronze/raw_articles`) and requires LLM processing (`--process`) to reach silver (`02_silver/sec_extractions`); `equity financials` fetches **structured XBRL** straight to `02_silver/sec_financials` with no LLM step. |
 
+## Client-side rate limiting
+
+By default no client-side throttling is applied beyond the per-source sleeps noted
+above. Optional sliding-window throttling (requests per minute, per provider) can
+be enabled via `config/settings.yaml` or env vars — off unless configured:
+
+```yaml
+sources:
+  default_rpm: 60            # fallback for every fetcher
+  rpm_overrides:
+    finnhub: 50              # shared by the news and social-sentiment fetchers
+    sec: 8
+    reddit: 30
+```
+
+```bash
+EQUITY_SOURCES__DEFAULT_RPM=60
+EQUITY_SOURCES__RPM_OVERRIDES__FINNHUB=50
+```
+
+Throttling happens before every fetch attempt (retries included) and is keyed by
+provider — `finnhub`, `yahoo`, `akshare`, `efinance`, `sec`, `reddit`, `rss`,
+`stocktwits`, `transcripts`, `krx`, `cn_hybrid` — so fetchers sharing a provider
+quota share one limiter. When a source would exceed its window, the fetch blocks
+until capacity frees up (logged at debug level as `rate_limit_wait`).
+
 ## Troubleshooting
 
 Start with `equity pipeline --help`, inspect `--save-results` JSON, and run

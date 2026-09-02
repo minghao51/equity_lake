@@ -35,6 +35,8 @@ class CNEfinanceFetcher(MarketDataFetcher):
     - Cleaner data output (less post-processing needed)
     """
 
+    source_name = "efinance"
+
     def __init__(
         self,
         retry_attempts: int = 3,

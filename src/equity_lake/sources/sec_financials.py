@@ -55,6 +55,8 @@ class SECFinancialsFetcher(MarketDataFetcher):
         lookback_days: Look back period for finding recent filings.
     """
 
+    source_name = "sec"  # shared SEC fair-access quota
+
     market = "us_sec_financials"
 
     def __init__(

@@ -35,6 +35,8 @@ class KRXEquityFetcher(MarketDataFetcher):
         028260  - Samsung C&T
     """
 
+    source_name = "krx"
+
     market = "krx"
 
     def __init__(

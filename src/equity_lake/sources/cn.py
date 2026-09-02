@@ -20,6 +20,8 @@ logger = structlog.get_logger()
 class CNAshareFetcher(MarketDataFetcher):
     """Fetch China A-share EOD data using akshare."""
 
+    source_name = "akshare"
+
     def __init__(
         self,
         retry_attempts: int = 3,

@@ -74,6 +74,8 @@ class RedditFetcher(MarketDataFetcher):
     inter-request pacing.
     """
 
+    source_name = "reddit"
+
     market = "reddit_posts"
 
     def __init__(

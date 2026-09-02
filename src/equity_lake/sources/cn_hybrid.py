@@ -44,6 +44,8 @@ class CNHybridFetcher(MarketDataFetcher):
     If efinance is enabled and returns sufficient data, akshare is skipped.
     """
 
+    source_name = "cn_hybrid"
+
     def __init__(
         self,
         retry_attempts: int = 3,

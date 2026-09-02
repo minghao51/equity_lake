@@ -36,6 +36,8 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         min_relevance: Minimum relevance score (0.0 to 1.0)
     """
 
+    source_name = "finnhub"  # shared quota with social-sentiment fetcher
+
     sentiment_analyzer: SentimentAnalyzer | None = None
 
     def __init__(

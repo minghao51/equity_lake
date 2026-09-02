@@ -31,3 +31,12 @@ dashboard:
 monitoring:
   max_age_days: 2
   null_threshold_pct: 5.0
+
+# Client-side rate limiting for source fetchers (off by default).
+# Uncomment to throttle; keys are provider-level source names.
+# sources:
+#   default_rpm: 60            # fallback for every fetcher
+#   rpm_overrides:
+#     finnhub: 50              # shared by news + social-sentiment fetchers
+#     sec: 8                   # SEC fair-access guidance (~10 req/s max)
+#     reddit: 30

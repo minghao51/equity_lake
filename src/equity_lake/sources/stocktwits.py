@@ -42,6 +42,8 @@ class StockTwitsFetcher(MarketDataFetcher):
     replacement for StockTwits social data.
     """
 
+    source_name = "stocktwits"
+
     market = "stocktwits_messages"
 
     def __init__(

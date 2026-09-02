@@ -35,6 +35,8 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
         max_workers: Maximum parallel workers (default: 1, sequential)
     """
 
+    source_name = "finnhub"  # shared quota with news fetcher
+
     def __init__(
         self,
         api_key: str | None = None,

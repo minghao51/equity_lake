@@ -126,6 +126,27 @@ class S3SyncSettings(BaseModel):
     )
 
 
+class SourcesSettings(BaseModel):
+    """Client-side rate limiting for source fetchers (off by default).
+
+    Overridable via ``EQUITY_SOURCES__*`` env vars or ``config/settings.yaml``.
+    ``default_rpm`` throttles every fetcher; ``rpm_overrides`` keys by
+    provider-level source name (``finnhub``, ``reddit``, ``sec``, ``yahoo``,
+    ``akshare``, ...) and wins over the default. Keys without an entry fall
+    back to ``default_rpm``; when both are unset, no throttling happens.
+    """
+
+    default_rpm: int | None = Field(
+        default=None,
+        ge=1,
+        description="Default requests-per-minute applied to every fetcher when set (None = unthrottled).",
+    )
+    rpm_overrides: dict[str, int] = Field(
+        default_factory=dict,
+        description=('Per-source RPM overrides, e.g. {"finnhub": 50, "sec": 8}; wins over default_rpm.'),
+    )
+
+
 class Settings(BaseSettings):
     project: ProjectSettings = Field(default_factory=ProjectSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
@@ -134,6 +155,7 @@ class Settings(BaseSettings):
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
     alerting: AlertingSettings = Field(default_factory=AlertingSettings)
     s3_sync: S3SyncSettings = Field(default_factory=S3SyncSettings)
+    sources: SourcesSettings = Field(default_factory=SourcesSettings)
 
     model_config = SettingsConfigDict(
         env_prefix="EQUITY_",

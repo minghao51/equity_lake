@@ -56,6 +56,8 @@ class SECFilingFetcher(MarketDataFetcher):
     name, accession number) is stored in ``source_metadata`` as JSON.
     """
 
+    source_name = "sec"  # shared SEC fair-access quota
+
     market = "sec_filings_fulltext"
 
     def __init__(

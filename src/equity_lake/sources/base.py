@@ -16,6 +16,7 @@ import yfinance as yf
 
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.polars_utils import ensure_polars, normalize_temporal_columns
+from equity_lake.core.rate_limit import throttle
 from equity_lake.core.retry import build_retry_decorator
 from equity_lake.core.schemas import STANDARD_COLUMNS
 
@@ -136,9 +137,16 @@ def standardize_columns(
 
 
 class MarketDataFetcher:
-    """Base class for market data fetchers."""
+    """Base class for market data fetchers.
+
+    ``source_name`` is the *provider-level* throttle key used by
+    :func:`equity_lake.core.rate_limit.throttle` — fetchers sharing a provider
+    quota must share the same name (e.g. both Finnhub fetchers use
+    ``"finnhub"``). Falls back to ``market``, then the class name.
+    """
 
     market: str = ""
+    source_name: str = ""
 
     def __init__(
         self,
@@ -158,6 +166,11 @@ class MarketDataFetcher:
             retry_on=TransientError,
             log=logger,
         )
+
+    @property
+    def rate_limit_source(self) -> str:
+        """Throttle key for this fetcher (provider name > market > class name)."""
+        return self.source_name or self.market or type(self).__name__
 
     def _get_configured_tickers(self, market: str) -> list[str]:
         """Load the configured ticker universe for deterministic daily runs."""
@@ -228,6 +241,10 @@ class MarketDataFetcher:
 
         @self._retry_decorator
         def _wrapped() -> Any:
+            # Client-side rate limiting (off unless configured): blocks before
+            # each attempt — including retries — so a 429 storm is prevented,
+            # not just survived.
+            throttle(self.rate_limit_source)
             try:
                 result = func(*args, **kwargs)
             except (
@@ -279,6 +296,8 @@ class YFinanceBaseFetcher(MarketDataFetcher):
     column standardization. Subclasses provide market name, fallback
     tickers, and optional column-rename overrides.
     """
+
+    source_name = "yahoo"  # shared per-IP quota across us/hk_sg/jpx
 
     market: str = ""
     DEFAULT_BATCH_SIZE = 500

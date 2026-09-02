@@ -68,6 +68,8 @@ class RSSNewsFetcher(MarketDataFetcher):
     schema for downstream LLM processing.
     """
 
+    source_name = "rss"
+
     market = "rss_news"
 
     def __init__(

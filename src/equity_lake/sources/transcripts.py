@@ -43,6 +43,8 @@ class EarningsTranscriptFetcher(MarketDataFetcher):
     daily runs will frequently return empty results.
     """
 
+    source_name = "transcripts"
+
     market = "us_earnings_transcripts"
 
     def __init__(
