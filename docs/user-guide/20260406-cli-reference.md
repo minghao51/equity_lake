@@ -234,6 +234,27 @@ ratios).
 dotenvx run -- uv run equity financials --tickers AAPL,MSFT
 ```
 
+### `equity corporate-actions`
+
+Fetch dividends and splits (yfinance) into the corporate-actions dataset
+(ADR-0011). Event-driven — there is no per-date fetch: the run is incremental
+from the max stored `ex_date` (full history on first run), and the same
+quality-gated frame lands in `01_bronze/corporate_actions/<market>` and
+`02_silver/corporate_actions/<market>`, partitioned by `ex_date`, upserted on
+`(ticker, ex_date, action)`. yfinance split multipliers are converted to the
+lake's old/new share-ratio convention (`2.0` → `0.5` for a 2-for-1 split).
+
+| Flag | Type | Default | Notes |
+|---|---|---|---|
+| `--market` | str | `us_equity` | Price market (ADR-0010 long key); yfinance-backed markets only |
+| `--tickers`, `-t` | str | all configured | Comma-separated tickers |
+| `--dry-run` | flag | off | Fetch but skip writes |
+
+```bash
+dotenvx run -- uv run equity corporate-actions            # incremental, configured tickers
+dotenvx run -- uv run equity corporate-actions -t AAPL,MSFT
+```
+
 ## Intelligence & ML
 
 ### `equity forecast`

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import polars as pl
+
 STANDARD_COLUMNS = [
     "ticker",
     "date",
@@ -60,6 +62,17 @@ CORPORATE_ACTION_COLUMNS = [
 ]
 
 CORPORATE_ACTION_TYPES = ("dividend", "split")
+
+# Exact dtypes for an empty corporate-actions frame (ADR-0011). ingested_at is
+# naive UTC — Delta/Polars write path uses tz-naive datetimes throughout.
+CORPORATE_ACTION_SCHEMA: dict[str, pl.DataType] = {
+    "ticker": pl.String(),
+    "ex_date": pl.Date(),
+    "action": pl.String(),
+    "value": pl.Float64(),
+    "source": pl.String(),
+    "ingested_at": pl.Datetime("us"),
+}
 
 MACRO_INDICATOR_CONFIG = {
     "dxy": {"source": "yfinance", "ticker": "^DXY"},
@@ -170,6 +183,7 @@ __all__ = [
     "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
     "CORPORATE_ACTION_COLUMNS",
+    "CORPORATE_ACTION_SCHEMA",
     "CORPORATE_ACTION_TYPES",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",

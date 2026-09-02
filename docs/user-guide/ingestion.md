@@ -70,6 +70,7 @@ dotenvx run -- uv run equity ratings --tickers AAPL,MSFT
 | `equity ratings` | `02_silver/analyst_ratings` | Structured analyst consensus and price targets — no LLM involved. |
 | `equity sec` | `01_bronze/raw_articles` | 10-K/10-Q full text from EDGAR with `--lookback` days (default `120`). Add `--process` to run the bronze→silver LLM extraction to `02_silver/sec_extractions` in the same command. |
 | `equity financials` | `02_silver/sec_financials` | Structured XBRL financials (balance sheet, income statement, ratios) — no LLM. `--lookback` default `120`. |
+| `equity corporate-actions` | `01_bronze` + `02_silver/corporate_actions/<market>` | Dividends and splits (yfinance, ADR-0011). Event-driven and incremental: fetches only events with `ex_date` after the max stored value; writes bronze and silver in one pass, partitioned by `ex_date`. |
 | `equity macro` | `01_bronze/macro` | FRED and yfinance macro indicators (VIX, treasury yields, DXY, …); `--indicators` filters by name. Fails with a non-zero exit if nothing is fetched. |
 
 All of them share `--date`, `--tickers`/`-t`, `--dry-run`, and `--verbose`,

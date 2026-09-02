@@ -36,7 +36,7 @@ def _dedupe_key_columns(market: str) -> list[str]:
         return ["ticker", "date"]
     if market in ("02_silver/sec_financials", "us_sec_financials"):
         return ["ticker", "date", "filing_type"]
-    if market in ("01_bronze/corporate_actions", "02_silver/corporate_actions", "corporate_actions"):
+    if _is_corporate_actions(market):
         return ["ticker", "ex_date", "action"]
     if market in ("04_platinum/predictions", "predictions"):
         return ["ticker", "date"]
@@ -45,7 +45,13 @@ def _dedupe_key_columns(market: str) -> list[str]:
 
 _NEWS_QUALITY_MARKETS = frozenset({"us_news", "us_social_sentiment", "02_silver/news_sentiment", "02_silver/social_sentiment"})
 _MACRO_QUALITY_MARKETS = frozenset({"macro", "01_bronze/macro"})
-_CORPORATE_ACTION_QUALITY_MARKETS = frozenset({"corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions"})
+
+
+def _is_corporate_actions(market: str) -> bool:
+    """True for the corporate-actions dataset (root or per-market table path)."""
+    return market == "corporate_actions" or market.startswith(("01_bronze/corporate_actions", "02_silver/corporate_actions"))
+
+
 # Datasets with no cheap pointblank schema: article-type tables are enforced at
 # the silver merge path (ingestion/bronze_silver.py), the rest rely on the
 # column-presence `validate_schema` contract only.
@@ -75,7 +81,7 @@ def _quality_data_type(market: str) -> str | None:
         return "news"
     if market in _MACRO_QUALITY_MARKETS:
         return "macro"
-    if market in _CORPORATE_ACTION_QUALITY_MARKETS:
+    if _is_corporate_actions(market):
         return "corporate_action"
     if market in _UNTYPED_QUALITY_MARKETS:
         return None
@@ -166,7 +172,7 @@ def validate_schema(df: FrameLike, market: str) -> bool:
         required_cols = ["ticker", "date"]
     elif market in ("us_sec_financials", "02_silver/sec_financials"):
         required_cols = ["ticker", "date", "filing_type"]
-    elif market in ("corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions"):
+    elif _is_corporate_actions(market):
         required_cols = CORPORATE_ACTION_COLUMNS
     elif market in ("01_bronze/raw_articles", "02_silver/processed_articles"):
         required_cols = ["article_id", "date"]

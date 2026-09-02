@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import urllib.error
 from collections.abc import Callable
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, cast
 
 import httpx
@@ -18,7 +18,7 @@ from equity_lake.core.config import TickerConfig
 from equity_lake.core.polars_utils import ensure_polars, normalize_temporal_columns
 from equity_lake.core.rate_limit import throttle
 from equity_lake.core.retry import build_retry_decorator
-from equity_lake.core.schemas import STANDARD_COLUMNS
+from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA, STANDARD_COLUMNS
 
 logger = structlog.get_logger()
 
@@ -400,6 +400,75 @@ class YFinanceBaseFetcher(MarketDataFetcher):
             unique_tickers = frame["ticker"].n_unique() if "ticker" in frame.columns else 0
             logger.info("Fetched %s rows for %s unique %s tickers", frame.height, unique_tickers, self.market)
             return frame
+
+        return cast(pl.DataFrame, self._retry_on_failure(_fetch))
+
+    def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+        """Fetch dividends and splits per ticker (ADR-0011).
+
+        Uses ``Ticker.actions`` per ticker — event-driven, so there is no
+        per-date fetch contract. ``since`` is an exclusive lower bound on
+        ``ex_date`` (pass the max stored ex-date for incremental runs; ``None``
+        fetches full history). yfinance stores splits as the share multiplier
+        (``2.0`` = 2-for-1); the lake convention (ADR-0011) is the old/new
+        share ratio (``0.5``), so the value is inverted here.
+
+        Returns:
+            Frame with ``CORPORATE_ACTION_COLUMNS``; empty when a ticker has
+            no recorded actions or none after ``since``.
+        """
+
+        def _fetch() -> pl.DataFrame:
+            throttle(self.rate_limit_source)
+            now = datetime.now().replace(microsecond=0)
+            rows: list[pl.DataFrame] = []
+            for ticker in self.tickers:
+                throttle(self.rate_limit_source)
+                try:
+                    actions = yf.Ticker(ticker).actions
+                except Exception as exc:  # one bad ticker must not sink the run
+                    logger.warning("corporate_actions_fetch_failed", ticker=ticker, error=str(exc))
+                    continue
+                if actions is None or (hasattr(actions, "empty") and actions.empty):
+                    continue
+                frame = pl.from_pandas(actions.reset_index())
+                date_col = frame.columns[0]
+                frame = frame.with_columns(pl.col(date_col).cast(pl.Date).alias("ex_date"))
+                if "Dividends" in frame.columns:
+                    frame = frame.with_columns(
+                        pl.when(pl.col("Dividends") > 0).then(pl.lit("dividend")).otherwise(None).alias("action"),
+                        pl.col("Dividends").cast(pl.Float64).alias("value"),
+                    )
+                else:
+                    frame = frame.with_columns(
+                        pl.lit(None, dtype=pl.String).alias("action"),
+                        pl.lit(None, dtype=pl.Float64).alias("value"),
+                    )
+                if "Splits" in frame.columns:
+                    # Sequential call: the split override must see "action"/"value".
+                    frame = frame.with_columns(
+                        pl.when(pl.col("Splits") > 0).then(pl.lit("split")).otherwise(pl.col("action")).alias("action"),
+                        pl.when(pl.col("Splits") > 0).then(1.0 / pl.col("Splits").cast(pl.Float64)).otherwise(pl.col("value")).alias("value"),
+                    )
+                events = frame.filter(pl.col("action").is_not_null()).select(
+                    pl.lit(ticker).alias("ticker"),
+                    "ex_date",
+                    "action",
+                    "value",
+                )
+                if since is not None:
+                    events = events.filter(pl.col("ex_date") > since)
+                if events.is_empty():
+                    continue
+                rows.append(
+                    events.with_columns(
+                        pl.lit("yahoo").alias("source"),
+                        pl.lit(now).alias("ingested_at"),
+                    ).select("ticker", "ex_date", "action", "value", "source", "ingested_at")
+                )
+            if not rows:
+                return pl.DataFrame(schema=CORPORATE_ACTION_SCHEMA)
+            return pl.concat(rows, how="vertical")
 
         return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 

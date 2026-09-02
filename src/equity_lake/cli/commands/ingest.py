@@ -229,6 +229,36 @@ def sec_filings(
         typer.secho("SEC filing ingestion complete", fg=typer.colors.GREEN)
 
 
+@app.command("corporate-actions")
+def corporate_actions(
+    market: Annotated[str, typer.Option("--market", help="Price market (ADR-0010 long key, yfinance-backed)")] = "us_equity",
+    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (default: config)")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Fetch but skip writes")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+) -> None:
+    """Fetch dividends/splits (yfinance) into bronze+silver corporate actions (ADR-0011).
+
+    Event-driven and incremental: fetches only events with ex_date after the
+    max stored value, then upserts both layers partitioned by ex_date.
+    """
+    _init_logging(verbose)
+
+    from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+
+    ticker_list = _parse_comma_list(tickers)
+    outcome = ingest_corporate_actions(market, tickers=ticker_list, dry_run=dry_run)
+
+    if not outcome["ok"]:
+        typer.secho(f"Corporate-actions ingestion failed for {market}", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    if outcome["fetched"] == 0:
+        since = outcome["since"]
+        typer.echo(f"No new corporate actions for {market} since {since or 'beginning of history'}")
+        return
+    scope = " [DRY RUN — nothing written]" if dry_run else ""
+    typer.secho(f"Corporate actions: {outcome['fetched']} events ingested for {market}{scope}", fg=typer.colors.GREEN)
+
+
 @app.command("financials")
 def sec_financials(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
