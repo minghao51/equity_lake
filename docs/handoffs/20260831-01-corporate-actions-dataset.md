@@ -232,3 +232,22 @@ uv run equity catalog-generate  # after catalog/datasets.py changes (Wave A1)
 uv run pytest tests/unit -n auto && uv run pytest tests/integration -n 4
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
+
+## Outcome (closed 2026-09-02)
+
+All waves implemented, reviewed inline (worker subagents aborted on rate limits;
+edits verified marker-by-marker), full gate green, committed per wave:
+
+| Wave | Commit | Notes |
+|---|---|---|
+| A1 | `e40dc5b` | Bronze entry renamed `corporate_actions_raw` during review — duplicate cross-layer names broke the name-keyed lineage check |
+| A2 | `6fe007f` | Review fixed a real design bug: backward-asof was inverted → forward-asof on `date + 1`; same-day split+dividend events collapsed to a step product |
+| B1 | `88684b8` | `equity corporate-actions` (root-app command); writers match per-market table paths by prefix; yfinance split multipliers inverted to lake ratio convention |
+| C1 | `8a25153` | `equity backtest --adjust {none,splits,total_return}` with disclosure line; `none` byte-identical to prior behavior; missing tables warn + raw fallback |
+
+Final gate: **984 passed / 1 skipped** (`tests/unit -n auto`), ruff + mypy (162
+files) clean. Definition of done: all boxes satisfied except feature-side
+adjustment (deferred by design — see Loose ends). Follow-ups unchanged from the
+Loose ends list: CN akshare source, spin-offs, feature-loader opt-in, monitor
+freshness wiring for the new dataset, and threading `adjust` through
+`equity report backtest` if the report surface ever needs it.
