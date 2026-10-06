@@ -29,13 +29,13 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --python "${{ matrix.python-version }}" --group dev
 
       - name: Ruff
-        run: uv run ruff check .
+        run: uv run --python "${{ matrix.python-version }}" ruff check .
 
       - name: Mypy
-        run: uv run mypy src
+        run: uv run --python "${{ matrix.python-version }}" mypy src
 
   test:
     runs-on: ubuntu-latest
@@ -56,14 +56,14 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --group dev
+        run: uv sync --python "${{ matrix.python-version }}" --group dev --group backtesting
 
       - name: Pytest
-        run: uv run pytest -q -m "not integration"
+        run: uv run --python "${{ matrix.python-version }}" pytest -q -m "not integration"
 
       - name: Security audit (advisory policy)
         continue-on-error: true
-        run: uv run pip-audit --skip-editable
+        run: uv run --python "${{ matrix.python-version }}" pip-audit --skip-editable
 
   docs:
     runs-on: ubuntu-latest

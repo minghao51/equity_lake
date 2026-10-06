@@ -890,6 +890,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "akshare" },
+    { name = "croniter" },
     { name = "deltalake" },
     { name = "duckdb" },
     { name = "edgartools" },
@@ -963,9 +964,6 @@ s3 = [
     { name = "boto3" },
     { name = "s5cmd" },
 ]
-schedule = [
-    { name = "croniter" },
-]
 sentiment = [
     { name = "vadersentiment" },
 ]
@@ -973,6 +971,7 @@ sentiment = [
 [package.metadata]
 requires-dist = [
     { name = "akshare", specifier = ">=1.15.0" },
+    { name = "croniter", specifier = ">=6.2.2" },
     { name = "deltalake", specifier = ">=0.25.0" },
     { name = "duckdb", specifier = ">=1.0.0" },
     { name = "edgartools", specifier = ">=5.36.0" },
@@ -1040,7 +1039,6 @@ s3 = [
     { name = "boto3", specifier = ">=1.34.0" },
     { name = "s5cmd", specifier = ">=0.3.3" },
 ]
-schedule = [{ name = "croniter", specifier = ">=6.2.2" }]
 sentiment = [{ name = "vadersentiment", specifier = ">=3.3.2" }]
 
 [[package]]
