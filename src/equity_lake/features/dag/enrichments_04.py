@@ -43,9 +43,25 @@ from equity_lake.core.paths import (
     SILVER_SEC_EXTRACTIONS_DIR,
     SILVER_SOCIAL_SENTIMENT_DIR,
 )
+from equity_lake.features.dag.raw_01 import normalize_eod_date_series
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger()
+
+
+def _eod_keys_to_date(frame: pl.DataFrame, *columns: str) -> pl.DataFrame:
+    """Normalize EOD join keys in ``frame`` to ``pl.Date`` (D01/F01).
+
+    Applied at every external-table query boundary so temporal joins never
+    fail on ``Date``/``Datetime`` key mismatch (the pre-W01 defect silently
+    zero-filled enrichments via the caught ``SchemaError``). Missing columns
+    pass through untouched; malformed string keys raise.
+    """
+    expressions = []
+    for column in columns:
+        if column in frame.columns and frame.schema[column] != pl.Date:
+            expressions.append(normalize_eod_date_series(frame[column]).alias(column))
+    return frame.with_columns(expressions) if expressions else frame
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +241,7 @@ def _merge_news_sentiment(
     """
 
     try:
-        sentiment_df = conn.execute(sentiment_query, [tickers, start_date, end_date]).pl()
+        sentiment_df = _eod_keys_to_date(conn.execute(sentiment_query, [tickers, start_date, end_date]).pl(), "date")
         if sentiment_df.is_empty():
             return _add_empty_news_sentiment_columns(features_df)
 
@@ -277,7 +293,7 @@ def _merge_social_sentiment(
     """
 
     try:
-        sentiment_df = conn.execute(sentiment_query, [tickers, start_date, end_date]).pl()
+        sentiment_df = _eod_keys_to_date(conn.execute(sentiment_query, [tickers, start_date, end_date]).pl(), "date")
         if sentiment_df.is_empty():
             return _add_empty_social_sentiment_columns(features_df)
 
@@ -293,7 +309,14 @@ def _merge_social_sentiment(
             )
             .sort(["ticker", "date"])
             .with_columns(
-                pl.col("social_mention_count").cast(pl.Float64).pct_change(5).over("ticker").fill_null(0.0).alias("social_momentum"),
+                # F15/W01: zero-baseline pct-change is an undefined ratio — null,
+                # never infinity. Warm-up rows are null by construction.
+                (
+                    (pl.col("social_mention_count").cast(pl.Float64) - pl.col("social_mention_count").cast(pl.Float64).shift(5))
+                    / pl.col("social_mention_count").cast(pl.Float64).shift(5).replace(0.0, None)
+                )
+                .over("ticker")
+                .alias("social_momentum"),
                 pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum"),
                 pl.col("social_sentiment_score")
                 .ewm_mean(half_life=3.0, ignore_nulls=True)
@@ -360,6 +383,7 @@ def _merge_enriched_sentiment(
         logger.error("enriched_sentiment_query_failed", error_type=type(exc).__name__, error=str(exc))
         return _add_empty_enriched_columns(features_df)
 
+    sentiment_df = _eod_keys_to_date(sentiment_df, "date")
     if sentiment_df.is_empty():
         return _add_empty_enriched_columns(features_df)
 
@@ -423,6 +447,7 @@ def _merge_analyst_ratings(
         logger.error("analyst_rating_query_failed", error_type=type(exc).__name__, error=str(exc))
         return _add_empty_analyst_columns(features_df)
 
+    ratings_df = _eod_keys_to_date(ratings_df, "date")
     if ratings_df.is_empty():
         return _add_empty_analyst_columns(features_df)
 
@@ -487,6 +512,7 @@ def _merge_sec_extractions(
         logger.error("sec_query_failed", error_type=type(exc).__name__, error=str(exc))
         return _add_empty_sec_columns(features_df)
 
+    sec_df = _eod_keys_to_date(sec_df, "date", "filing_date")
     if sec_df.is_empty():
         return _add_empty_sec_columns(features_df)
 
@@ -604,10 +630,9 @@ def _merge_macro(
     wide = raw.pivot(values="value", index="date", on="indicator").sort("date")
     numeric_cols = [col for col in wide.columns if col != "date"]
     wide = wide.with_columns([pl.col(col).cast(pl.Float64) for col in numeric_cols])
-    # Normalize the join-key dtype: ``features_df`` may carry ``date`` as
-    # datetime (FeatureEngineer path) while the macro scan yields Date — a bare
-    # join raises SchemaError. Cast the macro frame to match features_df.
-    wide = wide.with_columns(pl.col("date").cast(features_df["date"].dtype))
+    # D01/F01: normalize the join key to pl.Date on both sides — the feature
+    # boundary guarantees a Date key, so the macro side must match.
+    wide = _eod_keys_to_date(wide, "date")
 
     full_dates = pl.DataFrame({"date": features_df["date"].unique().sort()})
     wide = full_dates.join(wide, on="date", how="left").sort("date")

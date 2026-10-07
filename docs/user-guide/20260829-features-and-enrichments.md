@@ -61,10 +61,10 @@ under `src/equity_lake/features/dag/`:
 
 | Module | Layer | Responsibility |
 |---|---|---|
-| `raw_01.py` | bronze | Extract OHLCV columns from the input `price_data` frame |
-| `clean_02.py` | silver | Basic transforms (returns) and Pydantic boundary validation of the cleaned OHLCV frame |
-| `features_03.py` | gold | Technical indicators — momentum, volatility, volume, calendar |
-| `enrichments_04.py` | gold | External-data joins (news, social, enriched sentiment, analyst, SEC, macro) |
+| `raw_01.py` | bronze | Extract OHLCV columns from the input `price_data` frame; normalize the EOD `date` key to `pl.Date` (malformed keys raise) |
+| `clean_02.py` | silver | Basic transforms (returns) and the connected `validated_ohlcv` boundary — full-frame vectorized validation of the cleaned OHLCV frame; Pydantic row sampling is diagnostic-only |
+| `features_03.py` | gold | Technical indicators — momentum, volatility, volume, calendar — all consuming the same `validated_ohlcv` frame, plus the `validated_features` emitted-output boundary |
+| `enrichments_04.py` | gold | External-data joins (news, social, enriched sentiment, analyst, SEC, macro) on `pl.Date` keys |
 
 Execution is two-phase:
 
@@ -86,6 +86,30 @@ handle mixed-version history, and — per the change matrix in `AGENTS.md` — t
 change requires regenerating the catalog (`uv run equity catalog-generate`),
 since the gold-layer `technical_features` / `enriched_features` catalog
 entries describe exactly these columns.
+
+### Data contracts (W01)
+
+- **EOD keys are `pl.Date`.** Technical output, every enrichment join, and the
+  persisted gold layer all use `pl.Date` keys. `compute_enriched` normalizes
+  its input at the boundary, so Datetime-keyed feature frames still join
+  correctly; malformed string keys raise rather than producing nulls. (Only
+  the `compute_enriched` entry normalizes — callers driving the DAG nodes
+  directly must pass Date-keyed frames.)
+- **Invalid required price input fails the compute.** `validated_ohlcv`
+  enforces non-null ticker/date, strictly positive OHLC, non-negative volume,
+  and OHLC price relationships on the full frame — violations raise
+  `OHLCVValidationError` and fail the per-ticker computation visibly instead
+  of silently dropping rows. Rows are sorted by `(ticker, date)` and duplicate
+  identities keep the first input occurrence, deterministically, before any
+  rolling/shift calculation.
+- **Emitted output is enforced.** The `validated_features` boundary (and
+  `compute_technical` itself) reject null/duplicate identity, ±inf/NaN in any
+  float feature, and nulls in row-defined features beyond each ticker's first
+  row. Warm-up nulls (RSI, Bollinger, ROC windows) and the unavailable final
+  `next_day_return` are legitimate and never rejected.
+- **Undefined ratios are null, never infinity.** Zero baselines in
+  `volume_roc_5` and social `social_momentum` produce null — an honest
+  "undefined" rather than an invented finite value or `inf`.
 
 ## Enrichment toggles
 

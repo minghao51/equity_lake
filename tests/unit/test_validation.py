@@ -74,7 +74,7 @@ def test_validation_reexports_match_schemas_modules() -> None:
 
     assert ReExportedDataProfiler is profiling.DataProfiler
     assert ArticleDataSchema is schemas.ArticleDataSchema
-    assert set(schemas.SCHEMA_REGISTRY) == {"price", "macro", "news", "article", "corporate_action"}
+    assert set(schemas.SCHEMA_REGISTRY) == {"price", "macro", "news", "social", "article", "corporate_action"}
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +247,66 @@ def test_news_schema_valid() -> None:
         },
     )
     NewsDataSchema.validate(df)
+
+
+def test_social_schema_valid() -> None:
+    """W01/F20: real social-sentiment rows pass the dedicated schema."""
+    from equity_lake.validation.schemas import SocialSentimentSchema
+
+    df = pl.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "date": [date(2024, 1, 1)],
+            "datetime": [datetime(2024, 1, 1, 12, 0)],
+            "source": ["reddit"],
+            "mention_count": [10],
+            "positive_score": [4.0],
+            "negative_score": [1.0],
+            "score": [0.3],
+            "social_metric": ["upvotes"],
+        },
+    )
+    SocialSentimentSchema.validate(df)
+
+
+def test_social_schema_rejects_out_of_range_score() -> None:
+    from equity_lake.validation.schemas import SocialSentimentSchema
+
+    df = pl.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "date": [date(2024, 1, 1)],
+            "datetime": [datetime(2024, 1, 1, 12, 0)],
+            "source": ["reddit"],
+            "mention_count": [10],
+            "positive_score": [4.0],
+            "negative_score": [1.0],
+            "score": [3.0],
+            "social_metric": ["upvotes"],
+        },
+    )
+    with pytest.raises(ValueError, match="between"):
+        SocialSentimentSchema.validate(df)
+
+
+def test_social_schema_rejects_duplicate_identity() -> None:
+    from equity_lake.validation.schemas import SocialSentimentSchema
+
+    df = pl.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL"],
+            "date": [date(2024, 1, 1)] * 2,
+            "datetime": [datetime(2024, 1, 1, 12, 0)] * 2,
+            "source": ["reddit", "reddit"],
+            "mention_count": [10, 5],
+            "positive_score": [4.0, 2.0],
+            "negative_score": [1.0, 0.5],
+            "score": [0.3, 0.2],
+            "social_metric": ["upvotes", "upvotes"],
+        },
+    )
+    with pytest.raises(ValueError, match="distinct"):
+        SocialSentimentSchema.validate(df)
 
 
 # ---------------------------------------------------------------------------

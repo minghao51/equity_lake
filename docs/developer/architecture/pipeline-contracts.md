@@ -11,6 +11,9 @@ This page is the operational contract for `equity pipeline`.
 | Backfill scope | Recovery uses the requested markets and explicit tickers; the resolved date range and scope are logged before execution. |
 | Required source failure | A failed price source blocks dependent features and ML. |
 | Optional enrichment failure | Core features may continue; the result records partial success and the failed enrichment. |
+| Feature input validity | Invalid required price input (null keys, non-positive OHLC, negative volume, violated price relationships) fails the per-ticker feature computation — never silently drops rows (W01/D01). |
+| EOD join keys | All feature/enrichment joins use `pl.Date` keys; malformed date keys raise. Undefined ratios (zero baselines) are null, never infinity. |
+| Feature schema compatibility | W01 requires no stored-schema migration: gold `date` was already persisted as `pl.Date` pre-W01 (`run_feature_job` casts before write), `SOCIAL_COLUMNS` are unchanged, and `FEATURE_SCHEMA_VERSION` stays 3. |
 | Bronze-to-Silver failure | Only consumers of that Silver output are degraded. |
 | CLI exit status | Non-zero for required-stage failure; zero for dry-run and successful optional degradation. |
 

@@ -342,15 +342,23 @@ identical names, so downstream consumers are unaffected.
 ##### Boundary Validation
 
 - **Bronze→Silver**: `@check_output(data_type=float)` on `close` and `volume`
-  in `raw_01.py`; the `validated_ohlcv` node in `clean_02.py` applies Pydantic
-  schema validation and filters invalid rows
+  in `raw_01.py`; the `validated_ohlcv` node in `clean_02.py` runs full-frame
+  vectorized validation and **fails** on invalid required input (null keys,
+  non-positive OHLC, negative volume, violated price relationships — W01/D01);
+  Pydantic row sampling is diagnostic-only. Rows are sorted by `(ticker, date)`
+  with deterministic keep-first deduplication before any rolling calculation.
 - **Silver→Gold**: `@check_output(range=(0.0, 100.0))` on `rsi_14` in
-  `features_03.py`; the `validated_features` node enforces the Pydantic schema
-  on the final feature frame
+  `features_03.py`; every indicator consumes the shared `validated_ohlcv`
+  frame (row alignment by construction); the `validated_features` node and
+  `compute_technical` enforce the emitted-frame contract — non-null/unique
+  identity, no ±inf/NaN, no nulls in row-defined features beyond each
+  ticker's first row (warm-up nulls and the final target's unavailability are
+  legitimate)
 - **Write boundaries**: `validate_schema()` in `ingestion/writers.py` is a
   required-column presence / all-null check; pointblank contracts are enforced
   by `upsert_dataset(validate_quality=True)` via
-  `validation/pipeline.ValidationPipeline` (ADR-0007)
+  `validation/pipeline.ValidationPipeline` (ADR-0007) — social sentiment
+  validates against its dedicated `social` schema (W01/F20)
 - **Platinum**: `validate_predictions()` (`ml/__init__.py`) uses pointblank to
   enforce probability range, direction values, and non-null keys; intercepts
   writes to `04_platinum/predictions/`

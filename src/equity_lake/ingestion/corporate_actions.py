@@ -22,6 +22,7 @@ from equity_lake.core.paths import canonical_market
 
 logger = structlog.get_logger()
 
+
 def corporate_actions_table(market: str, layer: str = "bronze") -> str:
     """Lake-relative table path for a market's corporate actions (ADR-0011).
 

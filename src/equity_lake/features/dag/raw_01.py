@@ -32,14 +32,43 @@ def ticker(price_data: pl.DataFrame) -> pl.Series:
     return price_data["ticker"]
 
 
+class MalformedDateKeyError(ValueError):
+    """Raised when a date key cannot be normalized to ``pl.Date``.
+
+    Malformed keys fail loudly instead of being silently converted to nulls
+    that would later be dropped at the Silver boundary (W01/D01).
+    """
+
+
+def normalize_eod_date_series(column: pl.Series) -> pl.Series:
+    """Normalize an EOD date key series to ``pl.Date`` (D01).
+
+    ``pl.Date`` passes through; ``pl.Datetime`` truncates to its calendar date
+    (EOD keys carry no intraday time — true event timestamps stay in their own
+    columns); strings parse leniently (date or datetime layouts) and raise
+    :class:`MalformedDateKeyError` when a non-null value is unparseable.
+    """
+    if column.dtype == pl.Date:
+        return column
+    if column.dtype == pl.Datetime:
+        return column.dt.date()
+    if column.dtype in (pl.Utf8, pl.String):
+        parsed = column.str.to_datetime(strict=False)
+        malformed = parsed.is_null() & column.is_not_null()
+        if malformed.any():
+            examples = column.filter(malformed).head(3).to_list()
+            raise MalformedDateKeyError(f"unparseable EOD date key(s): {examples}")
+        return parsed.dt.date()
+    try:
+        return column.cast(pl.Date, strict=True)
+    except (pl.exceptions.ComputeError, pl.exceptions.InvalidOperationError) as exc:
+        raise MalformedDateKeyError(f"cannot normalize {column.dtype} to pl.Date: {exc}") from exc
+
+
 @tag(layer="bronze", category="raw_column", produces="date")  # type: ignore[untyped-decorator]
 def date(price_data: pl.DataFrame) -> pl.Series:
-    date_column = price_data["date"]
-    if date_column.dtype == pl.Utf8:
-        return date_column.str.to_datetime(strict=False)
-    if date_column.dtype == pl.Date:
-        return date_column.cast(pl.Datetime)
-    return date_column
+    """EOD join key, normalized to ``pl.Date`` (D01 contract)."""
+    return normalize_eod_date_series(price_data["date"])
 
 
 @tag(layer="bronze", category="raw_column", produces="open_price")  # type: ignore[untyped-decorator]

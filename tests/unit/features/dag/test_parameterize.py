@@ -6,7 +6,7 @@ import polars as pl
 from hamilton import base, driver
 from hamilton.plugins import h_polars
 
-from equity_lake.features.dag import features_03, raw_01
+from equity_lake.features.dag import clean_02, features_03, raw_01
 from equity_lake.features.indicators import roc
 
 
@@ -34,7 +34,7 @@ def test_parameterized_roc_matches_manual() -> None:
     expected = roc(close, length=5)
 
     adapter = base.SimplePythonGraphAdapter(h_polars.PolarsDataFrameResult())
-    dr = driver.Builder().with_modules(raw_01, features_03).with_adapter(adapter).build()
+    dr = driver.Builder().with_modules(raw_01, clean_02, features_03).with_adapter(adapter).build()
     result = dr.execute(["roc_5"], inputs={"price_data": _close_price_df()})
 
     actual = result["roc_5"]
@@ -52,7 +52,7 @@ def test_parameterized_returns_match_manual() -> None:
     expected = df["close"].pct_change(1)
 
     adapter = base.SimplePythonGraphAdapter(h_polars.PolarsDataFrameResult())
-    dr = driver.Builder().with_modules(raw_01, features_03).with_adapter(adapter).build()
+    dr = driver.Builder().with_modules(raw_01, clean_02, features_03).with_adapter(adapter).build()
     result = dr.execute(["return_1d"], inputs={"price_data": df})
 
     actual = result["return_1d"]
@@ -67,7 +67,7 @@ def test_parameterized_returns_match_manual() -> None:
 def test_parameterized_nodes_exist_in_dag() -> None:
     """All parameterized node names should be present in the DAG."""
     adapter = base.SimplePythonGraphAdapter(h_polars.PolarsDataFrameResult())
-    dr = driver.Builder().with_modules(raw_01, features_03).with_adapter(adapter).build()
+    dr = driver.Builder().with_modules(raw_01, clean_02, features_03).with_adapter(adapter).build()
 
     dag_nodes = {v.name for v in dr.list_available_variables()}
     for name in ["roc_5", "roc_10", "roc_20", "return_1d", "return_5d", "return_10d", "return_20d"]:

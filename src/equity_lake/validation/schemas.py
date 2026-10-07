@@ -136,6 +136,31 @@ class ArticleDataSchema(PointblankSchema):
         return v
 
 
+class SocialSentimentSchema(PointblankSchema):
+    """Schema for social-sentiment rows (Finnhub social metrics).
+
+    Distinct from news: social rows carry mention counts and aggregated
+    scores instead of headlines/urls. Added in W01 (F20) — social frames
+    previously routed through :class:`NewsDataSchema`, which rejected them
+    for missing ``headline``/``url``/``sentiment_score`` columns, blocking
+    every social write at the quality gate.
+    """
+
+    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+        return (
+            pb.Validate(data=df, label="Social sentiment data schema")
+            .col_vals_not_null(columns="ticker")
+            .col_vals_not_null(columns="date")
+            .col_vals_not_null(columns="datetime")
+            .col_vals_not_null(columns="source")
+            .col_vals_ge(columns="mention_count", value=0)
+            .col_vals_between(columns="score", left=-1, right=1)
+            .col_vals_ge(columns="positive_score", value=0)
+            .col_vals_ge(columns="negative_score", value=0)
+            .rows_distinct(columns_subset=["ticker", "datetime", "source"])
+        )
+
+
 class CorporateActionSchema(PointblankSchema):
     """Schema for corporate action rows (ADR-0011: dividends and splits).
 
@@ -172,6 +197,7 @@ SCHEMA_REGISTRY: dict[str, type[PointblankSchema]] = {
     "price": PriceDataSchema,
     "macro": MacroDataSchema,
     "news": NewsDataSchema,
+    "social": SocialSentimentSchema,
     "article": ArticleDataSchema,
     "corporate_action": CorporateActionSchema,
 }

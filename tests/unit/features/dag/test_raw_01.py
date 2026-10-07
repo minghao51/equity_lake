@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 import polars as pl
+import pytest
 
-from equity_lake.features.dag.raw_01 import close, high, low, open_price, ticker, volume
+from equity_lake.features.dag.raw_01 import MalformedDateKeyError, close, high, low, normalize_eod_date_series, open_price, ticker, volume
 from equity_lake.features.dag.raw_01 import date as date_fn
 
 
@@ -31,13 +32,41 @@ def test_ticker_extraction() -> None:
 
 def test_date_extraction_from_date_dtype() -> None:
     result = date_fn(_sample_df())
-    assert result.dtype == pl.Datetime
+    assert result.dtype == pl.Date
 
 
 def test_date_extraction_from_string() -> None:
     df = pl.DataFrame({"date": ["2024-01-01", "2024-01-02"]})
     result = date_fn(df)
-    assert result.dtype == pl.Datetime
+    assert result.dtype == pl.Date
+    assert result.to_list() == [date(2024, 1, 1), date(2024, 1, 2)]
+
+
+def test_date_extraction_from_datetime() -> None:
+    df = pl.DataFrame({"date": [datetime(2024, 1, 1, 15, 30), datetime(2024, 1, 2, 22, 0)]})
+    result = date_fn(df)
+    assert result.dtype == pl.Date
+    # EOD key truncates to calendar date; event time is not carried in the key.
+    assert result.to_list() == [date(2024, 1, 1), date(2024, 1, 2)]
+
+
+def test_date_extraction_mixed_string_layouts() -> None:
+    df = pl.DataFrame({"date": ["2024-01-01", "2024-01-02 00:00:00.000000"]})
+    result = date_fn(df)
+    assert result.dtype == pl.Date
+    assert result.to_list() == [date(2024, 1, 1), date(2024, 1, 2)]
+
+
+def test_malformed_date_string_raises_not_null() -> None:
+    """D01/F01: malformed keys are rejected loudly, never converted to nulls."""
+    df = pl.DataFrame({"date": ["2024-01-01", "not-a-date"]})
+    with pytest.raises(MalformedDateKeyError, match="unparseable EOD date key"):
+        date_fn(df)
+
+
+def test_normalize_eod_date_series_passthrough_and_cast() -> None:
+    assert normalize_eod_date_series(pl.Series([date(2024, 1, 1)])).dtype == pl.Date
+    assert normalize_eod_date_series(pl.Series([datetime(2024, 1, 1)])).dtype == pl.Date
 
 
 def test_close_cast_to_float64() -> None:

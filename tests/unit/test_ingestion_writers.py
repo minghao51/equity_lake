@@ -177,9 +177,12 @@ def test_upsert_dataset_macro_routes_to_macro_schema(tmp_path) -> None:
 
 
 def test_quality_data_type_mapping() -> None:
-    """Schema routing: news/markets -> news, macro -> macro, article tables -> None (silver path owns them)."""
+    """Schema routing: news -> news, social -> social (W01/F20), macro -> macro,
+    article tables -> None (silver path owns them)."""
     assert writers._quality_data_type("us_news") == "news"
-    assert writers._quality_data_type("02_silver/social_sentiment") == "news"
+    assert writers._quality_data_type("02_silver/news_sentiment") == "news"
+    assert writers._quality_data_type("us_social_sentiment") == "social"
+    assert writers._quality_data_type("02_silver/social_sentiment") == "social"
     assert writers._quality_data_type("macro") == "macro"
     assert writers._quality_data_type("01_bronze/macro") == "macro"
     for untyped in (
@@ -245,3 +248,100 @@ def test_upsert_dataset_refuses_invalid_corporate_actions(tmp_path) -> None:
     with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
         assert writers.upsert_dataset(df, "corporate_actions", date(2026, 6, 2), partition_by=["ex_date"]) is False
     assert list(tmp_path.rglob("*")) == []
+
+
+# ---------------------------------------------------------------------------
+# W01/F20: real-shape route frames validate under their registered schemas
+# ---------------------------------------------------------------------------
+
+
+def _social_frame(trading_date: date = date(2026, 6, 2)) -> pl.DataFrame:
+    """Real Finnhub social-sentiment shape (SOCIAL_COLUMNS)."""
+    return pl.DataFrame(
+        {
+            "ticker": ["AAPL", "MSFT"],
+            "date": [trading_date] * 2,
+            "datetime": [datetime(2026, 6, 2, 14, 0)] * 2,
+            "source": ["reddit", "stocktwits"],
+            "mention_count": [10, 5],
+            "positive_score": [4.0, 2.0],
+            "negative_score": [1.0, 0.5],
+            "score": [0.3, -0.2],
+            "social_metric": ["upvotes", "likes"],
+        }
+    )
+
+
+def test_social_sentiment_routes_to_social_schema(tmp_path) -> None:
+    """F20/W01: a real social frame passes the dedicated social schema —
+    pre-W01 it was routed to the news schema, which rejected it for missing
+    headline/url/sentiment_score columns, blocking every social write."""
+    trading_date = date(2026, 6, 2)
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(_social_frame(trading_date), "us_social_sentiment", trading_date)
+
+
+def test_social_sentiment_invalid_score_rejected(tmp_path) -> None:
+    trading_date = date(2026, 6, 2)
+    frame = _social_frame(trading_date)
+    frame = frame.with_columns(pl.when(pl.col("ticker") == "AAPL").then(5.0).otherwise(pl.col("score")).alias("score"))
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(frame, "02_silver/social_sentiment", trading_date) is False
+    assert list(tmp_path.rglob("*")) == []
+
+
+def test_news_route_frame_validates(tmp_path) -> None:
+    trading_date = date(2026, 6, 2)
+    frame = pl.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "date": [trading_date],
+            "datetime": [datetime(2026, 6, 2, 14, 0)],
+            "source": ["finnhub"],
+            "headline": ["h"],
+            "summary": ["s"],
+            "url": ["https://example.com/1"],
+            "category": ["n"],
+            "sentiment_score": [0.5],
+            "sentiment_label": ["positive"],
+            "relevance_score": [0.9],
+        }
+    )
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(frame, "us_news", trading_date)
+
+
+def test_macro_route_frame_validates(tmp_path) -> None:
+    trading_date = date(2026, 6, 2)
+    frame = pl.DataFrame(
+        {
+            "date": [trading_date],
+            "indicator": ["vix"],
+            "value": [15.0],
+            "source": ["yfinance"],
+            "updated_at": [datetime(2026, 6, 2, 12, 0)],
+        }
+    )
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(frame, "01_bronze/macro", trading_date)
+
+
+def test_price_route_frame_validates(tmp_path) -> None:
+    trading_date = date(2026, 6, 2)
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(_valid_ohlcv(trading_date=trading_date), "01_bronze/market_data/us_equity", trading_date)
+
+
+def test_predictions_route_frame_writes(tmp_path) -> None:
+    """Predictions are untyped for pointblank (column-presence contract only)."""
+    trading_date = date(2026, 6, 2)
+    frame = pl.DataFrame(
+        {
+            "ticker": ["AAPL"],
+            "date": [trading_date],
+            "direction": [1],
+            "probability": [0.62],
+        }
+    )
+    with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+        assert writers.upsert_dataset(frame, "04_platinum/predictions", trading_date)

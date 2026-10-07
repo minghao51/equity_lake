@@ -43,7 +43,8 @@ def _dedupe_key_columns(market: str) -> list[str]:
     return ["ticker", "date"]
 
 
-_NEWS_QUALITY_MARKETS = frozenset({"us_news", "us_social_sentiment", "02_silver/news_sentiment", "02_silver/social_sentiment"})
+_NEWS_QUALITY_MARKETS = frozenset({"us_news", "02_silver/news_sentiment"})
+_SOCIAL_QUALITY_MARKETS = frozenset({"us_social_sentiment", "02_silver/social_sentiment"})
 _MACRO_QUALITY_MARKETS = frozenset({"macro", "01_bronze/macro"})
 
 
@@ -76,9 +77,15 @@ _UNTYPED_QUALITY_MARKETS = frozenset(
 
 
 def _quality_data_type(market: str) -> str | None:
-    """Map a dataset path to its pointblank schema type; None when no schema applies."""
+    """Map a dataset path to its pointblank schema type; None when no schema applies.
+
+    W01/F20: social sentiment routes to the dedicated ``social`` schema — its
+    rows share no columns with the news contract beyond identity keys.
+    """
     if market in _NEWS_QUALITY_MARKETS:
         return "news"
+    if market in _SOCIAL_QUALITY_MARKETS:
+        return "social"
     if market in _MACRO_QUALITY_MARKETS:
         return "macro"
     if _is_corporate_actions(market):

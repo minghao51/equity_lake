@@ -6,7 +6,7 @@ via the call-time path resolution in :func:`equity_lake.core.paths.corporate_act
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import polars as pl
@@ -44,10 +44,14 @@ class _FakeTickerFactory:
         return _FakeActions(self.frames.get(ticker, pd.DataFrame()))
 
 
-def _actions_pandas(rows: list[tuple[date, float, float]]) -> pd.DataFrame:
-    """(date, dividends, splits) rows in yfinance's actions layout."""
+def _actions_pandas(rows: list[tuple[date, float, float]], *, split_column: str = "Stock Splits") -> pd.DataFrame:
+    """(date, dividends, splits) rows in yfinance's actions layout.
+
+    Production shape: installed yfinance (>= 0.2.5x) emits ``Stock Splits``;
+    ``split_column="Splits"`` builds the legacy layout for the compat test.
+    """
     return pd.DataFrame(
-        {"Dividends": [d for _, d, _ in rows], "Splits": [s for _, _, s in rows]},
+        {"Dividends": [d for _, d, _ in rows], split_column: [s for _, _, s in rows]},
         index=pd.Index([d for d, _, _ in rows], name="Date"),
     )
 
@@ -71,6 +75,47 @@ class TestFetchCorporateActions:
         assert out["value"].to_list() == pytest.approx([0.25, 0.25])
         assert out["source"].unique().to_list() == ["yahoo"]
         assert out["ingested_at"].is_not_null().all()
+
+    def test_vendor_stock_splits_layout_recognized(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """F13/W01: split-only events in the production ``Stock Splits`` layout
+        produce a split row with the inverted ratio (pre-W01: zero rows)."""
+        factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2020, 9, 1), 0.0, 4.0)])})
+        fetcher = _make_fetcher(monkeypatch, factory, ["AAPL"])
+        out = fetcher.fetch_corporate_actions()
+        assert out.height == 1
+        assert out["action"].to_list() == ["split"]
+        assert out["value"].to_list() == pytest.approx([0.25])
+
+    def test_legacy_splits_layout_still_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2020, 9, 1), 0.0, 4.0)], split_column="Splits")})
+        fetcher = _make_fetcher(monkeypatch, factory, ["AAPL"])
+        out = fetcher.fetch_corporate_actions()
+        assert out.height == 1
+        assert out["action"].to_list() == ["split"]
+
+    def test_simultaneous_dividend_and_split_yields_two_events(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """F14/W01: a same-day dividend + split expands to two lake events —
+        one row per (ticker, ex_date, action); the split no longer overrides
+        the dividend."""
+        factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2024, 6, 1), 0.50, 2.0)])})
+        fetcher = _make_fetcher(monkeypatch, factory, ["AAPL"])
+        out = fetcher.fetch_corporate_actions().sort("action")
+        assert out.height == 2
+        assert out["action"].to_list() == ["dividend", "split"]
+        assert out["value"].to_list() == pytest.approx([0.50, 0.5])
+        assert out["ex_date"].to_list() == [date(2024, 6, 1)] * 2
+
+    def test_ingested_at_is_naive_utc(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """W01: ``ingested_at`` follows the documented naive-UTC convention
+        (CORPORATE_ACTION_SCHEMA), not machine-local time."""
+        factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2024, 6, 1), 0.25, 0.0)])})
+        fetcher = _make_fetcher(monkeypatch, factory, ["AAPL"])
+        out = fetcher.fetch_corporate_actions()
+        assert out.schema["ingested_at"] == pl.Datetime("us")
+        now_utc = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
+        ingested = out["ingested_at"][0]
+        assert ingested.tzinfo is None
+        assert abs((ingested - now_utc).total_seconds()) < 5
 
     def test_since_is_exclusive_lower_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = _FakeTickerFactory({"A": _actions_pandas([(date(2023, 1, 1), 0.1, 0.0), (date(2024, 1, 1), 0.2, 0.0)])})
@@ -252,3 +297,74 @@ class TestDeltaLayer:
         assert merge_delta(df, table, key_columns=["ticker", "ex_date", "action"], lake_dir=tmp_path, partition_by=["ex_date"])
         assert merge_delta(df, table, key_columns=["ticker", "ex_date", "action"], lake_dir=tmp_path, partition_by=["ex_date"])
         assert read_delta(table, lake_dir=tmp_path).height == 1
+
+
+class TestSimultaneousEventRoundTrip:
+    """W01/F13/F14: vendor-shaped simultaneous events survive the full
+    fetch → quality gate → Delta write/read → price-adjustment path."""
+
+    def test_same_day_split_and_dividend_round_trip(self, monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+        """Vendor-shaped simultaneous events survive fetch → quality gate →
+        Delta write/read → price-adjustment. The write goes through
+        ``upsert_dataset`` so the pointblank ``corporate_action`` schema gates
+        the two-event frame exactly as production does (review finding)."""
+        from unittest.mock import patch
+
+        from equity_lake.ingestion.writers import upsert_dataset
+        from equity_lake.storage.lake_reader import with_price_adjustment
+
+        factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2024, 6, 3), 0.50, 2.0)])})
+        fetcher = _make_fetcher(monkeypatch, factory, ["AAPL"])
+        events = fetcher.fetch_corporate_actions()
+        assert events.height == 2
+        assert events.schema["ingested_at"] == pl.Datetime("us")
+
+        table = "02_silver/corporate_actions/us_equity"
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+            assert upsert_dataset(events, table, date.today(), partition_by=["ex_date"])
+        stored = read_delta(table, lake_dir=tmp_path).sort("action")
+        assert stored.height == 2
+        assert stored["action"].to_list() == ["dividend", "split"]
+
+        # Both events are visible to the read-time adjustment helper (ADR-0011):
+        # the split fixes the return across the ex-date, the dividend stays intact.
+        prices = pl.DataFrame(
+            {
+                "ticker": ["AAPL"] * 2,
+                "date": [date(2024, 6, 2), date(2024, 6, 3)],
+                "open": [100.0, 51.0],
+                "high": [101.0, 52.0],
+                "low": [99.0, 50.0],
+                "close": [100.0, 51.5],
+                "volume": [1_000.0, 2_000.0],
+            }
+        )
+        adjusted = with_price_adjustment(prices, stored.select("ticker", "ex_date", "action", "value"))
+        assert adjusted["close"].to_list() == pytest.approx([50.0, 51.5])
+
+    def test_future_ex_date_blocks_whole_batch_current_behavior(self, tmp_actions_lake: object) -> None:
+        """Pinned behavior (W01): the pointblank schema rejects any future
+        ex_date and the all-or-nothing quality gate discards the whole batch,
+        including valid historical rows. Changing this rejection policy is
+        W03's decision (F14 overlap/watermark policy) — this test documents
+        the current contract, not an endorsement."""
+        from datetime import timedelta
+
+        from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+
+        class _Fetcher:
+            tickers = ["AAPL"]
+
+            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+                return pl.DataFrame(
+                    [
+                        ("AAPL", date.today() - timedelta(days=30), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
+                        ("AAPL", date.today() + timedelta(days=30), "split", 0.5, "yahoo", datetime.now().replace(microsecond=0)),
+                    ],
+                    schema=CORPORATE_ACTION_SCHEMA,
+                    orient="row",
+                )
+
+        outcome = ingest_corporate_actions("us_equity", fetcher=_Fetcher())
+        assert not outcome["ok"]
+        assert not (tmp_actions_lake / "02_silver" / "corporate_actions" / "us_equity").exists()

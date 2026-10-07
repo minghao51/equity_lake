@@ -26,6 +26,12 @@ from equity_lake.core.polars_utils import FrameLike, ensure_polars
 
 FEATURE_SCHEMA_VERSION = 3
 
+#: Raw bronze passthrough nodes in ``TECHNICAL_FEATURES``. They are emitted
+#: from the *validated* frame at assembly time (F02 row alignment): requesting
+#: them directly would zip input-order series against the sorted/deduped
+#: indicator series and silently misalign rows for unsorted input.
+_RAW_PASSTHROUGH_NODES: tuple[str, ...] = ("ticker", "date", "open_price", "high", "low", "close", "volume")
+
 
 class FeaturePipeline:
     """Declarative feature pipeline powered by Hamilton."""
@@ -115,11 +121,42 @@ class FeaturePipeline:
             requested = requested + self.TARGET_FEATURES
         execution_inputs: dict[str, Any] = {"price_data": ensure_polars(price_data)}
 
-        result = self._driver.execute(requested, inputs=execution_inputs)
-        frame = result if isinstance(result, pl.DataFrame) else pl.DataFrame(result)
+        # F02 row alignment: ``validated_ohlcv`` (sorted by (ticker, date),
+        # deterministically deduplicated) is the single row-order authority for
+        # the emitted frame. Identity and price columns come from it directly;
+        # indicator nodes all derive from it, so every emitted column shares one
+        # row order regardless of input ordering or duplicate identities.
+        base = self._driver.execute(["validated_ohlcv"], inputs=execution_inputs)
+        if not isinstance(base, pl.DataFrame):
+            base = pl.DataFrame(base)
+        base_columns = {
+            "ticker": base["ticker"],
+            "date": base["date"],
+            "open_price": base["open"],
+            "high": base["high"],
+            "low": base["low"],
+            "close": base["close"],
+            "volume": base["volume"],
+        }
+
+        indicator_request = [name for name in requested if name not in _RAW_PASSTHROUGH_NODES]
+        indicator_columns: dict[str, pl.Series] = {}
+        if indicator_request:
+            result = self._driver.execute(indicator_request, inputs=execution_inputs)
+            result = result if isinstance(result, pl.DataFrame) else pl.DataFrame(result)
+            indicator_columns = {name: result[name] for name in indicator_request}
+
+        frame = pl.DataFrame({name: base_columns[name] if name in _RAW_PASSTHROUGH_NODES else indicator_columns[name] for name in requested})
         if "open_price" in frame.columns:
             frame = frame.rename({"open_price": "open"})
         frame = frame.with_columns(pl.lit(FEATURE_SCHEMA_VERSION).alias("feature_schema_version"))
+        # Gold-boundary enforcement on the emitted frame that callers persist
+        # (F02): identity, finite values, and row-defined completeness. The
+        # DAG-side seam is the ``validated_features`` node; both share
+        # ``validate_emitted_frame``.
+        from equity_lake.features.dag.features_03 import validate_emitted_frame
+
+        validate_emitted_frame(frame, target_included=include_target)
         return frame
 
     def compute_enriched(
@@ -140,11 +177,16 @@ class FeaturePipeline:
 
         This is Phase 2 of the two-phase execution model — runs once for
         all tickers after technical indicators have been computed.
+
+        The ``date`` key is normalized to ``pl.Date`` (D01) at this boundary,
+        matching the technical output and every external-table query boundary.
         """
+        from equity_lake.features.dag.enrichments_04 import _eod_keys_to_date
+
         result = self._driver.execute(
             ["enriched_features"],
             inputs={
-                "features_df": features_df,
+                "features_df": _eod_keys_to_date(features_df, "date"),
                 "duckdb_conn": duckdb_conn,
                 "start_date": start_date,
                 "end_date": end_date,

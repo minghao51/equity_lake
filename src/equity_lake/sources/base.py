@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import urllib.error
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 import httpx
@@ -413,14 +413,20 @@ class YFinanceBaseFetcher(MarketDataFetcher):
         (``2.0`` = 2-for-1); the lake convention (ADR-0011) is the old/new
         share ratio (``0.5``), so the value is inverted here.
 
+        Vendor layout (W01/F13): yfinance ≥ 0.2.5x emits the split column as
+        ``Stock Splits``; the legacy ``Splits`` name is accepted explicitly.
+        A same-day dividend and split expands to two lake events — one row per
+        ``(ticker, ex_date, action)`` (W01/F14).
+
         Returns:
             Frame with ``CORPORATE_ACTION_COLUMNS``; empty when a ticker has
-            no recorded actions or none after ``since``.
+            no recorded actions or none after ``since``. ``ingested_at`` is
+            naive UTC matching ``CORPORATE_ACTION_SCHEMA``.
         """
 
         def _fetch() -> pl.DataFrame:
             throttle(self.rate_limit_source)
-            now = datetime.now().replace(microsecond=0)
+            now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
             rows: list[pl.DataFrame] = []
             for ticker in self.tickers:
                 throttle(self.rate_limit_source)
@@ -434,28 +440,8 @@ class YFinanceBaseFetcher(MarketDataFetcher):
                 frame = pl.from_pandas(actions.reset_index())
                 date_col = frame.columns[0]
                 frame = frame.with_columns(pl.col(date_col).cast(pl.Date).alias("ex_date"))
-                if "Dividends" in frame.columns:
-                    frame = frame.with_columns(
-                        pl.when(pl.col("Dividends") > 0).then(pl.lit("dividend")).otherwise(None).alias("action"),
-                        pl.col("Dividends").cast(pl.Float64).alias("value"),
-                    )
-                else:
-                    frame = frame.with_columns(
-                        pl.lit(None, dtype=pl.String).alias("action"),
-                        pl.lit(None, dtype=pl.Float64).alias("value"),
-                    )
-                if "Splits" in frame.columns:
-                    # Sequential call: the split override must see "action"/"value".
-                    frame = frame.with_columns(
-                        pl.when(pl.col("Splits") > 0).then(pl.lit("split")).otherwise(pl.col("action")).alias("action"),
-                        pl.when(pl.col("Splits") > 0).then(1.0 / pl.col("Splits").cast(pl.Float64)).otherwise(pl.col("value")).alias("value"),
-                    )
-                events = frame.filter(pl.col("action").is_not_null()).select(
-                    pl.lit(ticker).alias("ticker"),
-                    "ex_date",
-                    "action",
-                    "value",
-                )
+
+                events = self._expand_action_events(frame, ticker)
                 if since is not None:
                     events = events.filter(pl.col("ex_date") > since)
                 if events.is_empty():
@@ -471,6 +457,42 @@ class YFinanceBaseFetcher(MarketDataFetcher):
             return pl.concat(rows, how="vertical")
 
         return cast(pl.DataFrame, self._retry_on_failure(_fetch))
+
+    @staticmethod
+    def _expand_action_events(frame: pl.DataFrame, ticker: str) -> pl.DataFrame:
+        """Expand a vendor actions frame into one row per ``(ex_date, action)``.
+
+        Dividend and split columns are mapped independently so a simultaneous
+        event (both non-zero on the same ex-date) yields two events instead of
+        one overriding the other (W01/F14). The split value is inverted to the
+        lake's old/new share ratio (ADR-0011). Accepts both the current
+        ``Stock Splits`` vendor layout and the legacy ``Splits`` name (F13).
+        """
+        dividends_col = "Dividends" if "Dividends" in frame.columns else None
+        splits_col = "Stock Splits" if "Stock Splits" in frame.columns else ("Splits" if "Splits" in frame.columns else None)
+
+        event_frames: list[pl.DataFrame] = []
+        if dividends_col is not None:
+            event_frames.append(
+                frame.filter(pl.col(dividends_col) > 0).select(
+                    pl.lit(ticker).alias("ticker"),
+                    "ex_date",
+                    pl.lit("dividend").alias("action"),
+                    pl.col(dividends_col).cast(pl.Float64).alias("value"),
+                )
+            )
+        if splits_col is not None:
+            event_frames.append(
+                frame.filter(pl.col(splits_col) > 0).select(
+                    pl.lit(ticker).alias("ticker"),
+                    "ex_date",
+                    pl.lit("split").alias("action"),
+                    (1.0 / pl.col(splits_col).cast(pl.Float64)).alias("value"),
+                )
+            )
+        if not event_frames:
+            return pl.DataFrame(schema={"ticker": pl.String(), "ex_date": pl.Date(), "action": pl.String(), "value": pl.Float64})
+        return pl.concat(event_frames, how="vertical")
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch a single trading day (delegates to :meth:`fetch_range`)."""
