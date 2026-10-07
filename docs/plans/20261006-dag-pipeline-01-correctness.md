@@ -264,5 +264,5 @@ passed / 22 skipped / 67 deselected / 3 failed (`test_arena.py`, same
 pre-existing set, verified failing on the untouched baseline); `-n auto`
 parity; ruff check/format clean; mypy at the 3-error pre-existing
 `ml/registry.py` baseline; catalog regenerated unchanged (52 nodes / 372
-edges); mkdocs build with only the 3 documented pre-existing warnings;
-`git diff --check` clean. Diff: 25 files, +1617/−313.
+edges); mkdocs build with only the 3 documented pre-existing warnings.
+Landed as `e44bd5d` (docs) + `2906477` (implementation) on local `main`.

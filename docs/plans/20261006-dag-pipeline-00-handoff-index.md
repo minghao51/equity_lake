@@ -144,7 +144,7 @@ behavioral assertions to hide the baseline failures.
 
 | Wave | State | Agent | Commit/PR | Evidence / blocker |
 |---|---|---|---|---|
-| W01 | **Implemented — reviewed, post-review fixes applied, gates re-run green; pending commit** | pi coding agent | Uncommitted working tree (no commit authorization) | D01 approved via owner dispatch. Three read-only reviews (zai/glm-5.3-flash): 1 critical (emitted-frame row alignment) + warnings — all addressed, see [W01 progress](20261006-dag-pipeline-01-correctness.md#progress). Post-fix gates: 1013 passed / 22 skipped / 3 pre-existing `test_arena.py` failures; lint/format/mypy at documented baseline. Accepted limitations recorded (missing-vs-failed detail → W02; catalog date-dtype wording → W05). Awaiting commit authorization, then W02 + D02 approval. |
+| W01 | **Landed** | pi coding agent | `e44bd5d` (audit/handoff docs) + `2906477` (implementation), local `main`, unpushed | D01 approved via owner dispatch. Three read-only reviews (zai/glm-5.3-flash): 1 critical (emitted-frame row alignment) + warnings — all addressed, see [W01 progress](20261006-dag-pipeline-01-correctness.md#progress). Post-fix gates: 1013 passed / 22 skipped / 3 pre-existing `test_arena.py` failures; lint/format/mypy at documented baseline. Accepted limitations recorded (missing-vs-failed detail → W02; catalog date-dtype wording → W05). W02 may dispatch; D02 approval still required. |
 | W02 | Not started | Unassigned | — | W01 commit + D02 approval |
 | W03 | Not started | Unassigned | — | W02, D03/D04 approval |
 | W04 | Not started | Unassigned | — | W03, accepted D05/D06 ADRs |
