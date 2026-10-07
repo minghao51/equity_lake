@@ -62,6 +62,16 @@ nav:
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
       - Project Structure: developer-guide/project-structure.md
       - Developer Tools: developer-guide/devtools.md
+      - DAG Pipeline Remediation:
+          - Audit Findings: finding/20261006-dag-pipeline-audit.md
+          - Agent Handoff Index: plans/20261006-dag-pipeline-00-handoff-index.md
+          - W01 Correctness: plans/20261006-dag-pipeline-01-correctness.md
+          - W02 Outcomes and Coverage: plans/20261006-dag-pipeline-02-outcomes-and-coverage.md
+          - W03 Incremental Contracts: plans/20261006-dag-pipeline-03-incremental-contracts.md
+          - W04 Schema and Provenance: plans/20261006-dag-pipeline-04-schema-and-provenance.md
+          - W05 Catalog and Monitoring: plans/20261006-dag-pipeline-05-catalog-and-monitoring.md
+          - W06 Storage and Processing: plans/20261006-dag-pipeline-06-storage-and-processing.md
+          - W07 Maintainability and Validation: plans/20261006-dag-pipeline-07-maintainability-and-validation.md
       - Decision Records:
           - 'ADR-0001: Medallion layout and generated catalog': decisions/0001-medallion-layout-and-generated-catalog.md
           - 'ADR-0002: Top-level modules and import boundaries': decisions/0002-top-level-modules-import-boundaries.md

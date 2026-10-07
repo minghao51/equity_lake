@@ -24,6 +24,7 @@ architecture pages and guides.
 - Static hosting: [Dashboard Hosting](user-guide/20260406-dashboard-hosting.md)
 - Contributors: [Project Structure](developer-guide/project-structure.md)
 - Architecture: [Data Flow](developer/architecture/data-flow.md) and [Pipeline Contracts](developer/architecture/pipeline-contracts.md)
+- Repository audit: [DAG Pipeline Findings](finding/20261006-dag-pipeline-audit.md) and [Agent Remediation Handoffs](plans/20261006-dag-pipeline-00-handoff-index.md)
 - Strategy users: [Backtesting Guide](user-guide/backtesting.md) and [Arena and Findings](user-guide/20260829-arena-and-findings.md)
 
 ## Sections
@@ -34,6 +35,8 @@ architecture pages and guides.
 - [developer/architecture/](developer/architecture/) for system design and subsystem docs
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
+- [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
+- [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts
 - [plans/20260804-portfolio-roadmap.md](plans/20260804-portfolio-roadmap.md) for the
   active roadmap (the archived `technical_roadmap.md` and its coverage map are
