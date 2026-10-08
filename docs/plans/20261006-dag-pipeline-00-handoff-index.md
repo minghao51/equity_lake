@@ -163,6 +163,10 @@ behavioral assertions to hide the baseline failures.
 > the catalog when required. Return the delivery packet and update the progress
 > ledger. No commit or migration without explicit authorization.
 
+Per-unit, copyable prompts (shared preamble, W03 PR1–PR4, W04–W07, and the
+read-only reviewer template) live in
+[Dispatch Prompts](20261008-dag-pipeline-dispatch-prompts.md).
+
 ## Whole-program exit criteria
 
 - All finding IDs are closed with evidence or explicitly deferred by the owner,

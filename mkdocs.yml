@@ -72,6 +72,7 @@ nav:
           - W05 Catalog and Monitoring: plans/20261006-dag-pipeline-05-catalog-and-monitoring.md
           - W06 Storage and Processing: plans/20261006-dag-pipeline-06-storage-and-processing.md
           - W07 Maintainability and Validation: plans/20261006-dag-pipeline-07-maintainability-and-validation.md
+          - Dispatch Prompts: plans/20261008-dag-pipeline-dispatch-prompts.md
       - Decision Records:
           - 'ADR-0001: Medallion layout and generated catalog': decisions/0001-medallion-layout-and-generated-catalog.md
           - 'ADR-0002: Top-level modules and import boundaries': decisions/0002-top-level-modules-import-boundaries.md
