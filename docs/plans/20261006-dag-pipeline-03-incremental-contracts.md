@@ -1,8 +1,11 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** Not started; label/session policy approval required  
-**Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md)  
-**Findings:** F03–F05, F11, overlap portion of F14, recovery portion of F25  
+**Status:** Ready to start — D03/D04 approved and ADR-0014 accepted (2026-10-08); PR1 change plan pending owner confirmation
+
+**Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
+
+**Findings:** F03–F05, F11, overlap portion of F14, recovery portion of F25
+
 **Next:** [W04](20261006-dag-pipeline-04-schema-and-provenance.md)
 
 ## Objective
@@ -32,6 +35,22 @@ corporate-action overlap. Do not bundle all four into an unreviewable migration.
 
 ### D03 Label lifecycle and training cutoff
 
+**Recorded (owner-approved 2026-10-08; see [ADR-0014](../decisions/0014-label-lifecycle-and-availability.md)).**
+Keep the existing Gold target columns and names. Finalize only the preceding
+observed session's labels on a later session, adding `label_available_date`
+availability metadata (null/unknown for legacy rows, never fabricated).
+"Next observation" is the next exchange session with a valid bar; missing next
+bars leave the label pending and are reported. Finalization is a bounded,
+key-scoped, label-only update through the canonical storage seam (no nulling,
+shrinking, evolution, or row insertion). As-of training/backtest excludes labels
+whose availability postdates the cutoff; unknown-availability legacy rows are
+strict-excluded by default. `compute_target=False` never finalizes labels;
+historical completion is an explicit label-only path. Corrections are
+idempotent; broad historical repair is report-first and separately authorized
+(D09). `FEATURE_SCHEMA_VERSION` is bumped with the metadata change, catalog
+regeneration, and model feature-list exclusion. The remaining recorded
+questions below are answered by this decision.
+
 Recommend keeping `next_day_return` in Gold for initial reader compatibility,
 but finalizing only target fields for the preceding observed session once the
 next bar is available. Retain/introduce approved availability metadata so
@@ -54,6 +73,21 @@ accepted before code. Bump feature schema version only with the corresponding
 reader/catalog/model compatibility plan; do not increment a constant alone.
 
 ### D04 Session scheduling
+
+**Recorded (owner-approved 2026-10-08; operational contract, no ADR required).**
+Exact explicit-date semantics: markets closed on that date are `not_scheduled`
+(a distinct outcome status), never failed and never silently substituted with an
+earlier session. `not_scheduled` does not block markets that are open; features
+and ML are planned only for scheduled scope, and the run exits zero when all
+scheduled required work succeeds. This also confines required-market `NO_DATA`
+to a genuinely empty scheduled session. For relative dates, the plan date is
+resolved once and each market is classified scheduled/not_scheduled;
+per-market "latest session" dates would be a different output contract and
+require a separate accepted design. HK/SG keeps union semantics (scheduled if
+either exchange is open) with per-instrument coverage reported and the
+per-exchange session limitation documented; intersection semantics are not used
+to skip a legitimately open instrument. Dry-run reports planned versus
+`not_scheduled` scope and writes nothing.
 
 Recommend exact explicit-date semantics: markets closed on that date are
 `not_scheduled`; no silent substitution of prior sessions. For relative dates,
@@ -194,6 +228,8 @@ rejection/retraining, not transparent reuse.
 
 ## Progress
 
-- Implementation: not started.
-- Label/session/overlap decisions: pending.
+- Decisions: **D03/D04 approved by the owner 2026-10-08**; ADR-0014 accepted
+  (label lifecycle and availability metadata).
+- Implementation: not started. PR1 (exact scope and ticker-aware completeness)
+  change plan presented for confirmation before any code edit.
 - Migration and test evidence: not recorded.

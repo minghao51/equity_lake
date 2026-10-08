@@ -33,3 +33,4 @@ enforced contracts when guidance conflicts.
 | [0011](0011-corporate-actions-dataset.md) | Corporate actions as an explicit dataset, point-in-time adjustment at read | Accepted |
 | [0012](0012-source-tree-hygiene.md) | Config unification, `eod_pipeline` rename, `contracts` rename, boundary coverage extension | Proposed |
 | [0013](0013-ml-signals-dependency-direction.md) | One-way dependency: `signals` may import `ml`, never the reverse | Proposed |
+| [0014](0014-label-lifecycle-and-availability.md) | Label finalization on a later session, `label_available_date` metadata, strict as-of cutoff | Accepted |
