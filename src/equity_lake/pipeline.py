@@ -10,7 +10,7 @@ import structlog
 from equity_lake.core.config import TickerConfig, get_settings
 from equity_lake.core.paths import LONG_TO_SHORT
 from equity_lake.features import NoFeatureHistoryError, run_feature_job
-from equity_lake.ingestion.backfill import backfill_date_range
+from equity_lake.ingestion.backfill import BackfillResult, backfill_date_range
 from equity_lake.ingestion.orchestrator import run_daily_ingestion
 from equity_lake.ingestion.types import (
     OPTIONAL_ENRICHMENT_MARKETS,
@@ -20,6 +20,7 @@ from equity_lake.ingestion.types import (
     SourceOutcome,
     SourceStatus,
     normalize_markets,
+    resolve_explicit_scope,
 )
 from equity_lake.ml import run_prediction_job
 
@@ -35,7 +36,7 @@ def _backfill_feature_history(
     ticker_config: TickerConfig,
     dry_run: bool = False,
     explicit_tickers: list[str] | None = None,
-) -> int:
+) -> BackfillResult:
     start_date = trading_date - timedelta(days=HISTORY_BACKFILL_WINDOW_DAYS)
     return backfill_date_range(
         start_date=start_date,
@@ -44,6 +45,7 @@ def _backfill_feature_history(
         ticker_config=ticker_config,
         dry_run=dry_run,
         explicit_tickers=explicit_tickers if explicit_tickers is not None else tickers,
+        authorized=True,
     )
 
 
@@ -141,6 +143,9 @@ def _run_ingestion_stage(
     )
     markets_payload = {m: outcome.status.value for m, outcome in ingestion_results.items()}
     errors = {m: outcome.error for m, outcome in ingestion_results.items() if outcome.error}
+    # W03/F25: re-derive (with the same pure resolver) the per-market scope that
+    # run_daily_ingestion consumed, so the stage payload reports resolved scope.
+    resolved_scope = resolve_explicit_scope(markets, explicit_tickers, ticker_config)
     stage = _stage(
         not required_failures,
         markets=markets_payload,
@@ -148,6 +153,7 @@ def _run_ingestion_stage(
         optional_failures=optional_failures,
         partial=bool(optional_failures),
         errors=errors,
+        ticker_scope={market: resolved_scope.get(market) for market in markets},
     )
     if not all(o.succeeded for o in ingestion_results.values()):
         if required_failures:
@@ -339,13 +345,17 @@ def _handle_missing_feature_history(
     )
 
     try:
-        backfilled_dates = _backfill_feature_history(
+        backfill_result = _backfill_feature_history(
             trading_date, tickers, price_markets, ticker_config, dry_run=dry_run, explicit_tickers=explicit_tickers
         )
     except Exception as backfill_exc:
         logger.error("feature_history_backfill_failed", error=str(backfill_exc))
         return _stage(
-            False, reason="history_backfill_failed", error=str(backfill_exc), coverage=_coverage_from_diagnostics(tickers, diagnostics)
+            False,
+            reason="history_backfill_failed",
+            error=str(backfill_exc),
+            recovery={"authorized": True, "error": str(backfill_exc)},
+            coverage=_coverage_from_diagnostics(tickers, diagnostics),
         ), tickers
 
     try:
@@ -363,7 +373,13 @@ def _handle_missing_feature_history(
         produced = sorted(features_df["ticker"].drop_nulls().unique().to_list()) if "ticker" in features_df.columns else []
         coverage = _coverage_payload(tickers, retry_diagnostics, produced)
         missing: dict[str, str] = coverage["missing"]
-        stage = _stage(not missing, rows=len(features_df), history_backfilled_dates=backfilled_dates, coverage=coverage)
+        stage = _stage(
+            not missing,
+            rows=len(features_df),
+            history_backfilled_dates=backfill_result.total_dates,
+            recovery=backfill_result.to_payload(),
+            coverage=coverage,
+        )
         if missing:
             logger.error("feature_coverage_incomplete", missing=missing)
             stage["error"] = _coverage_error(missing)
@@ -371,7 +387,11 @@ def _handle_missing_feature_history(
     except Exception as retry_exc:
         logger.error("feature_pipeline_failed", error=str(retry_exc))
         return _stage(
-            False, error=str(retry_exc), history_backfilled_dates=backfilled_dates, coverage=_coverage_from_diagnostics(tickers, retry_diagnostics)
+            False,
+            error=str(retry_exc),
+            history_backfilled_dates=backfill_result.total_dates,
+            recovery=backfill_result.to_payload(),
+            coverage=_coverage_from_diagnostics(tickers, retry_diagnostics),
         ), tickers
 
 

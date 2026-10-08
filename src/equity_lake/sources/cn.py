@@ -30,6 +30,7 @@ class CNAshareFetcher(MarketDataFetcher):
         filters: dict[str, Any] | None = None,
         max_workers: int = 10,
         stock_limit: int = 100,
+        tickers: list[str] | None = None,
     ):
         super().__init__(
             retry_attempts,
@@ -39,6 +40,15 @@ class CNAshareFetcher(MarketDataFetcher):
         )
         self.filters = filters or {}
         self.max_workers = max_workers
+        # W03/F04: explicit scope override (not truncated by stock_limit);
+        # None keeps the configured universe, [] is an explicit empty scope.
+        self._explicit_tickers = list(tickers) if tickers is not None else None
+
+    def _effective_tickers(self) -> list[str]:
+        """Explicit scope when supplied, otherwise the configured CN universe."""
+        if self._explicit_tickers is not None:
+            return self._explicit_tickers
+        return self._get_configured_tickers("cn")
 
     def _fetch_single_stock(
         self,
@@ -66,7 +76,7 @@ class CNAshareFetcher(MarketDataFetcher):
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch China A-share data for a trading date."""
-        tickers = self._get_configured_tickers("cn")
+        tickers = self._effective_tickers()
         logger.info(
             "fetch_cn_ashare_started",
             date=str(trading_date),

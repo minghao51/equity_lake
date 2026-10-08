@@ -326,14 +326,15 @@ class TestPipelineIntegration:
         """
         # ``us`` already has the date -> skipped as already-present.
         # ``cn`` is missing -> fetched (we return sample data so the write succeeds).
+        from equity_lake.core.config import TickerConfig
 
-        def has_date(market_dir, trading_date, con=None):
-            return market_dir.endswith("us_equity")
+        us_tickers = set(TickerConfig().get_tickers_for_market("us", active_only=True))
+
+        def coverage(market, market_dir, trading_date, con):
+            return (True, us_tickers) if market == "us_equity" else (False, set())
 
         with (
-            patch("equity_lake.ingestion.orchestrator._market_has_date", side_effect=has_date),
-            # Bypass the read-back validator (no real partition on disk in this test).
-            patch("equity_lake.ingestion.orchestrator._partition_is_valid", return_value=True),
+            patch("equity_lake.ingestion.orchestrator._read_partition_coverage", side_effect=coverage),
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
@@ -361,13 +362,8 @@ class TestPipelineIntegration:
         """
         # ``us`` exists (has_date True) but is corrupt (validate_schema False).
         # ``cn`` is missing entirely -> fetched.
-
-        def has_date(market_dir, trading_date, con=None):
-            return market_dir.endswith("us_equity")
-
         with (
-            patch("equity_lake.ingestion.orchestrator._market_has_date", side_effect=has_date),
-            patch("equity_lake.ingestion.orchestrator._partition_is_valid", return_value=False),
+            patch("equity_lake.ingestion.orchestrator._read_partition_coverage", return_value=(False, set())),
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
@@ -458,3 +454,239 @@ class TestPerformance:
         # Both should return DataFrames
         assert isinstance(df1, pl.DataFrame)
         assert isinstance(df2, pl.DataFrame)
+
+
+# =============================================================================
+# W03/F04/F05: explicit scope through all five markets + ticker-aware existing data
+# =============================================================================
+
+
+def _ohlcv_frame(tickers: list[str], trading_date: date) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "ticker": list(tickers),
+            "date": [trading_date] * len(tickers),
+            "open": [100.0] * len(tickers),
+            "high": [101.0] * len(tickers),
+            "low": [99.0] * len(tickers),
+            "close": [100.5] * len(tickers),
+            "volume": [1000.0] * len(tickers),
+            "adj_close": [100.5] * len(tickers),
+        },
+        schema={
+            "ticker": pl.Utf8,
+            "date": pl.Date,
+            "open": pl.Float64,
+            "high": pl.Float64,
+            "low": pl.Float64,
+            "close": pl.Float64,
+            "volume": pl.Float64,
+            "adj_close": pl.Float64,
+        },
+    )
+
+
+class TestExplicitScopeOrchestration:
+    """Explicit scope is resolved once and forwarded exactly to each price market."""
+
+    @pytest.mark.parametrize(
+        ("market", "tickers"),
+        [
+            ("us_equity", ["AAPL"]),
+            ("cn_ashare", ["600000"]),
+            ("hk_sg_equity", ["0700.HK"]),
+            ("jpx_equity", ["7203.T"]),
+            ("krx_equity", ["005930"]),
+        ],
+    )
+    def test_each_price_market_receives_exact_scoped_tickers(self, tmp_path, market, tickers) -> None:
+        """W03/F04: explicit scope reaches all five price markets, not just US."""
+        captured: list[tuple[str, list[str] | None]] = []
+
+        def spy(mkt, trading_date, **kwargs):
+            captured.append((mkt, kwargs.get("explicit_tickers")))
+            return pl.DataFrame()
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            run_daily_ingestion(date(2024, 1, 2), [market], dry_run=True, parallel=False, explicit_tickers=tickers)
+
+        assert captured == [(market, tickers)]
+
+    def test_empty_explicit_list_never_broadens(self, tmp_path) -> None:
+        """W03/F04: ``[]`` is preserved end to end and never becomes the configured universe."""
+        captured: list[list[str] | None] = []
+
+        def spy(mkt, trading_date, **kwargs):
+            captured.append(kwargs.get("explicit_tickers"))
+            return pl.DataFrame()
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 2), ["us_equity"], dry_run=True, parallel=False, explicit_tickers=[])
+
+        assert captured == [[]]
+        assert results["us_equity"].status is SourceStatus.NO_DATA
+
+    def test_ambiguous_multi_market_rejects_before_any_fetch(self, tmp_path) -> None:
+        """W03/F04: an ambiguous multi-market ticker raises and performs no fetch."""
+        from equity_lake.core.config_models import MarketConfig, TickerConfigRoot, TickerMetadata
+
+        def meta(symbol: str) -> TickerMetadata:
+            return TickerMetadata(symbol=symbol, name=symbol, exchange="TEST", sector="Tech")
+
+        config = TickerConfigRoot(
+            markets={
+                "us": MarketConfig(currency="USD", tickers=[meta("DUP")]),
+                "cn": MarketConfig(currency="CNY", tickers=[meta("DUP")]),
+            }
+        )
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch,
+            pytest.raises(ValueError, match="ambiguous: DUP"),
+        ):
+            run_daily_ingestion(date(2024, 1, 2), ["us_equity", "cn_ashare"], ticker_config=config, explicit_tickers=["DUP"])
+        mock_fetch.assert_not_called()
+
+    def test_parallel_branch_uses_per_market_scope(self, tmp_path) -> None:
+        """W03/F04: the parallel branch also receives the per-market resolved list."""
+        from equity_lake.core.config import TickerConfig
+
+        config = TickerConfig()
+        us_ticker = config.get_tickers_for_market("us", active_only=True)[0]
+        cn_ticker = config.get_tickers_for_market("cn", active_only=True)[0]
+        captured: dict[str, list[str] | None] = {}
+
+        def spy(mkt, trading_date, **kwargs):
+            captured[mkt] = kwargs.get("explicit_tickers")
+            return pl.DataFrame()
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data_with_config", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            run_daily_ingestion(
+                date(2024, 1, 2),
+                ["us_equity", "cn_ashare"],
+                dry_run=True,
+                parallel=True,
+                ticker_config=config,
+                explicit_tickers=[us_ticker, cn_ticker],
+            )
+
+        assert captured == {"us_equity": [us_ticker], "cn_ashare": [cn_ticker]}
+
+
+class TestTickerAwareExistingData:
+    """W03/F05: existing-date checks must prove requested-ticker completeness."""
+
+    @staticmethod
+    def _write_partition(tmp_path, tickers: list[str], trading_date: date) -> None:
+        with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
+            assert upsert_dataset(_ohlcv_frame(tickers, trading_date), "01_bronze/market_data/us_equity", trading_date, dry_run=False) is True
+
+    def test_partial_partition_is_not_skipped_and_fetches_only_missing(self, tmp_path) -> None:
+        """One ticker present + one absent -> not skipped; scoped fetch targets the missing ticker."""
+        trading_date = date(2024, 1, 2)
+        self._write_partition(tmp_path, ["AAPL"], trading_date)
+        captured: list[list[str] | None] = []
+
+        def spy(mkt, trading_date, **kwargs):
+            captured.append(kwargs.get("explicit_tickers"))
+            return pl.DataFrame()
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(trading_date, ["us_equity"], dry_run=True, parallel=False, explicit_tickers=["AAPL", "MSFT"])
+
+        assert results["us_equity"].status is not SourceStatus.SKIPPED_EXISTING
+        assert captured == [["MSFT"]]  # the late-added ticker is the only fetch scope
+
+    def test_unspecified_scope_incomplete_partition_fetches_fetcher_default(self, tmp_path) -> None:
+        """W03 review: an unspecified (None) request never fetches an over-broad explicit list.
+
+        The configured-scope coverage check decides *whether* to fetch; the fetch
+        itself stays ``None`` so the fetcher applies its own filtered/fallback
+        default exactly as before W03 (requested scope never broadens).
+        """
+        from equity_lake.core.config import TickerConfig
+        from equity_lake.core.config_models import MarketConfig, TickerMetadata
+
+        def meta(symbol: str) -> TickerMetadata:
+            return TickerMetadata(symbol=symbol, name=symbol, exchange="TEST", sector="Tech")
+
+        config = TickerConfig(markets={"us": MarketConfig(currency="USD", tickers=[meta("AAPL"), meta("MSFT")])})
+        trading_date = date(2024, 1, 2)
+        self._write_partition(tmp_path, ["AAPL"], trading_date)
+        captured: list[list[str] | None] = []
+
+        def spy(mkt, trading_date, **kwargs):
+            captured.append(kwargs.get("explicit_tickers"))
+            return pl.DataFrame()
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(trading_date, ["us_equity"], dry_run=True, parallel=False, ticker_config=config)
+
+        assert results["us_equity"].status is not SourceStatus.SKIPPED_EXISTING
+        assert captured == [None]  # fetcher default, not an explicit ticker list
+
+    def test_complete_partition_is_skipped_without_fetch(self, tmp_path) -> None:
+        """Every requested ticker present in a valid partition -> SKIPPED_EXISTING."""
+        trading_date = date(2024, 1, 2)
+        self._write_partition(tmp_path, ["AAPL", "MSFT"], trading_date)
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch,
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(trading_date, ["us_equity"], dry_run=True, parallel=False, explicit_tickers=["AAPL", "MSFT"])
+
+        assert results["us_equity"].status is SourceStatus.SKIPPED_EXISTING
+        mock_fetch.assert_not_called()
+
+    def test_corrupt_partition_is_refetched_in_full(self, tmp_path) -> None:
+        """A schema-invalid partition cannot prove presence, so the full scope is fetched."""
+        trading_date = date(2024, 1, 2)
+        self._write_partition(tmp_path, ["AAPL"], trading_date)
+        captured: list[list[str] | None] = []
+
+        def spy(mkt, trading_date, **kwargs):
+            captured.append(kwargs.get("explicit_tickers"))
+            return pl.DataFrame()
+
+        with (
+            patch("equity_lake.ingestion.orchestrator._read_partition_coverage", return_value=(False, {"AAPL"})),
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            run_daily_ingestion(trading_date, ["us_equity"], dry_run=True, parallel=False, explicit_tickers=["AAPL", "MSFT"])
+
+        assert captured == [["AAPL", "MSFT"]]
+
+    def test_direct_ingest_dry_run_writes_nothing(self, tmp_path, sample_ohlcv_data) -> None:
+        """W03: a direct ingest dry-run leaves no partition on disk."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 2), ["us_equity"], dry_run=True, parallel=False, explicit_tickers=["AAPL"])
+
+        assert results["us_equity"].status is SourceStatus.DRY_RUN
+        assert list(tmp_path.rglob("*")) == []

@@ -58,6 +58,22 @@ def _default_us_tickers(
     return tickers
 
 
+def _split_hk_sg_tickers(explicit_tickers: list[str]) -> tuple[list[str], list[str]]:
+    """Split an explicit HK/SG scope by symbol suffix (W03/F04).
+
+    ``.HK`` tickers go to the Hong Kong fetcher, ``.SI`` to Singapore. A ticker
+    matching neither suffix is rejected: silently dropping it would make the
+    market's completeness check pass while the requested instrument was never
+    fetched.
+    """
+    hk_tickers = [ticker for ticker in explicit_tickers if ticker.endswith(".HK")]
+    sg_tickers = [ticker for ticker in explicit_tickers if ticker.endswith(".SI")]
+    unrecognized = [ticker for ticker in explicit_tickers if not ticker.endswith((".HK", ".SI"))]
+    if unrecognized:
+        raise ValueError(f"hk_sg_equity explicit tickers must end with .HK or .SI; unrecognized: {', '.join(unrecognized)}")
+    return hk_tickers, sg_tickers
+
+
 def _make_us_fetcher(
     *,
     retry_attempts: int,
@@ -88,6 +104,7 @@ def _make_cn_fetcher(
     from equity_lake.sources.cn_hybrid import CNHybridFetcher
 
     return CNHybridFetcher(
+        tickers=explicit_tickers,
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,
         ticker_config=ticker_config,
@@ -105,7 +122,17 @@ def _make_hk_sg_fetcher(
 ) -> MarketDataFetcher:
     from equity_lake.sources.hk_sg import HKSGEquityFetcher
 
+    if explicit_tickers is None:
+        return HKSGEquityFetcher(
+            retry_attempts=retry_attempts,
+            retry_delay=retry_delay,
+            ticker_config=ticker_config,
+            filters=filters,
+        )
+    hk_tickers, sg_tickers = _split_hk_sg_tickers(explicit_tickers)
     return HKSGEquityFetcher(
+        hk_tickers=hk_tickers,
+        sg_tickers=sg_tickers,
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,
         ticker_config=ticker_config,
@@ -124,6 +151,7 @@ def _make_jpx_fetcher(
     from equity_lake.sources.jpx import JPXEquityFetcher
 
     return JPXEquityFetcher(
+        tickers=explicit_tickers,
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,
         ticker_config=ticker_config,
@@ -142,6 +170,7 @@ def _make_krx_fetcher(
     from equity_lake.sources.krx import KRXEquityFetcher
 
     return KRXEquityFetcher(
+        tickers=explicit_tickers,
         retry_attempts=retry_attempts,
         retry_delay=retry_delay,
         ticker_config=ticker_config,
@@ -178,7 +207,7 @@ def _make_news_fetcher(
 
     from equity_lake.sources.news import FinnhubNewsFetcher
 
-    if not explicit_tickers:
+    if explicit_tickers is None:
         explicit_tickers = _default_us_tickers(ticker_config, max_tickers=100)
 
     return FinnhubNewsFetcher(
@@ -201,7 +230,7 @@ def _make_sentiment_fetcher(
 
     from equity_lake.sources.sentiment import FinnhubSocialSentimentFetcher
 
-    if not explicit_tickers:
+    if explicit_tickers is None:
         explicit_tickers = _default_us_tickers(ticker_config, max_tickers=100)
 
     return FinnhubSocialSentimentFetcher(
@@ -252,7 +281,7 @@ def _make_stocktwits_fetcher(
 ) -> MarketDataFetcher:
     from equity_lake.sources.stocktwits import StockTwitsFetcher
 
-    if not explicit_tickers and ticker_config:
+    if explicit_tickers is None and ticker_config:
         explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
 
     return StockTwitsFetcher(
@@ -274,7 +303,7 @@ def _make_transcript_fetcher(
 
     from equity_lake.sources.transcripts import EarningsTranscriptFetcher
 
-    if not explicit_tickers:
+    if explicit_tickers is None:
         explicit_tickers = _default_us_tickers(ticker_config)
 
     return EarningsTranscriptFetcher(
@@ -297,7 +326,7 @@ def _make_analyst_rating_fetcher(
 
     from equity_lake.sources.analyst_ratings import AnalystRatingFetcher
 
-    if not explicit_tickers:
+    if explicit_tickers is None:
         explicit_tickers = _default_us_tickers(ticker_config)
 
     return AnalystRatingFetcher(
@@ -318,7 +347,7 @@ def _make_sec_filing_fetcher(
 ) -> MarketDataFetcher:
     from equity_lake.sources.sec_fulltext import SECFilingFetcher
 
-    if not explicit_tickers and ticker_config:
+    if explicit_tickers is None and ticker_config:
         explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
 
     return SECFilingFetcher(
@@ -338,7 +367,7 @@ def _make_sec_financials_fetcher(
 ) -> MarketDataFetcher:
     from equity_lake.sources.sec_financials import SECFinancialsFetcher
 
-    if not explicit_tickers and ticker_config:
+    if explicit_tickers is None and ticker_config:
         explicit_tickers = ticker_config.get_tickers_for_market("us", active_only=True)
 
     return SECFinancialsFetcher(

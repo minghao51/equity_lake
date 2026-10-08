@@ -12,6 +12,27 @@ _WRITTEN = SourceOutcome(SourceStatus.WRITTEN)
 _FAILED = SourceOutcome(SourceStatus.FAILED)
 
 
+def _backfill_result(total: int = 1, **overrides):
+    """Build a BackfillResult for tests that monkeypatch backfill_date_range."""
+    from equity_lake.ingestion.backfill import BackfillResult
+
+    fields = {
+        "start_date": date(2023, 9, 4),
+        "end_date": date(2024, 1, 2),
+        "markets": ("us_equity",),
+        "instruments": ("AAPL",),
+        "authorized": True,
+        "trading_dates": 1,
+        "market_date_attempts": total,
+        "succeeded": total,
+        "failed": 0,
+        "dates_recovered": 1 if total else 0,
+        "per_market": {"us_equity": total},
+    }
+    fields.update(overrides)
+    return BackfillResult(**fields)
+
+
 def test_execute_eod_pipeline_dry_run_skips_writes_and_processors(monkeypatch):
     """Dry-run is a plan-only execution and never enters write-capable stages."""
 
@@ -82,7 +103,7 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
     backfill_calls = []
-    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or 1)
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or _backfill_result(1))
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
@@ -96,6 +117,10 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
 
     assert results["features"]["success"] is True
     assert results["features"]["history_backfilled_dates"] == 1
+    # W03/F25: the structured recovery payload reports the frozen scope and counts.
+    assert results["features"]["recovery"]["authorized"] is True
+    assert results["features"]["recovery"]["succeeded"] == 1
+    assert results["features"]["recovery"]["instruments"] == ["AAPL"]
     assert backfill_calls == [
         {
             "start_date": date(2023, 9, 4),
@@ -104,6 +129,7 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
             "ticker_config": backfill_calls[0]["ticker_config"],
             "dry_run": False,
             "explicit_tickers": ["AAPL"],
+            "authorized": True,
         }
     ]
 
@@ -112,12 +138,13 @@ def test_backfill_feature_history_scopes_tickers_only_callers(monkeypatch):
     """A tickers-only caller must not trigger an unscoped all-ticker backfill."""
 
     backfill_calls = []
-    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or 3)
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or _backfill_result(3))
 
     # Tickers-only caller: previously forwarded explicit_tickers=None → unscoped 120-day all-ticker backfill.
     written = _backfill_feature_history(date(2024, 1, 2), ["MSFT", "NVDA"], ["us_equity"], TickerConfig())
-    assert written == 3
+    assert written.total_dates == 3
     assert backfill_calls[0]["explicit_tickers"] == ["MSFT", "NVDA"]
+    assert backfill_calls[0]["authorized"] is True
 
     # Explicit tickers still take precedence when provided.
     _backfill_feature_history(date(2024, 1, 2), ["MSFT"], ["us_equity"], TickerConfig(), explicit_tickers=["TSLA"])
@@ -135,7 +162,7 @@ def test_authorized_history_recovery_scopes_backfill_to_price_markets(monkeypatc
     """Recovery only re-ingests required price markets, not enrichments."""
 
     backfill_calls = []
-    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or 1)
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or _backfill_result(1))
     monkeypatch.setattr(
         "equity_lake.pipeline.run_feature_job",
         lambda **_: (_ for _ in ()).throw(NoFeatureHistoryError("No features generated")),
@@ -804,3 +831,99 @@ def test_bronze_to_silver_no_work_is_a_skip_not_a_failure(monkeypatch):
     assert stage["success"] is False
     assert stage["reason"] == "optional enrichment failed"
     assert stage["error"] == "llm quota"
+
+
+# =============================================================================
+# W03/F25: structured recovery reporting
+# =============================================================================
+
+
+def test_zero_recovered_dates_are_reported_without_fabricating_success(monkeypatch):
+    """W03/F25: zero recovered dates are visible and never asserted as success."""
+    import polars as pl
+
+    calls = {"n": 0}
+
+    def run_feature_job(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise NoFeatureHistoryError("No features generated")
+        kwargs["diagnostics"].update({"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}, "phase1_skipped": {}})
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
+    monkeypatch.setattr(
+        "equity_lake.pipeline.backfill_date_range",
+        lambda **_: _backfill_result(0, market_date_attempts=2, failed=2, per_market={"us_equity": 0}, dates_recovered=0),
+    )
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL"],
+        skip_ingestion=True,
+        skip_ml=True,
+        allow_history_backfill=True,
+    )
+
+    assert results["features"]["success"] is True
+    assert results["features"]["history_backfilled_dates"] == 0
+    recovery = results["features"]["recovery"]
+    assert recovery["succeeded"] == 0
+    assert recovery["failed"] == 2
+    assert recovery["dates_recovered"] == 0
+    assert recovery["market_date_attempts"] == 2
+
+
+def test_missing_coverage_after_recovery_fails_stage(monkeypatch):
+    """W03/F25: the post-recovery completeness check still fails missing scope."""
+    import polars as pl
+
+    calls = {"n": 0}
+
+    def run_feature_job(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise NoFeatureHistoryError("No features generated")
+        kwargs["diagnostics"].update(
+            {
+                "requested": ["AAPL", "MSFT"],
+                "produced": ["AAPL"],
+                "missing": {"MSFT": "insufficient_history"},
+                "phase1_skipped": {"MSFT": "insufficient_history"},
+            }
+        )
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **_: _backfill_result(1))
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL", "MSFT"],
+        skip_ingestion=True,
+        skip_ml=True,
+        allow_history_backfill=True,
+    )
+
+    assert results["features"]["success"] is False
+    assert "MSFT=insufficient_history" in results["features"]["error"]
+    assert results["features"]["recovery"]["succeeded"] == 1
+    assert results["features"]["coverage"]["missing"] == {"MSFT": "insufficient_history"}
+
+
+def test_ingestion_stage_reports_resolved_ticker_scope(monkeypatch):
+    """W03/F04: the ingestion stage publishes the resolver's per-market scope."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN})
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL"],
+        explicit_tickers=["AAPL"],
+        skip_features=True,
+        skip_ml=True,
+    )
+
+    assert results["ingestion"]["ticker_scope"] == {"us_equity": ["AAPL"]}

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.router import fetch_market_data
+from equity_lake.ingestion.router import fetch_market_data, fetch_market_data_with_config
 
 
 class TestFetchMarketDataUnknownMarket:
@@ -84,3 +84,64 @@ class TestFetchMarketDataWithFetcherError:
             pytest.raises(ValueError, match="us_equity.*schema"),
         ):
             fetch_market_data("us_equity", date(2026, 6, 2))
+
+
+# =============================================================================
+# W03/F04: explicit ticker scope reaches every price-market factory
+# =============================================================================
+
+
+class TestExplicitTickerForwarding:
+    """The router forwards the exact scoped list to each price-market factory."""
+
+    @patch("equity_lake.sources.cn_hybrid.CNHybridFetcher")
+    def test_cn_factory_forwards_explicit_tickers(self, mock_cls) -> None:
+        mock_cls.return_value.fetch.return_value = pl.DataFrame()
+        fetch_market_data_with_config("cn_ashare", date(2026, 6, 2), explicit_tickers=["600000", "000001"])
+        assert mock_cls.call_args.kwargs["tickers"] == ["600000", "000001"]
+
+    @patch("equity_lake.sources.hk_sg.HKSGEquityFetcher")
+    def test_hk_sg_factory_splits_by_suffix(self, mock_cls) -> None:
+        mock_cls.return_value.fetch.return_value = pl.DataFrame()
+        fetch_market_data_with_config("hk_sg_equity", date(2026, 6, 2), explicit_tickers=["0700.HK", "D05.SI"])
+        assert mock_cls.call_args.kwargs["hk_tickers"] == ["0700.HK"]
+        assert mock_cls.call_args.kwargs["sg_tickers"] == ["D05.SI"]
+
+    @patch("equity_lake.sources.hk_sg.HKSGEquityFetcher")
+    def test_hk_sg_factory_rejects_ticker_matching_neither_suffix(self, mock_cls) -> None:
+        """W03/F04: an unknown HK/SG suffix is rejected, never silently dropped."""
+        with pytest.raises(ValueError, match="unrecognized: AAPL"):
+            fetch_market_data_with_config("hk_sg_equity", date(2026, 6, 2), explicit_tickers=["AAPL"])
+        mock_cls.assert_not_called()
+
+    @patch("equity_lake.sources.jpx.JPXEquityFetcher")
+    def test_jpx_factory_forwards_explicit_tickers(self, mock_cls) -> None:
+        mock_cls.return_value.fetch.return_value = pl.DataFrame()
+        fetch_market_data_with_config("jpx_equity", date(2026, 6, 2), explicit_tickers=["7203.T"])
+        assert mock_cls.call_args.kwargs["tickers"] == ["7203.T"]
+
+    @patch("equity_lake.sources.krx.KRXEquityFetcher")
+    def test_krx_factory_forwards_explicit_tickers(self, mock_cls) -> None:
+        mock_cls.return_value.fetch.return_value = pl.DataFrame()
+        fetch_market_data_with_config("krx_equity", date(2026, 6, 2), explicit_tickers=["005930"])
+        assert mock_cls.call_args.kwargs["tickers"] == ["005930"]
+
+    @patch("equity_lake.sources.news.FinnhubNewsFetcher")
+    def test_empty_explicit_list_is_not_broadened(self, mock_cls, monkeypatch) -> None:
+        """W03/F04: an explicit empty list must not fall back to the default universe."""
+        from equity_lake.core.config import TickerConfig
+
+        monkeypatch.setenv("FINNHUB_API_KEY", "test-key")
+        mock_cls.return_value.fetch.return_value = pl.DataFrame()
+        fetch_market_data_with_config("us_news", date(2026, 6, 2), explicit_tickers=[], ticker_config=TickerConfig())
+        assert mock_cls.call_args.kwargs["tickers"] == []
+
+    @patch("equity_lake.sources.news.FinnhubNewsFetcher")
+    def test_none_explicit_list_uses_default_universe(self, mock_cls, monkeypatch) -> None:
+        from equity_lake.core.config import TickerConfig
+
+        monkeypatch.setenv("FINNHUB_API_KEY", "test-key")
+        mock_cls.return_value.fetch.return_value = pl.DataFrame()
+        config = TickerConfig()
+        fetch_market_data_with_config("us_news", date(2026, 6, 2), explicit_tickers=None, ticker_config=config)
+        assert mock_cls.call_args.kwargs["tickers"] == config.get_tickers_for_market("us", active_only=True)[:100]

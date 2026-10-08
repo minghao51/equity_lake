@@ -25,7 +25,17 @@ from equity_lake.ingestion.router import (
     fetch_market_data,
     fetch_market_data_with_config,
 )
-from equity_lake.ingestion.types import MARKET_DIR_MAP, OPTIONAL_ENRICHMENT_MARKETS, SourceOutcome, SourceStatus, normalize_markets
+from equity_lake.ingestion.types import (
+    EXPLICIT_TICKER_MARKETS,  # noqa: F401 -- re-exported for existing importers (single definition lives in types.py)
+    MARKET_DIR_MAP,
+    OPTIONAL_ENRICHMENT_MARKETS,
+    PRICE_MARKET_CONFIG_KEYS,
+    REQUIRED_PRICE_MARKETS,
+    SourceOutcome,
+    SourceStatus,
+    normalize_markets,
+    resolve_explicit_scope,
+)
 from equity_lake.ingestion.writers import upsert_dataset
 from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
 
@@ -36,20 +46,6 @@ __all__ = [
 ]
 
 logger = structlog.get_logger()
-
-# Markets whose fetchers honor explicit per-ticker overrides (Finnhub/SEC sources
-# that are ticker-scoped rather than broad-market pulls). Considered in both the
-# parallel and serial fetch branches below; kept here so the set is defined once.
-EXPLICIT_TICKER_MARKETS: frozenset[str] = frozenset(
-    {
-        "us_equity",
-        "stocktwits_messages",
-        "us_earnings_transcripts",
-        "us_analyst_ratings",
-        "sec_filings_fulltext",
-        "us_sec_financials",
-    }
-)
 
 
 def _finalize_market(market: str, trading_date: date, dry_run: bool, df: Any) -> SourceOutcome:
@@ -78,92 +74,119 @@ def _finalize_market(market: str, trading_date: date, dry_run: bool, df: Any) ->
         return SourceOutcome(SourceStatus.FAILED, error=str(exc))
 
 
-def _market_has_date(market_dir: str, trading_date: date, con: duckdb.DuckDBPyConnection | None = None) -> bool:
-    """Cheap row-count existence check (does NOT validate schema).
+def _configured_tickers_for_market(market: str, ticker_config: TickerConfig | None) -> list[str]:
+    """All configured active tickers for a price market (no implicit cap).
 
-    Use :func:`_partition_is_valid` when you need to confirm a partition is
-    usable, not merely present.
+    ``hk_sg_equity`` spans the ``hk`` and ``sg`` config sections; single-market
+    price markets use their short alias. Used as the *requested* scope when the
+    caller did not pass an explicit list, so presence checks cover the whole
+    configured scope rather than a single sampled row.
     """
-    market_path = LAKE_DIR / market_dir
-    if not market_path.exists():
-        return False
-
-    try:
-        from deltalake import DeltaTable
-
-        if DeltaTable.is_deltatable(str(market_path)):
-            own_connection = con is None
-            active_con = con if con is not None else duckdb.connect(":memory:")
-            try:
-                if own_connection:
-                    ensure_delta_extension(active_con)
-                row = active_con.execute(
-                    f"SELECT COUNT(*) FROM delta_scan('{market_path}') WHERE date = ?",
-                    [trading_date],
-                ).fetchone()
-                return row is not None and row[0] > 0
-            finally:
-                if own_connection:
-                    active_con.close()
-    except ImportError:
-        pass
-
-    return False
+    if ticker_config is None:
+        return []
+    tickers: list[str] = []
+    for key in PRICE_MARKET_CONFIG_KEYS.get(market, ()):
+        for ticker in ticker_config.get_tickers_for_market(key, active_only=True):
+            if ticker not in tickers:
+                tickers.append(ticker)
+    return tickers
 
 
-def _partition_is_valid(market: str, market_dir: str, trading_date: date, con: duckdb.DuckDBPyConnection) -> bool:
-    """Confirm a partition is usable: non-empty AND schema columns present and not all-null.
+def _read_partition_coverage(
+    market: str,
+    market_dir: str,
+    trading_date: date,
+    con: duckdb.DuckDBPyConnection,
+) -> tuple[bool, set[str]]:
+    """One bounded scoped read of the date partition: ``(schema_valid, present_tickers)``.
 
-    Reuses the write-boundary validator so the definition of "valid" is the same
-    one that gated the write in the first place. ``LIMIT 100`` keeps the read-back
-    cheap — column presence and all-null detection don't need a full scan.
+    Replaces the separate row-count and sampled-schema checks (W03/F05): a single
+    ``QUALIFY ROW_NUMBER()`` read returns one row per distinct ticker, so ticker
+    presence and schema validity come from the same bounded scan. Schema validity
+    reuses the write-boundary validator, so "valid" means the same thing that
+    gated the write. A missing/empty/corrupt partition yields ``(False, set())``
+    so the caller re-fetches rather than trusting it.
     """
     from equity_lake.ingestion.writers import validate_schema
 
     market_path = LAKE_DIR / market_dir
     if not market_path.exists():
-        return False
+        return False, set()
     scan_expr = duckdb_scan_for(market_path)
     try:
-        df = con.execute(f"SELECT * FROM {scan_expr} WHERE date = ? LIMIT 100", [trading_date]).pl()
+        df = con.execute(
+            f"SELECT * FROM {scan_expr} WHERE date = ? QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY ticker) = 1",
+            [trading_date],
+        ).pl()
     except Exception as exc:  # duckdb/delta scan failures mean we cannot trust the partition
         logger.warning("partition_read_failed", market=market, date=str(trading_date), error=str(exc))
-        return False
+        return False, set()
     if df.is_empty():
-        return False
-    return validate_schema(df, market)
+        return False, set()
+    valid = validate_schema(df, market)
+    present = set(df["ticker"].drop_nulls().to_list()) if "ticker" in df.columns else set()
+    return valid, present
 
 
-def _filter_markets_with_gaps(markets: list[str], trading_date: date) -> tuple[list[str], set[str]]:
-    """Split *markets* into those needing a fetch and those already present.
+def _filter_markets_with_gaps(
+    markets: list[str],
+    trading_date: date,
+    scope: dict[str, list[str] | None],
+    ticker_config: TickerConfig | None,
+) -> tuple[dict[str, list[str] | None], set[str]]:
+    """Split *markets* into fetch work and already-complete markets.
 
-    Returns ``(markets_needing_fetch, already_present)``. Enrichment markets that
-    are not checked for existing partitions are always placed in
-    ``markets_needing_fetch``. Price markets are only treated as present when
-    their partition passes :func:`_partition_is_valid` — a corrupt or
-    all-null partition is re-fetched rather than trusted.
+    Returns ``(to_fetch, already_present)`` where ``to_fetch`` maps a market to
+    the explicit ticker list it should fetch (``None`` = the provider's own
+    configured default, ``[]`` = an explicit empty scope that must not broaden).
+
+    Enrichment markets are never checked for existing partitions and keep their
+    per-market scope. A price market is ``already_present`` only when its date
+    partition is schema-valid *and* every requested ticker is present. An
+    *explicit* scope refetches only the missing tickers (full scope when the
+    partition is corrupt); an unspecified (``None``) request refetches with
+    ``None`` so the fetcher applies its own filtered/fallback default — the
+    coverage list above is used to decide *whether* to fetch, never to widen
+    what the fetcher would have pulled on its own (W03 review: filters/fallback
+    interplay must not over-broaden). An explicit ``[]`` scope stays ``[]``:
+    presence cannot be proven for it, and it must never broaden.
     """
-    markets_needing_fetch: list[str] = []
+    to_fetch: dict[str, list[str] | None] = {}
     already_present: set[str] = set()
     shared_con: duckdb.DuckDBPyConnection | None = None
     try:
         for market in markets:
             if market in OPTIONAL_ENRICHMENT_MARKETS:
-                markets_needing_fetch.append(market)
+                to_fetch[market] = scope.get(market)
                 continue
             market_dir = MARKET_DIR_MAP.get(market, market)
             if shared_con is None:
                 shared_con = duckdb.connect(":memory:")
                 ensure_delta_extension(shared_con)
-            if _market_has_date(market_dir, trading_date, con=shared_con) and _partition_is_valid(market, market_dir, trading_date, con=shared_con):
+            explicit = scope.get(market)
+            requested = explicit
+            if requested is None:
+                requested = _configured_tickers_for_market(market, ticker_config)
+            if not requested:
+                # Presence cannot be verified without a scope. An explicit []
+                # stays [] (never broadens); an unspecified request with an empty
+                # configured universe defers to the fetcher's own default so its
+                # filters/fallback behavior is unchanged from before W03.
+                to_fetch[market] = list(requested) if explicit is not None else None
+                continue
+            valid, present = _read_partition_coverage(market, market_dir, trading_date, shared_con)
+            missing = [ticker for ticker in requested if ticker not in present]
+            if valid and not missing:
                 logger.debug("market_data_exists", market=market, date=str(trading_date))
                 already_present.add(market)
+            elif valid:
+                to_fetch[market] = missing if explicit is not None else None
             else:
-                markets_needing_fetch.append(market)
+                to_fetch[market] = list(requested) if explicit is not None else None
     finally:
         if shared_con is not None:
             shared_con.close()
-    return markets_needing_fetch, already_present
+    return to_fetch, already_present
 
 
 def _write_market(df: Any, market: str, trading_date: date, dry_run: bool) -> bool:
@@ -193,8 +216,23 @@ def run_daily_ingestion(
     # the orchestrator boundary. Unknown keys raise here (loud failure).
     markets = normalize_markets(markets)
 
+    # W03/F04: resolve the explicit request to a per-market scope exactly once,
+    # before any fetch. Every fetch in both branches consumes ``fetch_scope``,
+    # so a ticker can never fan out to every provider or silently broaden.
+    scope = resolve_explicit_scope(markets, explicit_ticker_list, ticker_config)
+    logger.info("resolved_explicit_scope", trading_date=str(trading_date), scope={market: scope.get(market) for market in markets})
+
+    fetch_scope: dict[str, list[str] | None] = {market: scope.get(market) for market in markets}
     if skip_existing:
-        markets_to_fetch, already_present = _filter_markets_with_gaps(markets, trading_date)
+        # A coverage check needs the configured active scope when the caller did
+        # not pass an explicit list; load the shared config lazily so the direct
+        # CLI default (no ticker_config, no explicit tickers) keeps its full
+        # configured scope instead of degrading to an empty fetch. The fetchers
+        # still receive the original ``ticker_config`` unchanged.
+        coverage_config = ticker_config
+        if coverage_config is None and any(market in REQUIRED_PRICE_MARKETS and scope.get(market) is None for market in markets):
+            coverage_config = TickerConfig()
+        fetch_scope, already_present = _filter_markets_with_gaps(markets, trading_date, scope, coverage_config)
         if already_present:
             # Idempotent reruns must surface already-written partitions as success
             # so downstream feature/ML stages are not blocked by a missing result key.
@@ -202,7 +240,7 @@ def run_daily_ingestion(
             logger.info("skip_existing_data", trading_date=str(trading_date), skipped=sorted(already_present))
             for market in already_present:
                 results[market] = SourceOutcome(SourceStatus.SKIPPED_EXISTING)
-        markets = markets_to_fetch
+        markets = list(fetch_scope.keys())
 
     if not markets:
         logger.info("all_markets_up_to_date", trading_date=str(trading_date))
@@ -222,13 +260,13 @@ def run_daily_ingestion(
                             date,
                             ticker_config=config,
                             filters=fltrs,
-                            explicit_tickers=explicit_list if mkt in EXPLICIT_TICKER_MARKETS else None,
+                            explicit_tickers=explicit_list,
                         )
 
                     return fetch_func
 
                 fetch_func_map[market] = (
-                    make_fetch_func(market, explicit_ticker_list, ticker_config, filters),
+                    make_fetch_func(market, fetch_scope.get(market), ticker_config, filters),
                     {},
                 )
 
@@ -270,7 +308,7 @@ def run_daily_ingestion(
                         trading_date,
                         ticker_config=ticker_config,
                         filters=filters,
-                        explicit_tickers=explicit_ticker_list if market in EXPLICIT_TICKER_MARKETS else None,
+                        explicit_tickers=fetch_scope.get(market),
                     )
             except Exception as e:
                 # F10: the router no longer swallows fetch/schema errors into

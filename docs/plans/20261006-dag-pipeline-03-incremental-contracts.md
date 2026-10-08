@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** Ready to start — D03/D04 approved and ADR-0014 accepted (2026-10-08); PR1 change plan pending owner confirmation
+**Status:** In progress — D03/D04 approved and ADR-0014 accepted (2026-10-08); PR1 implemented + reviewed (READY WITH WARNINGS, warnings addressed; owner sign-off pending)
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
@@ -230,6 +230,120 @@ rejection/retraining, not transparent reuse.
 
 - Decisions: **D03/D04 approved by the owner 2026-10-08**; ADR-0014 accepted
   (label lifecycle and availability metadata).
-- Implementation: not started. PR1 (exact scope and ticker-aware completeness)
-  change plan presented for confirmation before any code edit.
-- Migration and test evidence: not recorded.
+- Implementation: **PR1 implemented-pending-review** (owner-approved scoped
+  plan; no commit yet). PR2 (labels), PR3 (market sessions), and PR4
+  (corporate-action overlap) remain not started.
+
+### PR1 — exact scope through all five price markets + ticker-aware completeness
+
+1. **Explicit scope resolver (F04).** `ingestion/types.py` adds
+   `resolve_explicit_scope(markets, tickers, ticker_config)`: `None` keeps every
+   market's configured default; exactly one requested price market receives
+   every explicit ticker (arbitrary overrides preserved for US, CN, HK/SG, JPX,
+   and KRX); multiple requested price markets resolve membership from
+   `TickerConfig` via `PRICE_MARKET_CONFIG_KEYS` (`hk_sg_equity` spans the
+   separate `hk`/`sg` sections), rejecting unresolved or ambiguous tickers with
+   an actionable `ValueError` and no fan-out. `[]` is preserved and never
+   becomes `None`. Ticker-scoped enrichment markets keep today's raw explicit
+   list; non-ticker-scoped enrichment markets stay `None`.
+2. **Orchestrator (F04/F25).** `run_daily_ingestion` resolves the scope once
+   before any fetch and passes the per-market list to both the serial and
+   parallel branches; `EXPLICIT_TICKER_MARKETS` now covers all five price
+   markets (single definition moved to `ingestion/types.py`, re-exported for
+   compatibility). The resolved scope is logged and `_run_ingestion_stage`
+   re-derives it with the same pure resolver into the ingestion stage payload
+   (`ticker_scope`). `run_daily_ingestion` keeps its
+   `dict[str, SourceOutcome]` return and W02 outcome semantics.
+3. **Router/factories (F04).** CN/HK-SG/JPX/KRX factories forward
+   `explicit_tickers`; HK/SG split `.HK`/`.SI` by suffix and reject a ticker
+   matching neither; the seven `if not explicit_tickers:` fallbacks became
+   `if explicit_tickers is None:` so an explicit empty list never broadens.
+4. **CN hybrid (F04).** `CNHybridFetcher` accepts `tickers` and forwards the same
+   effective list to the akshare primary, efinance, and yfinance fallback;
+   `CNAshareFetcher`/`CNEfinanceFetcher` gain the matching constructor seam. An
+   explicit list is not truncated by `stock_limit`, and the fallback-threshold
+   baseline uses the effective list.
+5. **Ticker-aware existing-data check (F05).** `_market_has_date` +
+   `_partition_is_valid` are consolidated into one bounded
+   `_read_partition_coverage` read (one row per ticker via
+   `QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ...)`). A price market is
+   `SKIPPED_EXISTING` only when the partition is schema-valid **and** every
+   requested ticker is present (`requested` = resolved per-market list, or the
+   configured active tickers when unspecified); otherwise only the missing
+   requested tickers are re-fetched (full scope when corrupt). An unspecified
+   (``None``) incomplete request fetches with ``None`` — the fetcher's own
+   filtered/fallback default — so coverage decides *whether* to fetch without
+   ever widening what the fetcher would have pulled (review warning 1 fix). An
+   empty requested list cannot prove completeness: explicit ``[]`` stays ``[]``;
+   an empty configured universe defers to the fetcher default (warning 4 fix:
+   the pre-W03 fallback behavior is preserved). Enrichment markets keep today's
+   always-fetch behavior.
+6. **Recovery reporting (F25 recovery-detail).** `backfill_date_range` returns a
+   frozen `BackfillResult` (range, markets, instruments, `authorized`, trading
+   dates, market-date attempts, succeeded/failed/recovered counts, per-market
+   counts; `trading_dates` counts calendar days iterated, not exchange
+   sessions — the loop keeps pre-W03 calendar semantics and session iteration
+   stays future work) with a `total_dates` property preserving the historical successful
+   market-date return. `_backfill_feature_history` returns it;
+   `_handle_missing_feature_history` keeps `history_backfilled_dates`
+   (via `.total_dates`) and adds a structured `recovery` payload; the CLI
+   backfill command prints the richer counts. Post-recovery missing coverage
+   still fails through W02's coverage check.
+- Files: `ingestion/{types,orchestrator,router,backfill}.py`,
+  `sources/{cn,cn_efinance,cn_hybrid}.py`, `pipeline.py`,
+  `cli/commands/data.py`; tests in `tests/unit/` (`test_ingestion_types.py`,
+  `test_router.py`, `test_ingestion_orchestrator.py`, `test_fetchers.py`,
+  `test_backfill.py`) and `tests/integration/test_pipeline_orchestrator.py`.
+- Regression proof: the new load-bearing tests were run against the pre-change
+  source via `git stash push -- src/` and fail there (resolver `None`/`[]`
+  preservation, five-market factory forwarding, HK/SG suffix rejection,
+  CN primary/fallback sharing, partial-partition scoped fetch, corrupt-partition
+  full fetch, dry-run no-write, and recovery payload/counts); the stash was
+  restored immediately. Existing partition-check tests were retargeted from the
+  removed `_market_has_date`/`_partition_is_valid` to the consolidated
+  `_read_partition_coverage` seam (no assertion relaxed).
+- Tests/gates: focused suites pass (166 in the
+  `backfill/auto_backfill/gap_detection/calendar/router/ingestion_types/ingestion_orchestrator/fetchers`
+  selection; 32 in `integration/test_pipeline_orchestrator.py`). Shared gates
+  (re-run after the review fixes):
+  `pytest -m "not network and not integration"` -> **1090 passed, 22 skipped,
+  85 deselected, 3 failed** (the pre-existing `test_arena.py` set, F28/W07);
+  `-n auto` -> **1090 passed, 22 skipped, 3 failed** (same baseline);
+  `ruff check`/`ruff format --check` clean; `mypy src` at the 3-error
+  `ml/registry.py` baseline; catalog regenerated unchanged (17 datasets / 52
+  nodes / 372 edges, zero diff) and the three catalog tests pass (67);
+  `mkdocs build` succeeds with only the documented pre-existing warnings;
+  `git diff --check` clean.
+- Catalog: pipeline/CLI change acknowledged; regeneration was a no-op (no
+  Hamilton topology/tag change).
+- Compatibility/rollback: all added payload fields are additive (`ticker_scope`,
+  `recovery`); `run_daily_ingestion`'s return type is unchanged;
+  `history_backfilled_dates` keeps its meaning; `EXPLICIT_TICKER_MARKETS` is
+  re-exported from its old module. The only behavioral changes are the intended
+  ones: explicit scope reaches all five markets, an empty explicit list no
+  longer broadens, and a partial partition is no longer treated as complete.
+  No lake migration; rollback reverts code and readers together.
+- Review/sign-off: **reviewer pass complete (2026-10-08,
+  `opencode-go/mimo-v2.6-pro`, read-only): READY WITH WARNINGS — 0 critical,
+  4 warnings, all addressed before handoff.** (1) Filters/None-scope interplay
+  could over-broaden the skip-existing fetch — fixed: an unspecified incomplete
+  request now fetches with `None` (fetcher default), never an explicit
+  over-broad list; pinned by
+  `test_unspecified_scope_incomplete_partition_fetches_fetcher_default`
+  (fails on pre-change source). (2) `trading_dates` naming overstated —
+  documented as calendar-day count on the dataclass and here (rename rejected:
+  the field name comes from the unit spec). (3) Gate-count arithmetic fuzz —
+  resolved: gates re-run directly post-fix (1090/22/3). (4) Degenerate
+  empty-config narrowing — fixed by the same `None`-default fetch: pre-W03
+  fetcher fallback behavior is preserved; noted above. Residual reviewer notes
+  accepted as documented limitations: per-ticker schema sampling on duplicate-
+  ticker partitions (same class as the old LIMIT 100), case-sensitive `.HK`/
+  `.SI` suffix matching (rejection, not normalization), mutable `per_market`
+  dict inside the frozen dataclass, `dates_recovered` = all-markets-succeeded
+  day (documented + tested). **Owner sign-off pending** — it closes F04/F05 and
+  the F25 recovery detail; this entry stays implemented-pending-review until
+  then.
+- Migration and test evidence: no production repair, migration, vacuum, or
+  retraining was performed; temporary-lake and mocked-provider tests only.
+- Remaining in W03: F03 labels (PR2), F11 market sessions (PR3), F14 action
+  overlap (PR4).

@@ -58,6 +58,7 @@ class CNHybridFetcher(MarketDataFetcher):
         enable_akshare: bool = True,
         efinance_timeout_seconds: float = 45.0,
         fallback_threshold: float = 0.3,
+        tickers: list[str] | None = None,
     ):
         """Initialize hybrid fetcher with configurable sources.
 
@@ -74,6 +75,11 @@ class CNHybridFetcher(MarketDataFetcher):
                 falling back to akshare
             fallback_threshold: Fraction of configured tickers that efinance
                 must return to skip akshare fallback (0.0-1.0)
+            tickers: Explicit ticker override forwarded unchanged to both the
+                efinance and akshare fetchers and to the yfinance fallback. An
+                explicit list is not truncated by ``stock_limit``. ``None``
+                (the default) keeps the configured CN universe; ``[]`` is an
+                explicit empty scope and never broadens.
         """
         super().__init__(retry_attempts, retry_delay)
         self.ticker_config = ticker_config or TickerConfig()
@@ -84,8 +90,15 @@ class CNHybridFetcher(MarketDataFetcher):
         self.enable_akshare = enable_akshare
         self.efinance_timeout_seconds = efinance_timeout_seconds
         self.fallback_threshold = fallback_threshold
-        configured_tickers = self.ticker_config.get_tickers_for_market("cn", active_only=True)
-        self.configured_ticker_count = min(len(configured_tickers), self.stock_limit)
+        self._explicit_tickers = list(tickers) if tickers is not None else None
+        if self._explicit_tickers is not None:
+            # W03/F04: an explicit list is the effective scope in full — the
+            # sufficiency-threshold baseline must reflect it, not the configured
+            # universe, or a complete scoped fetch would trigger a needless retry.
+            self.configured_ticker_count = len(self._explicit_tickers)
+        else:
+            configured_tickers = self.ticker_config.get_tickers_for_market("cn", active_only=True)
+            self.configured_ticker_count = min(len(configured_tickers), self.stock_limit)
 
         # Initialize fetchers
         self.efinance_fetcher: CNEfinanceFetcher | None = None
@@ -100,6 +113,7 @@ class CNHybridFetcher(MarketDataFetcher):
                     filters=filters,
                     max_workers=max_workers,
                     stock_limit=stock_limit,
+                    tickers=self._explicit_tickers,
                 )
                 logger.info("efinance_fetcher_initialized")
             except Exception as exc:
@@ -120,6 +134,7 @@ class CNHybridFetcher(MarketDataFetcher):
                     filters=filters,
                     max_workers=max_workers,
                     stock_limit=stock_limit,
+                    tickers=self._explicit_tickers,
                 )
                 logger.info("akshare_fetcher_initialized")
             except Exception as exc:
@@ -160,7 +175,7 @@ class CNHybridFetcher(MarketDataFetcher):
 
     def _fetch_yfinance_fallback(self, trading_date: date) -> pl.DataFrame:
         """Fetch CN data from Yahoo Finance when primary providers return empty."""
-        tickers = self._get_configured_tickers("cn")
+        tickers = self._explicit_tickers if self._explicit_tickers is not None else self._get_configured_tickers("cn")
         if not tickers:
             return _empty_frame()
 

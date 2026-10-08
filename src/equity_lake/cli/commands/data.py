@@ -133,15 +133,20 @@ def backfill(
     ticker_config = TickerConfig(config_path=config_path)
 
     market_list = _parse_markets(markets) or []
-    total = backfill_date_range(
+    result = backfill_date_range(
         start_date=start_date,
         end_date=end_date,
         markets=market_list,
         ticker_config=ticker_config,
         dry_run=dry_run,
+        authorized=True,
     )
 
-    typer.echo(f"Backfill complete: {total} dates processed across {market_list}")
+    typer.echo(
+        f"Backfill complete: {result.total_dates} market-dates succeeded "
+        f"({result.succeeded}/{result.market_date_attempts} attempts over {result.trading_dates} date(s), "
+        f"{result.dates_recovered} date(s) fully recovered, {result.failed} failed) across {market_list}"
+    )
 
 
 @app.command("auto-backfill")

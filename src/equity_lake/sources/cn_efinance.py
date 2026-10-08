@@ -46,6 +46,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
         max_workers: int = 10,
         stock_limit: int = 100,
         batch_size: int = 50,
+        tickers: list[str] | None = None,
     ):
         super().__init__(
             retry_attempts,
@@ -60,6 +61,15 @@ class CNEfinanceFetcher(MarketDataFetcher):
         self.filters = filters or {}
         self.max_workers = max_workers
         self.batch_size = batch_size
+        # W03/F04: explicit scope override (not truncated by stock_limit);
+        # None keeps the configured universe, [] is an explicit empty scope.
+        self._explicit_tickers = list(tickers) if tickers is not None else None
+
+    def _effective_tickers(self) -> list[str]:
+        """Explicit scope when supplied, otherwise the configured CN universe."""
+        if self._explicit_tickers is not None:
+            return self._explicit_tickers
+        return self._get_configured_tickers("cn")
 
     def _chunked(self, tickers: list[str], batch_size: int) -> list[list[str]]:
         """Split configured CN tickers into bounded efinance batches."""
@@ -133,7 +143,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
 
     def fetch(self, trading_date: date) -> pl.DataFrame:
         """Fetch China A-share data for a trading date using efinance."""
-        tickers = self._get_configured_tickers("cn")
+        tickers = self._effective_tickers()
         logger.info(
             "fetch_cn_ashare_efinance_started",
             date=str(trading_date),

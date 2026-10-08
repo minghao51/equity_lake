@@ -8,10 +8,13 @@ accepted only at boundaries (CLI flags, settings) and normalized there via
 :func:`normalize_markets` / ``canonical_market``.
 """
 
+from __future__ import annotations
+
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from equity_lake.core.paths import (
     BRONZE_MACRO_DIR,
@@ -30,6 +33,9 @@ from equity_lake.core.paths import (
     market_dir,
 )
 
+if TYPE_CHECKING:
+    from equity_lake.core.config import TickerConfig
+
 # Valid market set for validation. Price entries are the canonical long keys
 # derived from the registry; enrichment entries are single-form dataset ids.
 VALID_MARKETS: set[str] = set(PRICE_MARKETS) | set(OPTIONAL_ENRICHMENT_MARKETS)
@@ -45,6 +51,34 @@ REQUIRED_PRICE_MARKETS: frozenset[str] = frozenset(PRICE_MARKETS)
 # classification so the taxonomy lives in one place.
 UNSTRUCTURED_MARKETS: frozenset[str] = frozenset({"rss_news", "reddit_posts", "stocktwits_messages", "us_earnings_transcripts"})
 SEC_FILINGS_MARKETS: frozenset[str] = frozenset({"sec_filings_fulltext"})
+
+# Mapping from a canonical price-market key to the ticker-config section key(s)
+# that hold its instruments. Single-market price markets use the short alias
+# (``config/tickers.yaml`` is a separate vocabulary, out of ADR-0010 scope);
+# ``hk_sg_equity`` spans the separate ``hk`` and ``sg`` config sections.
+PRICE_MARKET_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "us_equity": ("us",),
+    "cn_ashare": ("cn",),
+    "hk_sg_equity": ("hk", "sg"),
+    "jpx_equity": ("jpx",),
+    "krx_equity": ("krx",),
+}
+
+# Markets whose fetchers honor explicit per-ticker overrides. All five price
+# markets are ticker-scoped (W03/F04: explicit scope must reach every provider,
+# not just US); the enrichment entries are the Finnhub/SEC sources whose fetch
+# is ticker-scoped rather than a broad-market pull. Considered by
+# :func:`resolve_explicit_scope` in both the parallel and serial paths.
+EXPLICIT_TICKER_MARKETS: frozenset[str] = frozenset(
+    {
+        *REQUIRED_PRICE_MARKETS,
+        "stocktwits_messages",
+        "us_earnings_transcripts",
+        "us_analyst_ratings",
+        "sec_filings_fulltext",
+        "us_sec_financials",
+    }
+)
 
 
 def _rel(path: Path) -> str:
@@ -105,6 +139,83 @@ def normalize_markets(markets: Iterable[str]) -> list[str]:
     return normalized
 
 
+def resolve_explicit_scope(
+    markets: list[str],
+    tickers: list[str] | None,
+    ticker_config: TickerConfig | None,
+) -> dict[str, list[str] | None]:
+    """Resolve an explicit ticker request to a per-market scope (W03/F04/F05).
+
+    The returned mapping has an entry for every requested market (deduplicated
+    by key):
+
+    * ``tickers is None`` -> every market maps to ``None`` (use the configured
+      default). An unspecified request is never turned into an explicit list.
+    * exactly one requested price market -> every explicit ticker is assigned to
+      it, preserving arbitrary overrides for US, CN, HK/SG, JPX, and KRX.
+    * multiple requested price markets -> membership is resolved from the
+      approved ``TickerConfig``; an unresolved or ambiguous ticker raises
+      ``ValueError`` (no fan-out to every provider, no guessing).
+    * ticker-scoped enrichment markets keep today's behavior: the raw explicit
+      list is preserved (deduplicated in request order). Non-ticker-scoped
+      enrichment markets stay ``None`` so their own defaults are unchanged.
+    * ``[]`` is preserved and never becomes ``None``: an explicit empty request
+      can never broaden into the configured universe.
+
+    Raises:
+        ValueError: An explicit ticker crossing multiple price markets cannot be
+            assigned to exactly one of them (unresolved or ambiguous symbol).
+    """
+    if tickers is None:
+        return {market: None for market in markets}
+
+    unique_tickers = list(dict.fromkeys(tickers))
+    resolved: dict[str, list[str] | None] = {market: ([] if market in REQUIRED_PRICE_MARKETS else None) for market in markets}
+    price_markets = list(dict.fromkeys(market for market in markets if market in REQUIRED_PRICE_MARKETS))
+
+    if len(price_markets) == 1:
+        resolved[price_markets[0]] = list(unique_tickers)
+    elif len(price_markets) > 1:
+        if unique_tickers and ticker_config is None:
+            # Multiple markets need approved metadata; load the shared config only
+            # when the caller did not supply one (lazy: keeps None requests pure).
+            from equity_lake.core.config import TickerConfig as _TickerConfig
+
+            ticker_config = _TickerConfig()
+        matched: dict[str, list[str]] = {}
+        for ticker in unique_tickers:
+            matched[ticker] = [
+                market
+                for market in price_markets
+                if ticker_config is not None
+                and any(ticker_config.get_ticker_metadata(ticker, market=key) is not None for key in PRICE_MARKET_CONFIG_KEYS.get(market, ()))
+            ]
+        unresolved = sorted(ticker for ticker, owners in matched.items() if not owners)
+        ambiguous = sorted(ticker for ticker, owners in matched.items() if len(owners) > 1)
+        if unresolved or ambiguous:
+            details: list[str] = []
+            if unresolved:
+                details.append(f"unresolved: {', '.join(unresolved)}")
+            if ambiguous:
+                details.append(f"ambiguous: {', '.join(ambiguous)}")
+            raise ValueError(
+                "Explicit ticker scope cannot be resolved across multiple price markets "
+                f"({', '.join(price_markets)}); {'; '.join(details)}. "
+                "Request a single price market for arbitrary ticker overrides."
+            )
+        assigned: dict[str, list[str]] = {market: [] for market in price_markets}
+        for ticker, owners in matched.items():
+            assigned[owners[0]].append(ticker)
+        for market in price_markets:
+            resolved[market] = assigned[market]
+
+    # Ticker-scoped enrichment markets keep their existing explicit-list behavior.
+    for market in markets:
+        if market not in REQUIRED_PRICE_MARKETS and market in EXPLICIT_TICKER_MARKETS:
+            resolved[market] = list(unique_tickers)
+    return resolved
+
+
 class SourceStatus(str, Enum):
     """Outcome status for a single market in an ingestion run.
 
@@ -156,9 +267,12 @@ __all__ = [
     "OPTIONAL_ENRICHMENT_MARKETS",
     "UNSTRUCTURED_MARKETS",
     "SEC_FILINGS_MARKETS",
+    "EXPLICIT_TICKER_MARKETS",
+    "PRICE_MARKET_CONFIG_KEYS",
     "MARKET_DIR_MAP",
     "MARKET_DIR_REVERSE",
     "SourceStatus",
     "SourceOutcome",
     "normalize_markets",
+    "resolve_explicit_scope",
 ]

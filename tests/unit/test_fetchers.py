@@ -913,3 +913,86 @@ class TestFetcherIntegration:
 
         # Hybrid should have 100% success rate
         assert successes == 10
+
+
+# =============================================================================
+# W03/F04: CN explicit-ticker seam (primary + fallback receive the same scope)
+# =============================================================================
+
+
+class TestCNExplicitTickerSeam:
+    """An explicit CN scope overrides the configured universe in every provider."""
+
+    @patch("equity_lake.sources.cn_hybrid.CNEfinanceFetcher")
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
+    def test_hybrid_forwards_same_explicit_list_to_primary_and_fallback(self, mock_akshare, mock_efinance) -> None:
+        CNHybridFetcher(enable_efinance=True, enable_akshare=True, tickers=["600000", "000001"])
+        assert mock_efinance.call_args.kwargs["tickers"] == ["600000", "000001"]
+        assert mock_akshare.call_args.kwargs["tickers"] == ["600000", "000001"]
+
+    def test_hybrid_explicit_list_not_truncated_by_stock_limit(self) -> None:
+        fetcher = CNHybridFetcher(enable_akshare=True, stock_limit=1, tickers=["a", "b", "c"])
+        assert fetcher._explicit_tickers == ["a", "b", "c"]
+        assert fetcher.configured_ticker_count == 3
+
+    def test_hybrid_empty_explicit_list_is_preserved(self) -> None:
+        fetcher = CNHybridFetcher(enable_akshare=True, tickers=[])
+        assert fetcher._explicit_tickers == []
+        assert fetcher.configured_ticker_count == 0
+
+    @patch("equity_lake.sources.cn.ak.stock_zh_a_hist")
+    def test_cn_ashare_explicit_tickers_override_config(self, mock_hist) -> None:
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001", "000002"]
+        mock_hist.return_value = pd.DataFrame(
+            {
+                "日期": ["2024-01-01"],
+                "开盘": [10.5],
+                "最高": [10.8],
+                "最低": [10.4],
+                "收盘": [10.7],
+                "成交量": [1000000],
+            }
+        )
+        fetcher = CNAshareFetcher(max_workers=1, ticker_config=ticker_config, tickers=["600000"])
+        fetcher.fetch(date(2024, 1, 1))
+        called = [call.kwargs["symbol"] for call in mock_hist.call_args_list]
+        assert called == ["600000"]
+
+    def test_cn_efinance_explicit_tickers_override_config(self) -> None:
+        ticker_config = MagicMock()
+        ticker_config.get_tickers_for_market.return_value = ["000001", "000002"]
+        fake_efinance = MagicMock()
+        fake_efinance.stock.get_quote_history.return_value = pd.DataFrame(
+            {
+                "股票代码": ["600000"],
+                "日期": ["2024-01-01"],
+                "开盘": [10.5],
+                "收盘": [10.7],
+                "最高": [10.8],
+                "最低": [10.4],
+                "成交量": [1000000],
+            }
+        )
+        with patch("equity_lake.sources.cn_efinance.efinance", fake_efinance):
+            fetcher = CNEfinanceFetcher(max_workers=1, ticker_config=ticker_config, tickers=["600000"])
+            result = fetcher.fetch(date(2024, 1, 1))
+
+        assert not result.is_empty()
+        assert fake_efinance.stock.get_quote_history.call_args.kwargs["stock_codes"] == ["600000"]
+
+    @patch("equity_lake.sources.cn_hybrid.CNAshareFetcher")
+    def test_hybrid_yfinance_fallback_uses_explicit_list(self, mock_akshare) -> None:
+        """The yfinance fallback uses the same effective explicit list."""
+        fetcher = CNHybridFetcher(enable_akshare=True, tickers=["600000", "000001"])
+        captured: list[list[str]] = []
+
+        def fake_download(symbols, **kwargs):
+            captured.append(list(symbols))
+            return pd.DataFrame()
+
+        with patch("equity_lake.sources.cn_hybrid.yf.download", side_effect=fake_download):
+            result = fetcher._fetch_yfinance_fallback(date(2024, 1, 1))
+
+        assert result.is_empty()
+        assert captured == [["600000.SS", "000001.SZ"]]
