@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** In progress — D03/D04 approved and ADR-0014 accepted (2026-10-08); PR1 implemented + reviewed (READY WITH WARNINGS, warnings addressed; owner sign-off pending)
+**Status:** In progress — PR1 landed (`c0f37ee`, 2026-10-08); PR2 (labels, ADR-0014) dispatched next
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
@@ -231,7 +231,8 @@ rejection/retraining, not transparent reuse.
 - Decisions: **D03/D04 approved by the owner 2026-10-08**; ADR-0014 accepted
   (label lifecycle and availability metadata).
 - Implementation: **PR1 implemented-pending-review** (owner-approved scoped
-  plan; no commit yet). PR2 (labels), PR3 (market sessions), and PR4
+  plan; committed as `c0f37ee` after the reviewer pass and owner
+  authorization). PR2 (labels), PR3 (market sessions), and PR4
   (corporate-action overlap) remain not started.
 
 ### PR1 — exact scope through all five price markets + ticker-aware completeness
@@ -340,9 +341,8 @@ rejection/retraining, not transparent reuse.
   ticker partitions (same class as the old LIMIT 100), case-sensitive `.HK`/
   `.SI` suffix matching (rejection, not normalization), mutable `per_market`
   dict inside the frozen dataclass, `dates_recovered` = all-markets-succeeded
-  day (documented + tested). **Owner sign-off pending** — it closes F04/F05 and
-  the F25 recovery detail; this entry stays implemented-pending-review until
-  then.
+  day (documented + tested). **Owner authorized the commit 2026-10-08
+  (`c0f37ee`), closing F04/F05 and the F25 recovery detail.**
 - Migration and test evidence: no production repair, migration, vacuum, or
   retraining was performed; temporary-lake and mocked-provider tests only.
 - Remaining in W03: F03 labels (PR2), F11 market sessions (PR3), F14 action
