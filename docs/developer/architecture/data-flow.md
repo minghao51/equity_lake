@@ -33,3 +33,9 @@ macro, analyst, and SEC branches are optional enrichments: their failure is
 recorded and the core feature path may continue without them. Bronze-to-Silver
 processors are run only when their source branch is selected; their failure
 disables that enrichment, not independent core features.
+
+The exact per-market outcome vocabulary, requested/produced feature coverage,
+optional-failure visibility, dry-run statuses, and exit-code policy are the
+contracts in [Pipeline Contracts](pipeline-contracts.md). The orchestrator
+isolates every market's fetch/conversion/write failure (serial and parallel
+alike) so one exception never erases another market's outcome.

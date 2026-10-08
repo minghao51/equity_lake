@@ -149,7 +149,10 @@ tests are marked and excluded from the default suite):
 
 - **structlog** JSON logging with correlation IDs in every adapter.
 - Per-market outcomes are structured `SourceOutcome`s (`written`,
-  `skipped_existing`, `failed`) serialized into the pipeline results payload.
+  `skipped_existing`, `no_data`, `dry_run`, `failed`) serialized into the
+  pipeline results payload. `failed` retains the per-market cause; a failing
+  optional source is surfaced (never hidden as a skip) and optionality is
+  applied by the pipeline when deciding blocking/exit status.
 - `equity monitor` (`cli/commands/analysis.py` → `monitoring/health.py`)
   checks freshness and quality across the medallion tables, including
   JPX/KRX bronze directories; `monitoring/alerting.py` dispatches alerts.

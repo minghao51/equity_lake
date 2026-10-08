@@ -84,6 +84,42 @@ dotenvx run -- uv run equity query --db data/equity_data.duckdb --verbose
 - `--dry-run`
 - `--verbose`
 
+## Scope, Coverage, and Result Truthfulness
+
+`equity pipeline` resolves the requested ticker scope explicitly:
+
+- With no `--tickers`, every configured active ticker in the requested price
+  markets is processed — there is no hidden limit.
+- `--tickers` is used exactly as given, deduplicated deterministically. An
+  explicitly empty value (for example `--tickers ""`) is rejected with a
+  non-zero exit; it never falls back to the configured universe.
+- A request whose markets contain no price market (for example `--markets macro`)
+  planned-skips features and ML with `reason: enrichment_only_no_price_scope`
+  instead of inventing tickers.
+
+The result JSON records `scope` (resolved tickers and markets), the ingestion
+status per market, and feature `coverage`: requested and produced tickers plus
+any missing ticker with a reason (`no_price_rows`, `insufficient_history`,
+`missing_output_bar`, `invalid_output`).
+
+Outcome semantics:
+
+- `written` — fetched and persisted; `skipped_existing` — a valid partition
+  already existed.
+- `no_data` — the source returned zero rows (not an error, and not a verified
+  partition).
+- `dry_run` — a direct `equity ingest --dry-run` simulated the write; it never
+  reports `written`.
+- `failed` — the fetch, schema check, or write failed; the per-market cause is
+  kept in the result and does not erase other markets' outcomes.
+
+Optional enrichment failures stay visible: they are listed in
+`optional_failures`, set `partial: true`, and do not block core features or the
+process exit. A requested ticker missing from the feature output fails the
+feature stage and exits non-zero while still reporting everything that was
+produced. Per-ticker ML results carry `persisted` so inference success is not
+mistaken for durability.
+
 ## Configuration
 
 Primary config files:

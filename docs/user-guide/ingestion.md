@@ -33,7 +33,12 @@ dotenvx run -- uv run equity backfill --days-back 30 --markets us_equity
 ```
 
 Dry-run performs no persistence. Fetchers use configured retries and ingestion
-may run in parallel; backfill deliberately runs one market/date at a time.
+may run in parallel; backfill deliberately runs one market/date at a time. A
+direct `equity ingest --dry-run` reports each market as `dry_run` — never
+`written`. An empty fetch is reported as `no_data` (distinct from
+`skipped_existing`, which means a valid partition already exists), and a source
+failure is reported as `failed` with its cause rather than being hidden as a
+skip.
 
 Feature history recovery is separate from ordinary ingestion and must be
 authorized:
@@ -44,8 +49,13 @@ dotenvx run -- uv run equity pipeline --markets us_equity --tickers AAPL \
 ```
 
 Without that flag, missing warm-up history is a failed feature stage and no
-backfill is started. Optional enrichment failures are reported as partial
-success; required price-source failures return a non-zero CLI status.
+backfill is started. When recovery runs, the number of backfilled dates is
+recorded in the feature stage (`history_backfilled_dates`). Optional enrichment
+failures are reported as partial success (`optional_failures` plus
+`partial: true`) and do not block core features; required price-source failures
+and missing required ticker coverage return a non-zero CLI status. Omitting
+`--tickers` processes every configured active ticker in the requested markets,
+and an explicitly empty `--tickers` value is rejected rather than broadened.
 
 ## Ingesting News and Structured Content
 

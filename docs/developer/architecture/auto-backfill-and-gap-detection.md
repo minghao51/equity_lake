@@ -104,8 +104,11 @@ All fill paths converge on `run_daily_ingestion` in
 
 A market that passes both is recorded as `SKIPPED_EXISTING` — surfaced as
 success so downstream feature/ML stages are not blocked — and skipped for
-fetching. Writes themselves are Delta merge/upserts keyed on the natural key
-(`ticker,date` for market data), so re-running a fill path is repeatable.
+fetching. `SKIPPED_EXISTING` is reserved for this verified existing-partition
+case: a successful fetch that returned zero rows is `NO_DATA`, and a direct
+dry-run is `DRY_RUN`. Writes themselves are Delta merge/upserts keyed on the
+natural key (`ticker,date` for market data), so re-running a fill path is
+repeatable.
 `auto-backfill` passes `skip_existing=False` only because its gap scan has
 already established which dates are missing.
 

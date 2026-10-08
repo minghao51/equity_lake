@@ -1,8 +1,8 @@
 # DAG Pipeline Remediation — Agent Handoff Index
 
-**Date:** 2026-10-06  
-**Status:** Draft implementation plan; no runtime changes implemented  
-**Audit baseline:** `522d8fa8a2c23d59d217fab37a2f9a42fb5d7f36`  
+**Date:** 2026-10-06
+**Status:** Draft implementation plan; no runtime changes implemented
+**Audit baseline:** `522d8fa8a2c23d59d217fab37a2f9a42fb5d7f36`
 **Owner:** Repository owner; implementation agents must record their assignments below
 
 ## Purpose and entry point
@@ -55,7 +55,7 @@ next available ADR number rather than assuming a specific unallocated number.
 | Decision | Recommended starting point | Stop condition |
 |---|---|---|
 | D01 Date and row validation | EOD keys are `pl.Date`; validate one cleaned frame before all indicators; invalid required price input fails rather than silently shrinking scope | Owner has not approved invalid-row handling |
-| D02 Scope and coverage | No hidden ten-ticker cap; explicit scope never broadens; report every missing instrument; missing scheduled required coverage fails | A cap/default-scope policy remains undecided |
+| D02 Scope and coverage | No hidden ten-ticker cap; explicit scope never broadens; report every missing instrument; missing scheduled required coverage fails | **Approved by owner 2026-10-07** (dispatch “approve on D02 … W03 to W07 per your judgement”): cap removed; explicit empty scope rejected/never broadened; enrichment-only requests planned-skip features/ML; missing scheduled required ticker coverage fails the feature stage. Implemented in W02. |
 | D03 Label lifecycle | Keep existing Gold target compatibility initially; finalize only label fields after the next observed session, with availability metadata and bounded repair | Target storage/update semantics or training cutoff semantics are undecided |
 | D04 Market sessions | Closed markets are `not_scheduled`, not failed; never silently substitute an earlier session for an explicit date | Per-market session/exit policy lacks approval |
 | D05 Instrument identity | Canonical long market key plus ticker in shared Gold/Platinum identity; ambiguity rejected, not guessed | No accepted schema/storage ADR or migration/reader plan |
@@ -144,9 +144,9 @@ behavioral assertions to hide the baseline failures.
 
 | Wave | State | Agent | Commit/PR | Evidence / blocker |
 |---|---|---|---|---|
-| W01 | **Landed** | pi coding agent | `e44bd5d` (audit/handoff docs) + `2906477` (implementation), local `main`, unpushed | D01 approved via owner dispatch. Three read-only reviews (zai/glm-5.3-flash): 1 critical (emitted-frame row alignment) + warnings — all addressed, see [W01 progress](20261006-dag-pipeline-01-correctness.md#progress). Post-fix gates: 1013 passed / 22 skipped / 3 pre-existing `test_arena.py` failures; lint/format/mypy at documented baseline. Accepted limitations recorded (missing-vs-failed detail → W02; catalog date-dtype wording → W05). W02 may dispatch; D02 approval still required. |
-| W02 | Not started | Unassigned | — | W01 commit + D02 approval |
-| W03 | Not started | Unassigned | — | W02, D03/D04 approval |
+| W01 | **Landed** | pi coding agent | `e44bd5d` (audit/handoff docs) + `2906477` (implementation), local `main`, unpushed | D01 approved via owner dispatch. Three read-only reviews (zai/glm-5.3-flash): 1 critical (emitted-frame row alignment) + warnings — all addressed, see [W01 progress](20261006-dag-pipeline-01-correctness.md#progress). Post-fix gates: 1013 passed / 22 skipped / 3 pre-existing `test_arena.py` failures; lint/format/mypy at documented baseline. Accepted limitations recorded (missing-vs-failed detail → W02; catalog date-dtype wording → W05). W02 dispatched 2026-10-07 after owner D02 approval. |
+| W02 | **Landed** | pi coding agent | `8229eda` (implementation + tests), local `main`, unpushed | All W02 findings implemented: truthful outcomes (optional_failures+partial, NO_DATA/DRY_RUN, router causes), equal serial/parallel isolation + per-task correlation context, D02 scope (cap removed, empty scope rejected, enrichment-only skip, scope published), feature coverage with stable reasons + coverage-fails policy, persistence/dry-run/recovery honesty. Regression: 15 load-bearing tests fail on pre-change `src/`. Gates: 1047 passed / 22 skipped / 3 pre-existing `test_arena.py` failures; `-n auto` parity; ruff/format clean; mypy at the 3-error `ml/registry.py` baseline; catalog unchanged (17/52/372); mkdocs 3 pre-existing warnings; `git diff --check` clean. Three read-only reviews (`opencode-go/mimo-v2.6-pro`): 1 critical (exception-path coverage fabrication) + warnings — all fixed; see [W02 progress](20261006-dag-pipeline-02-outcomes-and-coverage.md#progress). Cost disclosure recorded (scope increase to all configured active tickers). |
+| W03 | Not started | Unassigned | — | W02 commit + D03/D04 approval. Inherits: ticker-aware source completeness, session-aware `not_scheduled` (also resolves required-market `NO_DATA` blocking), scoped recovery, label finalization |
 | W04 | Not started | Unassigned | — | W03, accepted D05/D06 ADRs |
 | W05 | Not started | Unassigned | — | W03/W04, D07 approval |
 | W06 | Not started | Unassigned | — | W02/W04; normally after W05; D08 approval |
