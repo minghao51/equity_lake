@@ -167,13 +167,109 @@ class TestSchemaValidation:
 # =============================================================================
 
 
+# =============================================================================
+# W02 outcome truthfulness and isolation (F08/F09/F10/F25)
+# =============================================================================
+
+
+class TestOutcomeTruthfulness:
+    """Optional failures stay visible; no-data, dry-run, and failure are distinct."""
+
+    def test_optional_failure_is_failed_not_skipped_existing(self, tmp_path):
+        """W02/F08: optional market failures are FAILED with their cause — not a
+        success-shaped SKIPPED_EXISTING; the pipeline decides blocking/exit."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=RuntimeError("macro timeout")),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 1), ["macro"], dry_run=False, parallel=False)
+
+        assert results["macro"].status is SourceStatus.FAILED
+        assert results["macro"].succeeded is False
+        assert "macro timeout" in (results["macro"].error or "")
+
+    def test_empty_fetch_is_no_data(self, tmp_path):
+        """W02/F10: a genuine empty fetch is NO_DATA, never a write or a skip."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=pl.DataFrame()),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 1), ["macro"], dry_run=False, parallel=False)
+
+        assert results["macro"].status is SourceStatus.NO_DATA
+        assert results["macro"].succeeded is False
+
+    def test_parallel_write_exception_is_isolated_and_other_market_survives(self, tmp_path, sample_ohlcv_data):
+        """W02/F09: a write exception in one market must not erase the run; the
+        other market writes, the failing market is FAILED with its root cause."""
+
+        def fake_write(df, market, trading_date, dry_run):
+            if market == "us_equity":
+                raise ValueError("disk full")
+            return True
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data_with_config", return_value=sample_ohlcv_data),
+            patch("equity_lake.ingestion.orchestrator._write_market", side_effect=fake_write),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity", "cn_ashare"], dry_run=False, parallel=True)
+
+        assert results["us_equity"].status is SourceStatus.FAILED
+        assert "disk full" in (results["us_equity"].error or "")
+        assert results["cn_ashare"].status is SourceStatus.WRITTEN
+        assert results["cn_ashare"].succeeded is True
+
+    def test_serial_write_exception_matches_parallel_isolation(self, tmp_path, sample_ohlcv_data):
+        """W02/F09: the serial path isolates write exceptions with the same
+        statuses and retained cause as the parallel path."""
+
+        def fake_write(df, market, trading_date, dry_run):
+            if market == "us_equity":
+                raise ValueError("disk full")
+            return True
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
+            patch("equity_lake.ingestion.orchestrator._write_market", side_effect=fake_write),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity", "cn_ashare"], dry_run=False, parallel=False)
+
+        assert results["us_equity"].status is SourceStatus.FAILED
+        assert "disk full" in (results["us_equity"].error or "")
+        assert results["cn_ashare"].status is SourceStatus.WRITTEN
+
+    def test_parallel_fetch_failure_retains_cause(self, tmp_path):
+        """W02/F08/F10: a parallel fetch failure reaches the outcome with cause."""
+
+        def failing_fetch(market, trading_date, **kwargs):
+            raise RuntimeError(f"provider down for {market}")
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data_with_config", side_effect=failing_fetch),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity", "macro"], dry_run=False, parallel=True)
+
+        assert results["us_equity"].status is SourceStatus.FAILED
+        assert "provider down for us_equity" in (results["us_equity"].error or "")
+        assert results["macro"].status is SourceStatus.FAILED
+        assert "provider down for macro" in (results["macro"].error or "")
+
+
 class TestPipelineIntegration:
     """Integration tests for the ingestion pipeline."""
 
     def test_fetch_market_data_invalid_market(self):
-        """Test fetching with invalid market identifier."""
-        result = fetch_market_data("invalid_market", date(2024, 1, 1))
-        assert result is None
+        """W02/F10: an unknown market raises instead of returning a misleading None."""
+        with pytest.raises(ValueError, match="Unknown market"):
+            fetch_market_data("invalid_market", date(2024, 1, 1))
 
     def test_fetch_market_data_cn_uses_hybrid_fetcher(self):
         """CN ingestion should use the hybrid fetcher with built-in fallback."""
@@ -214,7 +310,8 @@ class TestPipelineIntegration:
         # normalized at the orchestrator boundary.
         assert "us_equity" in results
         assert results["us_equity"].succeeded is True
-        assert results["us_equity"].status is SourceStatus.WRITTEN  # dry-run fetch path
+        # W02/F25: a direct dry-run never claims a write; the status is DRY_RUN.
+        assert results["us_equity"].status is SourceStatus.DRY_RUN
 
     def test_skip_existing_marks_already_present_as_success(self, tmp_path, sample_ohlcv_data):
         """Regression test (P0): an idempotent rerun must not drop already-present markets.
@@ -251,7 +348,8 @@ class TestPipelineIntegration:
         assert results["us_equity"].succeeded is True  # already-present, not re-fetched
         assert results["us_equity"].status is SourceStatus.SKIPPED_EXISTING
         assert results["cn_ashare"].succeeded is True  # newly fetched
-        assert results["cn_ashare"].status is SourceStatus.WRITTEN
+        # W02/F25: dry-run cn is simulated (DRY_RUN), never WRITTEN.
+        assert results["cn_ashare"].status is SourceStatus.DRY_RUN
 
     def test_corrupt_partition_not_treated_as_present(self, tmp_path, sample_ohlcv_data):
         """A partition that exists but fails schema validation must be re-fetched.
@@ -281,10 +379,11 @@ class TestPipelineIntegration:
                 parallel=False,
             )
 
-        # Both markets were re-fetched (not skipped), both report WRITTEN.
+        # Both markets were re-fetched (not skipped) and simulated as DRY_RUN
+        # writes in dry-run mode.
         assert "us_equity" not in {m for m in results if results[m].status is SourceStatus.SKIPPED_EXISTING}
-        assert results["us_equity"].status is SourceStatus.WRITTEN
-        assert results["cn_ashare"].status is SourceStatus.WRITTEN
+        assert results["us_equity"].status is SourceStatus.DRY_RUN
+        assert results["cn_ashare"].status is SourceStatus.DRY_RUN
 
     def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
         """Test that Delta table is created on write."""

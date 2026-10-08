@@ -399,7 +399,15 @@ def fetch_market_data_with_config(
         explicit_tickers: Explicit ticker list (overrides config)
 
     Returns:
-        DataFrame with fetched data or None
+        DataFrame with fetched data (possibly empty).
+
+    Raises:
+        ValueError: The market is not in ``MARKET_REGISTRY`` (loud, mirroring
+            :func:`normalize_markets`).
+        Exception: Fetch, conversion, and schema-validation failures propagate
+            with their root cause (F10). Callers own the failure policy: the
+            orchestrator captures them into per-market ``FAILED`` outcomes in
+            both serial and parallel modes; no cause is swallowed into ``None``.
     """
     ingestion = get_settings().ingestion
     if retry_attempts is None:
@@ -409,8 +417,9 @@ def fetch_market_data_with_config(
 
     factory = MARKET_REGISTRY.get(market)
     if factory is None:
-        logger.error("Unknown market: %s", market)
-        return None
+        # Loud failure, matching normalize_markets: an unknown key must never
+        # read as "no data" downstream.
+        raise ValueError(f"Unknown market: {market}")
 
     # Factory construction is intentionally OUTSIDE the try/except so that
     # configuration errors (e.g. missing API keys) propagate to the caller.
@@ -422,14 +431,15 @@ def fetch_market_data_with_config(
         explicit_tickers=explicit_tickers,
     )
 
-    try:
-        df = ensure_polars(fetcher.fetch(trading_date))
-        if not frame_is_empty(df) and validate_schema(df, market):
-            return df
-        return None
-    except Exception as e:
-        logger.error("Failed to fetch %s data: %s", market, e)
-        return None
+    # F10: a genuine empty fetch returns the empty frame (the caller distinguishes
+    # no-data from failure); fetch/conversion exceptions and schema rejections
+    # propagate with their cause instead of collapsing into None.
+    df = ensure_polars(fetcher.fetch(trading_date))
+    if frame_is_empty(df):
+        return df
+    if not validate_schema(df, market):
+        raise ValueError(f"{market}: fetched frame rejected by schema validation")
+    return df
 
 
 def fetch_market_data(

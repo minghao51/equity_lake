@@ -87,11 +87,23 @@ class TestCanonicalMarket:
 
 
 def test_source_outcome_succeeded_semantics():
-    """WRITTEN and SKIPPED_EXISTING both permit downstream stages; FAILED does not."""
+    """WRITTEN/SKIPPED_EXISTING/DRY_RUN permit downstream stages; NO_DATA/FAILED do not."""
     assert SourceOutcome(SourceStatus.WRITTEN).succeeded is True
     assert SourceOutcome(SourceStatus.SKIPPED_EXISTING).succeeded is True
+    # A direct dry-run keeps its zero-exit contract but never claims a write.
+    assert SourceOutcome(SourceStatus.DRY_RUN).succeeded is True
     assert SourceOutcome(SourceStatus.FAILED).succeeded is False
     assert SourceOutcome(SourceStatus.FAILED, error="boom").succeeded is False
+    # A genuine empty fetch is not a verified partition and not a write.
+    assert SourceOutcome(SourceStatus.NO_DATA).succeeded is False
+
+
+def test_source_status_distinguishes_no_data_dry_run_and_failure():
+    """W02/F25: empty fetch, simulated write, and failure are never conflated."""
+    assert SourceStatus.NO_DATA.value == "no_data"
+    assert SourceStatus.DRY_RUN.value == "dry_run"
+    assert SourceOutcome(SourceStatus.NO_DATA).status is not SourceStatus.SKIPPED_EXISTING
+    assert SourceOutcome(SourceStatus.DRY_RUN).status is not SourceStatus.WRITTEN
 
 
 def test_source_status_serializes_to_string_value():

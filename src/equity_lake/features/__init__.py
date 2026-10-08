@@ -51,14 +51,24 @@ def run_feature_job(
     include_enriched_sentiment: bool = False,
     include_analyst_ratings: bool = False,
     include_sec_features: bool = False,
+    diagnostics: dict[str, Any] | None = None,
 ) -> pl.DataFrame:
-    """Generate features over a warm-up window, then persist the requested range."""
+    """Generate features over a warm-up window, then persist the requested range.
+
+    The returned DataFrame contract is unchanged. Pass ``diagnostics`` (an
+    out-dict) to receive requested/produced/missing ticker coverage with stable
+    exclusion reason codes (W02/F07): ``no_price_rows``, ``insufficient_history``,
+    ``invalid_output`` (phase-1 skips from the engineer), ``missing_output_bar``
+    (computed in the warm-up window but absent from the requested output window),
+    and ``intentional_limit`` (reserved for an explicit owner-approved cap).
+    """
     feature_engineer_cls = _load_feature_engineer()
 
     query_start_date = output_start_date - timedelta(days=120)
     query_end_date = output_end_date
 
     engineer = feature_engineer_cls()
+    engineer_diagnostics: dict[str, Any] = {}
     try:
         features_df = engineer.generate_features(
             tickers=tickers,
@@ -70,9 +80,24 @@ def run_feature_job(
             include_enriched_sentiment=include_enriched_sentiment,
             include_analyst_ratings=include_analyst_ratings,
             include_sec_features=include_sec_features,
+            diagnostics=engineer_diagnostics,
         )
     finally:
         engineer.close()
+
+    if diagnostics is not None:
+        # Fill early so even the no-output error paths below report scope with
+        # reason codes rather than an empty payload.
+        phase1_skipped: dict[str, str] = dict(engineer_diagnostics.get("phase1_skipped", {}))
+        diagnostics.clear()
+        diagnostics.update(
+            {
+                "requested": list(tickers),
+                "produced": [],
+                "missing": {t: phase1_skipped.get(t, "missing_output_bar") for t in tickers},
+                "phase1_skipped": phase1_skipped,
+            }
+        )
 
     if features_df.is_empty():
         raise NoFeatureHistoryError("No features generated")
@@ -84,6 +109,11 @@ def run_feature_job(
 
     if output_df.is_empty():
         raise NoFeatureHistoryError("No features generated for the requested output window")
+
+    if diagnostics is not None:
+        produced = sorted(output_df["ticker"].drop_nulls().unique().to_list()) if "ticker" in output_df.columns else []
+        diagnostics["produced"] = produced
+        diagnostics["missing"] = {t: phase1_skipped.get(t, "missing_output_bar") for t in tickers if t not in produced}
 
     from equity_lake.ingestion.writers import upsert_dataset
 

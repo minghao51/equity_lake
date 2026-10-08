@@ -33,7 +33,9 @@ def pipeline(
         str | None,
         typer.Option("--markets", "-m", help="Comma-separated markets (long keys like us_equity; short aliases like us accepted)"),
     ] = None,
-    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
+    tickers: Annotated[
+        str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (omit for all configured; an explicit empty value is rejected)")
+    ] = None,
     skip_ingestion: Annotated[bool, typer.Option("--skip-ingestion", help="Skip Stage 1")] = False,
     skip_features: Annotated[bool, typer.Option("--skip-features", help="Skip Stage 2")] = False,
     skip_ml: Annotated[bool, typer.Option("--skip-ml", help="Skip Stage 3")] = False,
@@ -53,6 +55,18 @@ def pipeline(
     _init_logging(verbose)
     market_list = _parse_markets(markets)
     ticker_list = _parse_comma_list(tickers)
+    # D02: an explicitly provided but empty ticker scope is rejected, never
+    # silently broadened into the configured universe.
+    if tickers is not None and not ticker_list:
+        typer.secho(
+            "--tickers was provided but resolved to an empty scope; omit --tickers to use the configured "
+            "scope (an explicit empty scope is never broadened).",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
+    if ticker_list:
+        # Deduplicate deterministically for consistent scope/backfill reporting.
+        ticker_list = list(dict.fromkeys(ticker_list))
     trading_date = _resolve_run_date(date_str, days_back, market_list)
 
     results = execute_eod_pipeline(

@@ -284,7 +284,7 @@ class TestNativeCommands:
             return_value={
                 "ingestion": {
                     "success": True,
-                    "bronze_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                    "bronze_to_silver": {"success": False, "reason": "optional enrichment failed"},
                 },
                 "features": {"success": True, "rows": 1},
                 "ml": {"success": True, "results": {}},
@@ -299,7 +299,7 @@ class TestNativeCommands:
             return_value={
                 "ingestion": {
                     "success": True,
-                    "sec_to_silver": {"success": False, "reason": "optional enrichment unavailable"},
+                    "sec_to_silver": {"success": False, "reason": "optional enrichment failed"},
                 },
                 "features": {"success": True, "rows": 1},
                 "ml": {"success": True, "results": {}},
@@ -774,3 +774,127 @@ class TestMonitorExitCode:
         result = self._invoke_monitor(healthy=False)
         assert result.exit_code == 1
         assert "ISSUES" in result.stdout
+
+
+class TestW02ExitContract:
+    """W02: deterministic exits for success, degradation, coverage, limits, dry-run."""
+
+    def _pipeline(self, results, args=None):
+        with patch("equity_lake.pipeline.execute_eod_pipeline", return_value=results) as mock_pipeline:
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", *(args or [])])
+        return result, mock_pipeline
+
+    def test_full_success_exits_zero(self):
+        results = {
+            "scope": {"tickers": ["AAPL"]},
+            "ingestion": {"success": True, "partial": False, "optional_failures": []},
+            "features": {"success": True, "coverage": {"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}}},
+            "ml": {"success": True, "results": {}},
+        }
+        result, _ = self._pipeline(results)
+        assert result.exit_code == 0
+
+    def test_coverage_failure_exits_nonzero(self):
+        """W02/F07 (D02): missing requested ticker coverage fails the run."""
+        results = {
+            "scope": {"tickers": ["AAPL", "MSFT"]},
+            "ingestion": {"success": True, "partial": False, "optional_failures": []},
+            "features": {
+                "success": False,
+                "coverage": {"requested": ["AAPL", "MSFT"], "produced": ["AAPL"], "missing": {"MSFT": "insufficient_history"}},
+                "error": "missing requested ticker coverage: MSFT=insufficient_history",
+            },
+            "ml": {"success": False, "skipped": True, "reason": "feature stage failed"},
+        }
+        result, _ = self._pipeline(results)
+        assert result.exit_code == 1
+
+    def test_explicit_skips_exit_zero(self):
+        results = {
+            "scope": {"tickers": ["AAPL"]},
+            "ingestion": {"success": True, "skipped": True, "reason": "skip_ingestion"},
+            "features": {"success": True, "skipped": True, "reason": "skip_features"},
+            "ml": {"success": True, "skipped": True, "reason": "skip_ml"},
+        }
+        result, _ = self._pipeline(results)
+        assert result.exit_code == 0
+
+    def test_enrichment_only_planned_skip_exits_zero(self):
+        results = {
+            "scope": {"tickers": [], "enrichment_only": True},
+            "ingestion": {"success": True},
+            "features": {"success": True, "skipped": True, "reason": "enrichment_only_no_price_scope"},
+            "ml": {"success": True, "skipped": True, "reason": "enrichment_only_no_price_scope"},
+        }
+        result, _ = self._pipeline(results)
+        assert result.exit_code == 0
+
+    def test_explicit_empty_ticker_scope_is_rejected(self):
+        """W02/F06 (D02): `--tickers ''` is an explicit empty scope, not 'all'."""
+        with patch("equity_lake.pipeline.execute_eod_pipeline") as mock_pipeline:
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--tickers", ""])
+        assert result.exit_code == 1
+        assert "empty scope" in result.stdout
+        mock_pipeline.assert_not_called()
+
+    def test_comma_only_ticker_scope_is_rejected(self):
+        with patch("equity_lake.pipeline.execute_eod_pipeline") as mock_pipeline:
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--tickers", ", ,"])
+        assert result.exit_code == 1
+        mock_pipeline.assert_not_called()
+
+    def test_dry_run_save_results_writes_nothing(self, tmp_path):
+        """W02/F25: --save-results under --dry-run must persist nothing."""
+        results = {
+            "scope": {"tickers": ["AAPL"]},
+            "ingestion": {"success": True, "skipped": True, "reason": "dry_run"},
+            "features": {"success": True, "skipped": True, "reason": "dry_run"},
+            "ml": {"success": True, "skipped": True, "reason": "dry_run"},
+        }
+        with (
+            patch("equity_lake.pipeline.execute_eod_pipeline", return_value=results),
+            patch("equity_lake.cli.commands.pipeline.LOGS_DIR", tmp_path),
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--dry-run", "--save-results"])
+        assert result.exit_code == 0
+        assert "skipped" in result.stdout.lower()
+        assert list(tmp_path.glob("pipeline_results_*.json")) == []
+
+    def test_save_results_writes_json_when_not_dry_run(self, tmp_path):
+        """The reader/writer seam still persists a normal run's results."""
+        results = {
+            "scope": {"tickers": ["AAPL"]},
+            "ingestion": {"success": True, "partial": False, "optional_failures": []},
+            "features": {"success": True, "coverage": {"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}}},
+            "ml": {"success": True, "results": {}},
+        }
+        with (
+            patch("equity_lake.pipeline.execute_eod_pipeline", return_value=results),
+            patch("equity_lake.cli.commands.pipeline.LOGS_DIR", tmp_path),
+        ):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--save-results"])
+        assert result.exit_code == 0
+        saved = list(tmp_path.glob("pipeline_results_*.json"))
+        assert len(saved) == 1
+        import json
+
+        payload = json.loads(saved[0].read_text())
+        # Added W02 fields survive the round trip for existing readers.
+        assert payload["scope"]["tickers"] == ["AAPL"]
+        assert payload["features"]["coverage"]["produced"] == ["AAPL"]
+
+    def test_ingest_rejects_explicit_empty_ticker_scope(self, tmp_path):
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion") as mock_ingest:
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--tickers", ""])
+        assert result.exit_code == 1
+        assert "empty scope" in result.stdout
+        mock_ingest.assert_not_called()
+
+    def test_ingest_dry_run_never_reports_written(self):
+        """W02/F25: a direct ingest dry-run reports dry_run, not written."""
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.DRY_RUN)}
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--dry-run", "--markets", "us_equity"])
+        assert result.exit_code == 0
+        assert "dry_run" in result.stdout
+        assert "written" not in result.stdout

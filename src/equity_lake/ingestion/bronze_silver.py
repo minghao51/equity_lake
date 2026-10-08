@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 import structlog
@@ -63,6 +64,7 @@ def process_unstructured_to_silver(
     silver_table_name: str,
     silver_key_columns: list[str],
     log_label: str = "article",
+    diagnostics: dict[str, Any] | None = None,
 ) -> bool:
     """Unified bronze→silver pipeline for all unstructured sources.
 
@@ -78,13 +80,28 @@ def process_unstructured_to_silver(
         silver_table_name: Delta table name (e.g. ``"02_silver/processed_articles"``).
         silver_key_columns: Dedup key columns for the silver merge.
         log_label: Label for log messages.
+        diagnostics: Optional out-dict filled with ``mode``
+            (``no_bronze_data`` | ``already_processed`` | ``processed`` |
+            ``processing_failed`` | ``write_failed``), plus ``rows``/
+            ``skipped``/``error`` where applicable. W02 (F25): no-work is
+            distinguishable from failure at the reporting seam; the boolean
+            return contract is unchanged.
 
     Returns:
         True if silver write succeeded, False otherwise.
     """
+
+    def _diag(mode: str, **extra: Any) -> None:
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update({"mode": mode, **extra})
+
     bronze_df = read_bronze()
     if bronze_df.is_empty():
+        # No bronze corpus for this date is an intentional no-work outcome,
+        # not a source failure (W02/F25 reporting; bounded selection is W06/F22).
         logger.warning("no_bronze_to_process", log_label=log_label, trading_date=str(trading_date))
+        _diag("no_bronze_data")
         return False
 
     # SEC filings have a dedicated processor + silver table (sec_extractions);
@@ -97,6 +114,7 @@ def process_unstructured_to_silver(
         bronze_df = bronze_df.filter(pl.col("source_type") == source_type_filter)
         if bronze_df.is_empty():
             logger.info("no_bronze_for_source_type", log_label=log_label, source_type=source_type_filter)
+            _diag("no_bronze_data")
             return False
 
     processed_ids = _get_processed_ids(silver_path, trading_date)
@@ -109,6 +127,7 @@ def process_unstructured_to_silver(
 
     if bronze_df.is_empty():
         logger.info("all_bronze_already_processed", log_label=log_label, trading_date=str(trading_date))
+        _diag("already_processed")
         return True
 
     logger.info("processing_bronze_to_silver", log_label=log_label, count=bronze_df.height, trading_date=str(trading_date))
@@ -117,10 +136,12 @@ def process_unstructured_to_silver(
         silver_df = process_fn(bronze_df)
     except Exception as exc:
         logger.error("processing_failed", log_label=log_label, error=str(exc))
+        _diag("processing_failed", error=str(exc))
         return False
 
     if silver_df.is_empty():
         logger.warning("processing_produced_no_silver", log_label=log_label)
+        _diag("processing_failed", error="processing produced no silver rows")
         return False
 
     ticker_filter = _load_known_tickers()
@@ -128,7 +149,11 @@ def process_unstructured_to_silver(
         silver_df = silver_df.filter(pl.col("ticker").is_null() | pl.col("ticker").is_in(ticker_filter))
         logger.info("filtered_silver_by_known_tickers", log_label=log_label, remaining=silver_df.height, known_tickers=len(ticker_filter))
 
-    return _write_silver_generic(silver_df, silver_table_name, silver_key_columns)
+    if _write_silver_generic(silver_df, silver_table_name, silver_key_columns):
+        _diag("processed", rows=silver_df.height)
+        return True
+    _diag("write_failed", rows=silver_df.height)
+    return False
 
 
 def _validate_silver_articles(df: pl.DataFrame, table_name: str) -> bool:
@@ -186,7 +211,7 @@ def _get_processed_ids(silver_path: Path, trading_date: date) -> set[str]:
         return set()
 
 
-def process_bronze_to_silver(trading_date: date) -> bool:
+def process_bronze_to_silver(trading_date: date, diagnostics: dict[str, Any] | None = None) -> bool:
     """Process unprocessed bronze articles through LLM and write to silver.
 
     Delegates to :func:`process_unstructured_to_silver` with article-specific
@@ -194,6 +219,7 @@ def process_bronze_to_silver(trading_date: date) -> bool:
 
     Args:
         trading_date: The trading date to process articles for.
+        diagnostics: Optional out-dict (see :func:`process_unstructured_to_silver`).
 
     Returns:
         True if silver write succeeded, False otherwise.
@@ -209,6 +235,7 @@ def process_bronze_to_silver(trading_date: date) -> bool:
         silver_table_name="02_silver/processed_articles",
         silver_key_columns=["article_id", "ticker"],
         log_label="article",
+        diagnostics=diagnostics,
     )
 
 

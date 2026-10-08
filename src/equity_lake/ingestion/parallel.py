@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -11,6 +12,16 @@ from typing import Any
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+
+def _run_in_context(context: contextvars.Context, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """Run ``func`` inside a copied context (typed shim for ``Context.run``).
+
+    ``Context.run`` is generic over the wrapped callable, which confuses
+    ``Executor.submit``'s signature check; this indirection keeps the call
+    type-clean while preserving the per-task context snapshot.
+    """
+    return context.run(func, *args, **kwargs)
 
 
 class FetchResult:
@@ -42,6 +53,12 @@ def fetch_markets_parallel(
     ``duration_seconds`` is measured from executor submit to completion, so it
     reflects real work (including any time the task waited in the executor
     queue), not the time spent iterating ``as_completed``.
+
+    W02 (F09): each task runs inside its own ``contextvars.copy_context()``
+    snapshot so structlog correlation IDs from the submitting thread reach
+    worker logs. ThreadPoolExecutor does not propagate ContextVars by itself;
+    a fresh copy per task keeps runs isolated (state set inside one task never
+    leaks into another or into the submitting thread).
     """
     workers = max_workers or len(markets)
     results: dict[str, FetchResult] = {}
@@ -52,7 +69,8 @@ def fetch_markets_parallel(
         for market in markets:
             if market in fetch_func_map:
                 func, kwargs = fetch_func_map[market]
-                future = executor.submit(func, trading_date, **kwargs)
+                task_context = contextvars.copy_context()
+                future = executor.submit(_run_in_context, task_context, func, trading_date, **kwargs)
                 futures[future] = market
                 submitted_at[future] = time.monotonic()
 
@@ -100,7 +118,7 @@ def fetch_items_parallel(
     workers = min(max_workers, len(items))
     all_results: list[Any] = []
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        future_to_item = {executor.submit(work_func, item, trading_date): item for item in items}
+        future_to_item = {executor.submit(_run_in_context, contextvars.copy_context(), work_func, item, trading_date): item for item in items}
         for future in as_completed(future_to_item):
             item = future_to_item[future]
             try:

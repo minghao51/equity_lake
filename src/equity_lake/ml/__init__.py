@@ -64,6 +64,10 @@ def run_prediction_job(
                 prediction = forecaster.predict(ticker=ticker, date=trading_date)
                 ticker_results[ticker] = {
                     "success": True,
+                    # W02/F25: inference success is not durability. ``persisted``
+                    # flips to True only after the batch write actually lands;
+                    # a validation/write failure must never claim it.
+                    "persisted": False,
                     "prediction": prediction,
                 }
                 prediction_rows.append(
@@ -80,6 +84,7 @@ def run_prediction_job(
             except Exception as exc:  # pragma: no cover - reported by caller
                 ticker_results[ticker] = {
                     "success": False,
+                    "persisted": False,
                     "error": str(exc),
                 }
                 all_success = False
@@ -113,6 +118,10 @@ def run_prediction_job(
                 logger.error("predictions_persist_failed", rows=len(prediction_rows), date=str(trading_date))
                 all_success = False
             else:
+                for row in prediction_rows:
+                    persisted_ticker = row["ticker"]
+                    if persisted_ticker in ticker_results:
+                        ticker_results[persisted_ticker]["persisted"] = True
                 logger.info("predictions_persisted", rows=len(prediction_rows), date=str(trading_date))
         except Exception as exc:
             logger.error("predictions_persist_failed", error=str(exc))

@@ -95,6 +95,7 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
     )
 
     assert results["features"]["success"] is True
+    assert results["features"]["history_backfilled_dates"] == 1
     assert backfill_calls == [
         {
             "start_date": date(2023, 9, 4),
@@ -244,7 +245,7 @@ def test_bronze_to_silver_failure_only_disables_article_enrichment(monkeypatch):
     import polars as pl
 
     monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "rss_news": _WRITTEN})
-    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_: False)
+    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_, **__: False)
     feature_kwargs = {}
 
     def run_feature_job(**kwargs):
@@ -266,7 +267,7 @@ def test_sec_processing_failure_only_disables_sec_enrichment(monkeypatch):
     import polars as pl
 
     monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
-    monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_: False)
+    monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_, **__: False)
     feature_kwargs = {}
 
     def run_feature_job(**kwargs):
@@ -288,7 +289,7 @@ def test_bronze_to_silver_success_enables_article_enrichment(monkeypatch):
     import polars as pl
 
     monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "rss_news": _WRITTEN})
-    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_: True)
+    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", lambda *_, **__: True)
     feature_kwargs = {}
 
     def run_feature_job(**kwargs):
@@ -311,7 +312,7 @@ def test_sec_processing_success_enables_sec_enrichment(monkeypatch):
     import polars as pl
 
     monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "sec_filings_fulltext": _WRITTEN})
-    monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_: True)
+    monkeypatch.setattr("equity_lake.ingestion.sec_processor.process_sec_bronze_to_silver", lambda *_, **__: True)
     feature_kwargs = {}
 
     def run_feature_job(**kwargs):
@@ -476,3 +477,330 @@ def test_resolve_trading_date_relative_weekday() -> None:
     _, mon, tue, *_ = _find_clean_week()
     resolved = resolve_trading_date(None, days_back=1, today=tue)
     assert resolved == mon
+
+
+# =============================================================================
+# W02: D02 scope/coverage policy, truthful outcomes, dry-run reporting
+# =============================================================================
+
+
+def test_configured_scope_is_not_truncated(monkeypatch):
+    """W02/F06 (D02): the configured active scope is resolved in full — the
+    historical ten-ticker cap is gone — and reported exactly."""
+    config = TickerConfig()
+    active_us = config.get_tickers_for_market("us", active_only=True)
+    assert len(active_us) > 10  # the old [:10] cap would have hidden the rest
+
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {})
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        ticker_config=config,
+        skip_ingestion=True,
+        skip_features=True,
+        skip_ml=True,
+    )
+
+    assert results["scope"]["tickers"] == active_us
+    assert results["scope"]["explicit_tickers"] is False
+    assert results["scope"]["enrichment_only"] is False
+    assert results["scope"]["markets"] == ["us_equity"]
+
+
+def test_configured_scope_dedupes_across_markets_deterministically(monkeypatch):
+    """W02/F06: repeated tickers across requested markets are deduplicated in
+    resolution order, with no silent cap."""
+    config = TickerConfig()
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {})
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity", "us_equity"],
+        ticker_config=config,
+        skip_ingestion=True,
+        skip_features=True,
+        skip_ml=True,
+    )
+
+    tickers = results["scope"]["tickers"]
+    assert tickers == list(dict.fromkeys(tickers))
+    assert tickers == config.get_tickers_for_market("us", active_only=True)
+
+
+def test_explicit_tickers_are_deduplicated(monkeypatch):
+    """W02/F06 (D02): explicit scope is deduplicated deterministically (D02), so
+    duplicates cannot double the scope or coverage entries."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {})
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL", "MSFT", "AAPL"],
+        skip_ingestion=True,
+        skip_features=True,
+        skip_ml=True,
+    )
+
+    assert results["scope"]["tickers"] == ["AAPL", "MSFT"]
+    assert results["scope"]["explicit_tickers"] is True
+
+
+def test_feature_write_failure_still_reports_coverage(monkeypatch):
+    """W02/F07/F25: a persistence failure on the feature stage keeps the computed
+    coverage (produced set and reasons) instead of discarding it."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN})
+
+    def failing_run_feature_job(**kwargs):
+        kwargs["diagnostics"].update({"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}, "phase1_skipped": {}})
+        raise RuntimeError("Feature write to 03_gold/features failed")
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", failing_run_feature_job)
+
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=["AAPL"], skip_ml=True)
+
+    assert results["features"]["success"] is False
+    assert results["features"]["coverage"] == {"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}}
+    assert "Feature write" in results["features"]["error"]
+
+
+def test_feature_job_crash_does_not_fabricate_coverage_reasons(monkeypatch):
+    """W02/F07: a whole-job crash before per-ticker diagnostics exists must not
+    invent data-gap reasons for every requested ticker."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN})
+
+    def crashing_run_feature_job(**_kwargs):
+        raise RuntimeError("duckdb connection lost")
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", crashing_run_feature_job)
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL", "MSFT"],
+        skip_ml=True,
+    )
+
+    assert results["features"]["success"] is False
+    assert results["features"]["coverage"] == {"requested": ["AAPL", "MSFT"], "produced": [], "missing": {}}
+
+
+def test_explicit_empty_scope_is_rejected_not_broadened():
+    """W02/F06 (D02): an explicit empty scope raises instead of silently
+    expanding to the configured universe."""
+    import pytest
+
+    with pytest.raises(ValueError, match="empty"):
+        execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=[])
+
+
+def test_explicit_tickers_are_reported_as_explicit(monkeypatch):
+    """W02/F06: explicit scope is preserved unchanged and flagged as explicit."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {})
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["MSFT", "AAPL"],
+        skip_ingestion=True,
+        skip_features=True,
+        skip_ml=True,
+    )
+
+    assert results["scope"]["tickers"] == ["MSFT", "AAPL"]
+    assert results["scope"]["explicit_tickers"] is True
+
+
+def test_enrichment_only_request_planned_skips_features_and_ml(monkeypatch):
+    """W02/D02: a request with no price market planned-skips features/ML with a
+    stable reason instead of inventing default tickers or failing on history."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"macro": _WRITTEN})
+    monkeypatch.setattr(
+        "equity_lake.pipeline.run_feature_job",
+        lambda **_: (_ for _ in ()).throw(AssertionError("features called for enrichment-only request")),
+    )
+    monkeypatch.setattr(
+        "equity_lake.pipeline.run_prediction_job",
+        lambda **_: (_ for _ in ()).throw(AssertionError("ML called for enrichment-only request")),
+    )
+
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["macro"])
+
+    assert results["scope"]["enrichment_only"] is True
+    assert results["features"] == {"success": True, "skipped": True, "reason": "enrichment_only_no_price_scope"}
+    assert results["ml"] == {"success": True, "skipped": True, "reason": "enrichment_only_no_price_scope"}
+
+
+def test_feature_coverage_failure_fails_stage_and_blocks_ml(monkeypatch):
+    """W02/F07 (D02): a requested ticker missing from the output fails the feature
+    stage with its reason and prevents dependent ML output."""
+    import polars as pl
+
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN})
+
+    def fake_run_feature_job(**kwargs):
+        diag = kwargs["diagnostics"]
+        diag.update(
+            {
+                "requested": ["AAPL", "MSFT"],
+                "produced": ["AAPL"],
+                "missing": {"MSFT": "insufficient_history"},
+                "phase1_skipped": {"MSFT": "insufficient_history"},
+            }
+        )
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", fake_run_feature_job)
+    monkeypatch.setattr(
+        "equity_lake.pipeline.run_prediction_job",
+        lambda **_: (_ for _ in ()).throw(AssertionError("ML ran despite incomplete coverage")),
+    )
+
+    results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=["AAPL", "MSFT"])
+
+    assert results["features"]["success"] is False
+    assert results["features"]["coverage"] == {
+        "requested": ["AAPL", "MSFT"],
+        "produced": ["AAPL"],
+        "missing": {"MSFT": "insufficient_history"},
+    }
+    assert "MSFT=insufficient_history" in results["features"]["error"]
+    assert results["ml"]["skipped"] is True
+
+
+def test_full_coverage_reports_requested_produced_missing(monkeypatch):
+    """W02/F07: even a successful stage publishes requested/produced coverage."""
+    import polars as pl
+
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN})
+
+    def fake_run_feature_job(**kwargs):
+        kwargs["diagnostics"].update({"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}, "phase1_skipped": {}})
+        return pl.DataFrame({"ticker": ["AAPL"]})
+
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", fake_run_feature_job)
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL"],
+        skip_ml=True,
+    )
+
+    assert results["features"]["success"] is True
+    assert results["features"]["coverage"] == {"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}}
+
+
+def test_optional_failure_is_visible_and_non_blocking(monkeypatch):
+    """W02/F08: an optional failure is reported in optional_failures + errors and
+    sets partial=true, while required success keeps the stage eligible."""
+    import polars as pl
+
+    monkeypatch.setattr(
+        "equity_lake.pipeline.run_daily_ingestion",
+        lambda **_: {"us_equity": _WRITTEN, "us_news": SourceOutcome(SourceStatus.FAILED, error="news timeout")},
+    )
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: pl.DataFrame({"ticker": ["AAPL"]}))
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity", "us_news"],
+        tickers=["AAPL"],
+        skip_ml=True,
+    )
+
+    ingestion = results["ingestion"]
+    assert ingestion["success"] is True
+    assert ingestion["partial"] is True
+    assert ingestion["optional_failures"] == ["us_news"]
+    assert ingestion["errors"] == {"us_news": "news timeout"}
+    assert ingestion["markets"] == {"us_equity": "written", "us_news": "failed"}
+    assert results["features"]["success"] is True
+
+
+def test_no_data_optional_market_is_visible_but_not_partial(monkeypatch):
+    """W02/F10: a genuine no-data fetch is distinct from an optional failure."""
+    import polars as pl
+
+    monkeypatch.setattr(
+        "equity_lake.pipeline.run_daily_ingestion",
+        lambda **_: {"us_equity": _WRITTEN, "macro": SourceOutcome(SourceStatus.NO_DATA)},
+    )
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: pl.DataFrame({"ticker": ["AAPL"]}))
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity", "macro"],
+        tickers=["AAPL"],
+        skip_ml=True,
+    )
+
+    assert results["ingestion"]["success"] is True
+    assert results["ingestion"]["partial"] is False
+    assert results["ingestion"]["optional_failures"] == []
+    assert results["ingestion"]["markets"]["macro"] == "no_data"
+
+
+def test_dry_run_reports_scope_and_no_write_stages(monkeypatch):
+    """W02/F25: dry-run reports resolved scope and never enters write-capable stages."""
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {})
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity"],
+        tickers=["AAPL"],
+        dry_run=True,
+    )
+
+    assert results["scope"]["dry_run"] is True
+    assert results["scope"]["tickers"] == ["AAPL"]
+    assert results["ingestion"]["reason"] == "dry_run"
+    assert results["features"]["reason"] == "dry_run"
+    assert results["ml"]["reason"] == "dry_run"
+
+
+def test_bronze_to_silver_no_work_is_a_skip_not_a_failure(monkeypatch):
+    """W02/F25: no bronze corpus is an intentional no-work skip, while a real
+    processing failure is still a failure."""
+    import polars as pl
+
+    monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "rss_news": _WRITTEN})
+
+    def no_bronze(trading_date, diagnostics=None):
+        if diagnostics is not None:
+            diagnostics.update({"mode": "no_bronze_data"})
+        return False
+
+    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", no_bronze)
+    monkeypatch.setattr("equity_lake.pipeline.run_feature_job", lambda **_: pl.DataFrame({"ticker": ["AAPL"]}))
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity", "rss_news"],
+        tickers=["AAPL"],
+        skip_ml=True,
+    )
+
+    stage = results["ingestion"]["bronze_to_silver"]
+    assert stage["success"] is True
+    assert stage["skipped"] is True
+    assert stage["reason"] == "no_bronze_work"
+
+    def processing_failed(trading_date, diagnostics=None):
+        if diagnostics is not None:
+            diagnostics.update({"mode": "processing_failed", "error": "llm quota"})
+        return False
+
+    monkeypatch.setattr("equity_lake.ingestion.bronze_silver.process_bronze_to_silver", processing_failed)
+
+    results = execute_eod_pipeline(
+        trading_date=date(2024, 1, 2),
+        markets=["us_equity", "rss_news"],
+        tickers=["AAPL"],
+        skip_ml=True,
+    )
+
+    stage = results["ingestion"]["bronze_to_silver"]
+    assert stage["success"] is False
+    assert stage["reason"] == "optional enrichment failed"
+    assert stage["error"] == "llm quota"

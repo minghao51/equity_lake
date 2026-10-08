@@ -52,12 +52,30 @@ EXPLICIT_TICKER_MARKETS: frozenset[str] = frozenset(
 )
 
 
-def _optional_market_outcome(market: str, error: str) -> SourceOutcome:
-    """Empty or failed optional enrichments are skipped (not failed) so they do
-    not fail the whole run. Required price markets stay FAILED on empty/failure."""
-    if market in OPTIONAL_ENRICHMENT_MARKETS:
-        return SourceOutcome(SourceStatus.SKIPPED_EXISTING, error=error)
-    return SourceOutcome(SourceStatus.FAILED, error=error)
+def _finalize_market(market: str, trading_date: date, dry_run: bool, df: Any) -> SourceOutcome:
+    """Map one fetched frame to its truthful terminal outcome.
+
+    Shared by the serial and parallel branches so both get identical isolation
+    (F09) and identical status semantics (F08/F25): a genuine empty fetch is
+    ``NO_DATA``, a simulated write is ``DRY_RUN`` (never ``written``), and any
+    conversion/validation/write exception is isolated to this market as a
+    ``FAILED`` outcome that retains the root cause.
+    """
+    if df is None:
+        # Defensive: never read a missing frame as no-data. The router raises for
+        # unknown markets; this guards direct/legacy callers.
+        logger.error("market_no_frame", market=market)
+        return SourceOutcome(SourceStatus.FAILED, error="no_frame_returned")
+    try:
+        if frame_is_empty(df):
+            logger.warning("no_data_fetched", market=market)
+            return SourceOutcome(SourceStatus.NO_DATA)
+        if _write_market(df, market, trading_date, dry_run):
+            return SourceOutcome(SourceStatus.DRY_RUN) if dry_run else SourceOutcome(SourceStatus.WRITTEN)
+        return SourceOutcome(SourceStatus.FAILED, error="write_returned_false")
+    except Exception as exc:
+        logger.error("market_write_failed", market=market, error=str(exc))
+        return SourceOutcome(SourceStatus.FAILED, error=str(exc))
 
 
 def _market_has_date(market_dir: str, trading_date: date, con: duckdb.DuckDBPyConnection | None = None) -> bool:
@@ -226,21 +244,17 @@ def run_daily_ingestion(
                 logger.info("market_processing_start", market=market.upper())
 
                 if not fetch_result.success:
+                    # F08: an optional market's fetch failure is a FAILED outcome
+                    # with its cause — optionality is applied by the pipeline when
+                    # deciding blocking/exit status, never here.
                     logger.error("market_fetch_failed", market=market, error=str(fetch_result.error), duration_seconds=fetch_result.duration_seconds)
-                    results[market] = _optional_market_outcome(market, str(fetch_result.error))
+                    results[market] = SourceOutcome(SourceStatus.FAILED, error=str(fetch_result.error))
                     continue
 
-                df = fetch_result.data
-                if frame_is_empty(df):
-                    logger.warning("no_data_fetched", market=market)
-                    results[market] = _optional_market_outcome(market, "empty_frame")
-                    continue
-
-                results[market] = (
-                    SourceOutcome(SourceStatus.WRITTEN)
-                    if _write_market(df, market, trading_date, dry_run)
-                    else SourceOutcome(SourceStatus.FAILED, error="write_returned_false")
-                )
+                # F09: conversion/validation/write exceptions are isolated per
+                # market inside _finalize_market — the same contract as the
+                # serial branch; other markets' outcomes always survive.
+                results[market] = _finalize_market(market, trading_date, dry_run, fetch_result.data)
 
             summary = summarize_results(fetch_results)
             logger.info("parallel_ingestion_summary", **summary)
@@ -258,20 +272,13 @@ def run_daily_ingestion(
                         filters=filters,
                         explicit_tickers=explicit_ticker_list if market in EXPLICIT_TICKER_MARKETS else None,
                     )
-
-                if frame_is_empty(df):
-                    logger.warning("no_data_fetched", market=market)
-                    results[market] = _optional_market_outcome(market, "empty_frame")
-                    continue
-
-                results[market] = (
-                    SourceOutcome(SourceStatus.WRITTEN)
-                    if _write_market(df, market, trading_date, dry_run)
-                    else SourceOutcome(SourceStatus.FAILED, error="write_returned_false")
-                )
-
             except Exception as e:
+                # F10: the router no longer swallows fetch/schema errors into
+                # None; they arrive here with their root cause intact.
                 logger.error("market_processing_error", market=market, error=str(e))
-                results[market] = _optional_market_outcome(market, str(e))
+                results[market] = SourceOutcome(SourceStatus.FAILED, error=str(e))
+                continue
+
+            results[market] = _finalize_market(market, trading_date, dry_run, df)
 
     return results

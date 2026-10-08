@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 
 import duckdb
 import polars as pl
@@ -91,6 +92,7 @@ class FeatureEngineer:
         include_analyst_ratings: bool = False,
         include_sec_features: bool = False,
         normalize_cross_sectional: bool = False,
+        diagnostics: dict[str, Any] | None = None,
     ) -> pl.DataFrame:
         """Generate all features for specified tickers and date range.
 
@@ -102,6 +104,13 @@ class FeatureEngineer:
         automatically by :meth:`FeaturePipeline.compute_enriched` based on the
         ``include_*`` flags. The legacy ``merge_*`` methods on this class are
         deprecated and should not be called directly.
+
+        Args:
+            diagnostics: Optional out-dict filled with per-ticker exclusion
+                reasons under ``"phase1_skipped"`` (stable codes:
+                ``no_price_rows``, ``insufficient_history``,
+                ``invalid_output``). W02 (F07): exclusions are observable at
+                the caller instead of disappearing into a narrower frame.
         """
         logger.info("feature_generation_start", ticker_count=len(tickers), start_date=str(start_date), end_date=str(end_date))
 
@@ -132,18 +141,32 @@ class FeatureEngineer:
         if "date" in df.columns and df.schema["date"] != pl.Date:
             df = df.with_columns(pl.col("date").cast(pl.Date))
 
-        # Phase 1: per-ticker technical indicators
+        # Phase 1: per-ticker technical indicators. Every exclusion is recorded
+        # with a stable reason code (W02/F07); a per-ticker compute failure is
+        # isolated to that ticker (the stage-level coverage policy decides the
+        # run outcome) instead of erasing every other ticker's output.
         result_dfs: list[pl.DataFrame] = []
+        phase1_skipped: dict[str, str] = {}
         for ticker in tqdm(tickers, desc="Computing features"):
             ticker_df = df.filter(pl.col("ticker") == ticker)
             if ticker_df.is_empty():
+                phase1_skipped[ticker] = "no_price_rows"
                 continue
             if ticker_df.height < 60:
                 logger.warning("ticker_insufficient_data", ticker=ticker, height=ticker_df.height)
+                phase1_skipped[ticker] = "insufficient_history"
                 continue
 
-            computed = self.feature_pipeline.compute_technical(ticker_df, include_target=compute_target)
+            try:
+                computed = self.feature_pipeline.compute_technical(ticker_df, include_target=compute_target)
+            except Exception as exc:
+                logger.error("ticker_compute_failed", ticker=ticker, error=str(exc))
+                phase1_skipped[ticker] = "invalid_output"
+                continue
             result_dfs.append(computed)
+
+        if diagnostics is not None:
+            diagnostics["phase1_skipped"] = dict(phase1_skipped)
 
         if not result_dfs:
             logger.error("No features generated - all tickers were skipped (insufficient data)")
@@ -152,6 +175,14 @@ class FeatureEngineer:
         features_df = pl.concat(result_dfs, how="vertical_relaxed")
         critical_cols = ["close", "volume", "rsi_14", "macd"]
         features_df = features_df.filter(~pl.any_horizontal([pl.col(column).is_null() for column in critical_cols if column in features_df.columns]))
+
+        # Tick whose surviving rows were all dropped by the critical-null
+        # filter never reach the output: record them as invalid output.
+        if diagnostics is not None and "ticker" in features_df.columns:
+            surviving = set(features_df["ticker"].drop_nulls().unique().to_list())
+            dropped_by_filter = sorted(t for t in df["ticker"].unique().to_list() if t not in phase1_skipped and t not in surviving)
+            for ticker in dropped_by_filter:
+                diagnostics["phase1_skipped"][ticker] = "invalid_output"
 
         # Phase 2: batch external-data enrichments via DAG
         any_enrichment = any(

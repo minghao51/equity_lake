@@ -110,11 +110,20 @@ class SourceStatus(str, Enum):
 
     ``str`` mixin so ``.value`` serializes cleanly into the pipeline's published
     ``results["ingestion"]["markets"]`` payload.
+
+    W02 (F08/F10/F25): every terminal condition has its own status. Optionality
+    never hides a failure — an optional market that fails reports ``FAILED`` and
+    is classified as an optional failure by the pipeline, which decides blocking
+    and exit status. ``SKIPPED_EXISTING`` is reserved for a verified existing
+    partition; a genuine empty fetch is ``NO_DATA``; a simulated write in a
+    direct dry-run is ``DRY_RUN`` (never ``written``).
     """
 
     WRITTEN = "written"  # newly fetched + persisted
     SKIPPED_EXISTING = "skipped_existing"  # partition already present (and validated)
-    FAILED = "failed"  # fetch failed, empty frame, write returned False, or exception
+    NO_DATA = "no_data"  # fetched successfully; the source returned zero rows
+    DRY_RUN = "dry_run"  # direct dry-run: write-capable path simulated, nothing persisted
+    FAILED = "failed"  # fetch failed, schema rejected, write returned False, or exception
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,10 +142,12 @@ class SourceOutcome:
     def succeeded(self) -> bool:
         """True when downstream stages (features/ML) may proceed.
 
-        Both ``WRITTEN`` and ``SKIPPED_EXISTING`` count as success; ``FAILED``
-        does not. Missing keys at call sites are treated as ``FAILED``.
+        ``WRITTEN`` and ``SKIPPED_EXISTING`` count as success; ``DRY_RUN`` also
+        counts so direct dry-runs keep their zero-exit contract (while never
+        claiming a write). ``NO_DATA`` and ``FAILED`` do not. Missing keys at
+        call sites are treated as ``FAILED``.
         """
-        return self.status in (SourceStatus.WRITTEN, SourceStatus.SKIPPED_EXISTING)
+        return self.status in (SourceStatus.WRITTEN, SourceStatus.SKIPPED_EXISTING, SourceStatus.DRY_RUN)
 
 
 __all__ = [

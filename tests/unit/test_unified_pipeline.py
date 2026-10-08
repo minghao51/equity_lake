@@ -133,3 +133,78 @@ class TestProcessingFailure:
             )
 
         assert result is False
+
+
+class TestW02Diagnostics:
+    """W02/F25: no-work is distinguishable from failure at the reporting seam."""
+
+    def _call(self, bronze, process_fn, diagnostics, *, processed_ids=None, merge_result=True):
+        with (
+            patch("equity_lake.ingestion.bronze_silver.read_bronze", return_value=bronze),
+            patch("equity_lake.ingestion.bronze_silver._get_processed_ids", return_value=processed_ids or set()),
+            patch("equity_lake.ingestion.bronze_silver._load_known_tickers", return_value=[]),
+            patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=merge_result),
+        ):
+            return process_unstructured_to_silver(
+                date(2026, 6, 14),
+                source_type_filter=None,
+                process_fn=process_fn,
+                silver_path=pl.DataFrame(),
+                silver_table_name="02_silver/processed_articles",
+                silver_key_columns=["article_id", "ticker"],
+                diagnostics=diagnostics,
+            )
+
+    def test_empty_bronze_reports_no_work(self):
+        diagnostics: dict = {}
+        result = self._call(pl.DataFrame(), lambda df: pl.DataFrame(), diagnostics)
+        assert result is False
+        assert diagnostics["mode"] == "no_bronze_data"
+
+    def test_all_already_processed_reports_no_work_success(self, bronze_df):
+        diagnostics: dict = {}
+        result = self._call(
+            bronze_df,
+            lambda df: pl.DataFrame(),
+            diagnostics,
+            processed_ids={"art-1", "art-2", "sec-1"},
+        )
+        assert result is True
+        assert diagnostics["mode"] == "already_processed"
+
+    def test_processed_reports_row_count(self, bronze_df):
+        diagnostics: dict = {}
+
+        def process_fn(df):
+            return pl.DataFrame({"article_id": ["art-1", "art-2", "sec-1"], "ticker": [None, None, None], "date": [date(2026, 6, 14)] * 3})
+
+        result = self._call(bronze_df, process_fn, diagnostics)
+        assert result is True
+        assert diagnostics["mode"] == "processed"
+        assert diagnostics["rows"] == 3
+
+    def test_processing_failure_reports_mode_and_cause(self, bronze_df):
+        diagnostics: dict = {}
+
+        def failing_fn(_):
+            raise RuntimeError("LLM API down")
+
+        result = self._call(bronze_df, failing_fn, diagnostics)
+        assert result is False
+        assert diagnostics["mode"] == "processing_failed"
+        assert "LLM API down" in diagnostics["error"]
+
+    def test_write_failure_reports_mode(self, bronze_df):
+        diagnostics: dict = {}
+
+        def process_fn(df):
+            return pl.DataFrame({"article_id": ["art-1"], "ticker": ["AAPL"], "date": [date(2026, 6, 14)]})
+
+        result = self._call(bronze_df, process_fn, diagnostics, merge_result=False)
+        assert result is False
+        assert diagnostics["mode"] == "write_failed"
+
+    def test_diagnostics_is_optional(self, bronze_df):
+        """The boolean contract is unchanged for callers that do not pass diagnostics."""
+        result = self._call(bronze_df, lambda df: pl.DataFrame(), None, processed_ids={"art-1", "art-2", "sec-1"})
+        assert result is True

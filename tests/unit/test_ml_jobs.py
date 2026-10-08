@@ -150,3 +150,59 @@ def test_run_prediction_job_fails_when_persistence_raises(monkeypatch):
     )
 
     assert success is False
+
+
+# =============================================================================
+# W02/F25: inference success is not claimed as persistence success.
+# =============================================================================
+
+
+def test_run_prediction_job_marks_persisted_only_after_write(monkeypatch):
+    """W02/F25: per-ticker results report ``persisted`` only when the batch write landed."""
+    _install_fake_forecaster(monkeypatch)
+    monkeypatch.setattr("equity_lake.storage.delta.merge_delta", lambda *_, **__: True)
+
+    success, results = run_prediction_job(
+        trading_date=date(2024, 1, 2),
+        tickers=["AAPL", "MSFT"],
+    )
+
+    assert success is True
+    assert results["AAPL"]["success"] is True
+    assert results["AAPL"]["persisted"] is True
+    assert results["MSFT"]["persisted"] is True
+
+
+def test_run_prediction_job_write_failure_keeps_persisted_false(monkeypatch):
+    """W02/F25: a failed batch write never leaves per-ticker persisted-success claims."""
+    _install_fake_forecaster(monkeypatch)
+    monkeypatch.setattr("equity_lake.storage.delta.merge_delta", lambda *_, **__: False)
+
+    success, results = run_prediction_job(
+        trading_date=date(2024, 1, 2),
+        tickers=["AAPL", "MSFT"],
+    )
+
+    assert success is False
+    # Predictions are preserved as diagnostics, but durability is not claimed.
+    assert results["AAPL"]["prediction"] is not None
+    assert results["AAPL"]["persisted"] is False
+    assert results["MSFT"]["persisted"] is False
+
+
+def test_run_prediction_job_validation_failure_keeps_persisted_false(monkeypatch):
+    """W02/F25: a batch that fails validation is not written and not reported persisted."""
+    _install_fake_forecaster(monkeypatch)
+    monkeypatch.setattr("equity_lake.ml.validate_predictions", lambda _df: False)
+
+    write_calls: list[object] = []
+    monkeypatch.setattr("equity_lake.storage.delta.merge_delta", lambda *a, **k: write_calls.append(a) or True)
+
+    success, results = run_prediction_job(
+        trading_date=date(2024, 1, 2),
+        tickers=["AAPL"],
+    )
+
+    assert success is False
+    assert results["AAPL"]["persisted"] is False
+    assert write_calls == []

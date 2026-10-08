@@ -194,7 +194,7 @@ def run_sec_processing(bronze_df: pl.DataFrame, batch_size: int = 5) -> pl.DataF
     return asyncio.run(processor.process_all(bronze_df))
 
 
-def process_sec_bronze_to_silver(trading_date: date) -> bool:
+def process_sec_bronze_to_silver(trading_date: date, diagnostics: dict[str, Any] | None = None) -> bool:
     """Process unprocessed SEC filing sections from bronze to silver.
 
     Delegates to :func:`process_unstructured_to_silver` with SEC-specific
@@ -202,6 +202,7 @@ def process_sec_bronze_to_silver(trading_date: date) -> bool:
 
     Args:
         trading_date: The trading date to process sections for.
+        diagnostics: Optional out-dict (see ``process_unstructured_to_silver``).
 
     Returns:
         True if silver write succeeded, False otherwise.
@@ -217,6 +218,7 @@ def process_sec_bronze_to_silver(trading_date: date) -> bool:
         silver_table_name="02_silver/sec_extractions",
         silver_key_columns=["article_id"],
         log_label="SEC",
+        diagnostics=diagnostics,
     )
 
 
