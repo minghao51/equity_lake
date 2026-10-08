@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** In progress — PR1 landed (`c0f37ee`, 2026-10-08); PR2 (labels, ADR-0014) implemented + reviewed (READY WITH WARNINGS, warnings addressed; owner sign-off pending)
+**Status:** In progress — PR1 landed (`c0f37ee`), PR2 landed (`457ca6d`, 2026-10-08); PR3 (sessions, D04) next
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
@@ -438,8 +438,9 @@ rejection/retraining, not transparent reuse.
   (final tree): **1108 passed / 22 skipped / 3 failed** (the pre-existing
   `test_arena.py` set), `-n auto` parity, ruff/format clean, mypy at the
   3-error baseline, `git diff --check` clean, catalog unchanged by the review
-  fixes (the one-line Gold diff from the unit itself stands). **Owner sign-off
-  pending** — it closes F03 and the label portions of F17/F25.
+  fixes (the one-line Gold diff from the unit itself stands). **Owner
+  authorized the commit 2026-10-08 (`457ca6d`), closing F03 and the label
+  portions of F17/F25.**
 - Remaining in W03: F11 market sessions (PR3), F14 action overlap (PR4). F03
   and the label portions of F17/F25 are implemented-pending-review — the
   read-only reviewer pass and owner sign-off close them.
