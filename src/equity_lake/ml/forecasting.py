@@ -53,6 +53,7 @@ NON_FEATURE_COLUMNS = {
     "close",
     "volume",
     "next_day_return",
+    "label_available_date",
     "feature_schema_version",
     "candidate_action",
     "candidate_source",
@@ -113,8 +114,10 @@ class PriceForecaster:
         ticker: str,
         start_date: date,
         end_date: date,
+        *,
+        require_available_by: date | None = None,
     ) -> pl.DataFrame:
-        return self._feature_loader.load_features(ticker, start_date, end_date)
+        return self._feature_loader.load_features(ticker, start_date, end_date, require_available_by=require_available_by)
 
     def _load_candidate_strategies(self) -> list[dict[str, Any]]:
         configured = self.ml_config.get("candidate_strategies")
@@ -173,7 +176,7 @@ class PriceForecaster:
                     )
                     return self._load_model(existing_path)
 
-        df = ensure_polars(self.load_features(ticker, start_date, end_date))
+        df = ensure_polars(self.load_features(ticker, start_date, end_date, require_available_by=end_date))
         if df.is_empty():
             raise ValueError(f"No features available for {ticker}")
 
@@ -450,7 +453,7 @@ class PriceForecaster:
         final row, whose ``next_day_return`` is null) are dropped, mirroring
         ``_prepare_training_frame``'s consumers in ``train_model``.
         """
-        df = ensure_polars(self.load_features(ticker, start_date, end_date))
+        df = ensure_polars(self.load_features(ticker, start_date, end_date, require_available_by=end_date))
         training_df = self._prepare_training_frame(df)
         target_column = "meta_label" if self.model_mode == "v2_meta_label" else "target"
         training_df = training_df.filter(pl.col(target_column).is_not_null())
@@ -765,7 +768,9 @@ class PriceForecaster:
         inference_cols = set(scoring_frame.columns)
         trained_set = set(trained_features)
         missing_in_inference = trained_set - inference_cols
-        extra_in_inference = inference_cols - trained_set - {"ticker", "date", "candidate_action", "candidate_source", "candidate_score"}
+        # Intentional non-predictors (identity, target, availability metadata,
+        # candidate bookkeeping) are never "extra" features.
+        extra_in_inference = inference_cols - trained_set - NON_FEATURE_COLUMNS
         if missing_in_inference or extra_in_inference:
             logger.warning(
                 "feature_skew_detected",

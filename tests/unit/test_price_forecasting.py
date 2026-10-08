@@ -47,7 +47,7 @@ def test_backtest_handles_null_target_on_final_row(monkeypatch, tmp_path) -> Non
     frame = _make_training_frame("AAPL", periods=40)
     frame.loc[frame.index[-1], "next_day_return"] = None
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
@@ -79,7 +79,7 @@ def test_backtest_fits_with_training_scale_pos_weight(monkeypatch, tmp_path) -> 
     # 2 positives / 5 negatives -> scale_pos_weight = 5 / 2 = 2.5.
     frame["next_day_return"] = [0.01 if i % 4 == 0 else -0.01 for i in range(len(frame))]
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
@@ -110,7 +110,7 @@ def test_backtest_predicts_with_optimized_threshold(monkeypatch, tmp_path) -> No
 
     frame = _make_training_frame("AAPL", periods=40)
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
@@ -233,7 +233,7 @@ def test_train_model_writes_validation_metadata(monkeypatch, tmp_path) -> None:
     def _noop_setup(self) -> None:
         return None
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         return _make_training_frame(ticker)
 
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
@@ -379,7 +379,7 @@ def test_triple_barrier_uses_low_volatility_floor() -> None:
 def test_train_model_handles_sparse_optional_feature_columns(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         frame = _make_training_frame(ticker)
         frame["social_sentiment_score"] = [None] * len(frame)
         return frame
@@ -402,7 +402,7 @@ def test_train_model_handles_sparse_optional_feature_columns(monkeypatch, tmp_pa
 def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         dates = pd.date_range("2024-01-01", periods=30, freq="B")
         close = [100.0, 102.0, 101.0, 103.0, 102.0, 104.0, 103.0, 105.0, 104.0, 106.0] * 3
         frame = pd.DataFrame(
@@ -462,7 +462,7 @@ def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatc
 
     training_frame = _make_training_frame("AAPL")
 
-    def _load_training(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _load_training(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         return training_frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _load_training)
@@ -478,7 +478,7 @@ def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatc
 
         prediction_date = date(2024, 4, 19)
 
-        def _load_scoring(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+        def _load_scoring(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
             scoring = training_frame[training_frame["date"] <= pd.Timestamp(prediction_date)].copy()
             return scoring.drop(columns=["macd"]).assign(extra_feature=1.0)
 
@@ -496,7 +496,7 @@ def test_class_balance_recorded_in_metadata(monkeypatch, tmp_path) -> None:
     """Imbalanced training set should record class_balance and scale_pos_weight."""
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         frame = _make_training_frame(ticker, periods=120)
         frame["next_day_return"] = [0.01 if i % 5 == 0 else -0.01 for i in range(len(frame))]
         return frame
@@ -519,7 +519,7 @@ def test_optimized_threshold_recorded_in_metadata(monkeypatch, tmp_path) -> None
     """Validation set with clear class separation should produce a non-default threshold."""
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         frame = _make_training_frame(ticker, periods=120)
         return frame
 
@@ -539,7 +539,7 @@ def test_shap_feature_importance_recorded_when_shap_available(monkeypatch, tmp_p
     """If SHAP is installed, training metadata should include top features."""
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load(self, ticker: str, start_date: date, end_date: date) -> pd.DataFrame:
+    def _fake_load(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
         return _make_training_frame(ticker, periods=120)
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)

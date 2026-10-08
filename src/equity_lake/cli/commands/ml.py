@@ -122,7 +122,11 @@ def ml_compare(
 
     loader = FeatureLoader()
     try:
-        features = loader.load_features(selected, start_date, end_date)
+        # ADR-0014 §5: comparison/ablation harnesses train models, so labels
+        # finalized after the requested window (or legacy unknown-availability
+        # rows) are excluded here just as in train_model/backtest (review
+        # warning 1).
+        features = loader.load_features(selected, start_date, end_date, require_available_by=end_date)
     finally:
         loader.close()
     if features.is_empty():

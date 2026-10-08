@@ -17,7 +17,7 @@ logging, and mutating commands accept `--dry-run` to simulate without writes.
 
 | Area | Commands |
 |---|---|
-| Ingestion & data | `ingest`, `backfill`, `auto-backfill`, `sync`, `macro`, `pipeline` |
+| Ingestion & data | `ingest`, `backfill`, `auto-backfill`, `label-repair`, `sync`, `macro`, `pipeline` |
 | Unstructured & news | `news`, `sentiment`, `transcripts`, `ratings`, `sec`, `financials` |
 | Intelligence & ML | `forecast`, `ml compare`, `ml ablate`, `ml train` |
 | Analysis | `query`, `signal scan`, `backtest`, `arena run`, `report backtest` |
@@ -78,6 +78,36 @@ Auto-detect and fill data gaps across markets.
 ```bash
 dotenvx run -- uv run equity auto-backfill --days-back 90 --dry-run
 ```
+
+### `equity label-repair`
+
+Inventory unlabeled rows in the Gold feature table and, only when explicitly
+authorized, apply a bounded label-only repair (ADR-0014 / D09). **Report-only by
+default** — it prints the finalizable scope (a next-session bar exists, so the
+label can be computed with known availability) and the pending scope (no
+next-session bar yet) and writes nothing.
+
+| Flag | Type | Default | Notes |
+|---|---|---|---|
+| `--start` | str | `--end` minus 30 days | Start date `YYYY-MM-DD` |
+| `--end` | str | yesterday | End date `YYYY-MM-DD` |
+| `--tickers`, `-t` | str | all tickers | Comma-separated ticker subset |
+| `--repair` | flag | off | Authorize the bounded label-only update |
+| `--authorize-broad` | flag | off | Owner authorization (D09) when finalizable rows exceed `--max-keys` |
+| `--max-keys` | int | `1000` | Bounded repair limit |
+
+```bash
+# Report the unlabeled scope without writing
+uv run equity label-repair --start 2026-09-01 --end 2026-09-30 --tickers AAPL,MSFT
+
+# Apply a bounded repair for the reported scope
+uv run equity label-repair --start 2026-09-01 --end 2026-09-30 --tickers AAPL,MSFT --repair
+```
+
+A repair never inserts missing keys, evolves the schema, or rewrites feature
+values; it updates only `next_day_return` and `label_available_date` for rows
+that already exist. A scope larger than `--max-keys` refuses to run without
+`--authorize-broad`, and no broad or automatic repair is ever performed.
 
 ### `equity sync`
 

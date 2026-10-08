@@ -433,7 +433,11 @@ The module-level `execute_eod_pipeline()` in `src/equity_lake/pipeline.py`
 chains all three stages and returns a per-stage results dict. Each stage is
 independently callable via the `equity` CLI. Predictions carry a
 `feature_schema_version` tag so downstream consumers can detect feature-set
-drift between training and inference.
+drift between training and inference. The Gold feature table also carries
+`label_available_date` (ADR-0014): the session on which each row's
+`next_day_return` target became computable. The daily feature run finalizes the
+preceding observed session's label with a bounded, matched-only update, and
+training/backtests exclude labels not available by their cutoff.
 
 ## Data Catalog
 

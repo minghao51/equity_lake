@@ -74,16 +74,18 @@ Execution is two-phase:
    ratios, calendar features, and `volatility_20`. With
    `include_target=True` it also appends `TARGET_FEATURES`
    (`next_day_return`) — the labeling column for supervised runs.
+
 2. `compute_enriched` runs **once for the whole batch** and applies the
    enabled external-data joins (see below). The chain terminates at the
    `enriched_features` node, a stable public name regardless of which
    enrichment nodes are enabled upstream.
 
 Every output frame is stamped with `feature_schema_version`. The current value
-is `FEATURE_SCHEMA_VERSION = 3`. A version bump means the column set or
-computation of published features changed: downstream consumers can detect and
-handle mixed-version history, and — per the change matrix in `AGENTS.md` — the
-change requires regenerating the catalog (`uv run equity catalog-generate`),
+is `FEATURE_SCHEMA_VERSION = 4` (raised in W03/ADR-0014 for the additive
+`label_available_date` availability column). A version bump means the column set
+or computation of published features changed: downstream consumers can detect
+and handle mixed-version history, and — per the change matrix in `AGENTS.md` —
+the change requires regenerating the catalog (`uv run equity catalog-generate`),
 since the gold-layer `technical_features` / `enriched_features` catalog
 entries describe exactly these columns.
 
@@ -110,6 +112,20 @@ entries describe exactly these columns.
 - **Undefined ratios are null, never infinity.** Zero baselines in
   `volume_roc_5` and social `social_momentum` produce null — an honest
   "undefined" rather than an invented finite value or `inf`.
+
+### Label availability (ADR-0014)
+
+With `compute_target=True`, `run_feature_job` also writes
+`label_available_date`: the next observed session on which `next_day_return`
+became computable. A row's target is null (pending) until that next session's
+bar exists — a missing next-session bar leaves the label pending and is
+reported in the feature stage's `labels` block. On each daily run the preceding
+observed session's label is finalized from the new session's bar; the newest
+row stays pending. Finalization is a matched-only update of the label columns:
+it never inserts a missing key, evolves the schema, or rewrites technical or
+enrichment feature values. `compute_target=False` neither stamps availability
+nor finalizes labels, so historical completion is an explicit label-only path
+(see [Pipeline Contracts](../developer/architecture/pipeline-contracts.md)).
 
 ## Enrichment toggles
 
@@ -194,7 +210,9 @@ Semantics of `--allow-history-backfill`:
   start_date, end_date)` for one ticker's history. It is the read path for
   `ml/forecasting.py` — training (`equity forecast --mode train`,
   `equity ml train`) and inference — and for the ML-rigor harnesses
-  ([ML Rigor](20260810-ml-rigor.md)).
+  ([ML Rigor](20260810-ml-rigor.md)). Pass
+  `require_available_by=<cutoff>` for strict as-of reads: labels finalized after
+  the cutoff, and legacy rows with unknown availability, are excluded.
 - **Catalog lineage** — the gold-layer entries `technical_features` and
   `enriched_features` in `data/catalog.jsonl` describe the columns written
   here; they are generated from the DAG topology with

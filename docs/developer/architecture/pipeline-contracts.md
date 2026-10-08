@@ -20,7 +20,9 @@ This page is the operational contract for `equity pipeline`.
 | Bronze-to-Silver no-work | Missing bronze corpus or an all-already-processed corpus is a planned skip (`no_bronze_work` / `already_processed`), not a source failure; processing and write failures stay failed with their cause. |
 | Feature input validity | Invalid required price input (null keys, non-positive OHLC, negative volume, violated price relationships) fails the per-ticker feature computation — never silently drops rows (W01/D01). |
 | EOD join keys | All feature/enrichment joins use `pl.Date` keys; malformed date keys raise. Undefined ratios (zero baselines) are null, never infinity. |
-| Feature schema compatibility | W01 requires no stored-schema migration: gold `date` was already persisted as `pl.Date` pre-W01 (`run_feature_job` casts before write), `SOCIAL_COLUMNS` are unchanged, and `FEATURE_SCHEMA_VERSION` stays 3. |
+| Feature schema compatibility | `FEATURE_SCHEMA_VERSION = 4` (ADR-0014). The new Gold column `label_available_date` is additive: pre-W03 readers tolerate the extra column, and the training/backtest loaders strict-exclude rows whose availability is unknown or after the cutoff. Installed models do not treat `label_available_date` or the target columns as predictors (`NON_FEATURE_COLUMNS`). |
+| Label lifecycle (ADR-0014) | On session D the preceding observed session's label (`next_day_return`) is finalized from D's bar and stamped `label_available_date = D`. "Next observation" is the next exchange session with a valid bar for the instrument; a missing next-session bar leaves the label pending and is reported. Finalization is a matched-only, label-column-only Delta update — it never inserts keys, evolves the schema, or touches feature columns. `compute_target=False` neither stamps availability nor finalizes. |
+| As-of eligibility (ADR-0014) | Training and backtests exclude labels whose `label_available_date` is after the cutoff; legacy rows with unknown availability (column absent or null) are strict-excluded by default. A documented tolerance is opt-in only and is not used by the default path. |
 | Bronze-to-Silver failure | Only consumers of that Silver output are degraded. |
 | CLI exit status | Non-zero for required source failure, missing required ticker coverage, or a failed/unauthorized feature-history recovery; zero for dry-run, planned skips, and successful optional degradation. |
 
@@ -37,7 +39,9 @@ dry-run mode, and whether the request was enrichment-only. The ingestion stage
 publishes the `markets` status map (kept for existing consumers), plus
 `required_failures`, `optional_failures`, `partial`, and `errors` (per-market
 error strings). The feature stage publishes `rows` and `coverage`
-(`requested`/`produced`/`missing`). The ML stage publishes per-ticker results
+(`requested`/`produced`/`missing`), and — when the target was computed — a
+`labels` block with `eligible`/`finalized`/`pending`/`unmatched` counts plus the
+pending and unmatched keys. The ML stage publishes per-ticker results
 with a `persisted` flag. All added fields are additive: existing consumers of
 the published dictionary remain compatible.
 
@@ -67,3 +71,36 @@ History recovery is never implicit. When authorized, the pipeline logs the
 120-day range, markets, ticker count, explicit tickers, and dry-run mode before
 calling the scoped backfill. Post-run verification is `equity monitor`, the
 pipeline result JSON, and the focused contract tests.
+
+## Label lifecycle, availability, and repair (ADR-0014)
+
+Gold keeps the existing label column semantics (`next_day_return`); no separate
+label table is introduced. `label_available_date` records the session on which
+the target value became computable (the next observed session). When session D
+is processed, the preceding observed session's label is finalized from D's bar
+through `update_delta_columns` in `src/equity_lake/storage/delta.py`, a
+matched-only, label-column-only update. Replaying an older session preserves an
+already-finalized label instead of nulling it.
+
+Migration and repair:
+
+- **Schema.** The column is additive. The first post-upgrade feature write
+evolves the Gold table, null-filling `label_available_date` for legacy rows;
+old readers that select by name keep working, and readers that select all
+columns tolerate the extra one.
+- **Readers.** `FeatureLoader.load_features(..., require_available_by=cutoff)`
+is the strict as-of read; `PriceForecaster.train_model` / `backtest` pass their
+end date and therefore exclude later-finalized and unknown-availability rows.
+Prediction loads leave it unset (inference needs the row regardless of label
+availability).
+- **Models.** Installed models are not retrained automatically; because
+strict as-of training excludes unknown-availability legacy rows, affected
+models must be retrained or explicitly validated before reuse (ADR-0014).
+- **Repair.** `equity label-repair` is report-only by default: it inventories
+finalizable rows (next-session bar present) and pending rows (no next-session
+bar) without writing. `--repair` authorizes a bounded, matched-only label
+update; a scope larger than `--max-keys` requires the separate owner
+authorization `--authorize-broad` (D09). No broad or automatic repair runs.
+- **Rollback.** Roll back code and schema-aware readers together; the
+label-only update is key-scoped and replayable, and Delta snapshots are
+preserved for an authorized repair rollback (no vacuum here).

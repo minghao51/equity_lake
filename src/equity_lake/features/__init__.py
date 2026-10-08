@@ -6,9 +6,12 @@ from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
+import structlog
 
 if TYPE_CHECKING:
     from equity_lake.features.engineering import FeatureEngineer
+
+logger = structlog.get_logger(__name__)
 
 
 class NoFeatureHistoryError(RuntimeError):
@@ -105,6 +108,14 @@ def run_feature_job(
     if "date" in features_df.columns and features_df.schema["date"] != pl.Date:
         features_df = features_df.with_columns(pl.col("date").cast(pl.Date))
 
+    # ADR-0014: stamp the session on which each label became computable. Only
+    # runs that compute the target carry label metadata; ``compute_target=False``
+    # neither stamps availability nor finalizes labels.
+    if compute_target:
+        from equity_lake.features.labels import add_label_availability
+
+        features_df = add_label_availability(features_df)
+
     output_df = features_df.filter((pl.col("date") >= pl.lit(output_start_date)) & (pl.col("date") <= pl.lit(output_end_date)))
 
     if output_df.is_empty():
@@ -117,11 +128,31 @@ def run_feature_job(
 
     from equity_lake.ingestion.writers import upsert_dataset
 
+    # ADR-0014 §7: never erase a label a later session already finalized when
+    # an older output session is replayed. Only label columns are carried.
+    if compute_target:
+        from equity_lake.features.labels import preserve_finalized_labels
+
+        output_df = preserve_finalized_labels(output_df)
+
     write_ok = upsert_dataset(output_df, "03_gold/features", output_end_date)
     if not write_ok:
         # Surface persistence failure so the pipeline records a failed features
         # stage instead of reporting success with unwritten data.
         raise RuntimeError("Feature write to 03_gold/features failed")
+
+    # ADR-0014: finalize the preceding observed session's label from the next
+    # session's bar. Matched-only and label-column-only; never inserts keys.
+    if compute_target:
+        from equity_lake.features.labels import LabelFinalizationResult, finalize_preceding_labels
+
+        try:
+            label_result = finalize_preceding_labels(features_df, output_start_date)
+        except Exception as exc:  # noqa: BLE001 - label finalization must not erase a written feature stage
+            logger.error("label_finalization_failed", error=str(exc))
+            label_result = LabelFinalizationResult(error=str(exc))
+        if diagnostics is not None:
+            diagnostics["label_finalization"] = label_result.to_payload()
 
     return output_df
 

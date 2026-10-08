@@ -32,7 +32,7 @@ def test_feature_pipeline_computes_expected_columns() -> None:
     assert "macd" in result.columns
     assert "volume_ratio" in result.columns
     assert "next_day_return" in result.columns
-    assert set(result["feature_schema_version"].to_list()) == {3}
+    assert set(result["feature_schema_version"].to_list()) == {4}
 
 
 def test_feature_pipeline_excludes_target_by_default() -> None:

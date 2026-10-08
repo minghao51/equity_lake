@@ -193,12 +193,85 @@ def _evolve_table_schema(table: str, df_polars: pl.DataFrame, lake_dir: Path | N
     write_delta(seed, table, mode="overwrite", schema_mode="overwrite", lake_dir=lake_dir, partition_by=partition_by)
 
 
+def update_delta_columns(
+    df: FrameLike,
+    table: str,
+    *,
+    update_columns: list[str],
+    key_columns: list[str] | None = None,
+    lake_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Matched-only, column-scoped update of existing rows (ADR-0014 §4).
+
+    This is the minimal seam for bounded label-only finalization. Unlike
+    :func:`merge_delta` it deliberately does **not**:
+
+    - create the table when it is absent (raises :class:`DeltaMergeError`);
+    - insert source keys that do not match a target row;
+    - evolve the schema (unknown *update_columns* raise);
+    - touch any column outside *update_columns*.
+
+    Broad schema-evolution/DDL hardening remains W06. Returns the delta-rs
+    merge metrics (``num_target_rows_updated`` is the matched-row count).
+    """
+    table_path = delta_table_path(table, lake_dir)
+    keys = key_columns or ["ticker", _DATE_COL]
+    df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
+
+    if df_polars.is_empty():
+        return {"num_source_rows": 0, "num_target_rows_updated": 0, "num_target_rows_inserted": 0}
+    if not DeltaTable.is_deltatable(str(table_path)):
+        raise DeltaMergeError(table, FileNotFoundError(f"Delta table '{table}' does not exist"))
+
+    dt = DeltaTable(str(table_path))
+    target_fields = {field.name for field in dt.schema().fields}
+    unknown = [column for column in update_columns if column not in target_fields]
+    if unknown:
+        raise DeltaMergeError(table, ValueError(f"update columns not in target schema (no evolution): {unknown}"))
+    missing_keys = [key for key in keys if key not in df_polars.columns]
+    if missing_keys:
+        raise DeltaMergeError(table, ValueError(f"source frame missing key columns: {missing_keys}"))
+
+    predicate = " AND ".join(f"target.{key} = source.{key}" for key in keys)
+    updates = {column: f"source.{column}" for column in update_columns}
+    try:
+        metrics = (
+            dt.merge(
+                source=df_polars.to_arrow(),
+                predicate=predicate,
+                source_alias="source",
+                target_alias="target",
+            )
+            .when_matched_update(updates)
+            .execute()
+        )
+    except Exception as exc:
+        logger.exception("delta_update_failed", table=table)
+        raise DeltaMergeError(table, exc) from exc
+
+    logger.info(
+        "delta_update_columns",
+        table=table,
+        rows=df_polars.height,
+        columns=update_columns,
+        updated=metrics.get("num_target_rows_updated"),
+    )
+    return {key: int(value) for key, value in metrics.items()}
+
+
 def read_delta(
     table: str,
     version: int | None = None,
     lake_dir: Path | None = None,
+    filters: list[tuple[str, str, Any]] | None = None,
+    columns: list[str] | None = None,
 ) -> pl.DataFrame:
     """Read a Delta table as a Polars DataFrame.
+
+    Args:
+        filters: Optional delta-rs predicate list (``[(col, op, value), ...]``
+            ANDed together) for bounded/partition-pruned reads.
+        columns: Optional projection; only these columns are materialized.
 
     Raises:
         DeltaReadError: If the table is missing or cannot be read.  Callers
@@ -207,7 +280,9 @@ def read_delta(
     table_path = delta_table_path(table, lake_dir)
     try:
         dt = DeltaTable(str(table_path), version=version) if version is not None else DeltaTable(str(table_path))
-        return cast(pl.DataFrame, pl.from_arrow(dt.to_pyarrow_table()))
+        projected = filters is not None or columns is not None
+        arrow = dt.to_pyarrow_table(columns=columns, filters=filters) if projected else dt.to_pyarrow_table()
+        return cast(pl.DataFrame, pl.from_arrow(arrow))
     except Exception as exc:
         logger.exception("delta_read_failed", table=table, path=str(table_path))
         raise DeltaReadError(table, exc) from exc
@@ -363,6 +438,7 @@ __all__ = [
     "merge_delta",
     "migrate_parquet_to_delta",
     "read_delta",
+    "update_delta_columns",
     "vacuum_delta",
     "write_delta",
 ]

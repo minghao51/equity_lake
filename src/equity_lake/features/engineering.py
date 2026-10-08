@@ -30,6 +30,7 @@ logger = structlog.get_logger()
 NUMERIC_DTYPES = {pl.Float32, pl.Float64, pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64}
 NON_NUMERIC_FOR_ZSCORE = {
     "next_day_return",
+    "label_available_date",
     "target",
     "meta_label",
     "barrier_outcome",
@@ -246,6 +247,7 @@ class FeatureEngineer:
             "close",
             "volume",
             "feature_schema_version",
+            "label_available_date",
             "candidate_action",
             "candidate_source",
         }

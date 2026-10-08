@@ -39,3 +39,12 @@ optional-failure visibility, dry-run statuses, and exit-code policy are the
 contracts in [Pipeline Contracts](pipeline-contracts.md). The orchestrator
 isolates every market's fetch/conversion/write failure (serial and parallel
 alike) so one exception never erases another market's outcome.
+
+The Gold feature table also carries label availability metadata. Each feature
+row's `next_day_return` target is computable on the next observed session for
+that instrument; `label_available_date` records that session (ADR-0014). On a
+daily run the preceding observed session's target is finalized with a bounded,
+label-only Delta update, while the newest session stays pending. Training and
+backtests read only labels available on or before their cutoff. The
+`equity label-repair` command inventories unlabeled history and applies a
+bounded, explicitly authorized label-only repair (D09).

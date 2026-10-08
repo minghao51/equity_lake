@@ -51,7 +51,21 @@ class FeatureLoader:
             return duckdb_scan_for(GOLD_FEATURES_DIR)
         return None
 
-    def load_features(self, ticker: str, start_date: date, end_date: date) -> pl.DataFrame:
+    def load_features(
+        self,
+        ticker: str,
+        start_date: date,
+        end_date: date,
+        *,
+        require_available_by: date | None = None,
+    ) -> pl.DataFrame:
+        """Load one ticker's Gold features in ``[start_date, end_date]``.
+
+        When *require_available_by* is given, strict as-of eligibility is
+        enforced (ADR-0014 §5): labels whose ``label_available_date`` postdates
+        the cutoff, and legacy rows with unknown availability, are excluded.
+        The default (``None``) leaves the frame unfiltered for inference.
+        """
         query = """
             SELECT * FROM features_all
             WHERE ticker = $1
@@ -59,6 +73,10 @@ class FeatureLoader:
             ORDER BY date
         """
         df = self.conn.execute(query, [ticker, start_date, end_date]).pl()
+        if require_available_by is not None and not df.is_empty():
+            from equity_lake.features.labels import filter_as_of_available
+
+            df = filter_as_of_available(df, require_available_by)
         if df.is_empty():
             logger.warning("features_not_found", ticker=ticker, start_date=str(start_date), end_date=str(end_date))
         return df

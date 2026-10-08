@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** In progress — PR1 landed (`c0f37ee`, 2026-10-08); PR2 (labels, ADR-0014) dispatched next
+**Status:** In progress — PR1 landed (`c0f37ee`, 2026-10-08); PR2 (labels, ADR-0014) implemented + reviewed (READY WITH WARNINGS, warnings addressed; owner sign-off pending)
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
@@ -230,9 +230,10 @@ rejection/retraining, not transparent reuse.
 
 - Decisions: **D03/D04 approved by the owner 2026-10-08**; ADR-0014 accepted
   (label lifecycle and availability metadata).
-- Implementation: **PR1 implemented-pending-review** (owner-approved scoped
-  plan; committed as `c0f37ee` after the reviewer pass and owner
-  authorization). PR2 (labels), PR3 (market sessions), and PR4
+- Implementation: **PR2 implemented-pending-review** (label lifecycle,
+  availability metadata, as-of cutoff, bounded report-first repair; not yet
+  landed/closed — the read-only reviewer pass and owner sign-off remain). PR1
+  (scope/completeness) is landed as `c0f37ee`. PR3 (market sessions) and PR4
   (corporate-action overlap) remain not started.
 
 ### PR1 — exact scope through all five price markets + ticker-aware completeness
@@ -347,3 +348,98 @@ rejection/retraining, not transparent reuse.
   retraining was performed; temporary-lake and mocked-provider tests only.
 - Remaining in W03: F03 labels (PR2), F11 market sessions (PR3), F14 action
   overlap (PR4).
+
+### PR2 — label finalization, availability metadata, and as-of cutoff (ADR-0014)
+
+1. **Label finalization (F03).** `features/labels.py` adds
+   `add_label_availability` (the next observed session per ticker;
+   `label_available_date`), `finalize_preceding_labels` (finalize the preceding
+   observed session's label from the next session's bar; missing next-session
+   bars stay pending and are reported), and `preserve_finalized_labels` (a
+   normal rewrite of an older session never nulls a label a later session
+   already finalized). `run_feature_job` stamps availability only when
+   `compute_target=True`, preserves finalized labels on the output rows, and
+   finalizes the preceding session after the output write; the pipeline feature
+   stage publishes a `labels` block (`eligible`/`finalized`/`pending`/`unmatched`
+   plus keys). `compute_target=False` performs no finalization.
+2. **Label-only storage seam.** `storage/delta.py` adds
+   `update_delta_columns(..., update_columns=[...])`: a matched-only merge that
+   never creates the table, never inserts unmatched keys, never evolves the
+   schema, and never touches columns outside `update_columns`. It is used only
+   for the two label columns; broad storage hardening remains W06.
+3. **As-of eligibility (label portion of F17).** `filter_as_of_available`
+   excludes labels whose `label_available_date` postdates the cutoff and
+   strict-excludes legacy unknown-availability rows; `FeatureLoader.load_features`
+   accepts `require_available_by` and `PriceForecaster.train_model`/`backtest`
+   pass their end date. Prediction reads stay unfiltered. `label_available_date`
+   and the target columns are excluded from predictors (`NON_FEATURE_COLUMNS`,
+   and the feature-skew "extra" set now uses that exclusion set).
+4. **Schema + catalog.** `FEATURE_SCHEMA_VERSION` 3 → 4; the Gold catalog entry
+   describes `label_available_date`; the catalog was regenerated (17 datasets /
+   52 nodes / 372 edges unchanged; one column added).
+5. **Report-first repair (label-carrying portion of F25, D09).** New native
+   Typer command `equity label-repair` (docstring help text, `Annotated` options
+   with help, help-scan test, user docs). Default is report-only; `--repair`
+   performs a bounded, matched-only label update; a scope over `--max-keys`
+   requires the separate owner authorization `--authorize-broad`. No automatic
+   or broad repair.
+- Files: `features/labels.py` (new), `features/__init__.py`,
+  `features/pipeline.py`, `features/engineering.py`, `storage/delta.py`,
+  `ml/feature_loader.py`, `ml/forecasting.py`, `pipeline.py`,
+  `cli/commands/data.py`, `catalog/datasets.py`, `data/catalog.jsonl`; tests in
+  `tests/unit/test_label_lifecycle.py` (new) plus `test_cli_unified.py`,
+  `test_hamilton_feature_pipeline.py`, `test_price_forecasting.py`.
+- Regression proof: the new load-bearing tests run against the pre-change
+  source via `git stash push -u -- src/` and fail there — the label module
+  fails to collect (`ModuleNotFoundError: equity_lake.features.labels`), and the
+  version assertion, `label-repair` help scan, and committed-catalog drift test
+  fail (3 failed, 13 passed in the unaffected subset); the stash was restored
+  immediately.
+- Tests/gates: `pytest -m "not network and not integration"` -> **3 failed,
+  1105 passed, 22 skipped, 85 deselected** (the pre-existing `test_arena.py`
+  set, F28/W07); `-n auto -m "not network and not integration and not serial"`
+  -> **3 failed, 1105 passed, 22 skipped** (same baseline); `ruff check`/`ruff
+  format --check` clean; `mypy src` at the 3-error `ml/registry.py` baseline;
+  `equity catalog-generate` changed exactly one Gold column (see below) and the
+  three catalog tests pass; `mkdocs build --site-dir
+  /tmp/equity-lake-remediation-site` succeeds with only the documented
+  pre-existing warnings; `git diff --check` clean.
+- Catalog: additive only — `technical_features.label_available_date`
+  (`dtype: "date"`, description of the next-session availability marker).
+  Dataset/node/edge counts are unchanged (17/52/372).
+- Compatibility/rollback: `FEATURE_SCHEMA_VERSION` is 4; the column is additive
+  and old readers tolerate it; the first post-upgrade feature write evolves the
+  Gold table (legacy rows get null availability). Installed models are not
+  retrained; strict as-of training/backtest excludes unknown-availability legacy
+  rows, so affected models must be retrained or validated before reuse.
+  Rolling back means reverting code and schema-aware readers together; the
+  label-only update is key-scoped and replayable and Delta snapshots are
+  preserved (no vacuum).
+- Migration/repair: no production repair, migration, vacuum, or retraining was
+  performed; `equity label-repair` is report-only by default and was exercised
+  only against temporary lakes.
+- Review/sign-off: **reviewer pass complete (2026-10-08,
+  `opencode-go/mimo-v2.6-pro`, read-only): READY WITH WARNINGS — 0 critical,
+  6 warnings, all addressed before handoff.** (1) `ml compare`/`ml ablate`
+  bypassed the as-of cutoff — fixed: the harness feature load now passes
+  `require_available_by=end_date` (ADR-0014 §5 applies to every training
+  path). (2) `filter_as_of_available` tolerance was inconsistent when the
+  availability column was present — fixed: `strict=False` now keeps
+  unknown-availability rows (pinned by test). (3) A replay recomputing a
+  different non-null finalized label rewrote it silently — surfaced: both the
+  preserve path (`label_replay_divergence`) and the finalization path
+  (`label_finalization_divergence`) log the divergent count (pinned by a
+  source-revision replay test). (4) Legacy target-present/availability-unknown
+  rows were invisible to the repair inventory — fixed: `scan_label_repair`
+  reports a third `availability_unknown` category (CLI report line + plan
+  field); they remain untouched by the bounded repair. (5) Dead
+  `_availability_lookahead` helper — now used by the repair scan. (6)
+  `.pi/agents/w03-reviewer.md` — deleted after the pass. Post-fix gates
+  (final tree): **1108 passed / 22 skipped / 3 failed** (the pre-existing
+  `test_arena.py` set), `-n auto` parity, ruff/format clean, mypy at the
+  3-error baseline, `git diff --check` clean, catalog unchanged by the review
+  fixes (the one-line Gold diff from the unit itself stands). **Owner sign-off
+  pending** — it closes F03 and the label portions of F17/F25.
+- Remaining in W03: F11 market sessions (PR3), F14 action overlap (PR4). F03
+  and the label portions of F17/F25 are implemented-pending-review — the
+  read-only reviewer pass and owner sign-off close them.

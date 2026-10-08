@@ -180,6 +180,73 @@ def auto_backfill(
     typer.echo(f"Auto-backfill {'(dry run) ' if dry_run else ''}complete.")
 
 
+@app.command("label-repair")
+def label_repair(
+    start: Annotated[str | None, typer.Option("--start", help="Start date YYYY-MM-DD (default: 30 days before --end)")] = None,
+    end: Annotated[str | None, typer.Option("--end", help="End date YYYY-MM-DD (default: yesterday)")] = None,
+    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated ticker subset (default: every ticker)")] = None,
+    repair: Annotated[
+        bool, typer.Option("--repair/--report-only", help="Authorize the bounded label-only update (default: report only, no writes)")
+    ] = False,
+    authorize_broad: Annotated[
+        bool, typer.Option("--authorize-broad", help="Owner authorization (D09) required when finalizable rows exceed --max-keys")
+    ] = False,
+    max_keys: Annotated[int, typer.Option("--max-keys", help="Bounded repair limit; a broader scope requires --authorize-broad")] = 1000,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+) -> None:
+    """Report unlabeled Gold rows; with --repair apply a bounded label-only fix.
+
+    Report-only by default: the command inventories finalizable rows (the next
+    observed session's bar exists) and pending rows (no next-session bar yet),
+    then stops. ``--repair`` authorizes a matched-only update of the label
+    columns for the reported scope; a scope larger than ``--max-keys`` requires
+    the separate owner authorization ``--authorize-broad`` (D09). No broad or
+    automatic repair is ever performed.
+    """
+    from datetime import timedelta
+
+    from equity_lake.features.labels import apply_label_repair, scan_label_repair
+
+    _init_logging(verbose)
+    end_date = date.fromisoformat(end) if end else date.today() - timedelta(days=1)
+    start_date = date.fromisoformat(start) if start else end_date - timedelta(days=30)
+    if start_date > end_date:
+        typer.secho("--start must be on or before --end.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    ticker_list = _parse_comma_list(tickers)
+
+    plan = scan_label_repair(start=start_date, end=end_date, tickers=ticker_list)
+    scope = ", ".join(ticker_list) if ticker_list else "all tickers"
+    typer.echo(f"Label repair scope {start_date} .. {end_date} ({scope})")
+    typer.echo(f"  finalizable (next-session bar present): {plan.finalizable_count}")
+    typer.echo(f"  pending (no next-session bar yet): {plan.pending_count}")
+    typer.echo(f"  availability-unknown (target present, availability unknown; strict-excluded from training): {plan.availability_unknown_count}")
+    for row in plan.finalizable.head(20).iter_rows(named=True):
+        typer.echo(f"    finalizable {row['ticker']} {row['date']} -> available {row['label_available_date']}")
+    for row in plan.pending.head(20).iter_rows(named=True):
+        typer.echo(f"    pending     {row['ticker']} {row['date']}")
+    for row in plan.availability_unknown.head(20).iter_rows(named=True):
+        typer.echo(f"    avail-unknown {row['ticker']} {row['date']}")
+
+    if not repair:
+        typer.echo("Report-only; re-run with --repair to apply the bounded label-only update.")
+        return
+    if plan.finalizable_count == 0:
+        typer.secho("Nothing to repair.", fg=typer.colors.GREEN)
+        return
+    if plan.finalizable_count > max_keys and not authorize_broad:
+        typer.secho(
+            f"Refusing repair: {plan.finalizable_count} finalizable rows exceed --max-keys {max_keys}. "
+            "Broad historical repair requires separate owner authorization (D09); re-run with --authorize-broad "
+            "after inventorying affected keys and model compatibility.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
+
+    updated = apply_label_repair(plan)
+    typer.secho(f"Repaired {updated} label row(s); {plan.pending_count} remain pending.", fg=typer.colors.GREEN)
+
+
 @app.command("sync")
 def sync(
     bucket: Annotated[

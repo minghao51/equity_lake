@@ -46,6 +46,14 @@ class TestUnifiedCLI:
         assert "validate" in result.stdout
 
 
+class TestLabelRepairSubcommands:
+    def test_label_repair_help(self):
+        result = runner.invoke(app, ["label-repair", "--help"])
+        assert result.exit_code == 0
+        assert "report" in result.stdout.lower()
+        assert "--repair" in result.stdout
+
+
 class TestSignalSubcommands:
     def test_signal_scan_help(self):
         result = runner.invoke(app, ["signal", "scan", "--help"])

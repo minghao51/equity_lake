@@ -364,6 +364,11 @@ GOLD_DATASETS: list[DatasetEntry] = [
             ColumnInfo(name="days_to_month_end", dtype="int8"),
             ColumnInfo(name="trading_day_of_month", dtype="int16"),
             ColumnInfo(name="volatility_20", dtype="float64"),
+            ColumnInfo(
+                name="label_available_date",
+                dtype="date",
+                description="Session on which next_day_return became computable; null when pending or unknown (legacy rows, ADR-0014)",
+            ),
             ColumnInfo(name="feature_schema_version", dtype="int8"),
         ],
     ),

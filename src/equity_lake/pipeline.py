@@ -275,6 +275,9 @@ def _run_feature_stage(
         # D02: missing scheduled required ticker coverage fails the feature stage;
         # successful tickers and every exclusion reason are still reported.
         stage = _stage(not missing, rows=len(features_df), coverage=coverage)
+        label_payload = diagnostics.get("label_finalization")
+        if label_payload is not None:
+            stage["labels"] = label_payload
         if missing:
             logger.error("feature_coverage_incomplete", missing=missing)
             stage["error"] = _coverage_error(missing)
@@ -380,6 +383,9 @@ def _handle_missing_feature_history(
             recovery=backfill_result.to_payload(),
             coverage=coverage,
         )
+        label_payload = retry_diagnostics.get("label_finalization")
+        if label_payload is not None:
+            stage["labels"] = label_payload
         if missing:
             logger.error("feature_coverage_incomplete", missing=missing)
             stage["error"] = _coverage_error(missing)
