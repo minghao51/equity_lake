@@ -135,6 +135,21 @@ class TestBackfillDateRange:
         assert result.failed == 2
         assert result.market_date_attempts == 2
 
+    def test_not_scheduled_days_are_skipped_not_recovered_or_failed(self, _mock_ingestion) -> None:
+        """W03/D04: a closed exchange is a planned skip, not a recovered date or failure."""
+        _mock_ingestion.return_value = {"us": SourceOutcome(SourceStatus.NOT_SCHEDULED)}
+        result = backfill_date_range(
+            start_date=date(2024, 1, 1),
+            end_date=date(2024, 1, 1),
+            markets=["us"],
+        )
+        assert result.market_date_attempts == 1
+        assert result.succeeded == 0
+        assert result.failed == 0
+        assert result.dates_recovered == 0
+        assert result.per_market == {"us": 0}
+        assert result.total_dates == 0
+
     def test_dry_run_forwarded(self, _mock_ingestion) -> None:
         _mock_ingestion.return_value = {"us": _WRITTEN}
         backfill_date_range(

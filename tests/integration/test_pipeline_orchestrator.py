@@ -65,7 +65,14 @@ def test_execute_eod_pipeline_dry_run_skips_writes_and_processors(monkeypatch):
         skip_ml=True,
     )
 
-    assert results["ingestion"] == {"success": True, "skipped": True, "reason": "dry_run", "markets": {}}
+    assert results["ingestion"] == {
+        "success": True,
+        "skipped": True,
+        "reason": "dry_run",
+        "markets": {},
+        "scheduled": ["us_equity", "cn_ashare"],
+        "not_scheduled": [],
+    }
     assert results["features"] == {"success": True, "skipped": True, "reason": "dry_run"}
     assert results["ml"] == {"success": True, "skipped": True, "reason": "dry_run"}
 
@@ -927,3 +934,177 @@ def test_ingestion_stage_reports_resolved_ticker_scope(monkeypatch):
     )
 
     assert results["ingestion"]["ticker_scope"] == {"us_equity": ["AAPL"]}
+
+
+# =============================================================================
+# W03/D04/F11: explicit-date session scheduling
+# =============================================================================
+
+
+class TestPipelineSessionScheduling:
+    """Features/ML are planned only for the scheduled price scope."""
+
+    def test_closed_market_is_not_scheduled_and_open_market_still_planned(self, monkeypatch) -> None:
+        """US Thanksgiving: US is a planned skip; CN work remains eligible."""
+        import polars as pl
+
+        config = TickerConfig()
+        cn_tickers = config.get_tickers_for_market("cn", active_only=True)
+        us_tickers = config.get_tickers_for_market("us", active_only=True)
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_daily_ingestion",
+            lambda **_: {"us_equity": SourceOutcome(SourceStatus.NOT_SCHEDULED), "cn_ashare": _WRITTEN},
+        )
+        seen: dict[str, list[str]] = {}
+
+        def fake_run_feature_job(**kwargs):
+            seen["tickers"] = kwargs["tickers"]
+            return pl.DataFrame({"ticker": cn_tickers})
+
+        monkeypatch.setattr("equity_lake.pipeline.run_feature_job", fake_run_feature_job)
+        monkeypatch.setattr("equity_lake.pipeline.run_prediction_job", lambda **_: (True, {}))
+
+        results = execute_eod_pipeline(
+            trading_date=date(2024, 11, 28),
+            markets=["us_equity", "cn_ashare"],
+            ticker_config=config,
+        )
+
+        assert results["ingestion"]["success"] is True
+        assert results["ingestion"]["not_scheduled"] == ["us_equity"]
+        assert results["ingestion"]["required_failures"] == []
+        assert results["ingestion"]["partial"] is False
+        assert results["scope"]["not_scheduled"] == ["us_equity"]
+        assert results["scope"]["scheduled"] == ["cn_ashare"]
+        assert seen["tickers"] == cn_tickers
+        assert not set(us_tickers) & set(seen["tickers"])
+        assert results["features"]["success"] is True
+
+    def test_all_requested_price_markets_closed_planned_skips_features_and_ml(self, monkeypatch) -> None:
+        """When every requested price market is closed there is no scheduled feature work."""
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_daily_ingestion",
+            lambda **_: {"us_equity": SourceOutcome(SourceStatus.NOT_SCHEDULED), "cn_ashare": SourceOutcome(SourceStatus.NOT_SCHEDULED)},
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_feature_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("features called for a closed-only request")),
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_prediction_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("ML called for a closed-only request")),
+        )
+
+        results = execute_eod_pipeline(trading_date=date(2024, 1, 1), markets=["us_equity", "cn_ashare"])
+
+        assert results["ingestion"]["success"] is True
+        assert results["ingestion"]["not_scheduled"] == ["cn_ashare", "us_equity"]
+        assert results["ingestion"]["required_failures"] == []
+        assert results["scope"]["not_scheduled"] == ["us_equity", "cn_ashare"]
+        assert results["features"] == {"success": True, "skipped": True, "reason": "not_scheduled_scope"}
+        assert results["ml"] == {"success": True, "skipped": True, "reason": "not_scheduled_scope"}
+
+    def test_dry_run_reports_not_scheduled_scope_without_writes(self, monkeypatch) -> None:
+        """Dry-run classifies the plan date, reports the closed scope, and writes nothing."""
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_daily_ingestion",
+            lambda **_: (_ for _ in ()).throw(AssertionError("dry-run must not ingest")),
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_feature_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("dry-run must not compute features")),
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_prediction_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("dry-run must not infer")),
+        )
+
+        results = execute_eod_pipeline(trading_date=date(2024, 1, 1), markets=["us_equity", "cn_ashare"], dry_run=True)
+
+        assert results["ingestion"]["reason"] == "dry_run"
+        assert results["ingestion"]["not_scheduled"] == ["us_equity", "cn_ashare"]
+        assert results["ingestion"]["scheduled"] == []
+        assert results["features"]["reason"] == "dry_run"
+        assert results["ml"]["reason"] == "dry_run"
+
+    def test_scheduled_required_market_no_data_still_blocks(self, monkeypatch) -> None:
+        """W02 blocking is confined to genuine data absence on a scheduled session."""
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_daily_ingestion",
+            lambda **_: {"us_equity": SourceOutcome(SourceStatus.NO_DATA)},
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_feature_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("features called despite required NO_DATA")),
+        )
+
+        results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=["AAPL"])
+
+        assert results["ingestion"]["not_scheduled"] == []
+        assert results["ingestion"]["required_failures"] == ["us_equity"]
+        assert results["ingestion"]["success"] is False
+        assert results["features"]["reason"] == "required price source failed"
+
+    def test_hk_sg_union_session_plans_the_open_instrument(self, monkeypatch) -> None:
+        """A Singapore-only holiday does not drop an open HK instrument (union semantics)."""
+        import polars as pl
+
+        monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"hk_sg_equity": _WRITTEN})
+        seen: dict[str, list[str]] = {}
+
+        def fake_run_feature_job(**kwargs):
+            seen["tickers"] = kwargs["tickers"]
+            return pl.DataFrame({"ticker": ["0700.HK"]})
+
+        monkeypatch.setattr("equity_lake.pipeline.run_feature_job", fake_run_feature_job)
+        monkeypatch.setattr("equity_lake.pipeline.run_prediction_job", lambda **_: (True, {}))
+
+        results = execute_eod_pipeline(trading_date=date(2024, 8, 9), markets=["hk_sg_equity"], tickers=["0700.HK"])
+
+        assert results["scope"]["not_scheduled"] == []
+        assert results["ingestion"]["not_scheduled"] == []
+        assert seen["tickers"] == ["0700.HK"]
+        assert results["features"]["success"] is True
+
+    def test_explicit_closed_market_is_never_substituted_with_an_earlier_session(self, monkeypatch) -> None:
+        """An explicit closed date is not_scheduled; no earlier-session fetch happens."""
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_daily_ingestion",
+            lambda **_: {"us_equity": SourceOutcome(SourceStatus.NOT_SCHEDULED)},
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_feature_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("features called for an explicit closed date")),
+        )
+
+        results = execute_eod_pipeline(trading_date=date(2024, 11, 28), markets=["us_equity"], tickers=["AAPL"], skip_ingestion=True)
+
+        assert results["scope"]["not_scheduled"] == ["us_equity"]
+        assert results["ingestion"]["not_scheduled"] == ["us_equity"]
+        assert results["features"]["reason"] == "not_scheduled_scope"
+
+    def test_explicit_ticker_owned_by_a_closed_market_planned_skips_features(self, monkeypatch) -> None:
+        """An explicit ticker whose only market is closed has no scheduled work."""
+        monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"cn_ashare": _WRITTEN})
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_feature_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("features called for a closed-market ticker")),
+        )
+        monkeypatch.setattr(
+            "equity_lake.pipeline.run_prediction_job",
+            lambda **_: (_ for _ in ()).throw(AssertionError("ML called for a closed-market ticker")),
+        )
+
+        results = execute_eod_pipeline(
+            trading_date=date(2024, 11, 28),
+            markets=["us_equity", "cn_ashare"],
+            tickers=["AAPL"],
+            explicit_tickers=["AAPL"],
+            skip_ingestion=True,
+        )
+
+        assert results["scope"]["not_scheduled"] == ["us_equity"]
+        assert results["scope"]["scheduled"] == ["cn_ashare"]
+        assert results["scope"]["tickers"] == []
+        assert results["features"]["reason"] == "not_scheduled_scope"
+        assert results["ml"]["reason"] == "not_scheduled_scope"

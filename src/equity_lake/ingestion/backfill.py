@@ -115,7 +115,14 @@ def backfill_date_range(
                     skip_existing=True,
                     parallel=False,
                 )
-                if result.get(market, SourceOutcome(SourceStatus.FAILED)).succeeded:
+                outcome = result.get(market, SourceOutcome(SourceStatus.FAILED))
+                if outcome.status is SourceStatus.NOT_SCHEDULED:
+                    # D04/F11: a closed exchange is a planned skip, not a
+                    # recovered date and not a failure. It stays counted in
+                    # market_date_attempts but is excluded from succeeded/failed
+                    # so recovery counts are not inflated by weekends/holidays.
+                    logger.info("backfill_not_scheduled", date=str(current), market=market)
+                elif outcome.succeeded:
                     logger.info("backfill_ok", date=str(current), market=market)
                     succeeded += 1
                     day_success += 1

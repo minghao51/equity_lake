@@ -28,6 +28,18 @@ reported as gaps. The calendar key is derived from the market directory
 (`01_bronze/market_data/us_equity` → `us_equity` → XNYS sessions), and each
 of the five equity markets maps to its home exchange(s).
 
+`is_trading_day` uses the opposite (union) semantics, and is what the EOD
+orchestrator and pipeline use to classify a plan date: a price market is
+`not_scheduled` only when *every* exchange mapped to it is closed. For
+`hk_sg_equity` that means a session where either XHKG or XSES trades is
+scheduled, so an open HK instrument on a Singapore-only holiday (or vice versa)
+is still fetched. The limitation is that a union-classified session is not a
+market-wide coverage claim — the other exchange may be closed — so
+per-instrument coverage is reported by the feature stage rather than inferred
+from the calendar. Because gap detection uses intersection, single-exchange
+gaps on those dates are not auto-detected; use an explicit `equity backfill`
+range when such a gap must be repaired.
+
 `find_missing_dates()` returns a `ticker -> [missing dates]` dict for a
 single ticker or the full table. The detector also offers `get_latest_date()`
 and `get_coverage_stats()` (expected vs actual trading days and coverage
@@ -60,7 +72,10 @@ already proved the dates are missing, so re-checking existence would be
 redundant. Failures on individual dates are logged
 (`auto_backfill_date_failed` / `auto_backfill_date_error`) without aborting
 the remaining dates. The return value maps each market to the number of dates
-actually filled.
+actually filled. `equity backfill` counts a `not_scheduled` (closed exchange)
+work item in `market_date_attempts` but not in `succeeded`/`failed`/
+`dates_recovered`, so a calendar-day range is not inflated by weekends or
+holidays; `history_backfilled_dates` reflects real recovered sessions only.
 
 ## The three fill paths
 

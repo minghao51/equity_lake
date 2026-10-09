@@ -13,6 +13,7 @@ from typing import Any
 import duckdb
 import structlog
 
+from equity_lake.core.calendar import classify_market_sessions
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.logging import correlation_context, timer
 from equity_lake.core.paths import LAKE_DIR
@@ -222,7 +223,21 @@ def run_daily_ingestion(
     scope = resolve_explicit_scope(markets, explicit_ticker_list, ticker_config)
     logger.info("resolved_explicit_scope", trading_date=str(trading_date), scope={market: scope.get(market) for market in markets})
 
-    fetch_scope: dict[str, list[str] | None] = {market: scope.get(market) for market in markets}
+    # D04/F11: classify price markets for the requested date *before* deciding
+    # whether an empty fetch is a failure. A closed exchange calendar is
+    # ``NOT_SCHEDULED`` — a planned skip, never failed and never substituted
+    # with an earlier session. Enrichment markets are calendar-independent.
+    # Classification happens after scope resolution so an ambiguous explicit
+    # request still fails loudly rather than being silently narrowed.
+    requested_price_markets = [market for market in markets if market in REQUIRED_PRICE_MARKETS]
+    _, not_scheduled_markets = classify_market_sessions(requested_price_markets, trading_date)
+    not_scheduled_set = set(not_scheduled_markets)
+    for market in not_scheduled_markets:
+        logger.info("market_not_scheduled", market=market, date=str(trading_date))
+        results[market] = SourceOutcome(SourceStatus.NOT_SCHEDULED)
+
+    active_markets = [market for market in markets if market not in not_scheduled_set]
+    fetch_scope: dict[str, list[str] | None] = {market: scope.get(market) for market in active_markets}
     if skip_existing:
         # A coverage check needs the configured active scope when the caller did
         # not pass an explicit list; load the shared config lazily so the direct
@@ -230,9 +245,9 @@ def run_daily_ingestion(
         # configured scope instead of degrading to an empty fetch. The fetchers
         # still receive the original ``ticker_config`` unchanged.
         coverage_config = ticker_config
-        if coverage_config is None and any(market in REQUIRED_PRICE_MARKETS and scope.get(market) is None for market in markets):
+        if coverage_config is None and any(market in REQUIRED_PRICE_MARKETS and scope.get(market) is None for market in active_markets):
             coverage_config = TickerConfig()
-        fetch_scope, already_present = _filter_markets_with_gaps(markets, trading_date, scope, coverage_config)
+        fetch_scope, already_present = _filter_markets_with_gaps(active_markets, trading_date, scope, coverage_config)
         if already_present:
             # Idempotent reruns must surface already-written partitions as success
             # so downstream feature/ML stages are not blocked by a missing result key.
@@ -240,18 +255,21 @@ def run_daily_ingestion(
             logger.info("skip_existing_data", trading_date=str(trading_date), skipped=sorted(already_present))
             for market in already_present:
                 results[market] = SourceOutcome(SourceStatus.SKIPPED_EXISTING)
-        markets = list(fetch_scope.keys())
+        active_markets = list(fetch_scope.keys())
 
-    if not markets:
-        logger.info("all_markets_up_to_date", trading_date=str(trading_date))
+    if not active_markets:
+        if not_scheduled_markets:
+            logger.info("no_scheduled_markets", trading_date=str(trading_date), not_scheduled=sorted(not_scheduled_markets))
+        else:
+            logger.info("all_markets_up_to_date", trading_date=str(trading_date))
         return results
 
     if parallel:
         with correlation_context():
-            logger.info("parallel_ingestion_mode", markets=markets, max_workers=max_workers or len(markets))
+            logger.info("parallel_ingestion_mode", markets=active_markets, max_workers=max_workers or len(active_markets))
 
             fetch_func_map: dict[str, tuple[Callable[[Any], Any], dict[Any, Any]]] = {}
-            for market in markets:
+            for market in active_markets:
 
                 def make_fetch_func(mkt: str, explicit_list: Any, config: Any, fltrs: Any) -> Callable[[Any], Any]:
                     def fetch_func(date: Any) -> Any:
@@ -272,7 +290,7 @@ def run_daily_ingestion(
 
             with timer("fetch_all_markets_parallel", mode="parallel"):
                 fetch_results = fetch_markets_parallel(
-                    markets=markets,
+                    markets=active_markets,
                     trading_date=trading_date,
                     fetch_func_map=fetch_func_map,
                     max_workers=max_workers,
@@ -298,7 +316,7 @@ def run_daily_ingestion(
             logger.info("parallel_ingestion_summary", **summary)
 
     else:
-        for market in markets:
+        for market in active_markets:
             logger.info("market_processing_start", market=market.upper())
 
             try:

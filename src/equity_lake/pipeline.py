@@ -7,6 +7,7 @@ from typing import Any
 
 import structlog
 
+from equity_lake.core.calendar import classify_market_sessions
 from equity_lake.core.config import TickerConfig, get_settings
 from equity_lake.core.paths import LONG_TO_SHORT
 from equity_lake.features import NoFeatureHistoryError, run_feature_job
@@ -71,6 +72,32 @@ def _resolve_configured_tickers(markets: list[str], ticker_config: TickerConfig)
     return resolved
 
 
+def _scheduled_explicit_tickers(
+    markets: list[str],
+    planned_markets: list[str],
+    explicit_tickers: list[str],
+    ticker_config: TickerConfig,
+) -> list[str]:
+    """Explicit tickers that belong to the scheduled price markets (D04/F11).
+
+    Membership is resolved with the same pure resolver the orchestrator uses, so
+    a ticker owned only by a closed market is dropped from the feature/ML plan.
+    Order follows ``planned_markets`` (request order) with deterministic
+    first-seen deduplication, matching :func:`_resolve_configured_tickers`.
+    """
+    resolved = resolve_explicit_scope(markets, explicit_tickers, ticker_config)
+    planned: list[str] = []
+    seen: set[str] = set()
+    for market in planned_markets:
+        if market not in REQUIRED_PRICE_MARKETS:
+            continue
+        for ticker in resolved.get(market) or []:
+            if ticker not in seen:
+                seen.add(ticker)
+                planned.append(ticker)
+    return planned
+
+
 def _coverage_payload(requested: list[str], diagnostics: dict[str, Any], produced: list[str]) -> dict[str, Any]:
     """Build the requested/produced/missing coverage payload with reason codes (F07)."""
     phase1_skipped: dict[str, str] = diagnostics.get("phase1_skipped", {})
@@ -133,6 +160,14 @@ def _run_ingestion_stage(
         skip_existing=True,
     )
     required_failures = sorted(m for m in markets if m in REQUIRED_PRICE_MARKETS and not _market_succeeded(ingestion_results, m))
+    # D04/F11: a closed price market is a planned skip, never a required failure
+    # (its ``succeeded`` property is true). Publish the scope explicitly so ops
+    # can distinguish a calendar skip from written/no-data work.
+    not_scheduled = sorted(
+        m
+        for m in markets
+        if m in REQUIRED_PRICE_MARKETS and ingestion_results.get(m, SourceOutcome(SourceStatus.FAILED)).status is SourceStatus.NOT_SCHEDULED
+    )
     # F08: optionality is applied here, never by hiding the failure. An optional
     # market that actually FAILED is reported as such; a genuine no-data fetch
     # (NO_DATA) is visible in the status map but is not a degradation failure.
@@ -151,6 +186,7 @@ def _run_ingestion_stage(
         markets=markets_payload,
         required_failures=required_failures,
         optional_failures=optional_failures,
+        not_scheduled=not_scheduled,
         partial=bool(optional_failures),
         errors=errors,
         ticker_scope={market: resolved_scope.get(market) for market in markets},
@@ -163,6 +199,8 @@ def _run_ingestion_stage(
         else:
             # NO_DATA-only outcomes: visible in the status map, not a degradation.
             logger.info("ingestion_no_data", results=markets_payload)
+    elif not_scheduled:
+        logger.info("ingestion_not_scheduled", results=markets_payload, not_scheduled=not_scheduled)
 
     # Optional bronze-to-silver processing
     unstructured_markets = UNSTRUCTURED_MARKETS
@@ -430,6 +468,15 @@ def execute_eod_pipeline(
     # ADR-0010: canonicalize short price-market aliases to long keys once, at
     # the pipeline boundary. Unknown keys raise here (loud failure).
     markets = normalize_markets(markets) if markets is not None else list(settings.ingestion.default_markets)
+    # D04/F11: classify the requested price markets for the resolved plan date
+    # once, before any work. A closed market is a planned skip (`not_scheduled`);
+    # features and ML are planned only for the scheduled scope, so a closed
+    # market never blocks an open one and required-market NO_DATA blocking (W02)
+    # is confined to a genuinely empty scheduled session.
+    requested_price_markets = [market for market in markets if market in REQUIRED_PRICE_MARKETS]
+    scheduled_price_markets, not_scheduled_markets = classify_market_sessions(requested_price_markets, trading_date)
+    not_scheduled_set = set(not_scheduled_markets)
+    planned_markets = [market for market in markets if market not in not_scheduled_set]
     # D02/F06: ``None`` means unspecified scope (resolve the configured active
     # tickers with no implicit cap); an explicit empty list is rejected rather
     # than silently broadened into the configured universe.
@@ -442,8 +489,12 @@ def execute_eod_pipeline(
         tickers = list(dict.fromkeys(tickers))
     # Ticker-config sections still use the short keys (config/tickers.yaml is a
     # separate vocabulary, out of ADR-0010 scope) — bridge via the registry alias.
+    # D04/F11: the resolved plan covers only the scheduled price markets; a
+    # ticker owned solely by a closed market is not planned.
     if tickers is None:
-        tickers = _resolve_configured_tickers(markets, ticker_config)
+        tickers = _resolve_configured_tickers(planned_markets, ticker_config)
+    else:
+        tickers = _scheduled_explicit_tickers(markets, planned_markets, tickers, ticker_config)
 
     results: dict[str, Any] = {}
     feature_output_tickers = tickers
@@ -459,16 +510,38 @@ def execute_eod_pipeline(
         "tickers": list(tickers),
         "dry_run": dry_run,
         "enrichment_only": enrichment_only,
+        "scheduled": list(scheduled_price_markets),
+        "not_scheduled": list(not_scheduled_markets),
     }
 
-    logger.info("pipeline_started", date=str(trading_date), markets=markets, tickers=len(tickers), dry_run=dry_run)
+    logger.info(
+        "pipeline_started",
+        date=str(trading_date),
+        markets=markets,
+        tickers=len(tickers),
+        not_scheduled=not_scheduled_markets,
+        dry_run=dry_run,
+    )
 
     # --- Stage 1: Ingestion ---
     ingestion_market_results: dict[str, SourceOutcome] = {}
     if dry_run:
-        results["ingestion"] = _stage(True, skipped=True, reason="dry_run", markets={})
+        results["ingestion"] = _stage(
+            True,
+            skipped=True,
+            reason="dry_run",
+            markets={},
+            scheduled=list(scheduled_price_markets),
+            not_scheduled=list(not_scheduled_markets),
+        )
     elif skip_ingestion:
-        results["ingestion"] = _stage(True, skipped=True, reason="skip_ingestion")
+        results["ingestion"] = _stage(
+            True,
+            skipped=True,
+            reason="skip_ingestion",
+            scheduled=list(scheduled_price_markets),
+            not_scheduled=list(not_scheduled_markets),
+        )
     else:
         ingestion_stage, ingestion_market_results = _run_ingestion_stage(
             trading_date,
@@ -487,6 +560,8 @@ def execute_eod_pipeline(
         results["features"] = _stage(True, skipped=True, reason="skip_features")
     elif enrichment_only:
         results["features"] = _stage(True, skipped=True, reason="enrichment_only_no_price_scope")
+    elif not scheduled_price_markets or not tickers:
+        results["features"] = _stage(True, skipped=True, reason="not_scheduled_scope")
     else:
         ingestion_stage = results.get("ingestion", {})
         use_enriched = ingestion_stage.get("bronze_to_silver", {}).get("success", False)
@@ -495,11 +570,11 @@ def execute_eod_pipeline(
         feature_stage, feature_output_tickers = _run_feature_stage(
             trading_date,
             tickers,
-            markets,
+            planned_markets,
             ticker_config,
             dry_run,
             allow_history_backfill,
-            explicit_tickers,
+            tickers if explicit_scope else None,
             ingestion_market_results,
             skip_ingestion=skip_ingestion,
             use_enriched=use_enriched,
@@ -515,6 +590,8 @@ def execute_eod_pipeline(
         results["ml"] = _stage(True, skipped=True, reason="skip_ml")
     elif enrichment_only:
         results["ml"] = _stage(True, skipped=True, reason="enrichment_only_no_price_scope")
+    elif not scheduled_price_markets or not tickers:
+        results["ml"] = _stage(True, skipped=True, reason="not_scheduled_scope")
     else:
         if not results.get("features", {}).get("success", skip_features):
             logger.warning("ml_skipped_due_to_feature_failure")

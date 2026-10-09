@@ -36,7 +36,10 @@ disables that enrichment, not independent core features.
 
 The exact per-market outcome vocabulary, requested/produced feature coverage,
 optional-failure visibility, dry-run statuses, and exit-code policy are the
-contracts in [Pipeline Contracts](pipeline-contracts.md). The orchestrator
+contracts in [Pipeline Contracts](pipeline-contracts.md). Each requested price
+market is classified once against the resolved plan date: a closed exchange is
+`not_scheduled`, a planned skip that never blocks an open market, and features
+and ML are planned only for the scheduled scope. The orchestrator
 isolates every market's fetch/conversion/write failure (serial and parallel
 alike) so one exception never erases another market's outcome.
 

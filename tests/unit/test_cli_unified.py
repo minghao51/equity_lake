@@ -532,6 +532,38 @@ class TestIngestFailureContract:
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "us_news"])
         assert result.exit_code == 0
 
+    def test_ingest_exits_zero_for_not_scheduled_required_market(self):
+        """W03/D04: a closed required market is a planned skip, not a failure."""
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.NOT_SCHEDULED)}
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
+            result = runner.invoke(app, ["ingest", "--date", "2024-11-28", "--markets", "us_equity"])
+        assert result.exit_code == 0
+        assert "us_equity: not_scheduled" in result.stdout
+
+
+class TestPipelineExitMatrix:
+    """W03/D04: not_scheduled is a planned skip and never flips the CLI exit status."""
+
+    def test_pipeline_not_scheduled_scope_exits_zero(self):
+        results = {
+            "ingestion": {"success": True, "not_scheduled": ["us_equity"], "required_failures": []},
+            "features": {"success": True, "skipped": True, "reason": "not_scheduled_scope"},
+            "ml": {"success": True, "skipped": True, "reason": "not_scheduled_scope"},
+        }
+        with patch("equity_lake.pipeline.execute_eod_pipeline", return_value=results):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-11-28", "--markets", "us_equity"])
+        assert result.exit_code == 0
+
+    def test_pipeline_required_failure_still_exits_nonzero(self):
+        results = {
+            "ingestion": {"success": False, "not_scheduled": [], "required_failures": ["us_equity"]},
+            "features": {"success": False, "reason": "required price source failed"},
+            "ml": {"success": False, "skipped": True, "reason": "feature stage failed"},
+        }
+        with patch("equity_lake.pipeline.execute_eod_pipeline", return_value=results):
+            result = runner.invoke(app, ["pipeline", "--date", "2024-11-28", "--markets", "us_equity"])
+        assert result.exit_code == 1
+
 
 class TestPipelineSaveResults:
     def _success_results(self) -> dict:  # type: ignore[no-untyped-def]

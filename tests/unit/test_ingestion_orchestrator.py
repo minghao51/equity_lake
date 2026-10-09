@@ -216,7 +216,7 @@ class TestOutcomeTruthfulness:
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
         ):
-            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity", "cn_ashare"], dry_run=False, parallel=True)
+            results = run_daily_ingestion(date(2024, 1, 4), ["us_equity", "cn_ashare"], dry_run=False, parallel=True)
 
         assert results["us_equity"].status is SourceStatus.FAILED
         assert "disk full" in (results["us_equity"].error or "")
@@ -238,7 +238,7 @@ class TestOutcomeTruthfulness:
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
         ):
-            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity", "cn_ashare"], dry_run=False, parallel=False)
+            results = run_daily_ingestion(date(2024, 1, 4), ["us_equity", "cn_ashare"], dry_run=False, parallel=False)
 
         assert results["us_equity"].status is SourceStatus.FAILED
         assert "disk full" in (results["us_equity"].error or "")
@@ -255,7 +255,7 @@ class TestOutcomeTruthfulness:
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
         ):
-            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity", "macro"], dry_run=False, parallel=True)
+            results = run_daily_ingestion(date(2024, 1, 4), ["us_equity", "macro"], dry_run=False, parallel=True)
 
         assert results["us_equity"].status is SourceStatus.FAILED
         assert "provider down for us_equity" in (results["us_equity"].error or "")
@@ -304,7 +304,7 @@ class TestPipelineIntegration:
                 patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
                 patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             ):
-                results = run_daily_ingestion(date(2024, 1, 1), ["us"], dry_run=True)
+                results = run_daily_ingestion(date(2024, 1, 4), ["us"], dry_run=True)
 
         # Results are keyed by the canonical long key (ADR-0010): short input is
         # normalized at the orchestrator boundary.
@@ -340,7 +340,7 @@ class TestPipelineIntegration:
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
         ):
             results = run_daily_ingestion(
-                date(2024, 1, 1),
+                date(2024, 1, 4),
                 ["us", "cn"],
                 dry_run=True,
                 parallel=False,
@@ -369,7 +369,7 @@ class TestPipelineIntegration:
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
         ):
             results = run_daily_ingestion(
-                date(2024, 1, 1),
+                date(2024, 1, 4),
                 ["us", "cn"],
                 dry_run=True,
                 parallel=False,
@@ -512,7 +512,7 @@ class TestExplicitScopeOrchestration:
             patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
             patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
         ):
-            run_daily_ingestion(date(2024, 1, 2), [market], dry_run=True, parallel=False, explicit_tickers=tickers)
+            run_daily_ingestion(date(2024, 1, 4), [market], dry_run=True, parallel=False, explicit_tickers=tickers)
 
         assert captured == [(market, tickers)]
 
@@ -690,3 +690,100 @@ class TestTickerAwareExistingData:
 
         assert results["us_equity"].status is SourceStatus.DRY_RUN
         assert list(tmp_path.rglob("*")) == []
+
+
+# =============================================================================
+# W03/D04/F11: explicit-date session scheduling
+# =============================================================================
+
+
+class TestSessionScheduling:
+    """Closed price markets are `not_scheduled`: planned skips, never failures."""
+
+    def test_closed_market_is_not_scheduled_and_never_fetched(self, tmp_path) -> None:
+        """An explicit date on a closed exchange is a planned skip, not NO_DATA/FAILED."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch,
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 1, 1), ["us_equity"], dry_run=False, parallel=False, skip_existing=False)
+
+        assert results["us_equity"].status is SourceStatus.NOT_SCHEDULED
+        assert results["us_equity"].succeeded is True
+        assert results["us_equity"].error is None
+        mock_fetch.assert_not_called()
+
+    def test_closed_market_does_not_block_open_market(self, tmp_path, sample_ohlcv_data) -> None:
+        """A US holiday must not stop an open market's fetch."""
+        captured: list[str] = []
+
+        def spy(market, trading_date, **kwargs):
+            captured.append(market)
+            return sample_ohlcv_data
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 11, 28), ["us_equity", "cn_ashare"], dry_run=True, parallel=False, skip_existing=False)
+
+        assert captured == ["cn_ashare"]
+        assert results["us_equity"].status is SourceStatus.NOT_SCHEDULED
+        assert results["cn_ashare"].status is SourceStatus.DRY_RUN
+
+    def test_parallel_branch_classifies_closed_market_before_fetch(self, tmp_path, sample_ohlcv_data) -> None:
+        """The parallel branch also marks the closed market not_scheduled and fetches only the open one."""
+        captured: list[str] = []
+
+        def spy(market, trading_date, **kwargs):
+            captured.append(market)
+            return sample_ohlcv_data
+
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data_with_config", side_effect=spy),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 11, 28), ["us_equity", "cn_ashare"], dry_run=True, parallel=True, skip_existing=False)
+
+        assert captured == ["cn_ashare"]
+        assert results["us_equity"].status is SourceStatus.NOT_SCHEDULED
+        assert results["cn_ashare"].status is SourceStatus.DRY_RUN
+
+    def test_scheduled_session_with_empty_fetch_still_blocks(self, tmp_path) -> None:
+        """A genuinely empty fetch on a scheduled session stays NO_DATA (a failure)."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=pl.DataFrame()),
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 11, 28), ["cn_ashare"], dry_run=False, parallel=False, skip_existing=False)
+
+        assert results["cn_ashare"].status is SourceStatus.NO_DATA
+        assert results["cn_ashare"].succeeded is False
+
+    def test_hk_sg_union_session_still_fetches(self, tmp_path, sample_ohlcv_data) -> None:
+        """An XHKG-only session schedules hk_sg_equity (union) rather than skipping it."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data) as mock_fetch,
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 8, 9), ["hk_sg_equity"], dry_run=True, parallel=False, skip_existing=False)
+
+        mock_fetch.assert_called_once()
+        assert results["hk_sg_equity"].status is SourceStatus.DRY_RUN
+
+    def test_hk_sg_common_holiday_is_not_scheduled(self, tmp_path) -> None:
+        """When both XHKG and XSES are closed, hk_sg_equity is a planned skip."""
+        with (
+            patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch,
+            patch("equity_lake.ingestion.orchestrator.LAKE_DIR", tmp_path),
+            patch("equity_lake.storage.delta.LAKE_DIR", tmp_path),
+        ):
+            results = run_daily_ingestion(date(2024, 3, 29), ["hk_sg_equity"], dry_run=False, parallel=False, skip_existing=False)
+
+        mock_fetch.assert_not_called()
+        assert results["hk_sg_equity"].status is SourceStatus.NOT_SCHEDULED

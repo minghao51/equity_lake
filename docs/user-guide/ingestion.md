@@ -35,10 +35,11 @@ dotenvx run -- uv run equity backfill --days-back 30 --markets us_equity
 Dry-run performs no persistence. Fetchers use configured retries and ingestion
 may run in parallel; backfill deliberately runs one market/date at a time. A
 direct `equity ingest --dry-run` reports each market as `dry_run` — never
-`written`. An empty fetch is reported as `no_data` (distinct from
-`skipped_existing`, which means a valid partition already exists), and a source
-failure is reported as `failed` with its cause rather than being hidden as a
-skip.
+`written`. An empty fetch on a scheduled session is reported as `no_data`
+(distinct from `skipped_existing`, which means a valid partition already
+exists), a market whose exchange is closed on the requested date is reported as
+`not_scheduled` (a planned skip, never a failure), and a source failure is
+reported as `failed` with its cause rather than being hidden as a skip.
 
 Feature history recovery is separate from ordinary ingestion and must be
 authorized:

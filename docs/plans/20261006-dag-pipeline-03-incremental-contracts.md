@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** In progress — PR1 landed (`c0f37ee`), PR2 landed (`457ca6d`, 2026-10-08); PR3 (sessions, D04) next
+**Status:** In progress — PR1 landed (`c0f37ee`), PR2 landed (`457ca6d`, 2026-10-08); PR3 (sessions, D04) implemented + reviewed (READY WITH WARNINGS; owner sign-off pending); PR4 (action overlap) next
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
@@ -230,11 +230,11 @@ rejection/retraining, not transparent reuse.
 
 - Decisions: **D03/D04 approved by the owner 2026-10-08**; ADR-0014 accepted
   (label lifecycle and availability metadata).
-- Implementation: **PR2 implemented-pending-review** (label lifecycle,
-  availability metadata, as-of cutoff, bounded report-first repair; not yet
-  landed/closed — the read-only reviewer pass and owner sign-off remain). PR1
-  (scope/completeness) is landed as `c0f37ee`. PR3 (market sessions) and PR4
-  (corporate-action overlap) remain not started.
+- Implementation: PR1 (scope/completeness) landed as `c0f37ee`; PR2 (label
+  lifecycle, availability metadata, as-of cutoff, bounded report-first repair)
+  landed as `457ca6d`. **PR3 (explicit-date session scheduling, D04/F11)
+  implemented-pending-review** (not closed — the read-only reviewer pass and
+  owner sign-off remain). PR4 (corporate-action overlap) not started.
 
 ### PR1 — exact scope through all five price markets + ticker-aware completeness
 
@@ -441,6 +441,92 @@ rejection/retraining, not transparent reuse.
   fixes (the one-line Gold diff from the unit itself stands). **Owner
   authorized the commit 2026-10-08 (`457ca6d`), closing F03 and the label
   portions of F17/F25.**
-- Remaining in W03: F11 market sessions (PR3), F14 action overlap (PR4). F03
-  and the label portions of F17/F25 are implemented-pending-review — the
-  read-only reviewer pass and owner sign-off close them.
+- Remaining in W03: F11 market sessions (PR3, implemented-pending-review) and
+  F14 action overlap (PR4). F03 and the label portions of F17/F25 are closed
+  (owner-authorized `457ca6d`).
+
+### PR3 — explicit-date session scheduling (D04/F11)
+
+1. **`not_scheduled` status (F11).** `ingestion/types.py` adds
+   `SourceStatus.NOT_SCHEDULED` (serialized `not_scheduled`), distinct from
+   `NO_DATA`/`FAILED`; `SourceOutcome.succeeded` treats it as a planned skip, so
+   it is excluded from `required_failures` and never enters
+   `optional_failures`/`partial`. `core/calendar.py` adds
+   `classify_market_sessions(markets, d)`, returning
+   `(scheduled, not_scheduled)` with the `is_trading_day` union semantics.
+2. **Orchestrator (F11).** `run_daily_ingestion` classifies the requested
+   price markets once, before the coverage check and any fetch. A closed market
+   is recorded as `NOT_SCHEDULED` and removed from the active fetch list, so it
+   is never fetched, never `NO_DATA`/`FAILED`, and never substituted with an
+   earlier session. Enrichment markets stay calendar-independent.
+3. **Pipeline planning (D04).** `execute_eod_pipeline` classifies once at plan
+   time: `scope` gains `scheduled`/`not_scheduled`; configured tickers resolve
+   from scheduled markets only and explicit tickers are filtered by the same
+   resolver (`_scheduled_explicit_tickers`); features/ML run only for the
+   scheduled scope; when every requested price market is closed the stages
+   planned-skip with `reason: not_scheduled_scope`. A scheduled required
+   `NO_DATA` still fails (W02 blocking confined to true data absence). The
+   ingestion stage publishes `not_scheduled`; dry-run reports
+   `scheduled`/`not_scheduled` and still writes nothing.
+4. **HK/SG union (D04).** Union semantics retained: scheduled if either XHKG or
+   XSES is open. The mixed-session limitation and the per-instrument coverage
+   requirement are documented in the pipeline contracts and
+   `auto-backfill-and-gap-detection.md`; intersection is not used to skip an
+   open instrument.
+- Files: `core/calendar.py`, `ingestion/types.py`,
+  `ingestion/orchestrator.py`, `pipeline.py`; tests in `tests/unit/`
+  (`test_calendar.py`, `test_ingestion_orchestrator.py`, `test_cli_unified.py`)
+  and `tests/integration/test_pipeline_orchestrator.py`.
+- Regression proof: the new load-bearing tests run against the pre-change
+  source via `git stash push -- src/` (restored immediately) and fail there:
+  classification + session-scheduling + `not_scheduled` CLI selection ->
+  **12 failed / 4 passed**, and `TestPipelineSessionScheduling` -> **7 failed**.
+  (Two generic pre-change session tests — an empty fetch and a union session —
+  pass on the old source; the failures are in the closed-market,
+  scheduled-`NO_DATA`, dry-run scope, and all-closed-plan assertions.)
+- Tests/gates: focused wave suites
+  (`backfill/auto_backfill/gap_detection/calendar/router/ingestion_orchestrator`)
+  -> **105 passed, 5 deselected**;
+  `tests/integration/test_pipeline_orchestrator.py -m "not network"` ->
+  **45 passed**; `pytest -m "not network and not integration"` ->
+  **3 failed, 1124 passed, 22 skipped, 92 deselected** (the pre-existing
+  `test_arena.py` set, F28/W07);
+  `-n auto -m "not network and not integration and not serial"` ->
+  **3 failed, 1124 passed, 22 skipped** (same baseline); `ruff check` /
+  `ruff format --check` clean; `mypy src` at the 3-error `ml/registry.py`
+  baseline (163 files); catalog regenerated unchanged (17 datasets / 52 nodes /
+  372 edges, byte-identical); the three catalog tests -> **67 passed**;
+  `mkdocs build --site-dir /tmp/equity-lake-remediation-site` succeeds with only
+  the documented pre-existing warnings; `git diff --check` clean.
+- Catalog: no Hamilton topology/tag change; regeneration was a no-op.
+- Compatibility/rollback: additive only — a new enum value, new stage/scope
+  keys (`scheduled`, `not_scheduled`), and a new calendar helper. No schema,
+  catalog, or lake change and no migration; rollback reverts the code together
+  and there is no persisted state to unwind.
+- Migration/repair: none; mocked providers/calendars and temporary lake paths
+  only. No live source, LLM processing, retraining, or production data was
+  touched.
+- Backfill interaction: `backfill_date_range` counts a `not_scheduled` outcome
+  in `market_date_attempts` but excludes it from `succeeded`/`failed`/
+  `dates_recovered`, so weekends and holidays do not inflate
+  `history_backfilled_dates` or post-recovery failure counts.
+- Review/sign-off: **review pass complete (2026-10-08, performed in-session by
+  the coordinator at owner direction after the pinned-reviewer subagent
+  timed out): READY WITH WARNINGS — 0 critical.** Coordinator re-verified the
+  gates on the final tree (1124/22/3, `-n auto` parity, ruff/format clean,
+  mypy baseline, `git diff --check` clean) and re-ran the pre-change stash
+  experiment (12 unit + 8 integration failures on stashed `src/`; restored).
+  Confirmed in code: closed price markets classify before the coverage
+  check/fetch and are never fetched, never substituted, never failed;
+  enrichment markets stay calendar-independent; `required_failures` excludes
+  `not_scheduled` (planned skip → exit zero); scheduled `NO_DATA` still
+  blocks; features/ML plan only the scheduled scope (`not_scheduled_scope`
+  planned-skip stages are success); dry-run publishes `scheduled`/
+  `not_scheduled` and writes nothing; backfill recovery counts exclude closed
+  days. Warnings/residuals (accepted, no code change): (1) ambiguous
+  multi-market explicit tickers now raise at plan time instead of fetch time —
+  same pre-existing uncaught-`ValueError` class at the CLI, ownership W04/D05;
+  (2) tickers owned solely by a closed market are dropped from the feature/ML
+  plan and are visible only via `scope["not_scheduled"]` plus resolver logs,
+  not named per-ticker — observability residual, revisit if ops needs it.
+  **Owner sign-off pending — it closes F11.**

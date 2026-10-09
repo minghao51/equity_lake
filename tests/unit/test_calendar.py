@@ -87,6 +87,57 @@ class TestCountTradingDays:
         assert count_trading_days("us_equity", date(2026, 6, 1), date(2026, 6, 5)) == len(days)
 
 
+class TestClassifyMarketSessions:
+    """W03/D04/F11: explicit-date classification for the five price markets."""
+
+    def test_all_five_markets_scheduled_on_a_common_session(self) -> None:
+        from equity_lake.core.calendar import classify_market_sessions
+
+        markets = ["us_equity", "cn_ashare", "hk_sg_equity", "jpx_equity", "krx_equity"]
+        scheduled, not_scheduled = classify_market_sessions(markets, date(2024, 1, 4))
+        assert scheduled == markets
+        assert not_scheduled == []
+
+    def test_us_holiday_marks_only_us_not_scheduled(self) -> None:
+        from equity_lake.core.calendar import classify_market_sessions
+
+        # 2024-11-28 is US Thanksgiving while CN/JPX hold sessions.
+        scheduled, not_scheduled = classify_market_sessions(["us_equity", "cn_ashare", "jpx_equity"], date(2024, 11, 28))
+        assert scheduled == ["cn_ashare", "jpx_equity"]
+        assert not_scheduled == ["us_equity"]
+
+    def test_jpx_new_year_holiday_is_not_scheduled(self) -> None:
+        from equity_lake.core.calendar import classify_market_sessions
+
+        # JPX is closed 2024-01-02 while US/CN trade.
+        scheduled, not_scheduled = classify_market_sessions(["us_equity", "jpx_equity"], date(2024, 1, 2))
+        assert scheduled == ["us_equity"]
+        assert not_scheduled == ["jpx_equity"]
+
+    def test_common_holiday_marks_every_market_not_scheduled(self) -> None:
+        from equity_lake.core.calendar import classify_market_sessions
+
+        markets = ["us_equity", "cn_ashare", "hk_sg_equity", "jpx_equity", "krx_equity"]
+        scheduled, not_scheduled = classify_market_sessions(markets, date(2024, 1, 1))
+        assert scheduled == []
+        assert not_scheduled == markets
+
+    def test_hk_sg_union_scheduled_when_either_exchange_open(self) -> None:
+        from equity_lake.core.calendar import classify_market_sessions
+
+        # 2024-08-09: XSES closed (SG National Day) but XHKG open -> union schedules it.
+        assert classify_market_sessions(["hk_sg_equity"], date(2024, 8, 9))[0] == ["hk_sg_equity"]
+        # 2024-04-04: XHKG closed (Ching Ming) but XSES open -> union schedules it.
+        assert classify_market_sessions(["hk_sg_equity"], date(2024, 4, 4))[0] == ["hk_sg_equity"]
+        # 2024-03-29 (Good Friday): both closed -> not scheduled.
+        assert classify_market_sessions(["hk_sg_equity"], date(2024, 3, 29))[1] == ["hk_sg_equity"]
+
+    def test_unknown_market_has_no_sessions(self) -> None:
+        from equity_lake.core.calendar import classify_market_sessions
+
+        assert classify_market_sessions(["unknown"], date(2024, 6, 3))[1] == ["unknown"]
+
+
 class TestMarketTimezone:
     def test_us_timezone(self) -> None:
         tz = market_timezone("us_equity")

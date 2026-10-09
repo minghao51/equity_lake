@@ -106,12 +106,25 @@ Outcome semantics:
 
 - `written` — fetched and persisted; `skipped_existing` — a valid partition
   already existed.
-- `no_data` — the source returned zero rows (not an error, and not a verified
-  partition).
+- `not_scheduled` — the market's exchange is closed on the resolved plan date.
+  This is a planned skip, not a failure: it does not block markets that are
+  open, never counts as `partial`, and the run still exits zero when the
+  scheduled required work succeeds.
+- `no_data` — the source returned zero rows on a scheduled session (not an
+  error by itself, and not a verified partition; a required price market with
+  no data still blocks features/ML).
 - `dry_run` — a direct `equity ingest --dry-run` simulated the write; it never
   reports `written`.
 - `failed` — the fetch, schema check, or write failed; the per-market cause is
   kept in the result and does not erase other markets' outcomes.
+
+Session planning: each requested price market is classified against the
+resolved plan date using its exchange calendar (`not_scheduled` when closed).
+Features and ML are planned only for the scheduled scope, and an explicit closed
+date is never replaced with an earlier session. `hk_sg_equity` uses union
+semantics — it is scheduled when either Hong Kong or Singapore is open — so an
+open instrument is never skipped on a single-exchange session; per-instrument
+coverage is reported by the feature stage.
 
 Optional enrichment failures stay visible: they are listed in
 `optional_failures`, set `partial: true`, and do not block core features or the

@@ -7,6 +7,7 @@ and timezone.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date
 from zoneinfo import ZoneInfo
 
@@ -79,6 +80,24 @@ def count_trading_days(market: str, start: date, end: date) -> int:
     return len(trading_days_between(market, start, end))
 
 
+def classify_market_sessions(markets: Iterable[str], d: date) -> tuple[list[str], list[str]]:
+    """Split ``markets`` into ``(scheduled, not_scheduled)`` for date ``d`` (D04/F11).
+
+    Price-market session classification for explicit-date planning. Uses the
+    union semantics of :func:`is_trading_day`, so ``hk_sg_equity`` counts as
+    scheduled when *either* XHKG or XSES is open; callers must report
+    per-instrument coverage and must not claim market-wide completeness from a
+    single-exchange session. A market with no exchange calendar (an unknown or
+    non-price key) has no sessions and therefore lands in ``not_scheduled``;
+    callers pass only the price markets they intend to classify.
+    """
+    scheduled: list[str] = []
+    not_scheduled: list[str] = []
+    for market in markets:
+        (scheduled if is_trading_day(market, d) else not_scheduled).append(market)
+    return scheduled, not_scheduled
+
+
 def market_timezone(market: str) -> ZoneInfo:
     tz_name = _MARKET_TZ.get(_canonical_key(market), "UTC")
     return ZoneInfo(tz_name)
@@ -92,6 +111,7 @@ def market_now(market: str) -> date:
 
 
 __all__ = [
+    "classify_market_sessions",
     "count_trading_days",
     "is_trading_day",
     "market_now",

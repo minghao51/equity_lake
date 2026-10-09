@@ -228,11 +228,18 @@ class SourceStatus(str, Enum):
     and exit status. ``SKIPPED_EXISTING`` is reserved for a verified existing
     partition; a genuine empty fetch is ``NO_DATA``; a simulated write in a
     direct dry-run is ``DRY_RUN`` (never ``written``).
+
+    W03/D04 (F11): ``NOT_SCHEDULED`` is a planned calendar skip — the market's
+    exchange is closed on the requested explicit date. It is distinct from a
+    genuinely empty scheduled session (``NO_DATA``) and from a failure, is never
+    substituted with an earlier session, and does not block markets that are
+    open.
     """
 
     WRITTEN = "written"  # newly fetched + persisted
     SKIPPED_EXISTING = "skipped_existing"  # partition already present (and validated)
     NO_DATA = "no_data"  # fetched successfully; the source returned zero rows
+    NOT_SCHEDULED = "not_scheduled"  # exchange closed on the requested date (planned skip)
     DRY_RUN = "dry_run"  # direct dry-run: write-capable path simulated, nothing persisted
     FAILED = "failed"  # fetch failed, schema rejected, write returned False, or exception
 
@@ -255,10 +262,17 @@ class SourceOutcome:
 
         ``WRITTEN`` and ``SKIPPED_EXISTING`` count as success; ``DRY_RUN`` also
         counts so direct dry-runs keep their zero-exit contract (while never
-        claiming a write). ``NO_DATA`` and ``FAILED`` do not. Missing keys at
-        call sites are treated as ``FAILED``.
+        claiming a write). ``NOT_SCHEDULED`` is a planned calendar skip and also
+        counts: the pipeline plans features/ML only for the scheduled scope, so
+        a closed market must not be reported as a failure. ``NO_DATA`` and
+        ``FAILED`` do not. Missing keys at call sites are treated as ``FAILED``.
         """
-        return self.status in (SourceStatus.WRITTEN, SourceStatus.SKIPPED_EXISTING, SourceStatus.DRY_RUN)
+        return self.status in (
+            SourceStatus.WRITTEN,
+            SourceStatus.SKIPPED_EXISTING,
+            SourceStatus.DRY_RUN,
+            SourceStatus.NOT_SCHEDULED,
+        )
 
 
 __all__ = [

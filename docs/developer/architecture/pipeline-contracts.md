@@ -14,8 +14,10 @@ This page is the operational contract for `equity pipeline`.
 | Requested scope (D02) | With no ticker argument, every configured active ticker in the requested price markets is resolved — there is no implicit ticker cap. An explicit `--tickers` list is used exactly as given (deduplicated deterministically); an explicitly empty scope is rejected with a non-zero exit and is never broadened to the configured universe. |
 | Enrichment-only requests | A request whose markets contain no price market planned-skips features and ML (`reason: enrichment_only_no_price_scope`); no default tickers are invented. |
 | Feature coverage | `features.coverage` reports the requested and produced tickers plus every missing ticker with a stable reason code: `no_price_rows`, `insufficient_history`, `missing_output_bar`, `invalid_output`, or `intentional_limit` (reserved). `produced` means the ticker reached the computed output window — it is a computation fact, not a persistence claim (a failed write is reported by the stage's `success: false` and `error` while `produced`/`missing` still describe what was computed). Missing scheduled required ticker coverage fails the feature stage (D02) while successful tickers are still written and reported. |
-| Source outcome statuses | `written` (fetched + persisted), `skipped_existing` (verified existing partition), `no_data` (successful fetch, zero rows), `dry_run` (direct dry-run simulation — never `written`), `failed` (fetch/schema/write failure with its cause retained). |
-| Optional failure visibility | An optional source that fails is reported as `failed`, listed in `optional_failures`, and sets `partial: true`; optionality controls blocking/exit status only, never visibility. A genuine `no_data` fetch is not a failure — but a `no_data` **required price market** is treated as missing scheduled coverage: it blocks dependent features/ML and appears in `required_failures` (session-aware `not_scheduled` handling is W03/D04). |
+| Source outcome statuses | `written` (fetched + persisted), `skipped_existing` (verified existing partition), `no_data` (successful fetch, zero rows), `not_scheduled` (the market's exchange is closed on the requested explicit date — a planned skip), `dry_run` (direct dry-run simulation — never `written`), `failed` (fetch/schema/write failure with its cause retained). |
+| Explicit-date session scheduling (D04) | Each requested price market is classified once against the resolved plan date with `core/calendar.py` union semantics. A closed market is `not_scheduled`: a planned skip, never `failed` and never substituted with an earlier session. Features and ML are planned only for the scheduled scope, so a closed market never blocks an open one; required-market `no_data` blocking is confined to a genuinely empty scheduled session. For relative dates the plan date is resolved once and then classified per market. |
+| HK/SG session union | `hk_sg_equity` is scheduled when *either* XHKG or XSES is open (`is_trading_day` union semantics), so an open instrument on a single-exchange session is never skipped. A scheduled mixed-market day does not imply market-wide coverage: per-instrument coverage is reported from the feature stage, and gap detection keeps its stricter intersection semantics (`trading_days_between`). |
+| Optional failure visibility | An optional source that fails is reported as `failed`, listed in `optional_failures`, and sets `partial: true`; optionality controls blocking/exit status only, never visibility. A genuine `no_data` fetch is not a failure — but a `no_data` **required price market** on a scheduled session is treated as missing scheduled coverage: it blocks dependent features/ML and appears in `required_failures`. A `not_scheduled` market is a plan skip: it is excluded from `required_failures` and never appears in `optional_failures` or `partial`. |
 | Persistence honesty | A stage reports success only when its output persisted. Per-ticker ML results carry `persisted` (true only after the batch write lands); a failed validation/write leaves it false while preserving prediction diagnostics. |
 | Bronze-to-Silver no-work | Missing bronze corpus or an all-already-processed corpus is a planned skip (`no_bronze_work` / `already_processed`), not a source failure; processing and write failures stay failed with their cause. |
 | Feature input validity | Invalid required price input (null keys, non-positive OHLC, negative volume, violated price relationships) fails the per-ticker feature computation — never silently drops rows (W01/D01). |
@@ -24,7 +26,7 @@ This page is the operational contract for `equity pipeline`.
 | Label lifecycle (ADR-0014) | On session D the preceding observed session's label (`next_day_return`) is finalized from D's bar and stamped `label_available_date = D`. "Next observation" is the next exchange session with a valid bar for the instrument; a missing next-session bar leaves the label pending and is reported. Finalization is a matched-only, label-column-only Delta update — it never inserts keys, evolves the schema, or touches feature columns. `compute_target=False` neither stamps availability nor finalizes. |
 | As-of eligibility (ADR-0014) | Training and backtests exclude labels whose `label_available_date` is after the cutoff; legacy rows with unknown availability (column absent or null) are strict-excluded by default. A documented tolerance is opt-in only and is not used by the default path. |
 | Bronze-to-Silver failure | Only consumers of that Silver output are degraded. |
-| CLI exit status | Non-zero for required source failure, missing required ticker coverage, or a failed/unauthorized feature-history recovery; zero for dry-run, planned skips, and successful optional degradation. |
+| CLI exit status | Non-zero for required source failure, missing required ticker coverage, or a failed/unauthorized feature-history recovery; zero for dry-run, planned skips (including `not_scheduled` and an all-closed scheduled scope), and successful optional degradation. |
 
 ## Inputs and outputs
 
@@ -34,11 +36,16 @@ authorization. Each returned stage is a dictionary containing `success` and,
 when relevant, `skipped`, `reason`, `error`, or stage-specific details.
 
 The result always contains a `scope` entry recording the resolved trading date,
-requested markets, whether the ticker scope was explicit, the resolved tickers,
-dry-run mode, and whether the request was enrichment-only. The ingestion stage
-publishes the `markets` status map (kept for existing consumers), plus
-`required_failures`, `optional_failures`, `partial`, and `errors` (per-market
-error strings). The feature stage publishes `rows` and `coverage`
+requested markets, whether the ticker scope was explicit, the resolved
+scheduled tickers, dry-run mode, whether the request was enrichment-only, and
+the `scheduled`/`not_scheduled` price markets for the plan date. The ingestion
+stage publishes the `markets` status map (kept for existing consumers), plus
+`required_failures`, `optional_failures`, `not_scheduled`, `partial`, and
+`errors` (per-market error strings). When there is no scheduled price scope
+(every requested price market is closed, or the requested explicit tickers all
+belong to closed markets), the stage planned-skips features/ML with
+`reason: not_scheduled_scope`.
+The feature stage publishes `rows` and `coverage`
 (`requested`/`produced`/`missing`), and — when the target was computed — a
 `labels` block with `eligible`/`finalized`/`pending`/`unmatched` counts plus the
 pending and unmatched keys. The ML stage publishes per-ticker results
