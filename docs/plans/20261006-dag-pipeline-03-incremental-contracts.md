@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** In progress — PR1 landed (`c0f37ee`), PR2 landed (`457ca6d`, 2026-10-08); PR3 (sessions, D04) implemented + reviewed (READY WITH WARNINGS; owner sign-off pending); PR4 (action overlap) next
+**Status:** In progress — PR1 landed (`c0f37ee`), PR2 (`457ca6d`) and PR3 (`1b24c8d`) landed 2026-10-08; PR4 (action overlap) in progress, implemented in-session
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
