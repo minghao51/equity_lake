@@ -109,6 +109,14 @@ uv run ruff format --check .
 uv run mypy
 ```
 
+When running large or parallel (`-n auto`) suites, write the full output to
+a file once (`uv run pytest … > /tmp/suite.log 2>&1`) and analyze the file —
+piping through `tail`/`grep` can lose the final summary if an xdist worker
+dies. For crash-resilient summaries use `--junitxml`; when iterating on a
+known failure, select the failing tests and add `-x`/`--maxfail=1` instead
+of re-running the full suite. Prefer reusing an already-captured summary
+over re-running an unchanged suite.
+
 A change is complete when relevant tests pass, the change matrix is satisfied,
 public behavior is documented (user guide for CLI changes, `ARCHITECTURE.md`
 for structure), the catalog is regenerated for pipeline or feature changes,

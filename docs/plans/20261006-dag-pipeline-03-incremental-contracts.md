@@ -1,6 +1,6 @@
 # W03 — Incremental Lifecycle, Completeness, and Scoped Recovery
 
-**Status:** In progress — PR1 landed (`c0f37ee`), PR2 (`457ca6d`) and PR3 (`1b24c8d`) landed 2026-10-08; PR4 (action overlap) in progress, implemented in-session
+**Status:** In progress — PR1 (`c0f37ee`), PR2 (`457ca6d`), PR3 (`1b24c8d`) landed 2026-10-08; PR4 (action overlap) implemented-pending-review 2026-10-09
 
 **Depends on:** [W02](20261006-dag-pipeline-02-outcomes-and-coverage.md) (landed) and D03/D04 approval
 
@@ -222,7 +222,7 @@ rejection/retraining, not transparent reuse.
 - [ ] Requested scope never broadens through any recovery route.
 - [ ] Partial partitions/new tickers are handled correctly.
 - [ ] Session/no-work/source-failure semantics are distinct.
-- [ ] Action overlap policy and late-event limitations documented.
+- [x] Action overlap policy and late-event limitations documented.
 - [ ] No production repair/retraining performed without separate authorization.
 - [ ] Audit/ledger/delivery packet complete; W04 knows interim legacy limits.
 
@@ -234,7 +234,8 @@ rejection/retraining, not transparent reuse.
   lifecycle, availability metadata, as-of cutoff, bounded report-first repair)
   landed as `457ca6d`. **PR3 (explicit-date session scheduling, D04/F11)
   implemented-pending-review** (not closed — the read-only reviewer pass and
-  owner sign-off remain). PR4 (corporate-action overlap) not started.
+  owner sign-off remain). PR4 (corporate-action overlap) is
+  implemented-pending-review (see the PR4 section below).
 
 ### PR1 — exact scope through all five price markets + ticker-aware completeness
 
@@ -529,4 +530,99 @@ rejection/retraining, not transparent reuse.
   (2) tickers owned solely by a closed market are dropped from the feature/ML
   plan and are visible only via `scope["not_scheduled"]` plus resolver logs,
   not named per-ticker — observability residual, revisit if ops needs it.
-  **Owner sign-off pending — it closes F11.**
+  **Owner authorized the commit 2026-10-08 (`1b24c8d`), closing F11.**
+
+### PR4 — corporate-action overlap: per-ticker scoped watermarks (F14)
+
+1. **Per-ticker watermarks (F14 overlap portion).**
+   `ingestion/corporate_actions.py` replaces the market-global exclusive
+   watermark with `max_stored_ex_dates(market) -> dict[str, date]`: each
+   ticker's fetch window is `(its own max stored ex_date, ∞)` computed from
+   silver at run time. `ingest_corporate_actions` scopes the map to the
+   fetcher's effective tickers (`fetcher.tickers`), passes it to the fetcher
+   as `since_by_ticker` (never a market-global `since`), and adds
+   `since_by_ticker` to the result payload; the window edges are logged in
+   `corporate_actions_fetch_start`. `max_stored_ex_date` remains as the
+   market-wide display/compat summary (`since` payload key, unchanged
+   meaning). Consequences: (a) a newly scoped ticker has no watermark row and
+   fetches full history — never suppressed by another ticker's recent event;
+   (b) a late event/correction for a known ticker dated above its own
+   watermark is picked up even when other tickers' events pushed the old
+   global bar higher; (c) overlapping reruns stay idempotent through the
+   `(ticker, ex_date, action)` natural-key upsert (`when_matched_update_all`
+   + insert).
+2. **Fetcher seam.** `YFinanceBaseFetcher.fetch_corporate_actions` gains
+   `since_by_ticker: Mapping[str, date | None] | None`; when given it
+   replaces the global `since` bound per ticker (a ticker missing from the
+   map, or mapped to `None`, fetches full history). Honest boundary documented
+   in the seam and both user guides: events at or below a ticker's watermark
+   are **not** re-detected — there is no unlimited historical correction
+   detection (the bounded-overlap alternative was not owner-approved).
+3. **ADR-0011 boundaries untouched.** US-only support guard unchanged;
+   adjustment stays opt-in at read time; no new sources, markets, feature
+   prices, or CLI flags. The W01-pinned all-or-nothing future-ex-date batch
+   rejection is retained (test docstring updated: PR4 landed watermarks
+   only, the rejection policy is unchanged current behavior).
+- Files: `ingestion/corporate_actions.py`, `sources/base.py`, tests in
+  `tests/unit/test_corporate_actions_ingest.py` (new
+  `TestPerTickerWatermarks`, 5 tests; existing doubles updated to the new
+  fetcher seam); user docs `docs/user-guide/ingestion.md`,
+  `docs/user-guide/20260406-cli-reference.md`.
+- Regression proof: `git stash push -- src/` (restored immediately) → the
+  new/updated load-bearing tests fail on the pre-change source —
+  `test_new_ticker_full_history_not_suppressed_by_other_tickers_event`,
+  `test_late_event_within_ticker_window_is_picked_up`,
+  `test_overlapping_rerun_is_idempotent` (ImportError on
+  `max_stored_ex_dates` + per-ticker assertions) and the updated
+  `test_ingest_end_to_end_idempotent` (4 failed). Two pins pass on both
+   sources by design: the below-watermark correction non-detection pin
+  (documented limitation) and the natural-key overwrite pin (writer
+  contract).
+- Tests/gates (2026-10-09, final tree): focused
+  `tests/unit/test_corporate_actions_ingest.py -m "not network and not
+  integration"` → **23 passed**; full serial
+  `pytest -m "not network and not integration"` → **3 failed (the
+  pre-existing `test_arena.py` set, F28/W07), 1129 passed, 22 skipped,
+  92 deselected**; `-n auto -m "… and not serial"` → parity, **3 failed /
+  1129 passed / 22 skipped** (JUnit-XML verified, all three failures in
+  `tests.unit.test_arena`); `ruff check` / `ruff format --check` clean;
+  `mypy src` at the 3-error `ml/registry.py` baseline (163 files);
+  `tests/unit/test_import_boundaries.py` passes;
+  `equity catalog-generate` → **byte-identical** (md5 verified; 17 datasets /
+  52 nodes / 372 edges — no Hamilton topology/tag change); the three catalog
+  tests → **67 passed**; `mkdocs build` succeeds with only the 3 documented
+  pre-existing warnings; `git diff --check` clean.
+- Catalog: expected unchanged (no topology/tag/schema change); regeneration
+  evidence recorded above (byte-identical).
+- Compatibility/rollback: the outcome dict change is additive
+  (`since_by_ticker`); `since`/`ok`/`fetched`/`market` keep their meanings
+  and the CLI is unchanged. The injected-`fetcher` seam now calls
+  `fetch_corporate_actions(since_by_ticker=...)` — a custom fetcher
+  implementing only the old `(since)` signature must add the kwarg
+  (documented in the docstring). **Watermark state migration: none needed**
+   — there is no persisted watermark state; watermarks are derived from the
+   silver table at each run, so per-ticker windows take effect immediately
+   from existing stored rows (no lake migration). Self-healing note: events
+   previously lost between a ticker's own max and the old market-global max
+   are inside the ticker's new window and are picked up on the next run;
+   events at or below a ticker's own max remain undetectable. Rollback =
+   revert the commit; stored rows are unchanged in shape and the old
+   market-global behavior resumes.
+- Migration/repair: no production repair, migration, vacuum, or retraining;
+   temporary-lake and mocked-provider tests only; dry-run writes nothing
+   (pinned by the existing test).
+- Review/sign-off: **read-only self-review pass of the full diff completed
+  2026-10-09: READY WITH WARNINGS — 0 critical, 2 warnings, both addressed.**
+  (1) stale pinned-test docstring still pointed at the undecided W03
+  rejection policy — updated to record the outcome; (2) `AGENTS.md` gained an
+  owner-directed operational note (capture large/parallel test output to a
+  file; `--junitxml`; targeted `-x` re-runs) — outside the unit's file scope,
+  flagged for a separate commit decision. Verified in the diff: the fetcher
+  receives only per-ticker bounds (no market-global path remains),
+  idempotency holds under concurrency-free reruns, US-only/opt-in-deferred
+  semantics untouched, import boundaries intact. **Owner commit decision
+  pending — it closes the F14 overlap portion.**
+- Next unit's entry conditions: W04 requires accepted D05 (instrument
+  identity) and D06 (temporal enrichment) ADRs — next free ADR number 0015,
+  not yet accepted. W04 stops (returns ADR drafts + migration decision
+  packet) until they exist.

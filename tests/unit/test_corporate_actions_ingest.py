@@ -176,8 +176,9 @@ class TestWatermarkAndIngest:
         class _Fetcher:
             tickers = ["AAPL"]
 
-            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
-                assert since is None  # first run: full history
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
+                assert since is None  # per-ticker watermarks only; first run = full history
+                assert since_by_ticker == {"AAPL": None}
                 return pl.DataFrame(
                     [
                         ("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
@@ -195,12 +196,13 @@ class TestWatermarkAndIngest:
         assert bronze.height == 2 and silver.height == 2
         assert max_stored_ex_date("us_equity") == date(2024, 6, 1)
 
-        # Second run: watermark bounds the fetch; overlapping rows dedupe.
+        # Second run: the per-ticker watermark bounds the fetch; overlapping rows dedupe.
         class _IncrementalFetcher:
             tickers = ["AAPL"]
 
-            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
-                assert since == date(2024, 6, 1)
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
+                assert since is None  # the bound is per ticker, not market-global
+                assert since_by_ticker == {"AAPL": date(2024, 6, 1)}
                 return pl.DataFrame(
                     [("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0))],
                     schema=CORPORATE_ACTION_SCHEMA,
@@ -217,7 +219,7 @@ class TestWatermarkAndIngest:
         class _Fetcher:
             tickers = ["AAPL"]
 
-            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
                     [
                         ("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
@@ -241,7 +243,7 @@ class TestWatermarkAndIngest:
         class _Fetcher:
             tickers = ["AAPL"]
 
-            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
                     [("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0))],
                     schema=CORPORATE_ACTION_SCHEMA,
@@ -265,7 +267,7 @@ class TestWatermarkAndIngest:
         class _Fetcher:
             tickers = ["AAPL"]
 
-            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
                     [("AAPL", date(2024, 6, 1), "split", 0.0, "yahoo", datetime.now().replace(microsecond=0))],
                     schema=CORPORATE_ACTION_SCHEMA,
@@ -275,6 +277,151 @@ class TestWatermarkAndIngest:
         outcome = ingest_corporate_actions("us_equity", fetcher=_Fetcher())
         assert not outcome["ok"]
         assert not (tmp_actions_lake / "02_silver" / "corporate_actions" / "us_equity").exists()
+
+
+# ---------------------------------------------------------------------------
+# W03 PR4 / F14: per-ticker scoped watermarks (vendor-shaped yfinance mocks
+# through the real fetcher -> quality gate -> Delta write path)
+# ---------------------------------------------------------------------------
+
+
+class TestPerTickerWatermarks:
+    """F14 overlap portion (W03 PR4): the fetch bound is each ticker's own
+    max stored ``ex_date`` — never a market-global watermark."""
+
+    def test_new_ticker_full_history_not_suppressed_by_other_tickers_event(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A newly scoped ticker fetches its own full history; MSFT's 2020/2024
+        events are older than the market-global max (2026-09-01) that the
+        pre-PR4 watermark would have used, so they must still land."""
+        from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+
+        seed_factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2026, 9, 1), 0.25, 0.0)])})
+        first = ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, seed_factory, ["AAPL"]))
+        assert first["ok"] and first["fetched"] == 1
+
+        run2_factory = _FakeTickerFactory(
+            {
+                "AAPL": _actions_pandas([(date(2026, 9, 1), 0.25, 0.0)]),
+                "MSFT": _actions_pandas([(date(2020, 9, 1), 0.0, 4.0), (date(2024, 6, 1), 0.30, 0.0)]),
+            }
+        )
+        second = ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, run2_factory, ["AAPL", "MSFT"]))
+        assert second["ok"]
+        assert second["since_by_ticker"] == {"AAPL": date(2026, 9, 1), "MSFT": None}
+
+        silver = read_delta("02_silver/corporate_actions/us_equity").sort(["ticker", "ex_date", "action"])
+        assert silver.height == 3
+        msft = silver.filter(pl.col("ticker") == "MSFT")
+        assert msft["ex_date"].to_list() == [date(2020, 9, 1), date(2024, 6, 1)]
+        assert msft["action"].to_list() == ["split", "dividend"]
+
+    def test_late_event_within_ticker_window_is_picked_up(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A late older event for a known ticker, dated above *its own*
+        watermark (2024-01-01) but far below another ticker's recent event
+        (2026-09-01), is picked up; the stored value lands via the natural key."""
+        from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+
+        seed_factory = _FakeTickerFactory(
+            {
+                "AAPL": _actions_pandas([(date(2024, 1, 1), 0.25, 0.0)]),
+                "MSFT": _actions_pandas([(date(2026, 9, 1), 1.0, 0.0)]),
+            }
+        )
+        ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, seed_factory, ["AAPL", "MSFT"]))
+
+        late_factory = _FakeTickerFactory(
+            {
+                "AAPL": _actions_pandas([(date(2024, 1, 1), 0.25, 0.0), (date(2024, 6, 1), 0.30, 0.0)]),
+                "MSFT": _actions_pandas([(date(2026, 9, 1), 1.0, 0.0)]),
+            }
+        )
+        second = ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, late_factory, ["AAPL", "MSFT"]))
+        assert second["ok"] and second["fetched"] == 1
+
+        silver = read_delta("02_silver/corporate_actions/us_equity").sort(["ticker", "ex_date", "action"])
+        assert silver.height == 3
+        aapl = silver.filter(pl.col("ticker") == "AAPL").sort("ex_date")
+        assert aapl["value"].to_list() == pytest.approx([0.25, 0.30])
+        # Stable natural keys, no duplicates.
+        assert silver.select("ticker", "ex_date", "action").unique().height == 3
+
+    def test_correction_below_ticker_watermark_is_not_redetected(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Honest provider boundary (F14): the per-ticker watermark is
+        exclusive — a vendor correction at or below the ticker's own max
+        stored ``ex_date`` is *not* re-detected. Pinned as documented
+        behavior, not an endorsement; no unlimited correction detection."""
+        from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+
+        seed_factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2024, 1, 1), 0.25, 0.0), (date(2024, 6, 1), 0.50, 0.0)])})
+        ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, seed_factory, ["AAPL"]))
+
+        corrected_factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2024, 1, 1), 0.35, 0.0), (date(2024, 6, 1), 0.50, 0.0)])})
+        second = ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, corrected_factory, ["AAPL"]))
+        assert second["ok"] and second["fetched"] == 0  # both events are <= the watermark
+
+        silver = read_delta("02_silver/corporate_actions/us_equity").sort("ex_date")
+        assert silver["value"].to_list() == pytest.approx([0.25, 0.50])  # stored values unchanged
+
+    def test_overlapping_rerun_is_idempotent(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reruns with overlapping fetch windows produce the identical table:
+        stable (ticker, ex_date, action) keys, no duplicate rows, unchanged
+        values, and the per-ticker watermarks persist across runs."""
+        from equity_lake.ingestion.corporate_actions import ingest_corporate_actions, max_stored_ex_dates
+
+        seed_factory = _FakeTickerFactory(
+            {
+                "AAPL": _actions_pandas([(date(2024, 1, 1), 0.25, 0.0)]),
+                "MSFT": _actions_pandas([(date(2026, 9, 1), 1.0, 0.0)]),
+            }
+        )
+        ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, seed_factory, ["AAPL", "MSFT"]))
+
+        late_factory = _FakeTickerFactory(
+            {
+                "AAPL": _actions_pandas([(date(2024, 1, 1), 0.25, 0.0), (date(2024, 6, 1), 0.30, 0.0)]),
+                "MSFT": _actions_pandas([(date(2026, 9, 1), 1.0, 0.0)]),
+            }
+        )
+        ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, late_factory, ["AAPL", "MSFT"]))
+
+        # Per-ticker watermarks persist per ticker (the market-global notion is gone).
+        assert max_stored_ex_dates("us_equity") == {"AAPL": date(2024, 6, 1), "MSFT": date(2026, 9, 1)}
+
+        before = read_delta("02_silver/corporate_actions/us_equity").sort(["ticker", "ex_date", "action"])
+        rerun = ingest_corporate_actions("us_equity", fetcher=_make_fetcher(monkeypatch, late_factory, ["AAPL", "MSFT"]))
+        assert rerun["ok"] and rerun["fetched"] == 0  # every event is <= its ticker's watermark
+
+        after = read_delta("02_silver/corporate_actions/us_equity").sort(["ticker", "ex_date", "action"])
+        assert after.height == before.height == 3
+        assert after.select("ticker", "ex_date", "action", "value").equals(before.select("ticker", "ex_date", "action", "value"))
+
+    def test_natural_key_upsert_overwrites_cleanly(self, tmp_actions_lake: object) -> None:
+        """When a fetched frame re-delivers an already-stored natural key with
+        a corrected value (e.g. an out-of-band redelivery inside the window),
+        the upsert overwrites it — one row per (ticker, ex_date, action)."""
+        from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+
+        class _Fetcher:
+            tickers = ["AAPL"]
+
+            def __init__(self, rows: list[tuple[str, date, str, float]]) -> None:
+                self._rows = rows
+
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
+                return _ca_frame(self._rows)
+
+        assert ingest_corporate_actions("us_equity", fetcher=_Fetcher([("AAPL", date(2024, 6, 1), "dividend", 0.30)]))["ok"]
+        # Redelivery with a corrected value plus a same-day split.
+        outcome = ingest_corporate_actions(
+            "us_equity",
+            fetcher=_Fetcher([("AAPL", date(2024, 6, 1), "dividend", 0.35), ("AAPL", date(2024, 6, 1), "split", 0.5)]),
+        )
+        assert outcome["ok"] and outcome["fetched"] == 2
+
+        silver = read_delta("02_silver/corporate_actions/us_equity").sort("action")
+        assert silver.height == 2
+        assert silver["action"].to_list() == ["dividend", "split"]
+        assert silver["value"].to_list() == pytest.approx([0.35, 0.5])  # corrected value overwrote 0.30
 
 
 # ---------------------------------------------------------------------------
@@ -345,9 +492,9 @@ class TestSimultaneousEventRoundTrip:
     def test_future_ex_date_blocks_whole_batch_current_behavior(self, tmp_actions_lake: object) -> None:
         """Pinned behavior (W01): the pointblank schema rejects any future
         ex_date and the all-or-nothing quality gate discards the whole batch,
-        including valid historical rows. Changing this rejection policy is
-        W03's decision (F14 overlap/watermark policy) — this test documents
-        the current contract, not an endorsement."""
+        including valid historical rows. W03 PR4 kept this rejection policy
+        (it landed per-ticker watermarks only) — this test documents the
+        current contract, not an endorsement."""
         from datetime import timedelta
 
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
@@ -355,7 +502,7 @@ class TestSimultaneousEventRoundTrip:
         class _Fetcher:
             tickers = ["AAPL"]
 
-            def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+            def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
                     [
                         ("AAPL", date.today() - timedelta(days=30), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),

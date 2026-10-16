@@ -3,7 +3,15 @@
 Unlike the daily price markets, corporate actions have no per-trading-date
 fetch contract: new rows appear when a company announces an ex-date. This
 module owns the end-to-end route (fetch → bronze → silver) and the
-``since`` watermark derived from the max stored ``ex_date``.
+per-ticker ``since`` watermarks derived from each ticker's max stored
+``ex_date`` (W03 PR4/F14: a ticker's fetch window depends only on its own
+history, never on a recent event on a different ticker).
+
+Outside a ticker's watermarked window (``ex_date <= watermark``) vendor
+corrections and late older events are not re-detected — the watermark is
+exclusive and no bounded overlap is implemented. The window edges are
+logged and returned in the ingest result payload instead of being promised
+away.
 
 Not part of ``VALID_MARKETS``: the daily orchestrator never fetches this
 dataset; it runs through the ``equity ingest corporate-actions`` command or
@@ -16,6 +24,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
+import polars as pl
 import structlog
 
 from equity_lake.core.paths import canonical_market
@@ -36,22 +45,35 @@ def corporate_actions_table(market: str, layer: str = "bronze") -> str:
     return f"{root.parent.name}/{root.name}/{canonical_market(market)}"
 
 
-def max_stored_ex_date(market: str) -> date | None:
-    """Watermark: max ``ex_date`` currently stored in the silver table.
+def max_stored_ex_dates(market: str) -> dict[str, date]:
+    """Per-ticker watermarks: max stored ``ex_date`` for each ticker (silver).
 
-    ``None`` when the table does not exist yet (first run fetches full
-    history). Bronze is intentionally not consulted — silver is the read
-    surface for adjustment.
+    A ticker's incremental fetch window is ``(watermark, ∞)`` — events at or
+    below it are not re-fetched (exclusive bound). Tickers absent from the
+    mapping have no stored history and fetch in full. ``{}`` when the table
+    does not exist yet (first run fetches full history). Bronze is
+    intentionally not consulted — silver is the read surface for adjustment.
     """
     from equity_lake.storage.delta import DeltaReadError, read_delta
 
     try:
         df = read_delta(corporate_actions_table(market, "silver"))
     except DeltaReadError:
-        return None
+        return {}
     if df.is_empty():
-        return None
-    return cast(date, df["ex_date"].max())
+        return {}
+    grouped = df.group_by("ticker").agg(pl.col("ex_date").max())
+    return dict(zip(grouped["ticker"].to_list(), grouped["ex_date"].to_list(), strict=True))
+
+
+def max_stored_ex_date(market: str) -> date | None:
+    """Market-wide max stored ``ex_date`` (silver) — summary/compat value.
+
+    The fetch path no longer bounds fetches by this market-global value
+    (W03 PR4/F14); per-ticker windows come from :func:`max_stored_ex_dates`.
+    """
+    watermarks = max_stored_ex_dates(market)
+    return max(watermarks.values()) if watermarks else None
 
 
 def ingest_corporate_actions(
@@ -74,11 +96,16 @@ def ingest_corporate_actions(
         tickers: Explicit ticker list; defaults to the fetcher's configured
             tickers for the market.
         dry_run: Fetch (unless ``fetcher`` is injected) but write nothing.
-        fetcher: Injectable fetcher exposing ``fetch_corporate_actions``;
-            overrides registry construction (tests, backfills).
+        fetcher: Injectable fetcher exposing
+            ``fetch_corporate_actions(since, since_by_ticker)``; overrides
+            registry construction (tests, backfills). Per-ticker watermarks
+            are scoped to ``fetcher.tickers`` when that attribute exists.
 
     Returns:
-        Outcome dict: ``ok``, ``fetched``, ``since``, ``market``.
+        Outcome dict: ``ok``, ``fetched``, ``since`` (market-wide max stored
+        ``ex_date``, display summary), ``since_by_ticker`` (the per-ticker
+        exclusive watermarks that bounded the fetch; ``None`` per ticker =
+        full history), ``market``.
     """
     from equity_lake.core.config import get_settings
     from equity_lake.ingestion.router import MARKET_REGISTRY
@@ -102,14 +129,29 @@ def ingest_corporate_actions(
             explicit_tickers=tickers,
         )
 
-    since = max_stored_ex_date(market)
-    logger.info("corporate_actions_fetch_start", market=market, since=since, tickers=len(getattr(fetcher, "tickers", []) or []))
+    # W03 PR4/F14: per-ticker scoped watermarks. The fetch bound for each
+    # ticker is its own max stored ex_date — a recent event on a different
+    # ticker cannot suppress a newly scoped ticker's history, and a late
+    # event above a ticker's own watermark is picked up. Events at or below
+    # a ticker's watermark are not re-detected (exclusive bound); the edges
+    # are logged and returned so ops can see the window.
+    watermarks = max_stored_ex_dates(market)
+    effective_tickers = list(getattr(fetcher, "tickers", None) or [])
+    since_by_ticker: dict[str, date | None] = {t: watermarks.get(t) for t in effective_tickers}
+    since = max(watermarks.values()) if watermarks else None
+    logger.info(
+        "corporate_actions_fetch_start",
+        market=market,
+        since=since,
+        since_by_ticker=since_by_ticker,
+        tickers=len(effective_tickers),
+    )
 
-    df = fetcher.fetch_corporate_actions(since=since)
+    df = fetcher.fetch_corporate_actions(since_by_ticker=since_by_ticker)
 
     if df.is_empty():
         logger.info("corporate_actions_no_new_events", market=market, since=since)
-        return {"ok": True, "fetched": 0, "since": since, "market": market}
+        return {"ok": True, "fetched": 0, "since": since, "market": market, "since_by_ticker": since_by_ticker}
 
     trading_date = date.today()
     bronze_ok = upsert_dataset(
@@ -129,14 +171,14 @@ def ingest_corporate_actions(
 
     if dry_run:
         logger.info("corporate_actions_dry_run", market=market, rows=df.height)
-        return {"ok": True, "fetched": df.height, "since": since, "market": market}
+        return {"ok": True, "fetched": df.height, "since": since, "market": market, "since_by_ticker": since_by_ticker}
 
     ok = bool(bronze_ok and silver_ok)
     if not ok:
         logger.error("corporate_actions_write_failed", market=market, bronze=bronze_ok, silver=silver_ok)
     else:
         logger.info("corporate_actions_ingested", market=market, rows=df.height, since=since)
-    return {"ok": ok, "fetched": df.height, "since": since, "market": market}
+    return {"ok": ok, "fetched": df.height, "since": since, "market": market, "since_by_ticker": since_by_ticker}
 
 
-__all__ = ["corporate_actions_table", "ingest_corporate_actions", "max_stored_ex_date"]
+__all__ = ["corporate_actions_table", "ingest_corporate_actions", "max_stored_ex_date", "max_stored_ex_dates"]

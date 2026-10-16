@@ -268,11 +268,20 @@ dotenvx run -- uv run equity financials --tickers AAPL,MSFT
 
 Fetch dividends and splits (yfinance) into the corporate-actions dataset
 (ADR-0011). Event-driven — there is no per-date fetch: the run is incremental
-from the max stored `ex_date` (full history on first run), and the same
+with **per-ticker watermarks** (W03/F14), each ticker fetching only events
+with `ex_date` after its own max stored value (full history on a ticker's
+first run, never suppressed by another ticker's recent event). The same
 quality-gated frame lands in `01_bronze/corporate_actions/<market>` and
 `02_silver/corporate_actions/<market>`, partitioned by `ex_date`, upserted on
-`(ticker, ex_date, action)`. yfinance split multipliers are converted to the
-lake's old/new share-ratio convention (`2.0` → `0.5` for a 2-for-1 split).
+`(ticker, ex_date, action)` — overlapping reruns are idempotent. yfinance
+split multipliers are converted to the lake's old/new share-ratio convention
+(`2.0` → `0.5` for a 2-for-1 split).
+
+Boundary: the watermark is exclusive, so vendor corrections at or below a
+ticker's own max stored `ex_date` are **not** re-detected — there is no
+unlimited historical correction detection. The per-ticker window edges are
+logged (`corporate_actions_fetch_start`) and returned in the ingest result
+payload (`since_by_ticker`).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import urllib.error
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
@@ -403,15 +403,27 @@ class YFinanceBaseFetcher(MarketDataFetcher):
 
         return cast(pl.DataFrame, self._retry_on_failure(_fetch))
 
-    def fetch_corporate_actions(self, since: date | None = None) -> pl.DataFrame:
+    def fetch_corporate_actions(
+        self,
+        since: date | None = None,
+        since_by_ticker: Mapping[str, date | None] | None = None,
+    ) -> pl.DataFrame:
         """Fetch dividends and splits per ticker (ADR-0011).
 
         Uses ``Ticker.actions`` per ticker — event-driven, so there is no
-        per-date fetch contract. ``since`` is an exclusive lower bound on
-        ``ex_date`` (pass the max stored ex-date for incremental runs; ``None``
-        fetches full history). yfinance stores splits as the share multiplier
-        (``2.0`` = 2-for-1); the lake convention (ADR-0011) is the old/new
-        share ratio (``0.5``), so the value is inverted here.
+        per-date fetch contract. The bound is an exclusive lower bound on
+        ``ex_date``: ``since`` applies to every ticker, while
+        ``since_by_ticker`` (W03 PR4/F14), when given, replaces it with
+        per-ticker watermarks — a ticker missing from the mapping (or mapped
+        to ``None``) fetches full history, so a recent event on another
+        ticker cannot suppress it. ``None`` everywhere fetches full history.
+        yfinance stores splits as the share multiplier (``2.0`` = 2-for-1);
+        the lake convention (ADR-0011) is the old/new share ratio (``0.5``),
+        so the value is inverted here.
+
+        Honest limitation: events at or below a ticker's bound are not
+        re-fetched, so vendor corrections there are not detectable through
+        this seam; callers surface the window edges.
 
         Vendor layout (W01/F13): yfinance ≥ 0.2.5x emits the split column as
         ``Stock Splits``; the legacy ``Splits`` name is accepted explicitly.
@@ -420,7 +432,7 @@ class YFinanceBaseFetcher(MarketDataFetcher):
 
         Returns:
             Frame with ``CORPORATE_ACTION_COLUMNS``; empty when a ticker has
-            no recorded actions or none after ``since``. ``ingested_at`` is
+            no recorded actions or none after its bound. ``ingested_at`` is
             naive UTC matching ``CORPORATE_ACTION_SCHEMA``.
         """
 
@@ -442,8 +454,9 @@ class YFinanceBaseFetcher(MarketDataFetcher):
                 frame = frame.with_columns(pl.col(date_col).cast(pl.Date).alias("ex_date"))
 
                 events = self._expand_action_events(frame, ticker)
-                if since is not None:
-                    events = events.filter(pl.col("ex_date") > since)
+                bound = since_by_ticker.get(ticker) if since_by_ticker is not None else since
+                if bound is not None:
+                    events = events.filter(pl.col("ex_date") > bound)
                 if events.is_empty():
                     continue
                 rows.append(
