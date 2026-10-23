@@ -4,6 +4,14 @@ from __future__ import annotations
 
 import polars as pl
 
+# Shared Gold feature contract versions (ADR-0015).
+FEATURE_SCHEMA_VERSION = 7
+
+# Canonical shared-table identity (ADR-0016). Bronze OHLCV remains unchanged;
+# identity is added only when explicit source provenance is available.
+INSTRUMENT_IDENTITY_COLUMNS = ["market", "mic", "symbol"]
+INSTRUMENT_DATE_KEY_COLUMNS = [*INSTRUMENT_IDENTITY_COLUMNS, "date"]
+
 STANDARD_COLUMNS = [
     "ticker",
     "date",
@@ -13,6 +21,14 @@ STANDARD_COLUMNS = [
     "close",
     "volume",
     "adj_close",
+    # Optional provider/current-config identity metadata is propagated when
+    # available; ingestion write boundaries reject unidentified new price rows.
+    "market",
+    "mic",
+    "symbol",
+    "exchange",
+    "identity_schema_version",
+    "identity_provenance",
 ]
 
 NEWS_COLUMNS = [
@@ -59,12 +75,28 @@ CORPORATE_ACTION_COLUMNS = [
     "value",
     "source",
     "ingested_at",
+    # Source publication/availability clock; nullable means unknown and is
+    # unusable for a strict point-in-time adjustment (ADR-0015).
+    "source_available_at",
 ]
-
+CORPORATE_ACTION_REQUIRED_COLUMNS = ["ticker", "ex_date", "action", "value", "source", "ingested_at"]
 CORPORATE_ACTION_TYPES = ("dividend", "split")
 
-# Exact dtypes for an empty corporate-actions frame (ADR-0011). ingested_at is
-# naive UTC — Delta/Polars write path uses tz-naive datetimes throughout.
+CORPORATE_ACTION_COVERAGE_COLUMNS = [
+    "market",
+    "mic",
+    "symbol",
+    "source",
+    "coverage_start",
+    "coverage_end",
+    "source_available_at",
+    "source_valid_until",
+    "coverage_status",
+    "coverage_schema_version",
+]
+
+# The legacy ingestion timestamp remains naive UTC. A source clock is stored as
+# timezone-aware UTC and is never synthesized from ingestion time.
 CORPORATE_ACTION_SCHEMA: dict[str, pl.DataType] = {
     "ticker": pl.String(),
     "ex_date": pl.Date(),
@@ -72,6 +104,20 @@ CORPORATE_ACTION_SCHEMA: dict[str, pl.DataType] = {
     "value": pl.Float64(),
     "source": pl.String(),
     "ingested_at": pl.Datetime("us"),
+    "source_available_at": pl.Datetime("us", "UTC"),
+}
+
+CORPORATE_ACTION_COVERAGE_SCHEMA: dict[str, pl.DataType] = {
+    "market": pl.String(),
+    "mic": pl.String(),
+    "symbol": pl.String(),
+    "source": pl.String(),
+    "coverage_start": pl.Date(),
+    "coverage_end": pl.Date(),
+    "source_available_at": pl.Datetime("us", "UTC"),
+    "source_valid_until": pl.Datetime("us", "UTC"),
+    "coverage_status": pl.String(),
+    "coverage_schema_version": pl.Int8(),
 }
 
 MACRO_INDICATOR_CONFIG = {
@@ -183,8 +229,14 @@ __all__ = [
     "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
     "CORPORATE_ACTION_COLUMNS",
+    "CORPORATE_ACTION_COVERAGE_COLUMNS",
+    "CORPORATE_ACTION_COVERAGE_SCHEMA",
+    "CORPORATE_ACTION_REQUIRED_COLUMNS",
     "CORPORATE_ACTION_SCHEMA",
     "CORPORATE_ACTION_TYPES",
+    "FEATURE_SCHEMA_VERSION",
+    "INSTRUMENT_DATE_KEY_COLUMNS",
+    "INSTRUMENT_IDENTITY_COLUMNS",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",
     "NEWS_COLUMNS",

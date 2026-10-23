@@ -8,25 +8,26 @@ engine level via ``entry_date > entry_sig_date``.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
+from pathlib import Path
+from runpy import run_path
 
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine
-from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy
-from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine  # type: ignore[import-untyped]
+from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy  # type: ignore[import-untyped]
+from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+
+_pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
+prepare_preloaded_backtest_data = _pit_fixtures["prepare_preloaded_backtest_data"]
+us_equity_session_dates = _pit_fixtures["us_equity_session_dates"]
 
 
 def _frame(closes: list[float], ticker: str = "TEST", start: date = date(2025, 1, 1)) -> pl.DataFrame:
     """Long OHLCV frame from a close series (one row per business day)."""
-    d0 = start
-    dates = []
-    d = d0
-    while len(dates) < len(closes):
-        if d.weekday() < 5:
-            dates.append(d)
-        d += timedelta(days=1)
+    dates = us_equity_session_dates(start, len(closes))
     return pl.DataFrame(
         {
             "ticker": [ticker] * len(closes),
@@ -220,14 +221,15 @@ def test_engine_executes_entry_the_bar_after_the_signal() -> None:
     """The engine must not trade the signal bar itself: entry_date > entry_sig_date."""
     closes = [100.0] * 25 + [100.0 + 1.0 * i for i in range(1, 30)] + [129.0 - 1.5 * i for i in range(1, 30)]
     data = _frame(closes)
+    dates = data["date"].to_list()
 
     engine = VectorBacktestEngine(
         strategy=SMACrossoverStrategy(params={"fast_period": 5, "slow_period": 20}),
         tickers=["TEST"],
-        start_date=data["date"].min(),
-        end_date=data["date"].max(),
+        start_date=dates[0],
+        end_date=dates[-1],
         initial_cash=10_000.0,
-        preloaded_data=data,
+        preloaded_data=prepare_preloaded_backtest_data(data, InstrumentKey(market="us_equity", mic="XNAS", symbol="TEST")),
     )
     result = engine.run()
 

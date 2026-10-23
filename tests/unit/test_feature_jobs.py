@@ -3,28 +3,42 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
+import deltalake
 import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.features import NoFeatureHistoryError, run_feature_job
+from equity_lake.features import NoFeatureHistoryError, run_feature_job  # type: ignore[import-untyped]
+from equity_lake.features import engineering as engineering_module
+from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
 
 
 def _fake_output_window(today: date) -> pl.DataFrame:
     """A non-empty frame whose single row lands inside the requested output window."""
-    return pl.DataFrame({"ticker": ["AAPL"], "date": [today]})
+    return pl.DataFrame(
+        {
+            "market": ["us_equity"],
+            "mic": ["XNAS"],
+            "symbol": ["AAPL"],
+            "identity_schema_version": [1],
+            "ticker": ["AAPL"],
+            "date": [today],
+        }
+    )
 
 
-def _patch_engineer(monkeypatch, frame: pl.DataFrame) -> None:
+def _patch_engineer(monkeypatch: pytest.MonkeyPatch, frame: pl.DataFrame) -> None:
     """Stub ``_load_feature_engineer`` to return an engineer yielding *frame*."""
 
     class _FakeEngineer:
-        def generate_features(self, *_, **__):
+        def generate_features(self, *_: object, **__: object) -> pl.DataFrame:
             return frame
 
-        def close(self):
+        def close(self) -> None:
             return None
 
     monkeypatch.setattr(
@@ -34,7 +48,7 @@ def _patch_engineer(monkeypatch, frame: pl.DataFrame) -> None:
     )
 
 
-def test_run_feature_job_raises_when_write_returns_false(monkeypatch):
+def test_run_feature_job_raises_when_write_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
     """Regression test (P0): a ``False`` feature-write result must fail the job.
 
     Previously ``run_feature_job`` discarded the ``upsert_dataset``
@@ -59,7 +73,7 @@ def test_run_feature_job_raises_when_write_returns_false(monkeypatch):
     mock_write.assert_called_once()
 
 
-def test_run_feature_job_succeeds_when_write_returns_true(monkeypatch):
+def test_run_feature_job_succeeds_when_write_returns_true(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sanity check: a successful write returns the filtered frame."""
     today = date(2024, 1, 2)
     _patch_engineer(monkeypatch, _fake_output_window(today))
@@ -107,6 +121,7 @@ def _price_frame(ticker: str, days: list[date], *, close_null: bool = False) -> 
     open_ = [value - 0.5 if value is not None else None for value in close]
     return pl.DataFrame(
         {
+            "mic": ["XNAS"] * len(days),
             "ticker": [ticker] * len(days),
             "date": days,
             "open": open_,
@@ -119,7 +134,7 @@ def _price_frame(ticker: str, days: list[date], *, close_null: bool = False) -> 
 
 
 @pytest.fixture()
-def price_lake(tmp_path, monkeypatch) -> dict[str, object]:
+def price_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     """Temporary bronze price lake with one ticker per exclusion reason."""
     all_days = _business_days(date(2024, 1, 1), 90)
     output_day = all_days[-1]
@@ -138,32 +153,33 @@ def price_lake(tmp_path, monkeypatch) -> dict[str, object]:
     return {"output_day": output_day}
 
 
-def test_run_feature_job_reports_requested_produced_missing(price_lake):
+def test_run_feature_job_reports_requested_produced_missing(price_lake: dict[str, object]) -> None:
     """W02/F07: every requested ticker that does not reach the output window is
     reported with a stable reason code; produced scope is explicit."""
     output_day = price_lake["output_day"]
     assert isinstance(output_day, date)
     diagnostics: dict[str, object] = {}
 
-    result = run_feature_job(
-        tickers=["AAPL", "MSFT", "TSLA", "GOOGL", "NVDA"],
-        output_start_date=output_day,
-        output_end_date=output_day,
-        diagnostics=diagnostics,
-    )
+    with pytest.raises(NoFeatureHistoryError):
+        run_feature_job(
+            tickers=["AAPL", "MSFT", "TSLA", "GOOGL", "NVDA"],
+            output_start_date=output_day,
+            output_end_date=output_day,
+            diagnostics=diagnostics,
+        )
 
-    assert result["ticker"].drop_nulls().unique().to_list() == ["AAPL"]
     assert diagnostics["requested"] == ["AAPL", "MSFT", "TSLA", "GOOGL", "NVDA"]
-    assert diagnostics["produced"] == ["AAPL"]
+    assert diagnostics["produced"] == []
     assert diagnostics["missing"] == {
+        "AAPL": "action_coverage_unavailable",
         "MSFT": "insufficient_history",
-        "TSLA": "missing_output_bar",
-        "GOOGL": "invalid_output",
+        "TSLA": "action_coverage_unavailable",
+        "GOOGL": "action_coverage_unavailable",
         "NVDA": "no_price_rows",
     }
 
 
-def test_run_feature_job_reports_coverage_when_output_window_is_empty(price_lake):
+def test_run_feature_job_reports_coverage_when_output_window_is_empty(price_lake: dict[str, object]) -> None:
     """W02/F07: the missing-history error path still reports per-ticker scope and
     reasons (the pipeline records these on the failed/recovery stage)."""
     output_day = price_lake["output_day"]
@@ -184,17 +200,16 @@ def test_run_feature_job_reports_coverage_when_output_window_is_empty(price_lake
     assert diagnostics["missing"] == {"MSFT": "insufficient_history", "NVDA": "no_price_rows"}
 
 
-def test_run_feature_job_compute_failure_is_invalid_output(price_lake, monkeypatch):
-    """W02/F07: a ticker whose per-ticker compute raises is reported as
-    invalid_output (isolated) while sibling tickers still produce."""
-    from equity_lake.features.pipeline import FeaturePipeline
+def test_run_feature_job_does_not_compute_without_action_coverage(price_lake: dict[str, object], monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unproven action history prevents technical computation and output."""
+    from equity_lake.features.pipeline import FeaturePipeline  # type: ignore[import-untyped]
 
     original = FeaturePipeline.compute_technical
 
-    def flaky_compute(self, frame, include_target=True):
+    def flaky_compute(self: FeaturePipeline, frame: pl.DataFrame, include_target: bool = True) -> pl.DataFrame:
         if frame["ticker"][0] == "TSLA":
             raise ValueError("bad indicator input")
-        return original(self, frame, include_target=include_target)
+        return cast(pl.DataFrame, original(self, frame, include_target=include_target))
 
     monkeypatch.setattr(FeaturePipeline, "compute_technical", flaky_compute)
 
@@ -202,20 +217,20 @@ def test_run_feature_job_compute_failure_is_invalid_output(price_lake, monkeypat
     assert isinstance(output_day, date)
     diagnostics: dict[str, object] = {}
 
-    result = run_feature_job(
-        tickers=["AAPL", "TSLA"],
-        output_start_date=output_day,
-        output_end_date=output_day,
-        diagnostics=diagnostics,
-    )
+    with pytest.raises(NoFeatureHistoryError):
+        run_feature_job(
+            tickers=["AAPL", "TSLA"],
+            output_start_date=output_day,
+            output_end_date=output_day,
+            diagnostics=diagnostics,
+        )
 
-    assert result["ticker"].drop_nulls().unique().to_list() == ["AAPL"]
-    assert diagnostics["missing"] == {"TSLA": "invalid_output"}
+    assert diagnostics["produced"] == []
+    assert diagnostics["missing"] == {"AAPL": "action_coverage_unavailable", "TSLA": "action_coverage_unavailable"}
 
 
-def test_run_feature_job_missing_output_bar_is_not_no_price_rows(price_lake):
-    """W02/F07: TSLA has 89 price rows (so it is not ``no_price_rows``) yet no bar
-    on the requested output date — a distinct, actionable reason."""
+def test_run_feature_job_marks_missing_action_coverage_before_output_bar(price_lake: dict[str, object]) -> None:
+    """Coverage uncertainty is reported before relying on an unadjusted bar."""
     output_day = price_lake["output_day"]
     assert isinstance(output_day, date)
     diagnostics: dict[str, object] = {}
@@ -228,4 +243,90 @@ def test_run_feature_job_missing_output_bar_is_not_no_price_rows(price_lake):
             diagnostics=diagnostics,
         )
 
-    assert diagnostics["missing"] == {"TSLA": "missing_output_bar"}
+    assert diagnostics["missing"] == {"TSLA": "action_coverage_unavailable"}
+
+
+@pytest.mark.parametrize("storage", ["delta", "parquet"])
+def test_price_reader_pushes_symbol_membership_before_materialization(
+    storage: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both local scan paths send the ticker predicate to the scanner first."""
+    symbols = ["TARGET", *(f"OTHER_{index:04d}" for index in range(3_000))]
+    frame = pl.DataFrame(
+        {
+            "ticker": symbols,
+            "symbol": symbols,
+            "mic": ["XNAS"] * len(symbols),
+            "date": [date(2024, 1, 2)] * len(symbols),
+            "open": [10.0] * len(symbols),
+            "high": [11.0] * len(symbols),
+            "low": [9.0] * len(symbols),
+            "close": [10.5] * len(symbols),
+            "volume": [1_000.0] * len(symbols),
+        }
+    )
+    source = tmp_path / storage
+    source.mkdir()
+    if storage == "delta":
+        write_deltalake(str(source), frame.to_arrow(), mode="overwrite")
+    else:
+        frame.write_parquet(source / "prices.parquet")
+
+    engineer = FeatureEngineer.__new__(FeatureEngineer)
+    engineer.market_sources = [("us_equity", source)]
+    observed_filters: list[str] = []
+
+    if storage == "delta":
+        real_delta_table: Any = deltalake.DeltaTable
+
+        class _RecordingDeltaTable:
+            @staticmethod
+            def is_deltatable(path: str) -> bool:
+                return bool(real_delta_table.is_deltatable(path))
+
+            def __init__(self, path: str) -> None:
+                self.table: Any = real_delta_table(path)
+
+            def schema(self) -> Any:
+                return self.table.schema()
+
+            def to_pyarrow_table(self, **kwargs: Any) -> Any:
+                filters: list[tuple[str, str, Any]] = kwargs["filters"]
+                observed_filters.extend(f"{column} {operator} {value}" for column, operator, value in filters)
+                assert any("symbol" in predicate and "in" in predicate and "TARGET" in predicate for predicate in observed_filters)
+                return self.table.to_pyarrow_table(**kwargs)
+
+        monkeypatch.setattr(deltalake, "DeltaTable", _RecordingDeltaTable)
+    else:
+        real_scan_parquet = pl.scan_parquet
+
+        class _RecordingLazyFrame:
+            def __init__(self, frame: pl.LazyFrame) -> None:
+                self.frame = frame
+
+            def collect_schema(self) -> pl.Schema:
+                return self.frame.collect_schema()
+
+            def filter(self, *predicates: Any, **constraints: Any) -> _RecordingLazyFrame:
+                observed_filters.extend(str(predicate) for predicate in predicates)
+                self.frame = self.frame.filter(*predicates, **constraints)
+                return self
+
+            def select(self, *expressions: Any, **named_expressions: Any) -> _RecordingLazyFrame:
+                self.frame = self.frame.select(*expressions, **named_expressions)
+                return self
+
+            def collect(self, *args: Any, **kwargs: Any) -> pl.DataFrame:
+                assert any("symbol" in predicate and "TARGET" in predicate for predicate in observed_filters)
+                return cast(pl.DataFrame, self.frame.collect(*args, **kwargs))
+
+        def scan_parquet(*args: Any, **kwargs: Any) -> _RecordingLazyFrame:
+            return _RecordingLazyFrame(real_scan_parquet(*args, **kwargs))
+
+        monkeypatch.setattr(engineering_module.pl, "scan_parquet", scan_parquet)
+
+    result = engineer._load_price_rows(["TARGET"], date(2024, 1, 2), date(2024, 1, 2))
+    assert result["symbol"].to_list() == ["TARGET"]
+    assert result.height == 1

@@ -7,13 +7,18 @@ via the call-time path resolution in :func:`equity_lake.core.paths.corporate_act
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA
-from equity_lake.storage.delta import merge_delta, read_delta
+from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA  # type: ignore[import-untyped]
+from equity_lake.storage.delta import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    merge_delta,
+    read_delta,
+)
 
 # ---------------------------------------------------------------------------
 # Fetcher mapping (mocked yfinance)
@@ -56,8 +61,10 @@ def _actions_pandas(rows: list[tuple[date, float, float]], *, split_column: str 
     )
 
 
-def _make_fetcher(monkeypatch: pytest.MonkeyPatch, factory: _FakeTickerFactory, tickers: list[str]):
-    from equity_lake.sources.base import YFinanceBaseFetcher
+def _make_fetcher(monkeypatch: pytest.MonkeyPatch, factory: _FakeTickerFactory, tickers: list[str]) -> Any:
+    from equity_lake.sources.base import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        YFinanceBaseFetcher,
+    )
 
     monkeypatch.setattr("equity_lake.sources.base.yf.Ticker", factory)
     return YFinanceBaseFetcher(tickers=tickers, retry_attempts=1, retry_delay=0.0)
@@ -75,6 +82,7 @@ class TestFetchCorporateActions:
         assert out["value"].to_list() == pytest.approx([0.25, 0.25])
         assert out["source"].unique().to_list() == ["yahoo"]
         assert out["ingested_at"].is_not_null().all()
+        assert out["source_available_at"].null_count() == out.height
 
     def test_vendor_stock_splits_layout_recognized(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """F13/W01: split-only events in the production ``Stock Splits`` layout
@@ -152,11 +160,11 @@ class TestFetchCorporateActions:
 
 
 @pytest.fixture()
-def tmp_actions_lake(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> object:
+def tmp_actions_lake(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Point the corporate-actions dataset roots and the delta lake at a tmp dir."""
     tmp = tmp_path_factory.mktemp("lake")
-    import equity_lake.core.paths as paths
-    import equity_lake.storage.delta as delta
+    import equity_lake.core.paths as paths  # type: ignore[import-untyped]
+    import equity_lake.storage.delta as delta  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
 
     monkeypatch.setattr(paths, "BRONZE_CORPORATE_ACTIONS_DIR", tmp / "01_bronze" / "corporate_actions")
     monkeypatch.setattr(paths, "SILVER_CORPORATE_ACTIONS_DIR", tmp / "02_silver" / "corporate_actions")
@@ -165,12 +173,14 @@ def tmp_actions_lake(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.T
 
 
 class TestWatermarkAndIngest:
-    def test_max_stored_ex_date_missing_table(self, tmp_actions_lake: object) -> None:
-        from equity_lake.ingestion.corporate_actions import max_stored_ex_date
+    def test_max_stored_ex_date_missing_table(self, tmp_actions_lake: Path) -> None:
+        from equity_lake.ingestion.corporate_actions import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+            max_stored_ex_date,
+        )
 
         assert max_stored_ex_date("us_equity") is None
 
-    def test_ingest_end_to_end_idempotent(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_ingest_end_to_end_idempotent(self, tmp_actions_lake: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions, max_stored_ex_date
 
         class _Fetcher:
@@ -181,8 +191,8 @@ class TestWatermarkAndIngest:
                 assert since_by_ticker == {"AAPL": None}
                 return pl.DataFrame(
                     [
-                        ("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
-                        ("AAPL", date(2020, 9, 1), "split", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
+                        ("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0), None),
+                        ("AAPL", date(2020, 9, 1), "split", 0.25, "yahoo", datetime.now().replace(microsecond=0), None),
                     ],
                     schema=CORPORATE_ACTION_SCHEMA,
                     orient="row",
@@ -204,7 +214,7 @@ class TestWatermarkAndIngest:
                 assert since is None  # the bound is per ticker, not market-global
                 assert since_by_ticker == {"AAPL": date(2024, 6, 1)}
                 return pl.DataFrame(
-                    [("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0))],
+                    [("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0), None)],
                     schema=CORPORATE_ACTION_SCHEMA,
                     orient="row",
                 )
@@ -213,7 +223,7 @@ class TestWatermarkAndIngest:
         assert second["ok"]
         assert read_delta("01_bronze/corporate_actions/us_equity").height == 2
 
-    def test_ingest_partitioned_by_ex_date(self, tmp_actions_lake: object) -> None:
+    def test_ingest_partitioned_by_ex_date(self, tmp_actions_lake: Path) -> None:
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
 
         class _Fetcher:
@@ -222,8 +232,8 @@ class TestWatermarkAndIngest:
             def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
                     [
-                        ("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
-                        ("AAPL", date(2020, 9, 1), "split", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
+                        ("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0), None),
+                        ("AAPL", date(2020, 9, 1), "split", 0.25, "yahoo", datetime.now().replace(microsecond=0), None),
                     ],
                     schema=CORPORATE_ACTION_SCHEMA,
                     orient="row",
@@ -237,7 +247,7 @@ class TestWatermarkAndIngest:
         }
         assert part_dirs == {"2020-09-01", "2024-06-01"}
 
-    def test_dry_run_writes_nothing(self, tmp_actions_lake: object) -> None:
+    def test_dry_run_writes_nothing(self, tmp_actions_lake: Path) -> None:
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
 
         class _Fetcher:
@@ -245,7 +255,7 @@ class TestWatermarkAndIngest:
 
             def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
-                    [("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0))],
+                    [("AAPL", date(2024, 6, 1), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0), None)],
                     schema=CORPORATE_ACTION_SCHEMA,
                     orient="row",
                 )
@@ -254,13 +264,13 @@ class TestWatermarkAndIngest:
         assert outcome["ok"] and outcome["fetched"] == 1
         assert not (tmp_actions_lake / "01_bronze" / "corporate_actions" / "us_equity").exists()
 
-    def test_unsupported_market_rejected(self, tmp_actions_lake: object) -> None:
+    def test_unsupported_market_rejected(self, tmp_actions_lake: Path) -> None:
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
 
         outcome = ingest_corporate_actions("us_news")
         assert not outcome["ok"]
 
-    def test_quality_gate_blocks_bad_rows(self, tmp_actions_lake: object) -> None:
+    def test_quality_gate_blocks_bad_rows(self, tmp_actions_lake: Path) -> None:
         # A split with value <= 0 violates the pointblank schema: nothing lands.
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
 
@@ -269,7 +279,7 @@ class TestWatermarkAndIngest:
 
             def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
-                    [("AAPL", date(2024, 6, 1), "split", 0.0, "yahoo", datetime.now().replace(microsecond=0))],
+                    [("AAPL", date(2024, 6, 1), "split", 0.0, "yahoo", datetime.now().replace(microsecond=0), None)],
                     schema=CORPORATE_ACTION_SCHEMA,
                     orient="row",
                 )
@@ -289,7 +299,7 @@ class TestPerTickerWatermarks:
     """F14 overlap portion (W03 PR4): the fetch bound is each ticker's own
     max stored ``ex_date`` — never a market-global watermark."""
 
-    def test_new_ticker_full_history_not_suppressed_by_other_tickers_event(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_new_ticker_full_history_not_suppressed_by_other_tickers_event(self, tmp_actions_lake: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A newly scoped ticker fetches its own full history; MSFT's 2020/2024
         events are older than the market-global max (2026-09-01) that the
         pre-PR4 watermark would have used, so they must still land."""
@@ -315,7 +325,7 @@ class TestPerTickerWatermarks:
         assert msft["ex_date"].to_list() == [date(2020, 9, 1), date(2024, 6, 1)]
         assert msft["action"].to_list() == ["split", "dividend"]
 
-    def test_late_event_within_ticker_window_is_picked_up(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_late_event_within_ticker_window_is_picked_up(self, tmp_actions_lake: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A late older event for a known ticker, dated above *its own*
         watermark (2024-01-01) but far below another ticker's recent event
         (2026-09-01), is picked up; the stored value lands via the natural key."""
@@ -345,7 +355,7 @@ class TestPerTickerWatermarks:
         # Stable natural keys, no duplicates.
         assert silver.select("ticker", "ex_date", "action").unique().height == 3
 
-    def test_correction_below_ticker_watermark_is_not_redetected(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_correction_below_ticker_watermark_is_not_redetected(self, tmp_actions_lake: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Honest provider boundary (F14): the per-ticker watermark is
         exclusive — a vendor correction at or below the ticker's own max
         stored ``ex_date`` is *not* re-detected. Pinned as documented
@@ -362,7 +372,7 @@ class TestPerTickerWatermarks:
         silver = read_delta("02_silver/corporate_actions/us_equity").sort("ex_date")
         assert silver["value"].to_list() == pytest.approx([0.25, 0.50])  # stored values unchanged
 
-    def test_overlapping_rerun_is_idempotent(self, tmp_actions_lake: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_overlapping_rerun_is_idempotent(self, tmp_actions_lake: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Reruns with overlapping fetch windows produce the identical table:
         stable (ticker, ex_date, action) keys, no duplicate rows, unchanged
         values, and the per-ticker watermarks persist across runs."""
@@ -395,7 +405,7 @@ class TestPerTickerWatermarks:
         assert after.height == before.height == 3
         assert after.select("ticker", "ex_date", "action", "value").equals(before.select("ticker", "ex_date", "action", "value"))
 
-    def test_natural_key_upsert_overwrites_cleanly(self, tmp_actions_lake: object) -> None:
+    def test_natural_key_upsert_overwrites_cleanly(self, tmp_actions_lake: Path) -> None:
         """When a fetched frame re-delivers an already-stored natural key with
         a corrected value (e.g. an out-of-band redelivery inside the window),
         the upsert overwrites it — one row per (ticker, ex_date, action)."""
@@ -431,14 +441,14 @@ class TestPerTickerWatermarks:
 
 def _ca_frame(rows: list[tuple[str, date, str, float]]) -> pl.DataFrame:
     return pl.DataFrame(
-        [(*r, "yahoo", datetime.now().replace(microsecond=0)) for r in rows],
+        [(*r, "yahoo", datetime.now().replace(microsecond=0), None) for r in rows],
         schema=CORPORATE_ACTION_SCHEMA,
         orient="row",
     )
 
 
 class TestDeltaLayer:
-    def test_merge_idempotent_on_event_key(self, tmp_path: object) -> None:
+    def test_merge_idempotent_on_event_key(self, tmp_path: Path) -> None:
         df = _ca_frame([("A", date(2024, 1, 1), "split", 0.5)])
         table = "01_bronze/corporate_actions/us_equity"
         assert merge_delta(df, table, key_columns=["ticker", "ex_date", "action"], lake_dir=tmp_path, partition_by=["ex_date"])
@@ -450,15 +460,21 @@ class TestSimultaneousEventRoundTrip:
     """W01/F13/F14: vendor-shaped simultaneous events survive the full
     fetch → quality gate → Delta write/read → price-adjustment path."""
 
-    def test_same_day_split_and_dividend_round_trip(self, monkeypatch: pytest.MonkeyPatch, tmp_path: object) -> None:
+    def test_same_day_split_and_dividend_round_trip(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """Vendor-shaped simultaneous events survive fetch → quality gate →
         Delta write/read → price-adjustment. The write goes through
         ``upsert_dataset`` so the pointblank ``corporate_action`` schema gates
         the two-event frame exactly as production does (review finding)."""
         from unittest.mock import patch
 
-        from equity_lake.ingestion.writers import upsert_dataset
-        from equity_lake.storage.lake_reader import with_price_adjustment
+        from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+            ActionCoverageProof,
+            AvailabilityContractError,
+        )
+        from equity_lake.ingestion.writers import upsert_dataset  # type: ignore[import-untyped]
+        from equity_lake.storage.lake_reader import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+            with_price_adjustment,
+        )
 
         factory = _FakeTickerFactory({"AAPL": _actions_pandas([(date(2024, 6, 3), 0.50, 2.0)])})
         fetcher = _make_fetcher(monkeypatch, factory, ["AAPL"])
@@ -475,8 +491,12 @@ class TestSimultaneousEventRoundTrip:
 
         # Both events are visible to the read-time adjustment helper (ADR-0011):
         # the split fixes the return across the ex-date, the dividend stays intact.
+        assert stored["source_available_at"].null_count() == stored.height
         prices = pl.DataFrame(
             {
+                "market": ["us_equity"] * 2,
+                "mic": ["XNAS"] * 2,
+                "symbol": ["AAPL"] * 2,
                 "ticker": ["AAPL"] * 2,
                 "date": [date(2024, 6, 2), date(2024, 6, 3)],
                 "open": [100.0, 51.0],
@@ -486,10 +506,22 @@ class TestSimultaneousEventRoundTrip:
                 "volume": [1_000.0, 2_000.0],
             }
         )
-        adjusted = with_price_adjustment(prices, stored.select("ticker", "ex_date", "action", "value"))
-        assert adjusted["close"].to_list() == pytest.approx([50.0, 51.5])
+        coverage = [
+            ActionCoverageProof(
+                market="us_equity",
+                mic="XNAS",
+                symbol="AAPL",
+                source="synthetic-test-proof",
+                coverage_start=date(2024, 6, 2),
+                coverage_end=date(2024, 6, 3),
+                source_available_at=datetime(2024, 6, 3, 15, tzinfo=UTC),
+                source_valid_until=datetime(2024, 6, 4, tzinfo=UTC),
+            )
+        ]
+        with pytest.raises(AvailabilityContractError, match="action source clock is unknown"):
+            with_price_adjustment(prices, stored.select("ticker", "ex_date", "action", "value", "source_available_at"), coverage=coverage)
 
-    def test_future_ex_date_blocks_whole_batch_current_behavior(self, tmp_actions_lake: object) -> None:
+    def test_future_ex_date_blocks_whole_batch_current_behavior(self, tmp_actions_lake: Path) -> None:
         """Pinned behavior (W01): the pointblank schema rejects any future
         ex_date and the all-or-nothing quality gate discards the whole batch,
         including valid historical rows. W03 PR4 kept this rejection policy
@@ -505,8 +537,8 @@ class TestSimultaneousEventRoundTrip:
             def fetch_corporate_actions(self, since: date | None = None, since_by_ticker: dict[str, date | None] | None = None) -> pl.DataFrame:
                 return pl.DataFrame(
                     [
-                        ("AAPL", date.today() - timedelta(days=30), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0)),
-                        ("AAPL", date.today() + timedelta(days=30), "split", 0.5, "yahoo", datetime.now().replace(microsecond=0)),
+                        ("AAPL", date.today() - timedelta(days=30), "dividend", 0.25, "yahoo", datetime.now().replace(microsecond=0), None),
+                        ("AAPL", date.today() + timedelta(days=30), "split", 0.5, "yahoo", datetime.now().replace(microsecond=0), None),
                     ],
                     schema=CORPORATE_ACTION_SCHEMA,
                     orient="row",

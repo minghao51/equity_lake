@@ -11,14 +11,14 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from equity_lake.validation import (
+from equity_lake.validation import (  # type: ignore[import-untyped]
     ArticleDataSchema,
     MacroDataSchema,
     NewsDataSchema,
     PriceDataSchema,
     ValidationPipeline,
 )
-from equity_lake.validation.profiling import DataProfiler, DriftReport
+from equity_lake.validation.profiling import DataProfiler, DriftReport  # type: ignore[import-untyped]
 
 _OHLCV_SCHEMA = {
     "ticker": pl.Utf8,
@@ -74,7 +74,7 @@ def test_validation_reexports_match_schemas_modules() -> None:
 
     assert ReExportedDataProfiler is profiling.DataProfiler
     assert ArticleDataSchema is schemas.ArticleDataSchema
-    assert set(schemas.SCHEMA_REGISTRY) == {"price", "macro", "news", "social", "article", "corporate_action"}
+    assert set(schemas.SCHEMA_REGISTRY) == {"price", "macro", "news", "social", "article", "corporate_action", "corporate_action_coverage"}
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +437,7 @@ def test_profiler_quality_metrics(tmp_path: Path, sample_ohlcv_data: pl.DataFram
 
 def test_profiler_default_storage_is_auxiliary_profiles_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """DataProfiler defaults to DATA_DIR / "profiles" (ADR-0006), never CWD-relative."""
-    from equity_lake.core import paths as core_paths
+    from equity_lake.core import paths as core_paths  # type: ignore[import-untyped]
     from equity_lake.validation import profiling
 
     monkeypatch.setattr(profiling, "PROFILES_DIR", tmp_path / "profiles")
@@ -447,7 +447,7 @@ def test_profiler_default_storage_is_auxiliary_profiles_dir(tmp_path: Path, monk
 
 
 def test_profiler_default_is_data_dir_profiles_without_patch() -> None:
-    from equity_lake.core.paths import DATA_DIR, PROFILES_DIR
+    from equity_lake.core.paths import DATA_DIR, PROFILES_DIR  # type: ignore[import-untyped]
 
     assert DataProfiler().storage_path == PROFILES_DIR
     assert PROFILES_DIR == DATA_DIR / "profiles"

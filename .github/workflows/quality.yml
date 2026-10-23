@@ -34,6 +34,9 @@ jobs:
       - name: Ruff
         run: uv run --python "${{ matrix.python-version }}" ruff check .
 
+      - name: Ruff format
+        run: uv run --python "${{ matrix.python-version }}" ruff format --check .
+
       - name: Mypy
         run: uv run --python "${{ matrix.python-version }}" mypy src
 
@@ -59,7 +62,7 @@ jobs:
         run: uv sync --python "${{ matrix.python-version }}" --group dev --group backtesting
 
       - name: Pytest
-        run: uv run --python "${{ matrix.python-version }}" pytest -q -m "not integration"
+        run: uv run --python "${{ matrix.python-version }}" pytest -q -m "not network and not integration"
 
       - name: Security audit (advisory policy)
         continue-on-error: true

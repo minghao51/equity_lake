@@ -8,9 +8,11 @@ target.
 
 Enrichment flag defaults
 ------------------------
-``enable_macro`` defaults to **True** because macro indicators (VIX,
-treasury yields, DXY) are cheap to load from a single compact table and
-provide broad market context for every prediction.
+``enable_macro`` defaults to **True** so the feature frame retains a stable
+macro schema. Macro values remain unavailable (null, with
+``macro_available=0``) until persisted source vintages establish verified
+point-in-time availability; observation dates or ingestion timestamps alone
+do not prove when a value became available (ADR-0015).
 
 All other enrichments (``enable_news_sentiment``, ``enable_social_sentiment``,
 ``enable_enriched_sentiment``, ``enable_analyst_ratings``,
@@ -28,25 +30,58 @@ Chain topology
 
 from __future__ import annotations
 
-from datetime import date
+import math
+from datetime import date, datetime, timedelta
+from typing import Any
 
 import duckdb
 import polars as pl
 import structlog
 from hamilton.function_modifiers import tag
 
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    AvailabilityContractError,
+    source_observable_session,
+)
+from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey  # pyright: ignore[reportMissingImports] -- source import verified by uv
 from equity_lake.core.paths import (
-    BRONZE_MACRO_DIR,
-    SILVER_ANALYST_RATINGS_DIR,
     SILVER_NEWS_SENTIMENT_DIR,
-    SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
     SILVER_SOCIAL_SENTIMENT_DIR,
 )
 from equity_lake.features.dag.raw_01 import normalize_eod_date_series
-from equity_lake.storage.lake_reader import duckdb_scan_for
 
 logger = structlog.get_logger()
+
+
+def _identity_for_features(features_df: pl.DataFrame) -> InstrumentKey | None:
+    if not set(IDENTITY_COLUMNS).issubset(features_df.columns):
+        return None
+    identities = features_df.select(*IDENTITY_COLUMNS).unique()
+    if identities.height != 1:
+        return None
+    return InstrumentKey(**identities.row(0, named=True))
+
+
+def _source_sessions(instrument: InstrumentKey, observations: pl.DataFrame, clock_column: str = "source_available_at") -> list[dict[str, Any]]:
+    """Require trusted clocks for every candidate row and map to venue sessions."""
+    if clock_column not in observations.columns:
+        raise AvailabilityContractError(f"{clock_column} is absent; source availability is unknown")
+    rows: list[dict[str, Any]] = []
+    for observation in observations.to_dicts():
+        source_time = observation.get(clock_column)
+        if not isinstance(source_time, datetime) or source_time.tzinfo is None or source_time.utcoffset() is None:
+            raise AvailabilityContractError("source availability clock is unknown")
+        observation["_observable_session"] = source_observable_session(instrument, source_time)
+        rows.append(observation)
+    return rows
+
+
+def _unavailable_columns(features_df: pl.DataFrame, columns: dict[str, Any], flag: str) -> pl.DataFrame:
+    """Keep a stable feature schema while distinguishing unknown from neutral."""
+    additions = [pl.lit(None, dtype=dtype).alias(name) for name, dtype in columns.items()]
+    additions.append(pl.lit(0, dtype=pl.Int8).alias(flag))
+    return features_df.with_columns(additions)
 
 
 def _eod_keys_to_date(frame: pl.DataFrame, *columns: str) -> pl.DataFrame:
@@ -179,7 +214,7 @@ def cross_modal_features(sec_extractions_enriched: pl.DataFrame) -> pl.DataFrame
     layer="gold",
     category="enrichment",
     produces="macro_enriched",
-    description="Pivot macro indicators wide and forward-fill onto features (opt-out)",
+    description="Fail closed: macro values remain null until persisted source vintages verify point-in-time availability (ADR-0015)",
 )
 def macro_enriched(
     cross_modal_features: pl.DataFrame,
@@ -188,7 +223,7 @@ def macro_enriched(
     end_date: date,
     enable_macro: bool = True,
 ) -> pl.DataFrame:
-    """Pivot macro indicators wide and join onto features (opt-out)."""
+    """Expose macro values as unavailable until persisted source vintages prove point-in-time availability."""
     if not enable_macro or cross_modal_features.is_empty():
         return cross_modal_features
     return _merge_macro(cross_modal_features, duckdb_conn, start_date, end_date)
@@ -221,50 +256,90 @@ def _merge_news_sentiment(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """Merge aggregated Finnhub news sentiment onto feature frame."""
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-
-    sentiment_query = f"""
-        SELECT
-            ticker,
-            date,
-            AVG(sentiment_score) as avg_daily_sentiment,
-            COUNT(*) as news_count,
-            SUM(CASE WHEN sentiment_label = 'positive' THEN 1 ELSE 0 END) as positive_count,
-            SUM(CASE WHEN sentiment_label = 'negative' THEN 1 ELSE 0 END) as negative_count,
-            SUM(CASE WHEN sentiment_label = 'neutral' THEN 1 ELSE 0 END) as neutral_count,
-            STDDEV(sentiment_score) as sentiment_std
-        FROM {duckdb_scan_for(SILVER_NEWS_SENTIMENT_DIR)}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-        GROUP BY ticker, date
-    """
-
+    """Join only composite-identity news with trusted clocks and 3 articles/7d."""
+    empty = _add_empty_news_sentiment_columns(features_df)
+    instrument = _identity_for_features(features_df)
+    if instrument is None:
+        return empty
+    query_start = start_date - timedelta(days=7)
     try:
-        sentiment_df = _eod_keys_to_date(conn.execute(sentiment_query, [tickers, start_date, end_date]).pl(), "date")
-        if sentiment_df.is_empty():
-            return _add_empty_news_sentiment_columns(features_df)
+        observations = pl.read_delta(SILVER_NEWS_SENTIMENT_DIR).filter(
+            (pl.col("market") == instrument.market)
+            & (pl.col("mic") == instrument.mic)
+            & (pl.col("symbol") == instrument.symbol)
+            & pl.col("date").cast(pl.Date, strict=False).is_between(query_start, end_date)
+        )
+        rows = _source_sessions(instrument, observations)
+    except (OSError, pl.exceptions.PolarsError, AvailabilityContractError, ValueError) as exc:
+        logger.warning("news_sentiment_unavailable", instrument=instrument.display_key, error_type=type(exc).__name__)
+        return empty
+    invalid_score = any(
+        not isinstance(row.get("url"), str) or not math.isfinite(float(row["sentiment_score"]))
+        for row in rows
+        if row.get("sentiment_score") is not None
+    )
+    if invalid_score:
+        return empty
 
-        merged_df = features_df.join(sentiment_df, on=["ticker", "date"], how="left").with_columns(
-            pl.col("avg_daily_sentiment").fill_null(0.0),
-            pl.col("news_count").fill_null(0).cast(pl.Int64),
-            pl.col("positive_count").fill_null(0).cast(pl.Int64),
-            pl.col("negative_count").fill_null(0).cast(pl.Int64),
-            pl.col("neutral_count").fill_null(0).cast(pl.Int64),
-            pl.col("sentiment_std").fill_null(0.0),
+    metrics: dict[str, list[object]] = {
+        name: []
+        for name in (
+            "avg_daily_sentiment",
+            "news_count",
+            "positive_count",
+            "negative_count",
+            "neutral_count",
+            "sentiment_std",
+            "sentiment_ewma_3d",
+            "sentiment_ewma_7d",
+            "sentiment_ewma_30d",
+            "news_coverage_7d",
+            "news_source_age_days",
+            "news_available",
         )
-        merged_df = merged_df.sort(["ticker", "date"]).with_columns(
-            pl.col("avg_daily_sentiment").ewm_mean(half_life=3.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_3d"),
-            pl.col("avg_daily_sentiment").ewm_mean(half_life=7.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_7d"),
-            pl.col("avg_daily_sentiment").ewm_mean(half_life=30.0, ignore_nulls=True).over("ticker").fill_null(0.0).alias("sentiment_ewma_30d"),
+    }
+    for day in features_df["date"].to_list():
+        in_window = [row for row in rows if day - timedelta(days=6) <= row["_observable_session"] <= day]
+        by_url: dict[str, dict[str, Any]] = {}
+        for row in in_window:
+            score = row.get("sentiment_score")
+            url = row.get("url")
+            if score is None or not isinstance(url, str) or not url:
+                continue
+            prior = by_url.get(url)
+            if prior is None or row["source_available_at"] > prior["source_available_at"]:
+                by_url[url] = row
+            elif row["source_available_at"] == prior["source_available_at"] and float(score) != float(prior["sentiment_score"]):
+                by_url = {}
+                break
+        scored = list(by_url.values())
+        scores: list[float] = [float(row["sentiment_score"]) for row in scored]
+        enough = len(scored) >= 3
+        metrics["news_available"].append(1 if enough else 0)
+        metrics["news_coverage_7d"].append(len(scored))
+        metrics["news_count"].append(len(scored) if scored else None)
+        metrics["news_source_age_days"].append((day - max(row["_observable_session"] for row in scored)).days if scored else None)
+        mean_score = sum(scores) / len(scores) if scores else None
+        sample_std: float | None = None
+        if enough and len(scores) > 1:
+            mean_for_std = sum(scores) / len(scores)
+            sample_std = math.sqrt(sum((score - mean_for_std) ** 2 for score in scores) / (len(scores) - 1))
+        metrics["avg_daily_sentiment"].append(mean_score if enough else None)
+        metrics["sentiment_std"].append(sample_std)
+        for label in ("positive", "negative", "neutral"):
+            metrics[f"{label}_count"].append(sum(row.get("sentiment_label") == label for row in scored) if enough else None)
+        for name in ("sentiment_ewma_3d", "sentiment_ewma_7d", "sentiment_ewma_30d"):
+            metrics[name].append(None)
+    integer_columns = {"news_count", "positive_count", "negative_count", "neutral_count", "news_coverage_7d", "news_source_age_days"}
+    typed = [
+        pl.Series(
+            name,
+            values,
+            dtype=pl.Int8 if name == "news_available" else pl.Int32 if name in integer_columns else pl.Float64,
         )
-        return merged_df
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("news_sentiment_merge_failed", error_type=type(exc).__name__, error=str(exc))
-        # Schema parity (handoff 08 A5): transient errors must not change the
-        # feature column set downstream — return the same zero-filled defaults
-        # as the no-data path, like the sibling merges do.
-        return _add_empty_news_sentiment_columns(features_df)
+        for name, values in metrics.items()
+    ]
+    return features_df.with_columns(typed)
 
 
 def _merge_social_sentiment(
@@ -273,75 +348,111 @@ def _merge_social_sentiment(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """Merge aggregated social sentiment scores."""
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-
-    sentiment_query = f"""
-        SELECT
-            ticker,
-            date,
-            SUM(mention_count) as social_mention_count,
-            AVG(score) as social_sentiment_score,
-            SUM(positive_score) as social_positive_score,
-            SUM(negative_score) as social_negative_score,
-            SUM(CASE WHEN source = 'reddit' THEN mention_count ELSE 0 END) as social_reddit_mentions,
-            SUM(CASE WHEN source = 'twitter' THEN mention_count ELSE 0 END) as social_twitter_mentions
-        FROM {duckdb_scan_for(SILVER_SOCIAL_SENTIMENT_DIR)}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-        GROUP BY ticker, date
-    """
-
+    """Join seven-day social context separately from scored news articles."""
+    empty = _add_empty_social_sentiment_columns(features_df)
+    instrument = _identity_for_features(features_df)
+    if instrument is None:
+        return empty
     try:
-        sentiment_df = _eod_keys_to_date(conn.execute(sentiment_query, [tickers, start_date, end_date]).pl(), "date")
-        if sentiment_df.is_empty():
-            return _add_empty_social_sentiment_columns(features_df)
-
-        merged_df = (
-            features_df.join(sentiment_df, on=["ticker", "date"], how="left")
-            .with_columns(
-                pl.col("social_mention_count").fill_null(0).cast(pl.Int64),
-                pl.col("social_sentiment_score").fill_null(0.0),
-                pl.col("social_positive_score").fill_null(0.0),
-                pl.col("social_negative_score").fill_null(0.0),
-                pl.col("social_reddit_mentions").fill_null(0).cast(pl.Int64),
-                pl.col("social_twitter_mentions").fill_null(0).cast(pl.Int64),
-            )
-            .sort(["ticker", "date"])
-            .with_columns(
-                # F15/W01: zero-baseline pct-change is an undefined ratio — null,
-                # never infinity. Warm-up rows are null by construction.
-                (
-                    (pl.col("social_mention_count").cast(pl.Float64) - pl.col("social_mention_count").cast(pl.Float64).shift(5))
-                    / pl.col("social_mention_count").cast(pl.Float64).shift(5).replace(0.0, None)
-                )
-                .over("ticker")
-                .alias("social_momentum"),
-                pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0).alias("social_sentiment_momentum"),
-                pl.col("social_sentiment_score")
-                .ewm_mean(half_life=3.0, ignore_nulls=True)
-                .over("ticker")
-                .fill_null(0.0)
-                .alias("social_sentiment_ewma_3d"),
-                pl.col("social_sentiment_score")
-                .ewm_mean(half_life=7.0, ignore_nulls=True)
-                .over("ticker")
-                .fill_null(0.0)
-                .alias("social_sentiment_ewma_7d"),
-                pl.col("social_sentiment_score")
-                .ewm_mean(half_life=30.0, ignore_nulls=True)
-                .over("ticker")
-                .fill_null(0.0)
-                .alias("social_sentiment_ewma_30d"),
-            )
+        observations = pl.read_delta(SILVER_SOCIAL_SENTIMENT_DIR).filter(
+            (pl.col("market") == instrument.market)
+            & (pl.col("mic") == instrument.mic)
+            & (pl.col("symbol") == instrument.symbol)
+            & pl.col("date").cast(pl.Date, strict=False).is_between(start_date - timedelta(days=7), end_date)
         )
-        return merged_df
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("social_sentiment_merge_failed", error_type=type(exc).__name__, error=str(exc))
-        # Schema parity (handoff 08 A5): transient errors must not change the
-        # feature column set downstream — return the same zero-filled defaults
-        # as the no-data path, like the sibling merges do.
-        return _add_empty_social_sentiment_columns(features_df)
+        rows = _source_sessions(instrument, observations)
+    except (OSError, pl.exceptions.PolarsError, AvailabilityContractError, ValueError) as exc:
+        logger.warning("social_sentiment_unavailable", instrument=instrument.display_key, error_type=type(exc).__name__)
+        return empty
+
+    names = (
+        "social_mention_count",
+        "social_sentiment_score",
+        "social_positive_score",
+        "social_negative_score",
+        "social_reddit_mentions",
+        "social_twitter_mentions",
+        "social_reddit_available",
+        "social_twitter_available",
+        "social_positive_available",
+        "social_negative_available",
+        "social_momentum",
+        "social_sentiment_momentum",
+        "social_sentiment_ewma_3d",
+        "social_sentiment_ewma_7d",
+        "social_sentiment_ewma_30d",
+        "social_context_rows_7d",
+        "social_source_age_days",
+        "social_available",
+    )
+    values: dict[str, list[object]] = {name: [] for name in names}
+    for day in features_df["date"].to_list():
+        in_window = [row for row in rows if day - timedelta(days=6) <= row["_observable_session"] <= day]
+        grouped: dict[tuple[object, object], list[dict[str, Any]]] = {}
+        for row in in_window:
+            grouped.setdefault((row.get("source"), row.get("datetime")), []).append(row)
+        context: list[dict[str, Any]] = []
+        for duplicates in grouped.values():
+            latest_time = max(row["source_available_at"] for row in duplicates)
+            latest = [row for row in duplicates if row["source_available_at"] == latest_time]
+            measured = {(row.get("mention_count"), row.get("score"), row.get("positive_score"), row.get("negative_score")) for row in latest}
+            if len(measured) == 1:
+                context.append(latest[0])
+            else:
+                logger.warning("social_sentiment_conflicting_vintage", instrument=instrument.display_key, source=latest[0].get("source"))
+
+        valid_scores = [row for row in context if row.get("score") is not None]
+        measured_mentions = [row for row in context if row.get("mention_count") is not None]
+        positive = [row for row in context if row.get("positive_score") is not None]
+        negative = [row for row in context if row.get("negative_score") is not None]
+        available = bool(valid_scores)
+        values["social_available"].append(1 if available else 0)
+        values["social_context_rows_7d"].append(len(valid_scores) if valid_scores else None)
+        values["social_source_age_days"].append((day - max(row["_observable_session"] for row in valid_scores)).days if valid_scores else None)
+        values["social_mention_count"].append(sum(int(row["mention_count"]) for row in measured_mentions) if measured_mentions else None)
+        values["social_sentiment_score"].append(sum(float(row["score"]) for row in valid_scores) / len(valid_scores) if valid_scores else None)
+        values["social_positive_score"].append(sum(float(row["positive_score"]) for row in positive) if positive else None)
+        values["social_negative_score"].append(sum(float(row["negative_score"]) for row in negative) if negative else None)
+        values["social_positive_available"].append(1 if positive else 0)
+        values["social_negative_available"].append(1 if negative else 0)
+        for source, mentions_name, available_name in (
+            ("reddit", "social_reddit_mentions", "social_reddit_available"),
+            ("twitter", "social_twitter_mentions", "social_twitter_available"),
+        ):
+            family = [row for row in measured_mentions if row.get("source") == source]
+            values[available_name].append(1 if family else 0)
+            values[mentions_name].append(sum(int(row["mention_count"]) for row in family) if family else None)
+        for name in (
+            "social_momentum",
+            "social_sentiment_momentum",
+            "social_sentiment_ewma_3d",
+            "social_sentiment_ewma_7d",
+            "social_sentiment_ewma_30d",
+        ):
+            values[name].append(None)
+    integer_columns = {
+        "social_mention_count",
+        "social_reddit_mentions",
+        "social_twitter_mentions",
+        "social_context_rows_7d",
+        "social_source_age_days",
+    }
+    flag_columns = {
+        "social_available",
+        "social_reddit_available",
+        "social_twitter_available",
+        "social_positive_available",
+        "social_negative_available",
+    }
+    typed = [
+        pl.Series(
+            name,
+            values[name],
+            dtype=pl.Int8 if name in flag_columns else pl.Int32 if name in integer_columns else pl.Float64,
+        )
+        for name in names
+    ]
+    return features_df.with_columns(typed)
 
 
 def _merge_enriched_sentiment(
@@ -350,69 +461,8 @@ def _merge_enriched_sentiment(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """Merge LLM-enriched article-ticker sentiment from silver layer."""
-    silver_path = SILVER_PROCESSED_ARTICLES_DIR
-    if not silver_path.exists():
-        return _add_empty_enriched_columns(features_df)
-
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-    scan = duckdb_scan_for(silver_path)
-
-    query = f"""
-        SELECT
-            ticker,
-            date,
-            COUNT(*) as enriched_article_count,
-            AVG(sentiment_score) as enriched_sentiment_mean,
-            AVG(confidence) as enriched_confidence_mean,
-            AVG(market_relevance) as enriched_relevance_mean,
-            SUM(CASE WHEN sentiment_label = 'bullish' THEN 1.0 ELSE 0.0 END)
-                / NULLIF(COUNT(*), 0) as bullish_ratio,
-            SUM(CASE WHEN source_type IN ('reddit', 'stocktwits') THEN 1 ELSE 0 END) as social_volume,
-            AVG(CASE WHEN source_type IN ('reddit', 'stocktwits') THEN sentiment_score ELSE NULL END) as social_sentiment_mean,
-            MAX(CASE WHEN market_relevance > 0.8 AND impact_horizon = 'short' THEN 1 ELSE 0 END) as breaking_news_flag
-        FROM {scan}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-        GROUP BY ticker, date
-    """
-
-    try:
-        sentiment_df = conn.execute(query, [tickers, start_date, end_date]).pl()
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("enriched_sentiment_query_failed", error_type=type(exc).__name__, error=str(exc))
-        return _add_empty_enriched_columns(features_df)
-
-    sentiment_df = _eod_keys_to_date(sentiment_df, "date")
-    if sentiment_df.is_empty():
-        return _add_empty_enriched_columns(features_df)
-
-    ewma_df = sentiment_df.sort(["ticker", "date"]).with_columns(
-        pl.col("enriched_sentiment_mean")
-        .ewm_mean(half_life=3.0, ignore_nulls=True)
-        .over("ticker")
-        .fill_null(0.0)
-        .alias("enriched_sentiment_ewma_3d"),
-        pl.col("enriched_sentiment_mean")
-        .ewm_mean(half_life=7.0, ignore_nulls=True)
-        .over("ticker")
-        .fill_null(0.0)
-        .alias("enriched_sentiment_ewma_7d"),
-    )
-
-    merged_df = features_df.join(ewma_df, on=["ticker", "date"], how="left").with_columns(
-        pl.col("enriched_article_count").fill_null(0).cast(pl.Int64),
-        pl.col("enriched_sentiment_mean").fill_null(0.0),
-        pl.col("enriched_sentiment_ewma_3d").fill_null(0.0),
-        pl.col("enriched_sentiment_ewma_7d").fill_null(0.0),
-        pl.col("enriched_confidence_mean").fill_null(0.0),
-        pl.col("enriched_relevance_mean").fill_null(0.0),
-        pl.col("bullish_ratio").fill_null(0.0),
-        pl.col("social_volume").fill_null(0).cast(pl.Int64),
-        pl.col("social_sentiment_mean").fill_null(0.0),
-        pl.col("breaking_news_flag").fill_null(0).cast(pl.Int64),
-    )
-    return merged_df
+    """Mark legacy LLM article enrichments unavailable without identity/clocks."""
+    return _add_empty_enriched_columns(features_df)
 
 
 def _merge_analyst_ratings(
@@ -421,62 +471,8 @@ def _merge_analyst_ratings(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """Merge analyst consensus + price targets."""
-    ratings_path = SILVER_ANALYST_RATINGS_DIR
-    if not ratings_path.exists():
-        return _add_empty_analyst_columns(features_df)
-
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-    scan = duckdb_scan_for(ratings_path)
-
-    query = f"""
-        SELECT
-            ticker,
-            date,
-            consensus_score AS analyst_consensus_score,
-            price_target_count AS analyst_coverage_count,
-            price_target_mean AS analyst_price_target_mean
-        FROM {scan}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-    """
-
-    try:
-        ratings_df = conn.execute(query, [tickers, start_date, end_date]).pl()
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("analyst_rating_query_failed", error_type=type(exc).__name__, error=str(exc))
-        return _add_empty_analyst_columns(features_df)
-
-    ratings_df = _eod_keys_to_date(ratings_df, "date")
-    if ratings_df.is_empty():
-        return _add_empty_analyst_columns(features_df)
-
-    ewma_df = ratings_df.sort(["ticker", "date"]).with_columns(
-        pl.col("analyst_consensus_score")
-        .ewm_mean(half_life=7.0, ignore_nulls=True)
-        .over("ticker")
-        .fill_null(0.0)
-        .alias("analyst_consensus_score_ewma_7d"),
-    )
-
-    merged_df = features_df.join(ewma_df, on=["ticker", "date"], how="left").with_columns(
-        pl.col("analyst_consensus_score").fill_null(0.0),
-        pl.col("analyst_consensus_score_ewma_7d").fill_null(0.0),
-        pl.col("analyst_coverage_count").fill_null(0).cast(pl.Int64),
-    )
-
-    if "close" in merged_df.columns and "analyst_price_target_mean" in merged_df.columns:
-        merged_df = merged_df.with_columns(
-            ((pl.col("analyst_price_target_mean") - pl.col("close")) / pl.col("close").clip(lower_bound=1e-8)).alias("analyst_price_target_upside"),
-        )
-    else:
-        merged_df = merged_df.with_columns(pl.lit(0.0).alias("analyst_price_target_upside"))
-
-    merged_df = merged_df.with_columns(
-        pl.col("analyst_price_target_mean").fill_null(0.0),
-        pl.col("analyst_price_target_upside").fill_null(0.0),
-    )
-    return merged_df
+    """Mark analyst data unavailable until identity and publication vintages exist."""
+    return _add_empty_analyst_columns(features_df)
 
 
 def _merge_sec_extractions(
@@ -485,72 +481,59 @@ def _merge_sec_extractions(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """ASOF join SEC filing extractions (point-in-time)."""
-    sec_path = SILVER_SEC_EXTRACTIONS_DIR
-    if not sec_path.exists():
-        return _add_empty_sec_columns(features_df)
-
-    tickers = sorted(str(v) for v in features_df["ticker"].unique().to_list())
-    scan = duckdb_scan_for(sec_path)
-
-    query = f"""
-        SELECT
-            ticker,
-            filing_date,
-            risk_sentiment,
-            management_tone,
-            guidance_direction,
-            new_vs_repeated
-        FROM {scan}
-        WHERE ticker IN (SELECT unnest(?::VARCHAR[]))
-        AND date BETWEEN ? AND ?
-    """
-
+    """Use identity-scoped SEC extracts only within their 95-day visible age."""
+    empty = _add_empty_sec_columns(features_df)
+    instrument = _identity_for_features(features_df)
+    if instrument is None:
+        return empty
     try:
-        sec_df = conn.execute(query, [tickers, start_date, end_date]).pl()
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.error("sec_query_failed", error_type=type(exc).__name__, error=str(exc))
-        return _add_empty_sec_columns(features_df)
-
-    sec_df = _eod_keys_to_date(sec_df, "date", "filing_date")
-    if sec_df.is_empty():
-        return _add_empty_sec_columns(features_df)
-
-    sec_df = sec_df.with_columns(
-        pl.when(pl.col("guidance_direction") == "positive").then(1).otherwise(0).alias("sec_guidance_positive"),
-        pl.when(pl.col("new_vs_repeated").is_in(["new", "modified"])).then(1).otherwise(0).alias("sec_risk_change_flag"),
-    )
-
-    sec_aggregated = (
-        sec_df.sort("filing_date")
-        .group_by("ticker", "filing_date")
-        .agg(
-            pl.col("risk_sentiment").mean().alias("risk_sentiment"),
-            pl.col("management_tone").mean().alias("management_tone"),
-            pl.col("sec_guidance_positive").max().alias("sec_guidance_positive"),
-            pl.col("sec_risk_change_flag").max().alias("sec_risk_change_flag"),
+        observations = pl.read_delta(SILVER_SEC_EXTRACTIONS_DIR).filter(
+            (pl.col("market") == instrument.market)
+            & (pl.col("mic") == instrument.mic)
+            & (pl.col("symbol") == instrument.symbol)
+            & pl.col("date").cast(pl.Date, strict=False).is_between(start_date - timedelta(days=95), end_date)
         )
-        .sort(["ticker", "filing_date"])
-    )
+        rows = _source_sessions(instrument, observations)
+    except (OSError, pl.exceptions.PolarsError, AvailabilityContractError, ValueError) as exc:
+        logger.warning("sec_context_unavailable", instrument=instrument.display_key, error_type=type(exc).__name__)
+        return empty
 
-    merged_df = (
-        features_df.sort(["ticker", "date"])
-        .join_asof(
-            sec_aggregated,
-            left_on="date",
-            right_on="filing_date",
-            by="ticker",
-            strategy="backward",
+    outputs: dict[str, list[object]] = {
+        "sec_risk_sentiment": [],
+        "sec_management_tone": [],
+        "sec_guidance_positive": [],
+        "sec_risk_change_flag": [],
+        "sec_source_age_days": [],
+        "sec_available": [],
+    }
+    for day in features_df["date"].to_list():
+        latest = [
+            row
+            for row in rows
+            if row["_observable_session"] <= day
+            and (day - row["_observable_session"]).days <= 95
+            and isinstance(row.get("filing_date"), date)
+            and row["filing_date"] <= day
+        ]
+        selected = max(latest, key=lambda row: row["source_available_at"]) if latest else None
+        outputs["sec_available"].append(1 if selected else 0)
+        outputs["sec_source_age_days"].append((day - selected["_observable_session"]).days if selected else None)
+        outputs["sec_risk_sentiment"].append(selected.get("risk_sentiment") if selected else None)
+        outputs["sec_management_tone"].append(selected.get("management_tone") if selected else None)
+        guidance = selected.get("guidance_direction") if selected else None
+        change = selected.get("new_vs_repeated") if selected else None
+        outputs["sec_guidance_positive"].append(1 if guidance == "positive" else 0 if guidance == "negative" else None)
+        outputs["sec_risk_change_flag"].append(1 if change in {"new", "modified"} else 0 if change == "repeated" else None)
+    integer_columns = {"sec_available", "sec_guidance_positive", "sec_risk_change_flag"}
+    typed = [
+        pl.Series(
+            name,
+            outputs[name],
+            dtype=pl.Int8 if name in integer_columns else pl.Int32 if name == "sec_source_age_days" else pl.Float64,
         )
-        .with_columns(
-            pl.col("risk_sentiment").fill_null(0.0).alias("sec_risk_sentiment"),
-            pl.col("management_tone").fill_null(0.0).alias("sec_management_tone"),
-            pl.col("sec_guidance_positive").fill_null(0).cast(pl.Int64),
-            pl.col("sec_risk_change_flag").fill_null(0).cast(pl.Int64),
-        )
-        .drop(["filing_date", "risk_sentiment", "management_tone"])
-    )
-    return merged_df
+        for name in outputs
+    ]
+    return features_df.with_columns(typed)
 
 
 def _add_cross_modal(features_df: pl.DataFrame) -> pl.DataFrame:
@@ -565,8 +548,8 @@ def _add_cross_modal(features_df: pl.DataFrame) -> pl.DataFrame:
     if "avg_daily_sentiment" in enriched.columns:
         expressions.extend(
             [
-                (pl.col("avg_daily_sentiment").fill_null(0.0) * log_volume).alias("sentiment_x_log_volume"),
-                pl.col("avg_daily_sentiment").diff(5).over("ticker").fill_null(0.0).alias("news_sentiment_momentum_5d"),
+                (pl.col("avg_daily_sentiment") * log_volume).alias("sentiment_x_log_volume"),
+                pl.col("avg_daily_sentiment").diff(5).over("ticker").alias("news_sentiment_momentum_5d"),
             ]
         )
 
@@ -579,22 +562,20 @@ def _add_cross_modal(features_df: pl.DataFrame) -> pl.DataFrame:
         social_momentum_5d = (
             pl.col("social_sentiment_momentum")
             if "social_sentiment_momentum" in enriched.columns
-            else pl.col("social_sentiment_score").diff(5).over("ticker").fill_null(0.0)
+            else pl.col("social_sentiment_score").diff(5).over("ticker")
         )
         expressions.extend(
             [
-                (pl.col("social_sentiment_score").fill_null(0.0) * log_volume).alias("social_sentiment_x_log_volume"),
+                (pl.col("social_sentiment_score") * log_volume).alias("social_sentiment_x_log_volume"),
                 social_momentum_5d.alias("social_sentiment_momentum_5d"),
             ]
         )
 
     if {"avg_daily_sentiment", "social_sentiment_score"}.issubset(enriched.columns):
-        expressions.append(
-            (pl.col("avg_daily_sentiment").fill_null(0.0) - pl.col("social_sentiment_score").fill_null(0.0)).alias("news_social_sentiment_gap")
-        )
+        expressions.append((pl.col("avg_daily_sentiment") - pl.col("social_sentiment_score")).alias("news_social_sentiment_gap"))
 
     if {"news_count", "social_mention_count"}.issubset(enriched.columns):
-        expressions.append((pl.col("news_count").fill_null(0) - pl.col("social_mention_count").fill_null(0)).alias("news_social_mentions_gap"))
+        expressions.append((pl.col("news_count") - pl.col("social_mention_count")).alias("news_social_mentions_gap"))
 
     return enriched.with_columns(expressions) if expressions else enriched
 
@@ -605,59 +586,10 @@ def _merge_macro(
     start_date: date,
     end_date: date,
 ) -> pl.DataFrame:
-    """Pivot macro indicators to wide format and as-of join on date."""
-    macro_path = BRONZE_MACRO_DIR
-    if not macro_path.exists():
-        return features_df
-
-    try:
-        macro_scan = duckdb_scan_for(macro_path)
-        raw = conn.execute(
-            f"""
-            SELECT date, indicator, value
-            FROM {macro_scan}
-            WHERE date BETWEEN ? AND ?
-            """,
-            [start_date, end_date],
-        ).pl()
-    except (duckdb.Error, pl.exceptions.PolarsError) as exc:
-        logger.warning("macro_load_failed", error_type=type(exc).__name__, error=str(exc))
-        return features_df
-
-    if raw.is_empty():
-        return features_df
-
-    wide = raw.pivot(values="value", index="date", on="indicator").sort("date")
-    numeric_cols = [col for col in wide.columns if col != "date"]
-    wide = wide.with_columns([pl.col(col).cast(pl.Float64) for col in numeric_cols])
-    # D01/F01: normalize the join key to pl.Date on both sides — the feature
-    # boundary guarantees a Date key, so the macro side must match.
-    wide = _eod_keys_to_date(wide, "date")
-
-    full_dates = pl.DataFrame({"date": features_df["date"].unique().sort()})
-    wide = full_dates.join(wide, on="date", how="left").sort("date")
-    for col_name in numeric_cols:
-        wide = wide.with_columns(pl.col(col_name).forward_fill().alias(col_name))
-
-    derived_exprs: list[pl.Expr] = []
-    if "vix" in wide.columns:
-        derived_exprs.append((pl.col("vix") - pl.col("vix").shift(5)).alias("vix_change_5d"))
-    if {"treasury_10y", "tips_yield"}.issubset(wide.columns):
-        derived_exprs.append((pl.col("treasury_10y") - pl.col("tips_yield")).alias("yield_curve_slope"))
-    if "dxy" in wide.columns:
-        derived_exprs.append((pl.col("dxy") - pl.col("dxy").shift(5)).alias("dxy_change_5d"))
-    if derived_exprs:
-        wide = wide.with_columns(derived_exprs)
-
-    macro_cols = [c for c in wide.columns if c != "date"]
-    for col_name in macro_cols:
-        wide = wide.with_columns(pl.col(col_name).fill_null(0.0))
-
-    joined = features_df.join(wide, on="date", how="left")
-    for col_name in macro_cols:
-        if col_name in joined.columns:
-            joined = joined.with_columns(pl.col(col_name).fill_null(0.0))
-    return joined
+    """Expose macro context as unavailable until source vintages are recorded."""
+    # Observation dates and local ingestion timestamps are not release/vintage
+    # proofs. ADR-0015 forbids using them as if the value were known that day.
+    return _add_empty_macro_columns(features_df)
 
 
 # ---------------------------------------------------------------------------
@@ -666,66 +598,114 @@ def _merge_macro(
 
 
 def _add_empty_news_sentiment_columns(df: pl.DataFrame) -> pl.DataFrame:
-    """Zero-filled news-sentiment defaults matching the populated-merge schema."""
-    return df.with_columns(
-        pl.lit(0.0).alias("avg_daily_sentiment"),
-        pl.lit(0).cast(pl.Int64).alias("news_count"),
-        pl.lit(0).cast(pl.Int64).alias("positive_count"),
-        pl.lit(0).cast(pl.Int64).alias("negative_count"),
-        pl.lit(0).cast(pl.Int64).alias("neutral_count"),
-        pl.lit(0.0).alias("sentiment_std"),
-        pl.lit(0.0).alias("sentiment_ewma_3d"),
-        pl.lit(0.0).alias("sentiment_ewma_7d"),
-        pl.lit(0.0).alias("sentiment_ewma_30d"),
+    """Unknown news remains null, with an explicit unavailable flag."""
+    return _unavailable_columns(
+        df,
+        {
+            "avg_daily_sentiment": pl.Float64,
+            "news_count": pl.Int32,
+            "positive_count": pl.Int32,
+            "negative_count": pl.Int32,
+            "neutral_count": pl.Int32,
+            "sentiment_std": pl.Float64,
+            "sentiment_ewma_3d": pl.Float64,
+            "sentiment_ewma_7d": pl.Float64,
+            "sentiment_ewma_30d": pl.Float64,
+            "news_coverage_7d": pl.Int32,
+            "news_source_age_days": pl.Int32,
+        },
+        "news_available",
     )
 
 
 def _add_empty_social_sentiment_columns(df: pl.DataFrame) -> pl.DataFrame:
-    """Zero-filled social-sentiment defaults matching the populated-merge schema."""
-    return df.with_columns(
-        pl.lit(0).cast(pl.Int64).alias("social_mention_count"),
-        pl.lit(0.0).alias("social_sentiment_score"),
-        pl.lit(0.0).alias("social_positive_score"),
-        pl.lit(0.0).alias("social_negative_score"),
-        pl.lit(0).cast(pl.Int64).alias("social_reddit_mentions"),
-        pl.lit(0).cast(pl.Int64).alias("social_twitter_mentions"),
-        pl.lit(0.0).alias("social_momentum"),
-        pl.lit(0.0).alias("social_sentiment_momentum"),
-        pl.lit(0.0).alias("social_sentiment_ewma_3d"),
-        pl.lit(0.0).alias("social_sentiment_ewma_7d"),
-        pl.lit(0.0).alias("social_sentiment_ewma_30d"),
+    """Unknown social context remains null, separate from article coverage."""
+    return _unavailable_columns(
+        df,
+        {
+            "social_mention_count": pl.Int32,
+            "social_sentiment_score": pl.Float64,
+            "social_positive_score": pl.Float64,
+            "social_negative_score": pl.Float64,
+            "social_reddit_mentions": pl.Int32,
+            "social_twitter_mentions": pl.Int32,
+            "social_reddit_available": pl.Int8,
+            "social_twitter_available": pl.Int8,
+            "social_positive_available": pl.Int8,
+            "social_negative_available": pl.Int8,
+            "social_momentum": pl.Float64,
+            "social_sentiment_momentum": pl.Float64,
+            "social_sentiment_ewma_3d": pl.Float64,
+            "social_sentiment_ewma_7d": pl.Float64,
+            "social_sentiment_ewma_30d": pl.Float64,
+            "social_context_rows_7d": pl.Int32,
+            "social_source_age_days": pl.Int32,
+        },
+        "social_available",
     )
 
 
 def _add_empty_enriched_columns(df: pl.DataFrame) -> pl.DataFrame:
-    return df.with_columns(
-        pl.lit(0).alias("enriched_article_count"),
-        pl.lit(0.0).alias("enriched_sentiment_mean"),
-        pl.lit(0.0).alias("enriched_sentiment_ewma_3d"),
-        pl.lit(0.0).alias("enriched_sentiment_ewma_7d"),
-        pl.lit(0.0).alias("enriched_confidence_mean"),
-        pl.lit(0.0).alias("enriched_relevance_mean"),
-        pl.lit(0.0).alias("bullish_ratio"),
-        pl.lit(0).alias("social_volume"),
-        pl.lit(0.0).alias("social_sentiment_mean"),
-        pl.lit(0).alias("breaking_news_flag"),
+    return _unavailable_columns(
+        df,
+        {
+            "enriched_article_count": pl.Int32,
+            "enriched_sentiment_mean": pl.Float64,
+            "enriched_sentiment_ewma_3d": pl.Float64,
+            "enriched_sentiment_ewma_7d": pl.Float64,
+            "enriched_confidence_mean": pl.Float64,
+            "enriched_relevance_mean": pl.Float64,
+            "bullish_ratio": pl.Float64,
+            "social_volume": pl.Int32,
+            "social_sentiment_mean": pl.Float64,
+            "breaking_news_flag": pl.Int8,
+            "enriched_source_age_days": pl.Int32,
+        },
+        "enriched_available",
     )
 
 
 def _add_empty_analyst_columns(df: pl.DataFrame) -> pl.DataFrame:
-    return df.with_columns(
-        pl.lit(0.0).alias("analyst_consensus_score"),
-        pl.lit(0.0).alias("analyst_consensus_score_ewma_7d"),
-        pl.lit(0).alias("analyst_coverage_count"),
-        pl.lit(0.0).alias("analyst_price_target_mean"),
-        pl.lit(0.0).alias("analyst_price_target_upside"),
+    return _unavailable_columns(
+        df,
+        {
+            "analyst_consensus_score": pl.Float64,
+            "analyst_consensus_score_ewma_7d": pl.Float64,
+            "analyst_coverage_count": pl.Int32,
+            "analyst_price_target_mean": pl.Float64,
+            "analyst_price_target_upside": pl.Float64,
+            "analyst_source_age_days": pl.Int32,
+        },
+        "analyst_available",
     )
 
 
 def _add_empty_sec_columns(df: pl.DataFrame) -> pl.DataFrame:
-    return df.with_columns(
-        pl.lit(0.0).alias("sec_risk_sentiment"),
-        pl.lit(0.0).alias("sec_management_tone"),
-        pl.lit(0).alias("sec_guidance_positive"),
-        pl.lit(0).alias("sec_risk_change_flag"),
+    return _unavailable_columns(
+        df,
+        {
+            "sec_risk_sentiment": pl.Float64,
+            "sec_management_tone": pl.Float64,
+            "sec_guidance_positive": pl.Int8,
+            "sec_risk_change_flag": pl.Int8,
+            "sec_source_age_days": pl.Int32,
+        },
+        "sec_available",
+    )
+
+
+def _add_empty_macro_columns(df: pl.DataFrame) -> pl.DataFrame:
+    return _unavailable_columns(
+        df,
+        {
+            "vix": pl.Float64,
+            "treasury_10y": pl.Float64,
+            "tips_yield": pl.Float64,
+            "dxy": pl.Float64,
+            "vix_change_5d": pl.Float64,
+            "yield_curve_slope": pl.Float64,
+            "dxy_change_5d": pl.Float64,
+            "macro_source_age_days": pl.Int32,
+        },
+        "macro_available",
     )

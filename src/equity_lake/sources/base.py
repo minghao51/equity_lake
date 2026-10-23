@@ -15,6 +15,14 @@ import structlog
 import yfinance as yf
 
 from equity_lake.core.config import TickerConfig
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    IDENTITY_SCHEMA_VERSION,
+    InstrumentIdentityError,
+    InstrumentKey,
+    LegacyIdentityUnavailableError,
+    mic_for_exchange,
+)
+from equity_lake.core.paths import LONG_TO_SHORT, canonical_market
 from equity_lake.core.polars_utils import ensure_polars, normalize_temporal_columns
 from equity_lake.core.rate_limit import throttle
 from equity_lake.core.retry import build_retry_decorator
@@ -194,6 +202,76 @@ class MarketDataFetcher:
             stock_limit=self.stock_limit,
         )
         return selected
+
+    def _attach_source_identity(self, frame: pl.DataFrame) -> pl.DataFrame:
+        """Attach current source identity without guessing from ticker spelling.
+
+        Explicit vendor MIC/exchange fields take precedence and are checked
+        against configured current metadata. If the vendor omits venue data,
+        only an exact current ticker-config exchange mapping can fill it; an
+        explicit ticker list by itself is not provenance. This is called only
+        for newly fetched price rows, never while reading historical data.
+        """
+        if frame.is_empty():
+            return frame
+        canonical = canonical_market(self.market)
+        rows = frame.to_dicts()
+        for row in rows:
+            symbol = row.get("symbol", row.get("ticker"))
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise InstrumentIdentityError("Price provider returned a row without ticker/symbol")
+            stored_market = row.get("market")
+            if isinstance(stored_market, str) and stored_market.strip() and canonical_market(stored_market.strip()) != canonical:
+                raise InstrumentIdentityError(f"Provider market {stored_market!r} conflicts with source {canonical!r}")
+
+            prior_provenance = row.get("identity_provenance")
+            valid_provenance = {"provider_mic", "provider_exchange", "current_ticker_config"}
+            if prior_provenance is not None and prior_provenance not in valid_provenance:
+                raise InstrumentIdentityError(f"Provider returned an unknown identity provenance label {prior_provenance!r}")
+            prior_version = row.get("identity_schema_version")
+            if prior_version is not None:
+                try:
+                    parsed_version = int(prior_version)
+                except (TypeError, ValueError) as exc:
+                    raise InstrumentIdentityError(f"Provider returned invalid identity schema version {prior_version!r}") from exc
+                if parsed_version != IDENTITY_SCHEMA_VERSION:
+                    raise InstrumentIdentityError(f"Provider returned unsupported identity schema version {prior_version!r}")
+
+            raw_mic = row.get("mic")
+            raw_exchange = row.get("exchange")
+            provider_mic = raw_mic.strip().upper() if isinstance(raw_mic, str) and raw_mic.strip() else None
+            provider_exchange = raw_exchange.strip() if isinstance(raw_exchange, str) and raw_exchange.strip() else None
+            exchange_mic = mic_for_exchange(provider_exchange) if provider_exchange else None
+            if provider_mic and exchange_mic and provider_mic != exchange_mic:
+                raise InstrumentIdentityError(f"Provider MIC {provider_mic!r} conflicts with exchange {provider_exchange!r}")
+
+            configured_mics: set[str] = set()
+            if self.ticker_config is not None:
+                config_markets = {LONG_TO_SHORT[canonical], canonical}
+                if canonical == "hk_sg_equity":
+                    config_markets.update({"hk", "sg"})
+                for config_market in config_markets:
+                    configured = self.ticker_config.get_ticker_metadata(symbol, market=config_market)
+                    if configured is not None:
+                        configured_mics.add(configured.instrument_key(canonical).mic)
+            configured_mic = next(iter(configured_mics)) if len(configured_mics) == 1 else None
+            resolved_mic = provider_mic or exchange_mic or configured_mic
+            if resolved_mic is None:
+                reason = "ambiguous" if len(configured_mics) > 1 else "unavailable"
+                raise LegacyIdentityUnavailableError(
+                    f"Price provider omitted MIC/exchange for {symbol!r} and exact current ticker-config identity is {reason}"
+                )
+            if configured_mics and resolved_mic not in configured_mics:
+                raise InstrumentIdentityError(
+                    f"Provider identity {resolved_mic!r} for {symbol!r} conflicts with configured current MICs {sorted(configured_mics)}"
+                )
+            identity = InstrumentKey(market=canonical, mic=resolved_mic, symbol=symbol)
+            row.update(identity.as_columns())
+            row["identity_schema_version"] = IDENTITY_SCHEMA_VERSION
+            row["identity_provenance"] = prior_provenance or (
+                "provider_mic" if provider_mic else "provider_exchange" if exchange_mic else "current_ticker_config"
+            )
+        return pl.DataFrame(rows, infer_schema_length=None)
 
     def load_tickers_from_config(
         self,
@@ -397,6 +475,7 @@ class YFinanceBaseFetcher(MarketDataFetcher):
 
             frame = pd.concat(all_frames, ignore_index=True)
             frame = standardize_columns(frame, rename=self._get_column_rename(), columns=STANDARD_COLUMNS)
+            frame = self._attach_source_identity(frame)
             unique_tickers = frame["ticker"].n_unique() if "ticker" in frame.columns else 0
             logger.info("Fetched %s rows for %s unique %s tickers", frame.height, unique_tickers, self.market)
             return frame
@@ -463,7 +542,8 @@ class YFinanceBaseFetcher(MarketDataFetcher):
                     events.with_columns(
                         pl.lit("yahoo").alias("source"),
                         pl.lit(now).alias("ingested_at"),
-                    ).select("ticker", "ex_date", "action", "value", "source", "ingested_at")
+                        pl.lit(None, dtype=CORPORATE_ACTION_SCHEMA["source_available_at"]).alias("source_available_at"),
+                    ).select("ticker", "ex_date", "action", "value", "source", "ingested_at", "source_available_at")
                 )
             if not rows:
                 return pl.DataFrame(schema=CORPORATE_ACTION_SCHEMA)

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
+from typing import Any
+
 import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.features.pipeline import FeaturePipeline
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
+from equity_lake.features.pipeline import FeaturePipeline  # type: ignore[import-untyped]
 
 
 def _sample_frame(n: int = 80) -> pd.DataFrame:
@@ -32,7 +36,7 @@ def test_feature_pipeline_computes_expected_columns() -> None:
     assert "macd" in result.columns
     assert "volume_ratio" in result.columns
     assert "next_day_return" in result.columns
-    assert set(result["feature_schema_version"].to_list()) == {4}
+    assert set(result["feature_schema_version"].to_list()) == {FEATURE_SCHEMA_VERSION}
 
 
 def test_feature_pipeline_excludes_target_by_default() -> None:
@@ -100,7 +104,7 @@ class TestConnectedValidation:
     def test_invalid_open_fails_public_compute(self) -> None:
         frame = _sample_frame()
         frame.loc[0, "open"] = 0.0
-        from equity_lake.features.dag.clean_02 import OHLCVValidationError
+        from equity_lake.features.dag.clean_02 import OHLCVValidationError  # type: ignore[import-untyped]
 
         with pytest.raises(OHLCVValidationError, match="strictly positive"):
             FeaturePipeline().compute_technical(frame)
@@ -199,7 +203,7 @@ class TestConnectedValidation:
         assert result.schema["date"] == pl.Date
 
 
-def _flatten(items):
+def _flatten(items: Iterable[Any]) -> Iterator[Any]:
     for item in items:
         if isinstance(item, (set, frozenset, list, tuple)):
             yield from _flatten(item)
@@ -209,7 +213,7 @@ def _flatten(items):
 
 def test_gold_boundary_node_rejects_infinite_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """If an indicator produced inf, the Gold boundary node rejects the frame."""
-    import equity_lake.features.dag.features_03 as features_03
+    import equity_lake.features.dag.features_03 as features_03  # type: ignore[import-untyped]
     from equity_lake.features.dag.features_03 import FeatureOutputValidationError
 
     original = features_03.validate_emitted_frame

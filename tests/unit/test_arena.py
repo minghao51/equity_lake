@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import json
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.arena import (
+from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
     COST_REGIMES,
     MARKET_COST_DEFAULTS,
     STRATEGY_REGISTRY,
@@ -17,12 +19,15 @@ from equity_lake.backtesting.arena import (
     equal_weight_buyhold,
     run_arena,
 )
-from equity_lake.backtesting.report import (
+from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
     build_finding_cards,
     drawdown_series,
     write_arena_artifacts,
 )
-from equity_lake.findings import load_finding_cards
+from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    ActionCoverageProof,
+)
+from equity_lake.findings import load_finding_cards  # type: ignore[import-untyped]
 
 pytestmark = pytest.mark.slow
 
@@ -39,7 +44,28 @@ def _synthetic_data(n_tickers: int = 12, n_days: int = 320, seed: int = 42) -> p
         for d in dates:
             px *= 1.0 + rng.normal(0.0004, 0.015)
             rows.append({"ticker": t, "date": d, "open": px, "high": px * 1.01, "low": px * 0.99, "close": px, "volume": 1e6})
-    return pl.DataFrame(rows)
+    data = pl.DataFrame(rows).with_columns(
+        pl.lit("us_equity").alias("market"),
+        pl.lit("XNYS").alias("mic"),
+        pl.col("ticker").alias("symbol"),
+    )
+    context_by_ticker: dict[str, str] = {}
+    for ticker in tickers:
+        proof = ActionCoverageProof(
+            market="us_equity",
+            mic="XNYS",
+            symbol=ticker,
+            source="synthetic-arena",
+            coverage_start=min(dates),
+            coverage_end=max(dates),
+            source_available_at=datetime(2021, 12, 31, 20, 0, tzinfo=UTC),
+            source_valid_until=datetime(2023, 1, 1, tzinfo=UTC),
+        )
+        context_by_ticker[ticker] = json.dumps({"actions": [], "coverage": [proof.model_dump(mode="json")]})
+    return data.with_columns(
+        *[pl.col(column).alias(f"__pit_raw_{column}") for column in ("open", "high", "low", "close", "volume")],
+        pl.col("ticker").replace_strict(context_by_ticker, return_dtype=pl.String).alias("__pit_action_context"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -67,7 +93,7 @@ def test_drawdown_series_is_non_positive_and_peaks_at_zero() -> None:
     dd = drawdown_series(equity)
     assert dd.len() == 4
     assert dd.max() == pytest.approx(0.0)  # at the running peak
-    assert dd.min() < 0.0  # the 90 trough
+    assert cast(float, dd.min()) < 0.0  # the 90 trough
 
 
 def test_drawdown_series_empty() -> None:
@@ -81,11 +107,12 @@ def test_drawdown_series_empty() -> None:
 
 
 def test_run_arena_matrix_and_benchmark() -> None:
-    data = _synthetic_data()
+    data = _synthetic_data(n_days=80)
+    start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
     outcome = run_arena(
         [f"T{i:02d}" for i in range(12)],
-        data["date"].min(),
-        data["date"].max(),
+        start_date,
+        end_date,
         preloaded_data=data,
         strategies=list(STRATEGY_REGISTRY),
         cost_regimes=list(COST_REGIMES),
@@ -102,11 +129,12 @@ def test_run_arena_matrix_and_benchmark() -> None:
 
 def test_run_arena_rejects_unknown_strategies() -> None:
     data = _synthetic_data(n_tickers=12, n_days=60)
+    start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
     with pytest.raises(ValueError, match="Unknown strategies"):
         run_arena(
             ["T00"],
-            data["date"].min(),
-            data["date"].max(),
+            start_date,
+            end_date,
             preloaded_data=data,
             strategies=["bogus"],
         )
@@ -142,11 +170,12 @@ def test_realistic_regime_accepts_market_cost_overrides() -> None:
 
 
 def test_build_finding_cards_axes_and_verdicts() -> None:
-    data = _synthetic_data()
+    data = _synthetic_data(n_days=80)
+    start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
     outcome = run_arena(
         [f"T{i:02d}" for i in range(12)],
-        data["date"].min(),
-        data["date"].max(),
+        start_date,
+        end_date,
         preloaded_data=data,
     )
     cards = build_finding_cards(outcome, run_date=date(2026, 8, 4), scope={"synthetic": True})
@@ -163,11 +192,12 @@ def test_build_finding_cards_axes_and_verdicts() -> None:
 
 
 def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
-    data = _synthetic_data()
+    data = _synthetic_data(n_days=80)
+    start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
     outcome = run_arena(
         [f"T{i:02d}" for i in range(12)],
-        data["date"].min(),
-        data["date"].max(),
+        start_date,
+        end_date,
         preloaded_data=data,
     )
     written = write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4), scope={"synthetic": True})
@@ -182,11 +212,12 @@ def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
 
 def test_card_evidence_refs_point_at_artifacts_write_arena_actually_writes(tmp_path: Path) -> None:
     """B5: evidence_refs must reference real per-run artifact dirs, not phantom dirs."""
-    data = _synthetic_data()
+    data = _synthetic_data(n_days=80)
+    start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
     outcome = run_arena(
         [f"T{i:02d}" for i in range(12)],
-        data["date"].min(),
-        data["date"].max(),
+        start_date,
+        end_date,
         preloaded_data=data,
     )
     cards = write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4))

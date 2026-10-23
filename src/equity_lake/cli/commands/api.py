@@ -15,8 +15,15 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"}
 def api_serve(
     host: Annotated[
         str,
-        typer.Option("--host", help="Bind host (non-loopback hosts require confirmation — the API is unauthenticated)"),
+        typer.Option("--host", help="Bind host (non-loopback hosts require confirmation unless explicitly opted in)"),
     ] = "127.0.0.1",
+    allow_unauthenticated_exposure: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unauthenticated-exposure",
+            help="Explicitly allow serving the unauthenticated API on a non-loopback interface",
+        ),
+    ] = False,
     port: Annotated[int, typer.Option("--port", "-p", help="Bind port")] = 8000,
     reload: Annotated[bool, typer.Option("--reload", help="Auto-reload on code changes (dev)")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
@@ -28,15 +35,16 @@ def api_serve(
 
     _init_logging(verbose)
     if host not in _LOOPBACK_HOSTS:
-        # Mirrors the demo-seed guard pattern: warn + confirm before exposing.
         # The API (including /docs) has no authentication; binding a wildcard or
         # LAN interface publishes findings, models, and predictions to anyone
-        # who can reach the port. Non-interactive contexts (EOF on stdin) abort.
+        # who can reach the port. Explicit opt-in is suitable for noninteractive
+        # containers only when deployment networking provides the intended limit.
         typer.secho(
             f"WARNING: --host {host} binds a non-loopback interface and the API — including /docs — is UNAUTHENTICATED.",
             fg=typer.colors.YELLOW,
         )
-        typer.confirm("Expose the unauthenticated API on this interface anyway?", abort=True)
+        if not allow_unauthenticated_exposure:
+            typer.confirm("Expose the unauthenticated API on this interface anyway?", abort=True)
     typer.secho(f"Serving Equity Lake API on http://{host}:{port}", fg=typer.colors.GREEN)
     typer.echo("  OpenAPI docs at /docs  ·  health at /health")
     if reload:

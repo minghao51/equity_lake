@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
+from runpy import run_path
+from typing import cast
 
 import polars as pl
 import pytest
 
-from equity_lake.findings.writer import load_finding_cards
-from equity_lake.ml.comparison import run_comparison
+from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.findings.writer import load_finding_cards  # type: ignore[import-untyped]
+from equity_lake.ml.comparison import run_comparison  # type: ignore[import-untyped]
+
+_pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
+with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]
 
 
 def _make_features_frame(ticker: str = "AAPL", periods: int = 300) -> pl.DataFrame:
@@ -19,7 +26,7 @@ def _make_features_frame(ticker: str = "AAPL", periods: int = 300) -> pl.DataFra
     """
     dates = [date(2024, 1, 1) + timedelta(days=i) for i in range(periods)]
     close = [100.0 + i * 0.5 for i in range(periods)]
-    return pl.DataFrame(
+    frame = pl.DataFrame(
         {
             "ticker": [ticker] * periods,
             "date": dates,
@@ -33,6 +40,7 @@ def _make_features_frame(ticker: str = "AAPL", periods: int = 300) -> pl.DataFra
             "macd": [0.1 * (i % 3) for i in range(periods)],
         }
     )
+    return cast(pl.DataFrame, with_synthetic_feature_proof(frame, InstrumentKey(market="us_equity", mic="XNAS", symbol=ticker)))
 
 
 @pytest.fixture
@@ -40,7 +48,7 @@ def features_frame() -> pl.DataFrame:
     return _make_features_frame()
 
 
-def test_run_comparison_returns_two_expected_cards(tmp_path, features_frame: pl.DataFrame) -> None:
+def test_run_comparison_returns_two_expected_cards(tmp_path: Path, features_frame: pl.DataFrame) -> None:
     """run_comparison emits exactly the labeling + model FindingCards."""
     pytest.importorskip("lightgbm")  # backend pair requires LightGBM (ml group)
 
@@ -68,7 +76,7 @@ def test_run_comparison_returns_two_expected_cards(tmp_path, features_frame: pl.
         assert card.scope["tickers"] == ["AAPL"]
 
 
-def test_comparison_cards_round_trip_via_load(tmp_path, features_frame: pl.DataFrame) -> None:
+def test_comparison_cards_round_trip_via_load(tmp_path: Path, features_frame: pl.DataFrame) -> None:
     """Written cards persist under base and reload via load_finding_cards."""
     pytest.importorskip("lightgbm")
 

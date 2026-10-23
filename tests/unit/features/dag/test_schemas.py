@@ -8,8 +8,8 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.features.dag.schemas import FeatureModel, OHLCVCleanModel
-from equity_lake.ml import validate_predictions
+from equity_lake.features.dag.schemas import FeatureModel, OHLCVCleanModel  # type: ignore[import-untyped]
+from equity_lake.ml import validate_predictions  # type: ignore[import-untyped]
 
 # ---------------------------------------------------------------------------
 # OHLCVCleanModel (Silver boundary)
@@ -92,6 +92,10 @@ def test_feature_model_rejects_rsi_out_of_range() -> None:
 def test_validate_predictions_valid() -> None:
     df = pl.DataFrame(
         {
+            "market": ["us_equity"] * 2,
+            "mic": ["XNAS"] * 2,
+            "symbol": ["AAPL", "MSFT"],
+            "identity_schema_version": [1] * 2,
             "ticker": ["AAPL", "MSFT"],
             "date": [date(2024, 1, 1), date(2024, 1, 1)],
             "direction": ["up", "down"],
@@ -104,6 +108,10 @@ def test_validate_predictions_valid() -> None:
 def test_validate_predictions_catches_bad_probability() -> None:
     df = pl.DataFrame(
         {
+            "market": ["us_equity"],
+            "mic": ["XNAS"],
+            "symbol": ["AAPL"],
+            "identity_schema_version": [1],
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 1)],
             "direction": ["up"],
@@ -116,6 +124,10 @@ def test_validate_predictions_catches_bad_probability() -> None:
 def test_validate_predictions_catches_bad_direction() -> None:
     df = pl.DataFrame(
         {
+            "market": ["us_equity"],
+            "mic": ["XNAS"],
+            "symbol": ["AAPL"],
+            "identity_schema_version": [1],
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 1)],
             "direction": ["sideways"],

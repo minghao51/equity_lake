@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from equity_lake.catalog.builder import _is_hamilton_internal, build_catalog
-from equity_lake.catalog.models import Catalog
+from equity_lake.catalog.builder import _is_hamilton_internal, build_catalog  # type: ignore[import-untyped]
+from equity_lake.catalog.models import Catalog  # type: ignore[import-untyped]
 
 
 @pytest.fixture(scope="module")
@@ -79,7 +79,28 @@ class TestEdges:
 
 class TestDatasets:
     def test_dataset_count(self, catalog: Catalog) -> None:
-        assert len(catalog.datasets) == 17
+        assert len(catalog.datasets) == 18
+
+    def test_silver_corporate_action_coverage_is_cataloged_but_tracking_is_auxiliary(self, catalog: Catalog) -> None:
+        coverage = next(dataset for dataset in catalog.datasets if dataset.name == "corporate_action_coverage")
+        corporate_actions = next(dataset for dataset in catalog.datasets if dataset.name == "corporate_actions")
+        assert coverage.layer == corporate_actions.layer == "silver"
+        assert coverage.path == "data/lake/02_silver/corporate_action_coverage/"
+        assert coverage.format == "delta"
+        assert coverage.partition == "coverage_end"
+        columns = {column.name: column.dtype for column in coverage.columns}
+        assert {name: columns.get(name) for name in ("market", "mic", "symbol", "source_available_at", "source_valid_until")} == {
+            "market": "string",
+            "mic": "string",
+            "symbol": "string",
+            "source_available_at": "datetime",
+            "source_valid_until": "datetime",
+        }
+
+        # Watchlists, event history and delivery outbox live outside the lake;
+        # only medallion datasets belong in the generated catalog.
+        assert all(dataset.path.startswith("data/lake/") for dataset in catalog.datasets)
+        assert not any("tracking" in dataset.name or "watchlist" in dataset.name or "outbox" in dataset.name for dataset in catalog.datasets)
 
     def test_all_layers_present(self, catalog: Catalog) -> None:
         layers = {ds.layer for ds in catalog.datasets}
@@ -95,8 +116,8 @@ class TestCatalogDrift:
     """
 
     def test_committed_jsonl_matches_builder_output(self) -> None:
-        from equity_lake.catalog.writer import catalog_to_jsonl
-        from equity_lake.core.paths import PROJECT_ROOT
+        from equity_lake.catalog.writer import catalog_to_jsonl  # type: ignore[import-untyped]
+        from equity_lake.core.paths import PROJECT_ROOT  # type: ignore[import-untyped]
 
         on_disk = (PROJECT_ROOT / "data" / "catalog.jsonl").read_text(encoding="utf-8")
         assert on_disk == catalog_to_jsonl(build_catalog()), (
@@ -146,7 +167,7 @@ class TestDatasetLineage:
 
     def test_lineage_does_not_mutate_static_definitions(self) -> None:
         """The static ALL_DATASETS must remain unpopulated after build_catalog()."""
-        from equity_lake.catalog.datasets import ALL_DATASETS
+        from equity_lake.catalog.datasets import ALL_DATASETS  # type: ignore[import-untyped]
 
         for ds in ALL_DATASETS:
             assert ds.upstream == [], f"Static dataset {ds.name} was mutated: upstream={ds.upstream}"

@@ -21,10 +21,12 @@ from equity_lake.cli._app import (
     ml_app,
     report_app,
     signal_app,
+    tracking_app,
     validate_app,
 )
 
 app.add_typer(signal_app, name="signal")
+app.add_typer(tracking_app, name="tracking")
 app.add_typer(dashboard_app, name="dashboard")
 app.add_typer(bootstrap_app, name="bootstrap")
 app.add_typer(config_app, name="config")
@@ -67,6 +69,8 @@ def dashboard_serve(
         "streamlit",
         "run",
         str(app_path),
+        "--server.address",
+        "127.0.0.1",
         "--server.port",
         str(port),
         "--server.headless",
@@ -88,6 +92,7 @@ import equity_lake.cli.commands.arena  # noqa: E402, F401
 import equity_lake.cli.commands.demo  # noqa: E402, F401
 import equity_lake.cli.commands.ml  # noqa: E402, F401
 import equity_lake.cli.commands.api  # noqa: E402, F401
+import equity_lake.cli.commands.tracking  # noqa: E402, F401
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ sentiment:
 
 # ML prediction signals
 ml:
-  enabled: true
+  enabled: false
   model_dir: "data/models"
   mode: "v1_direction"
   horizon_days: 5

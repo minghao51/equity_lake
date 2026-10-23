@@ -18,14 +18,21 @@ def backtest_cmd(
     start_date: Annotated[str, typer.Option("--start-date", help="Start date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     end_date: Annotated[str, typer.Option("--end-date", help="End date YYYY-MM-DD")] = ...,  # type: ignore[assignment]
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
-    adjust: Annotated[str, typer.Option("--adjust", help="Corporate-action price adjustment (ADR-0011): none, splits, total_return")] = "none",
+    adjust: Annotated[
+        str, typer.Option("--adjust", help="Point-in-time split-only adjustment (default); 'none' is a legacy alias, not a raw-price bypass")
+    ] = "splits",
     output: Annotated[str | None, typer.Option("--output", "-o", help="Output JSON")] = None,
 ) -> None:
     """Backtest trading strategies (shares the strategy registry with ``equity report backtest``)."""
     from equity_lake.backtesting.factory import build_backtest_engine
 
-    if adjust not in ("none", "splits", "total_return"):
-        typer.secho(f"Unknown --adjust value: {adjust} (expected none, splits, total_return)", fg=typer.colors.RED)
+    if adjust == "total_return":
+        typer.secho(
+            "--adjust total_return is unsupported; only point-in-time split-only adjustment is implemented (use --adjust splits)", fg=typer.colors.RED
+        )
+        raise typer.Exit(1)
+    if adjust not in ("none", "splits"):
+        typer.secho(f"Unknown --adjust value: {adjust} (expected splits; none is a legacy split-only alias)", fg=typer.colors.RED)
         raise typer.Exit(1)
 
     try:
@@ -35,7 +42,7 @@ def backtest_cmd(
             start_date=date.fromisoformat(start_date),
             end_date=date.fromisoformat(end_date),
             initial_cash=initial_cash,
-            adjust=cast("Literal['none', 'splits', 'total_return']", adjust),
+            adjust=cast("Literal['none', 'splits']", adjust),
         )
     except ValueError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
@@ -46,8 +53,7 @@ def backtest_cmd(
     except Exception as exc:  # noqa: BLE001 — surface a clean CLI error
         typer.secho(f"backtest failed: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1) from exc
-    if adjust != "none":
-        typer.echo(f"Price adjustment: {adjust} (corporate actions applied at read time; ADR-0011)")
+    typer.echo("Price adjustment: split-only (corporate actions applied at read time; ADR-0015)")
     typer.echo(result.summary())
     if output:
         Path(output).write_text(json.dumps(result.to_dict(), indent=2, default=str))
@@ -106,32 +112,31 @@ def monitor(
         verbose=verbose,
         alerter=build_alerter(settings.alerting.webhook_url),
     )
-    all_healthy = monitor_inst.run_health_check()
-
-    # Presentation lives here: the monitor computes and dispatches alerts via
-    # its alerter (console alerts print exactly once through ConsoleAlerter).
-    typer.echo("\n" + "=" * 70)
-    typer.echo("PIPELINE HEALTH MONITOR")
-    typer.echo("=" * 70 + "\n")
-    for check_name, healthy in monitor_inst.check_results.items():
-        status = "\u2705 PASS" if healthy else "\u274c FAIL"
-        typer.echo(f"{status:<12} {check_name}")
-    typer.echo("\n" + "=" * 70)
-    if all_healthy:
-        typer.echo("\u2705 Pipeline is HEALTHY")
-    else:
-        typer.echo("\u26a0\ufe0f  Pipeline has ISSUES")
-    typer.echo("=" * 70 + "\n")
-
-    # Cron/schedulers branch on the exit code: unhealthy data must fail the
-    # command even though the report itself was produced successfully.
-    if not all_healthy:
-        raise typer.Exit(1)
-
-    # Always persist to the canonical location so dashboards can render it.
-    # --output-json overrides the default logs/health-report.json path.
-    output_path = Path(output_json) if output_json is not None else LOGS_DIR / "health-report.json"
     try:
+        all_healthy = monitor_inst.run_health_check()
+
+        # Presentation lives here: the monitor computes and dispatches alerts via
+        # its alerter (console alerts print exactly once through ConsoleAlerter).
+        typer.echo("\n" + "=" * 70)
+        typer.echo("PIPELINE HEALTH MONITOR")
+        typer.echo("=" * 70 + "\n")
+        for check_name, healthy in monitor_inst.check_results.items():
+            status = "\u2705 PASS" if healthy else "\u274c FAIL"
+            typer.echo(f"{status:<12} {check_name}")
+        typer.echo("\n" + "=" * 70)
+        if all_healthy:
+            typer.echo("\u2705 Pipeline is HEALTHY")
+        else:
+            typer.echo("\u26a0\ufe0f  Pipeline has ISSUES")
+        typer.echo("=" * 70 + "\n")
+
+        # Always persist the canonical report, including when unhealthy. Schedulers
+        # use the exit code, while dashboards need the latest result either way.
+        output_path = Path(output_json) if output_json is not None else LOGS_DIR / "health-report.json"
         monitor_inst.save_report(output_path)
     finally:
         monitor_inst.close()
+
+    # Close the monitor before exposing an unhealthy result to cron/schedulers.
+    if not all_healthy:
+        raise typer.Exit(1)

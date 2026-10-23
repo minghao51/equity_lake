@@ -1,14 +1,15 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo
+.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo
 
 # Default target
 help:
 	@echo "Equity EOD Data Pipeline - Available Commands:"
 	@echo ""
 	@echo "  setup      - Create virtual environment and install core dependencies"
-	@echo "  test       - Run tests with coverage"
+	@echo "  test       - Run offline, non-integration tests with coverage"
+	@echo "  test-network - Explicitly run network and integration tests"
 	@echo "  lint       - Run code linting (ruff)"
 	@echo "  lint-md    - Run Markdown linting"
 	@echo "  format     - Format code (ruff)"
@@ -111,20 +112,24 @@ sentiment-dry:
 
 # Testing
 test:
-	@echo "🧪 Running tests..."
-	dotenvx run -- uv run pytest -v --cov=src/equity_lake --cov-report=html --cov-report=term
+	@echo "🧪 Running offline, non-integration tests..."
+	uv run pytest -v -m "not network and not integration" --cov=src/equity_lake --cov-report=html --cov-report=term
 
 test-unit:
-	@echo "🔬 Running unit tests..."
-	uv run pytest tests/ -v -m "unit"
+	@echo "🔬 Running offline unit tests..."
+	uv run pytest tests/ -v -m "unit and not network and not integration"
 
 test-integration:
-	@echo "🔗 Running integration tests..."
-	uv run pytest tests/ -v -m "integration"
+	@echo "🔗 Running integration tests (may access external services)..."
+	uv run pytest tests/ -v --run-network -m "integration"
 
 test-slow:
-	@echo "🐌 Running slow tests..."
-	uv run pytest tests/ -v -m "slow"
+	@echo "🐌 Running offline slow tests..."
+	uv run pytest tests/ -v -m "slow and not network and not integration"
+
+test-network:
+	@echo "🌐 Running network and integration tests (may access external services)..."
+	uv run pytest tests/ -v --run-network -m "network or integration"
 
 # Code Quality
 lint:
@@ -190,32 +195,15 @@ ci: validate check-all test-unit
 # Backtesting tests
 quick-test:
 	@echo "🔍 Running quick backtesting validation..."
-	uv run python examples/quick_test.py
+	uv run pytest tests/unit/test_backtest_generator.py -q
 
 test-backtest:
 	@echo "🧪 Running full backtesting test suite..."
-	uv run python examples/backtest_demo.py
+	uv run pytest tests/unit/test_backtest_adjustment.py tests/unit/test_backtest_generator.py tests/unit/test_backtest_metrics.py tests/unit/test_backtesting_regressions.py -q
 
 # Portfolio showcase: seed the demo lake (offline-safe, synthetic by default)
 demo:
 	@echo "🎬 Seeding demo lake (synthetic, offline-safe)..."
 	uv run equity demo seed
-	@echo ""
-	@echo "✅ Demo lake populated. Next:"
-	@echo "  equity arena run --start-date 2022-01-03 --end-date $$(date +%F)"
-	@echo "🚀 Quick start for Equity EOD Data Pipeline..."
-	make setup
-	make dev-setup
-	make validate
-	@echo ""
-	@echo "🎉 Quick start complete!"
-	@echo "Next steps:"
-	@echo "  1. Copy .env.example to .env and configure"
-	@echo "  2. Run 'make test' to verify everything works"
-	@echo "  3. Run 'make daily' to fetch test data"
-	@echo "  4. Run 'make query' to explore data"
-	@echo "  5. Run 'make quick-test' to validate backtesting framework"
-	@echo ""
-	@echo "Or try the unified CLI:"
-	@echo "  equity bootstrap sample    # Generate sample data in seconds"
-	@echo "  equity --help              # See all commands"
+	@echo "✅ Demo lake populated under data/sample/. No setup, validation, or provider fetches were run."
+	@echo "Explore commands with: uv run equity --help"

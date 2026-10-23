@@ -215,13 +215,22 @@ def ml_train(
     verbose: VerboseOption = False,
 ) -> None:
     """Train one backend classifier (canonical entrypoint; ``intelligence forecast --mode train`` is the legacy alias)."""
+    from equity_lake.ml.candidates import DEFAULT_BACKTEST_STRATEGY
     from equity_lake.ml.forecasting import PriceForecaster
+    from equity_lake.signals.config import load_signal_config
 
     _init_logging(verbose)
+    signal_config = load_signal_config()
+    configured = signal_config.ml.get("candidate_strategies") or signal_config.backtest.get("strategies")
+    candidate_strategies = (
+        [strategy.model_dump() if hasattr(strategy, "model_dump") else dict(strategy) for strategy in configured]
+        if configured
+        else [dict(DEFAULT_BACKTEST_STRATEGY)]
+    )
     start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
     end_date = date.fromisoformat(end) if end else date.today()
 
-    forecaster = PriceForecaster(model_mode=model_mode, backend=backend)
+    forecaster = PriceForecaster(model_mode=model_mode, backend=backend, candidate_strategies=candidate_strategies)
     try:
         forecaster.train_model(ticker, start_date, end_date, tune_hyperparams=tune, validate=True)
     except Exception as exc:  # noqa: BLE001 — surface a clean CLI error

@@ -1,13 +1,14 @@
 """Test signal data models."""
 
 from datetime import date
+from typing import Any
 
 import pytest
 
-from equity_lake.signals.models import Signal, SignalConfig, Watchlist
+from equity_lake.signals.models import Signal, SignalConfig, Watchlist  # type: ignore[import-untyped]
 
 
-def test_signal_creation_valid():
+def test_signal_creation_valid() -> None:
     """Test creating a valid signal."""
     signal = Signal(
         ticker="AAPL",
@@ -23,7 +24,7 @@ def test_signal_creation_valid():
     assert signal.confidence == 75.0
 
 
-def test_signal_confidence_validation():
+def test_signal_confidence_validation() -> None:
     """Test that confidence out of range raises error."""
     with pytest.raises(ValueError, match="Confidence must be 0-100"):
         Signal(
@@ -37,14 +38,14 @@ def test_signal_confidence_validation():
         )
 
 
-def test_watchlist_simple_list():
+def test_watchlist_simple_list() -> None:
     """Test watchlist with simple ticker list."""
     watchlist = Watchlist(name="My Portfolio", tickers=["AAPL", "GOOGL", "MSFT"])
     assert len(watchlist.tickers) == 3
     assert "AAPL" in watchlist.tickers
 
 
-def test_watchlist_with_groups():
+def test_watchlist_with_groups() -> None:
     """Test watchlist with grouped tickers."""
     watchlist = Watchlist(
         name="Tech Portfolio",
@@ -57,7 +58,7 @@ def test_watchlist_with_groups():
     assert "RIVN" in watchlist.tickers
 
 
-def test_signal_config_generator_enabled():
+def test_signal_config_generator_enabled() -> None:
     """Test checking if generator is enabled."""
     config = SignalConfig(
         backtest={"enabled": True},
@@ -69,7 +70,7 @@ def test_signal_config_generator_enabled():
     assert config.is_generator_enabled("ml")
 
 
-def test_watchlist_validate_against_tickers_returns_unknown_entries():
+def test_watchlist_validate_against_tickers_returns_unknown_entries() -> None:
     """Test watchlist validation returns unconfigured tickers without raising."""
     watchlist = Watchlist(name="My Portfolio", tickers=["AAPL", "MISSING"])
 
@@ -83,7 +84,7 @@ def test_watchlist_validate_against_tickers_returns_unknown_entries():
 # ---------------------------------------------------------------------------
 
 
-def _ml_signal(**metadata) -> Signal:
+def _ml_signal(**metadata: Any) -> Signal:
     return Signal(
         ticker="AAPL",
         date=date(2026, 8, 30),
@@ -92,10 +93,12 @@ def _ml_signal(**metadata) -> Signal:
         confidence=75.0,
         reasoning="ML predicts next-day upside",
         metadata=metadata,
+        market="us_equity",
+        mic="XNAS",
     )
 
 
-def test_signal_record_round_trips_whitelisted_metadata():
+def test_signal_record_round_trips_whitelisted_metadata() -> None:
     """Whitelisted keys survive a Signal -> SignalRecord -> Signal round-trip."""
     from equity_lake.signals.models import SignalRecord
 
@@ -113,7 +116,7 @@ def test_signal_record_round_trips_whitelisted_metadata():
     assert restored.confidence == 75.0
 
 
-def test_signal_record_rejects_base_column_collision():
+def test_signal_record_rejects_base_column_collision() -> None:
     """Metadata key 'confidence' collides with the base column -> explicit error."""
     from equity_lake.signals.models import SignalRecord
 
@@ -122,7 +125,7 @@ def test_signal_record_rejects_base_column_collision():
         SignalRecord.from_signal(signal)
 
 
-def test_signal_record_drops_unknown_metadata_keys():
+def test_signal_record_drops_unknown_metadata_keys() -> None:
     """Keys outside the whitelist are dropped (schema stays stable), not stored."""
     from equity_lake.signals.models import SignalRecord
 
@@ -133,7 +136,7 @@ def test_signal_record_drops_unknown_metadata_keys():
     assert record.probability == 0.6
 
 
-def test_signal_record_serializes_barrier_settings_dict_as_json():
+def test_signal_record_serializes_barrier_settings_dict_as_json() -> None:
     """Nested dicts become JSON strings — no Delta struct columns."""
     import json
 
@@ -148,6 +151,8 @@ def test_signal_record_serializes_barrier_settings_dict_as_json():
         confidence=80.0,
         reasoning="meta-label accepted",
         metadata={"candidate_action": "BUY", "barrier_settings": settings},
+        market="us_equity",
+        mic="XNAS",
     )
     record = SignalRecord.from_signal(signal)
     assert isinstance(record.barrier_settings_json, str)
@@ -155,7 +160,7 @@ def test_signal_record_serializes_barrier_settings_dict_as_json():
     assert record.to_signal().metadata["barrier_settings"] == settings
 
 
-def test_signal_record_is_closed():
+def test_signal_record_is_closed() -> None:
     """extra='forbid': unknown fields cannot sneak into the persisted schema."""
     from pydantic import ValidationError
 
@@ -175,7 +180,7 @@ def test_signal_record_is_closed():
         )
 
 
-def test_signal_record_validates_confidence_range():
+def test_signal_record_validates_confidence_range() -> None:
     from pydantic import ValidationError
 
     from equity_lake.signals.models import SignalRecord

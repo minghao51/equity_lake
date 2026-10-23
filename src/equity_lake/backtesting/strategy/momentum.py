@@ -1,7 +1,7 @@
 import polars as pl
 import structlog
 
-from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.strategy.base import BaseStrategy, strategy_identity_columns
 
 logger = structlog.get_logger(__name__)
 
@@ -35,7 +35,9 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
         long_only = self.get_param("long_only")
         min_stocks = self.get_param("min_stocks")
 
-        df = data.with_columns((pl.col("close").pct_change(n=lookback).over("ticker").shift(skip_days)).alias("past_return"))
+        identity_columns = strategy_identity_columns(data)
+        weight_keys = ["date", *identity_columns]
+        df = data.with_columns((pl.col("close").pct_change(n=lookback).over(identity_columns).shift(skip_days)).alias("past_return"))
 
         dates = df["date"].unique().sort()
         rebalance_dates = dates[::rebalance_days].to_list()
@@ -50,38 +52,36 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
             ranked = slice_df.with_columns(pl.col("past_return").rank(descending=True).alias("rank"))
             n = ranked.height
             top_count = max(int(n * top_pct), 1)
-            top_tickers = set(ranked.sort("rank").head(top_count)["ticker"].to_list())
 
             if long_only:
-                weights = slice_df.with_columns(
-                    pl.when(pl.col("ticker").is_in(top_tickers)).then(1.0 / top_count).otherwise(0.0).alias("weight")
-                ).select("date", "ticker", "weight")
+                weights = ranked.with_columns(pl.when(pl.col("rank") <= top_count).then(1.0 / top_count).otherwise(0.0).alias("weight")).select(
+                    *weight_keys, "weight"
+                )
             else:
                 bottom_pct = self.get_param("bottom_pct")
                 bottom_count = max(int(n * bottom_pct), 1)
-                bottom_tickers = set(ranked.sort("rank", descending=True).head(bottom_count)["ticker"].to_list())
                 long_w = 1.0 / top_count if top_count > 0 else 0.0
                 short_w = -1.0 / bottom_count if bottom_count > 0 else 0.0
 
-                weights = slice_df.with_columns(
-                    pl.when(pl.col("ticker").is_in(top_tickers))
+                weights = ranked.with_columns(
+                    pl.when(pl.col("rank") <= top_count)
                     .then(long_w)
-                    .when(pl.col("ticker").is_in(bottom_tickers))
+                    .when(pl.col("rank") > n - bottom_count)
                     .then(short_w)
                     .otherwise(0.0)
                     .alias("weight")
-                ).select("date", "ticker", "weight")
+                ).select(*weight_keys, "weight")
 
             weight_frames.append(weights)
 
         if not weight_frames:
-            return data.select("date", "ticker").with_columns(pl.lit(0.0).alias("weight"))
+            return data.select(weight_keys).with_columns(pl.lit(0.0).alias("weight"))
 
         result = pl.concat(weight_frames)
         return (
-            data.select("date", "ticker")
-            .join(result, on=["date", "ticker"], how="left")
-            .with_columns(pl.col("weight").fill_null(strategy="forward").over("ticker"))
+            data.select(weight_keys)
+            .join(result, on=weight_keys, how="left")
+            .with_columns(pl.col("weight").fill_null(strategy="forward").over(identity_columns))
             .fill_null(0.0)
         )
 

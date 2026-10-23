@@ -7,15 +7,22 @@ from typing import Any
 
 import polars as pl
 
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    ACTION_COVERAGE_SCHEMA_VERSION,
+    ActionCoverageProof,
+)
+from equity_lake.core.instruments import InstrumentIdentityError, normalize_identity_frame
 from equity_lake.core.polars_utils import ensure_polars
 from equity_lake.core.schemas import CORPORATE_ACTION_TYPES
 
+pb: Any
 try:
-    import pointblank as pb
+    import pointblank as _pointblank
 except ImportError as _exc:  # pragma: no cover - exercised via subprocess test
     pb = None
     _POINTBLANK_IMPORT_ERROR: Exception | None = _exc
 else:
+    pb = _pointblank
     _POINTBLANK_IMPORT_ERROR = None
 
 _POINTBLANK_INSTALL_HINT = (
@@ -46,7 +53,7 @@ class PointblankSchema:
             raise ValueError("Schema validation failed:\n" + "\n".join(msgs))
         return df_polars
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
         raise NotImplementedError
 
 
@@ -57,7 +64,14 @@ class PriceDataSchema(PointblankSchema):
     and no duplicate ticker+date combinations.
     """
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
+        canonical_identity = {"market", "mic", "symbol"}.issubset(df.columns)
+        if canonical_identity:
+            try:
+                normalize_identity_frame(df)
+            except InstrumentIdentityError as exc:
+                raise ValueError(f"Invalid canonical price identity: {exc}") from exc
+        identity_date = ["market", "mic", "symbol", "date"] if canonical_identity else ["ticker", "date"]
         v = (
             pb.Validate(data=df, label="Price data schema")
             .col_vals_gt(columns="open", value=0)
@@ -65,7 +79,7 @@ class PriceDataSchema(PointblankSchema):
             .col_vals_gt(columns="low", value=0)
             .col_vals_gt(columns="close", value=0)
             .col_vals_ge(columns="volume", value=0)
-            .rows_distinct(columns_subset=["ticker", "date"])
+            .rows_distinct(columns_subset=identity_date)
         )
 
         v = v.col_vals_expr(
@@ -87,7 +101,7 @@ class PriceDataSchema(PointblankSchema):
 class MacroDataSchema(PointblankSchema):
     """Schema for macro economic indicator data."""
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
         return (
             pb.Validate(data=df, label="Macro data schema")
             .col_vals_not_null(columns="date")
@@ -100,7 +114,7 @@ class MacroDataSchema(PointblankSchema):
 class NewsDataSchema(PointblankSchema):
     """Schema for news article data with sentiment."""
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
         return (
             pb.Validate(data=df, label="News data schema")
             .col_vals_not_null(columns="ticker")
@@ -123,7 +137,7 @@ class ArticleDataSchema(PointblankSchema):
     market-wide news, optional LLM enrichment).
     """
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
         v = pb.Validate(data=df, label="Article data schema").col_vals_not_null(columns="article_id")
         if "date" in df.columns:
             v = v.col_vals_not_null(columns="date")
@@ -146,7 +160,7 @@ class SocialSentimentSchema(PointblankSchema):
     every social write at the quality gate.
     """
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
         return (
             pb.Validate(data=df, label="Social sentiment data schema")
             .col_vals_not_null(columns="ticker")
@@ -161,6 +175,48 @@ class SocialSentimentSchema(PointblankSchema):
         )
 
 
+class CorporateActionCoverageSchema(PointblankSchema):
+    """Schema for complete source-scoped corporate-action coverage proofs.
+
+    Complete empty windows are persisted as coverage rows, not fabricated
+    corporate-action events. The source clock must be timezone-aware and is
+    checked by the shared versioned Pydantic contract.
+    """
+
+    @classmethod
+    def validate(cls, df: Any) -> pl.DataFrame:
+        frame = ensure_polars(df)
+        proofs = [ActionCoverageProof.model_validate(row) for row in frame.to_dicts()]
+        for index, proof in enumerate(proofs):
+            for other in proofs[index + 1 :]:
+                same_source = proof.identity == other.identity and proof.source == other.source
+                overlaps = proof.coverage_start <= other.coverage_end and other.coverage_start <= proof.coverage_end
+                conflicting_vintage = (proof.source_available_at, proof.source_valid_until) != (other.source_available_at, other.source_valid_until)
+                if same_source and overlaps and conflicting_vintage:
+                    raise ValueError(f"Conflicting overlapping corporate-action coverage proofs for {proof.identity} from {proof.source!r}")
+        return super().validate(frame)
+
+    def _build_validation(self, df: pl.DataFrame) -> Any:
+        return (
+            pb.Validate(data=df, label="Corporate-action coverage schema")
+            .col_vals_not_null(columns="market")
+            .col_vals_not_null(columns="mic")
+            .col_vals_not_null(columns="symbol")
+            .col_vals_not_null(columns="source")
+            .col_vals_not_null(columns="coverage_start")
+            .col_vals_not_null(columns="coverage_end")
+            .col_vals_not_null(columns="source_available_at")
+            .col_vals_not_null(columns="source_valid_until")
+            .col_vals_in_set(columns="coverage_status", set=["complete"])
+            .col_vals_eq(columns="coverage_schema_version", value=ACTION_COVERAGE_SCHEMA_VERSION)
+            .col_vals_expr(
+                expr=pl.col("coverage_end") >= pl.col("coverage_start"),
+                brief="coverage_end must be on or after coverage_start",
+            )
+            .rows_distinct(columns_subset=["market", "mic", "symbol", "source", "coverage_start", "coverage_end"])
+        )
+
+
 class CorporateActionSchema(PointblankSchema):
     """Schema for corporate action rows (ADR-0011: dividends and splits).
 
@@ -169,7 +225,7 @@ class CorporateActionSchema(PointblankSchema):
     is never in the future.
     """
 
-    def _build_validation(self, df: pl.DataFrame) -> pb.Validate:
+    def _build_validation(self, df: pl.DataFrame) -> Any:
         return (
             pb.Validate(data=df, label="Corporate action data schema")
             .col_vals_not_null(columns="ticker")
@@ -200,4 +256,5 @@ SCHEMA_REGISTRY: dict[str, type[PointblankSchema]] = {
     "social": SocialSentimentSchema,
     "article": ArticleDataSchema,
     "corporate_action": CorporateActionSchema,
+    "corporate_action_coverage": CorporateActionCoverageSchema,
 }

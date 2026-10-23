@@ -7,13 +7,17 @@ under ``data/lake/<medallion-layer>/<dataset>/``.
 
 from __future__ import annotations
 
+import errno
+import stat
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import polars as pl
 import structlog
 from deltalake import DeltaTable, write_deltalake
-from deltalake.exceptions import SchemaMismatchError
+from deltalake.exceptions import CommitFailedError
+from deltalake.schema import Schema
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_none
 
 from equity_lake.core.paths import LAKE_DIR
 from equity_lake.core.polars_utils import FrameLike, normalize_temporal_columns
@@ -107,6 +111,43 @@ def write_delta(
         raise DeltaWriteError(table, exc) from exc
 
 
+def _open_existing_delta_table(table_path: Path) -> DeltaTable | None:
+    """Open an existing valid Delta table, or return None only for true absence."""
+    try:
+        table_path.lstat()
+    except FileNotFoundError as exc:
+        if exc.errno != errno.ENOENT:
+            raise
+        _raise_for_dangling_ancestor(table_path)
+        return None
+    if not DeltaTable.is_deltatable(str(table_path)):
+        raise FileNotFoundError(f"Existing path is not a readable Delta table: {table_path}")
+    return DeltaTable(str(table_path))
+
+
+def _raise_for_dangling_ancestor(path: Path) -> None:
+    """Do not mistake a missing child behind a dangling symlink for absence."""
+    candidate = path
+    for _ in range(len(path.parts)):
+        try:
+            candidate_stat = candidate.lstat()
+        except FileNotFoundError as exc:
+            if exc.errno != errno.ENOENT:
+                raise
+        else:
+            if stat.S_ISLNK(candidate_stat.st_mode):
+                try:
+                    candidate.stat()
+                except FileNotFoundError as exc:
+                    if exc.errno == errno.ENOENT:
+                        raise FileNotFoundError(f"Dangling symlink in Delta table path at {candidate}") from exc
+                    raise
+        parent = candidate.parent
+        if parent == candidate:
+            break
+        candidate = parent
+
+
 def merge_delta(
     df: FrameLike,
     table: str,
@@ -117,80 +158,114 @@ def merge_delta(
     """Upsert *df* into an existing Delta table, matching on *key_columns*.
 
     If the table does not yet exist it is created, partitioned by
-    *partition_by* (``["date"]`` when None).  On a schema mismatch the
-    target table is evolved to the incoming schema (all existing rows are
-    preserved, same partitioning) and the merge is retried — rows are never
-    appended on top of existing keys, so keyed upserts stay idempotent.
+    *partition_by* (``["date"]`` when None). New nullable source columns are
+    added with Delta's native schema evolution; existing rows are not
+    materialized or rewritten by this wrapper. Optimistic concurrency conflicts
+    are retried at most three times, refreshing the table snapshot before each
+    retry. Other failures, including incompatible types, remain visible.
     """
     table_path = delta_table_path(table, lake_dir)
     keys = key_columns or ["ticker", _DATE_COL]
     df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
 
-    if not DeltaTable.is_deltatable(str(table_path)):
-        return write_delta(df_polars, table, mode="append", lake_dir=lake_dir, partition_by=partition_by)
+    missing_source_keys = [key for key in keys if key not in df_polars.columns]
+    if missing_source_keys:
+        raise DeltaMergeError(table, ValueError(f"source frame missing key columns: {missing_source_keys}"))
+    if df_polars.select(keys).is_duplicated().any():
+        raise DeltaMergeError(table, ValueError("source frame contains duplicate natural keys"))
 
-    predicate = " AND ".join(f"target.{k} = source.{k}" for k in keys)
+    # SQL NULL-safe equality is required for intentional nullable natural-key
+    # components, including article ticker=None rows. The expanded predicate is
+    # supported by the installed delta-rs expression parser.
+    predicate = " AND ".join(f"((target.{key} = source.{key}) OR (target.{key} IS NULL AND source.{key} IS NULL))" for key in keys)
+    source_schema = Schema.from_arrow(df_polars.to_arrow().schema)
+    source_fields = {field.name: field for field in source_schema.fields}
+    table_path = delta_table_path(table, lake_dir)
+
+    def refresh_after_conflict(retry_state: Any) -> None:
+        """Reload the committed snapshot before tenacity starts another attempt."""
+        del retry_state
+        snapshot["table"] = _open_existing_delta_table(table_path)
+        logger.warning("delta_merge_occ_refresh", table=table)
+
+    snapshot: dict[str, DeltaTable | None] = {"table": None}
+
+    def attempt_merge() -> None:
+        current = snapshot["table"]
+        if current is None:
+            current = _open_existing_delta_table(table_path)
+            if current is None:
+                try:
+                    # error-if-exists prevents a racing creator from silently
+                    # appending duplicate natural keys after our absence check.
+                    write_deltalake(
+                        str(table_path),
+                        df_polars.to_arrow(),
+                        mode="error",
+                        partition_by=partition_by or [_DATE_COL],
+                    )
+                except CommitFailedError:
+                    raise
+                except Exception:
+                    # A concurrent process may have won table creation between
+                    # the snapshot check and write. Re-open and keyed-merge only
+                    # when a valid Delta table now exists; corrupt paths/errors
+                    # remain visible.
+                    current = _open_existing_delta_table(table_path)
+                    if current is None:
+                        raise
+                    snapshot["table"] = current
+                    _execute_merge(current, df_polars, predicate)
+                    return
+                snapshot["table"] = DeltaTable(str(table_path))
+                return
+            snapshot["table"] = current
+
+        target_fields = {field.name for field in current.schema().fields}
+        missing_target_keys = [key for key in keys if key not in target_fields]
+        if missing_target_keys:
+            # Delta 1.6 cannot bind a merge predicate against a target field
+            # that does not exist yet. Add only those nullable source fields via
+            # a metadata commit, then reload before the keyed merge.
+            missing_fields = [source_fields[key] for key in missing_target_keys]
+            current.alter.add_columns(missing_fields)
+            current = DeltaTable(str(table_path))
+            snapshot["table"] = current
+
+        _execute_merge(current, df_polars, predicate)
 
     try:
-        _execute_merge(DeltaTable(str(table_path)), df_polars, predicate)
-    except Exception as exc:
-        if not _is_schema_mismatch(exc):
-            logger.exception("delta_merge_failed", table=table)
-            raise DeltaMergeError(table, exc) from exc
-        logger.warning(
-            "delta_merge_schema_mismatch",
-            table=table,
-            error=str(exc),
-            action="evolve schema and re-merge",
+        retryer = Retrying(
+            retry=retry_if_exception_type(CommitFailedError),
+            stop=stop_after_attempt(3),
+            wait=wait_none(),
+            before_sleep=refresh_after_conflict,
+            reraise=True,
         )
-        try:
-            _evolve_table_schema(table, df_polars, lake_dir, partition_by=partition_by)
-            _execute_merge(DeltaTable(str(table_path)), df_polars, predicate)
-        except Exception as retry_exc:
-            logger.exception("delta_merge_failed_after_evolution", table=table)
-            raise DeltaMergeError(table, retry_exc) from retry_exc
+        retryer(attempt_merge)
+    except Exception as exc:
+        logger.exception("delta_merge_failed", table=table)
+        raise DeltaMergeError(table, exc) from exc
 
     logger.info("delta_merge", table=table, rows=df_polars.height)
     return True
 
 
 def _execute_merge(dt: DeltaTable, df_polars: pl.DataFrame, predicate: str) -> None:
-    """Run one keyed upsert merge; any delta-rs failure raises."""
+    """Run one keyed upsert with native nullable additive schema evolution."""
     (
         dt.merge(
             source=df_polars.to_arrow(),
             predicate=predicate,
             source_alias="source",
             target_alias="target",
+            merge_schema=True,
+            error_on_type_mismatch=True,
         )
         .when_matched_update_all()
         .when_not_matched_insert_all()
         .execute()
     )
-
-
-def _is_schema_mismatch(exc: Exception) -> bool:
-    """True when *exc* looks like a source/target schema incompatibility."""
-    if isinstance(exc, SchemaMismatchError):
-        return True
-    lowered = str(exc).lower()
-    return "schema" in lowered or "column" in lowered
-
-
-def _evolve_table_schema(table: str, df_polars: pl.DataFrame, lake_dir: Path | None, partition_by: list[str] | None = None) -> None:
-    """Rewrite the table under the incoming schema, preserving every existing row.
-
-    Seed-overwrite evolution: existing rows are re-written with the incoming
-    (superset) schema — new columns are null-filled, conflicting types are
-    widened to a common supertype — so the caller can re-run the keyed merge.
-    The replacement is a single atomic Delta commit.  The rewrite keeps the
-    table's *partition_by* layout (``["date"]`` when None), so evolving a
-    partitioned table never silently re-partitions it.
-    """
-    table_path = delta_table_path(table, lake_dir)
-    existing = cast(pl.DataFrame, pl.from_arrow(DeltaTable(str(table_path)).to_pyarrow_table()))
-    seed = pl.concat([existing, df_polars.head(0)], how="diagonal_relaxed")
-    write_delta(seed, table, mode="overwrite", schema_mode="overwrite", lake_dir=lake_dir, partition_by=partition_by)
 
 
 def update_delta_columns(
@@ -351,7 +426,7 @@ def migrate_parquet_to_delta(
     con = duckdb.connect(":memory:")
     glob = str(table_dir / "**" / "*.parquet")
     try:
-        df = con.execute(f"SELECT * FROM read_parquet('{glob}', hive_partitioning=1, union_by_name=true)").pl()
+        df = con.execute("SELECT * FROM read_parquet(?, hive_partitioning=1, union_by_name=true)", [glob]).pl()
     except Exception as exc:
         logger.error("delta_migrate_read_failed", table=table, error=str(exc))
         return False
@@ -424,7 +499,10 @@ def _backup_old_partitions(table_dir: Path) -> None:
     for d in old_partitions:
         dest = backup_dir / d.name
         if not dest.exists():
-            shutil.move(str(d), str(dest))
+            try:
+                shutil.move(str(d), str(dest))
+            except (OSError, shutil.Error) as exc:
+                raise RuntimeError(f"Unable to back up legacy Delta partition {d} to {dest}") from exc
     logger.info("delta_migrate_backup", table=table_dir.name, backed_up=len(old_partitions), path=str(backup_dir))
 
 

@@ -1,53 +1,58 @@
 """Unit tests for the unified CLI (__main__.py)."""
 
+from collections.abc import Iterator
 from datetime import date
+from pathlib import Path
+from typing import Any, NoReturn, Self
 from unittest.mock import MagicMock, patch
 
 import polars as pl
 import pytest
+import typer
+from click.testing import Result
 from typer.testing import CliRunner
 
-from equity_lake.cli.__main__ import app
-from equity_lake.core.paths import LAKE_DIR
-from equity_lake.ingestion.types import SourceOutcome, SourceStatus
+from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+from equity_lake.core.paths import LAKE_DIR  # type: ignore[import-untyped]
+from equity_lake.ingestion.types import SourceOutcome, SourceStatus  # type: ignore[import-untyped]
 
 runner = CliRunner()
 
 
 class TestUnifiedCLI:
-    def test_cli_help(self):
+    def test_cli_help(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "Equity Lake" in result.stdout
 
-    def test_ingest_command_exists(self):
+    def test_ingest_command_exists(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "ingest" in result.stdout
 
-    def test_pipeline_command_exists(self):
+    def test_pipeline_command_exists(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "pipeline" in result.stdout
 
-    def test_backtest_command_exists(self):
+    def test_backtest_command_exists(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "backtest" in result.stdout
 
-    def test_signal_command_exists(self):
+    def test_signal_command_exists(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "signal" in result.stdout
 
-    def test_validate_command_exists(self):
+    def test_validate_command_exists(self) -> None:
         result = runner.invoke(app, ["--help"])
         assert result.exit_code == 0
         assert "validate" in result.stdout
 
 
 class TestLabelRepairSubcommands:
-    def test_label_repair_help(self):
+    def test_label_repair_help(self) -> None:
         result = runner.invoke(app, ["label-repair", "--help"])
         assert result.exit_code == 0
         assert "report" in result.stdout.lower()
@@ -55,110 +60,143 @@ class TestLabelRepairSubcommands:
 
 
 class TestSignalSubcommands:
-    def test_signal_scan_help(self):
+    def test_signal_scan_help(self) -> None:
         result = runner.invoke(app, ["signal", "scan", "--help"])
         assert result.exit_code == 0
+        assert "without scanning" in result.stdout
+
+    def test_signal_history_help(self) -> None:
+        result = runner.invoke(app, ["signal", "history", "--help"])
+        assert result.exit_code == 0
+        assert "--date" in result.stdout
+        assert "--limit" in result.stdout
+
+
+class TestDoctorCommand:
+    def test_doctor_help(self) -> None:
+        result = runner.invoke(app, ["doctor", "--help"])
+        assert result.exit_code == 0
+        assert "--as-of" in result.stdout
+        assert "read-only" in result.stdout
+
+    def test_doctor_does_not_initialize_runtime_paths(self) -> None:
+        with (
+            patch("equity_lake.cli._app.ensure_dirs") as ensure,
+            patch("equity_lake.signals.readiness.build_tracking_readiness", side_effect=ValueError("invalid fixture")),
+        ):
+            result = runner.invoke(app, ["doctor"])
+        assert result.exit_code == 1
+        ensure.assert_not_called()
 
 
 class TestValidateSubcommands:
-    def test_validate_check_help(self):
+    def test_validate_check_help(self) -> None:
         result = runner.invoke(app, ["validate", "check", "--help"])
         assert result.exit_code == 0
 
-    def test_validate_profile_help(self):
+    def test_validate_profile_help(self) -> None:
         result = runner.invoke(app, ["validate", "profile", "--help"])
         assert result.exit_code == 0
 
-    def test_validate_drift_help(self):
+    def test_validate_drift_help(self) -> None:
         result = runner.invoke(app, ["validate", "drift", "--help"])
         assert result.exit_code == 0
 
 
 class TestDashboardSubcommands:
-    def test_dashboard_build_help(self):
+    def test_dashboard_build_help(self) -> None:
         result = runner.invoke(app, ["dashboard", "build", "--help"])
         assert result.exit_code == 0
 
-    def test_dashboard_serve_help(self):
+    def test_dashboard_serve_help(self) -> None:
         result = runner.invoke(app, ["dashboard", "serve", "--help"])
         assert result.exit_code == 0
 
+    def test_dashboard_launcher_binds_loopback(self) -> None:
+        with patch("equity_lake.cli.__main__.subprocess.run") as run:
+            run.return_value.returncode = 0
+            result = runner.invoke(app, ["dashboard", "serve"])
+        assert result.exit_code == 0
+        command = run.call_args.args[0]
+        assert command[command.index("--server.address") + 1] == "127.0.0.1"
+
 
 class TestBootstrapSubcommands:
-    def test_bootstrap_sample_help(self):
+    def test_bootstrap_sample_help(self) -> None:
         result = runner.invoke(app, ["bootstrap", "sample", "--help"])
         assert result.exit_code == 0
 
 
 class TestArenaReportSubcommands:
-    def test_arena_run_help(self):
+    def test_arena_run_help(self) -> None:
         result = runner.invoke(app, ["arena", "run", "--help"])
         assert result.exit_code == 0
         assert "FindingCards" in result.stdout
 
-    def test_report_backtest_help(self):
+    def test_report_backtest_help(self) -> None:
         result = runner.invoke(app, ["report", "backtest", "--help"])
         assert result.exit_code == 0
         assert "report artifacts" in result.stdout
 
 
 class TestDemoSubcommands:
-    def test_demo_seed_help(self):
+    def test_demo_seed_help(self) -> None:
         result = runner.invoke(app, ["demo", "seed", "--help"])
         assert result.exit_code == 0
         assert "offline-safe" in result.stdout or "synthetic" in result.stdout.lower()
 
 
 class TestMlSubcommands:
-    def test_ml_compare_help(self):
+    def test_ml_compare_help(self) -> None:
         result = runner.invoke(app, ["ml", "compare", "--help"])
         assert result.exit_code == 0
         assert "FindingCards" in result.stdout
 
-    def test_ml_ablate_help(self):
+    def test_ml_ablate_help(self) -> None:
         result = runner.invoke(app, ["ml", "ablate", "--help"])
         assert result.exit_code == 0
         assert "enrichment-ablation" in result.stdout or "ablation" in result.stdout.lower()
 
-    def test_ml_train_help(self):
+    def test_ml_train_help(self) -> None:
         result = runner.invoke(app, ["ml", "train", "--help"])
         assert result.exit_code == 0
         assert "backend" in result.stdout.lower()
 
 
 class TestApiSubcommands:
-    def test_api_serve_help(self):
-        result = runner.invoke(app, ["api", "serve", "--help"])
+    def test_api_serve_help(self) -> None:
+        result = runner.invoke(app, ["api", "serve", "--help"], env={"COLUMNS": "180"})
         assert result.exit_code == 0
         assert "API" in result.stdout or "api" in result.stdout.lower()
         assert "non-loopback" in result.stdout  # guard documented in --host help
+        assert "--allow-unauthenticated-exposure" in result.stdout
 
 
 class TestApiServeNonLoopbackGuard:
     """--host outside loopback must warn + confirm before exposing the unauthenticated API."""
 
-    def test_loopback_host_serves_without_prompt(self):
+    def test_loopback_host_serves_without_prompt(self) -> None:
         with patch("uvicorn.run") as mock_run:
             result = runner.invoke(app, ["api", "serve"])
         assert result.exit_code == 0
         mock_run.assert_called_once()
         assert "WARNING" not in result.stdout
 
-    def test_non_loopback_host_aborts_without_confirmation(self):
+    def test_non_loopback_host_aborts_without_confirmation(self) -> None:
         with patch("uvicorn.run") as mock_run:
             result = runner.invoke(app, ["api", "serve", "--host", "0.0.0.0"], input="n\n")
         assert result.exit_code == 1
         mock_run.assert_not_called()
         assert "UNAUTHENTICATED" in result.stdout
 
-    def test_non_loopback_host_aborts_on_eof(self):
+    def test_non_loopback_host_aborts_on_eof(self) -> None:
         """Non-interactive runs (no stdin) must abort, never serve silently (safe for CI)."""
         with patch("uvicorn.run") as mock_run:
             result = runner.invoke(app, ["api", "serve", "--host", "0.0.0.0"], input="")
         assert result.exit_code != 0
         mock_run.assert_not_called()
 
-    def test_non_loopback_host_confirmed_proceeds(self):
+    def test_non_loopback_host_confirmed_proceeds(self) -> None:
         with patch("uvicorn.run") as mock_run:
             result = runner.invoke(app, ["api", "serve", "--host", "0.0.0.0"], input="y\n")
         assert result.exit_code == 0
@@ -168,17 +206,17 @@ class TestApiServeNonLoopbackGuard:
 
 
 class TestConfigSubcommands:
-    def test_config_show_help(self):
+    def test_config_show_help(self) -> None:
         result = runner.invoke(app, ["config", "show", "--help"])
         assert result.exit_code == 0
 
-    def test_config_validate_help(self):
+    def test_config_validate_help(self) -> None:
         result = runner.invoke(app, ["config", "validate", "--help"])
         assert result.exit_code == 0
 
 
 class TestNativeCommands:
-    def test_ingest_command_invokes_business_logic(self):
+    def test_ingest_command_invokes_business_logic(self) -> None:
         outcomes = {"us_equity": SourceOutcome(SourceStatus.WRITTEN), "cn_ashare": SourceOutcome(SourceStatus.WRITTEN)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes) as mock_ingest:
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--dry-run", "--markets", "us,cn"])
@@ -187,7 +225,7 @@ class TestNativeCommands:
             # Short flag values are canonicalized at parse (ADR-0010).
             assert mock_ingest.call_args.kwargs["markets"] == ["us_equity", "cn_ashare"]
 
-    def test_ingest_command_accepts_long_market_keys(self):
+    def test_ingest_command_accepts_long_market_keys(self) -> None:
         """Both vocabularies are accepted at the CLI boundary and canonicalized."""
         outcomes = {"us_equity": SourceOutcome(SourceStatus.WRITTEN)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes) as mock_ingest:
@@ -195,7 +233,7 @@ class TestNativeCommands:
             assert result.exit_code == 0
             assert mock_ingest.call_args.kwargs["markets"] == ["us_equity"]
 
-    def test_ingest_command_rejects_unknown_market(self):
+    def test_ingest_command_rejects_unknown_market(self) -> None:
         """A typo'd --markets value exits 1 instead of becoming a silent no-op."""
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion") as mock_ingest:
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "uss"])
@@ -203,14 +241,14 @@ class TestNativeCommands:
         assert "Unknown market" in result.stdout
         mock_ingest.assert_not_called()
 
-    def test_ingest_resolves_default_markets_when_omitted(self):
+    def test_ingest_resolves_default_markets_when_omitted(self) -> None:
         """Regression test (P0): ingest without --markets must fall back to settings defaults.
 
         Previously the CLI passed ``markets=[]`` which made ``run_daily_ingestion``
         log ``all_markets_up_to_date`` and return ``{}`` — a silent no-op reported
         as success.
         """
-        from equity_lake.core.config import get_settings
+        from equity_lake.core.config import get_settings  # type: ignore[import-untyped]
 
         expected = list(get_settings().ingestion.default_markets)
         assert expected, "settings.ingestion.default_markets must be non-empty for this test to be meaningful"
@@ -225,7 +263,7 @@ class TestNativeCommands:
         assert markets_passed == expected
         assert len(markets_passed) > 0
 
-    def test_config_show_outputs_settings(self):
+    def test_config_show_outputs_settings(self) -> None:
         with patch("equity_lake.core.config.load_settings") as mock_load:
             mock_settings = MagicMock()
             mock_settings.model_dump.return_value = {"project": {"name": "test"}}
@@ -233,13 +271,13 @@ class TestNativeCommands:
             result = runner.invoke(app, ["config", "show"])
             assert result.exit_code == 0
 
-    def test_config_validate_outputs_valid(self):
+    def test_config_validate_outputs_valid(self) -> None:
         with patch("equity_lake.config.validators.validate_tickers", return_value=[]):
             result = runner.invoke(app, ["config", "validate"])
         assert result.exit_code == 0
         assert "passed" in result.stdout.lower()
 
-    def test_config_validate_all_validates_signals(self):
+    def test_config_validate_all_validates_signals(self) -> None:
         with (
             patch("equity_lake.config.validators.validate_tickers", return_value=[]),
             patch("equity_lake.config.validators.validate_watchlist", return_value=[]),
@@ -249,12 +287,12 @@ class TestNativeCommands:
         assert result.exit_code == 1
         assert "boom" in result.stdout
 
-    def test_pipeline_command_exits_nonzero_on_stage_failure(self):
+    def test_pipeline_command_exits_nonzero_on_stage_failure(self) -> None:
         with patch("equity_lake.pipeline.execute_eod_pipeline", return_value={"features": {"success": False, "error": "boom"}}):
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
             assert result.exit_code == 1
 
-    def test_pipeline_command_exits_zero_on_stage_success(self):
+    def test_pipeline_command_exits_zero_on_stage_success(self) -> None:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={"ingestion": {"us_equity": True}, "features": {"success": True, "rows": 1}, "ml": {"success": True, "results": {}}},
@@ -262,7 +300,7 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
             assert result.exit_code == 0
 
-    def test_pipeline_command_exits_zero_for_dry_run(self):
+    def test_pipeline_command_exits_zero_for_dry_run(self) -> None:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={
@@ -274,7 +312,7 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--dry-run"])
         assert result.exit_code == 0
 
-    def test_pipeline_command_exits_zero_for_optional_degradation(self):
+    def test_pipeline_command_exits_zero_for_optional_degradation(self) -> None:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={
@@ -286,7 +324,7 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
         assert result.exit_code == 0
 
-    def test_pipeline_command_exits_zero_for_bronze_to_silver_failure(self):
+    def test_pipeline_command_exits_zero_for_bronze_to_silver_failure(self) -> None:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={
@@ -301,7 +339,7 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
         assert result.exit_code == 0
 
-    def test_pipeline_command_exits_zero_for_sec_to_silver_failure(self):
+    def test_pipeline_command_exits_zero_for_sec_to_silver_failure(self) -> None:
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
             return_value={
@@ -316,7 +354,7 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
         assert result.exit_code == 0
 
-    def test_pipeline_command_ml_skip_reason_does_not_independently_fail(self):
+    def test_pipeline_command_ml_skip_reason_does_not_independently_fail(self) -> None:
         """An ml stage skipped because features failed must not independently trigger non-zero."""
         with patch(
             "equity_lake.pipeline.execute_eod_pipeline",
@@ -328,17 +366,17 @@ class TestNativeCommands:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01"])
         assert result.exit_code == 0
 
-    def test_news_command_requires_api_key(self):
+    def test_news_command_requires_api_key(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             result = runner.invoke(app, ["news"])
             assert result.exit_code == 1
 
-    def test_sentiment_command_requires_api_key(self):
+    def test_sentiment_command_requires_api_key(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             result = runner.invoke(app, ["sentiment"])
             assert result.exit_code == 1
 
-    def test_sync_iterates_all_equity_markets(self):
+    def test_sync_iterates_all_equity_markets(self) -> None:
         """Regression test (P0): sync must pull a distinct remote path per market.
 
         Verifies S3Syncer is instantiated once per equity market (us, cn,
@@ -349,12 +387,12 @@ class TestNativeCommands:
         instances = []
 
         class FakeSyncer:
-            def __init__(self, bucket, target_dir, workers=16, dry_run=False, tool="auto"):
+            def __init__(self, bucket: str, target_dir: Path, workers: int = 16, dry_run: bool = False, tool: str = "auto") -> None:
                 self.bucket = bucket
                 self.target_dir = target_dir
                 instances.append(self)
 
-            def sync(self):
+            def sync(self) -> None:
                 return None
 
         with (
@@ -385,7 +423,7 @@ class TestNativeCommands:
             medallion_suffix = str(instance.target_dir).removeprefix(f"{LAKE_DIR}/")
             assert instance.bucket == f"s3://test-bucket/{medallion_suffix}"
 
-    def test_delta_vacuum_resolves_canonical_medallion_paths(self):
+    def test_delta_vacuum_resolves_canonical_medallion_paths(self) -> None:
         """Regression test (P0): delta-vacuum must resolve dataset ids to canonical paths.
 
         Without resolution, ``vacuum_delta("us_equity")`` targeted
@@ -402,7 +440,7 @@ class TestNativeCommands:
             dry_run=True,
         )
 
-    def test_delta_vacuum_no_dry_run_negation_parses_and_executes(self):
+    def test_delta_vacuum_no_dry_run_negation_parses_and_executes(self) -> None:
         """--dry-run defaults ON; the --no-dry-run negation must parse so the command can execute for real.
 
         Regression: ``typer.Option("--dry-run", ...)`` with default True registers no
@@ -420,7 +458,7 @@ class TestNativeCommands:
         assert help_result.exit_code == 0
         assert "--no-dry-run" in help_result.stdout
 
-    def test_delta_compact_resolves_canonical_medallion_paths(self):
+    def test_delta_compact_resolves_canonical_medallion_paths(self) -> None:
         """Regression test (P0): delta-compact must resolve dataset ids to canonical paths."""
         with patch("equity_lake.storage.delta.compact_delta", return_value={}) as mock_compact:
             result = runner.invoke(app, ["delta-compact", "--markets", "us_equity"])
@@ -428,7 +466,7 @@ class TestNativeCommands:
         assert result.exit_code == 0
         mock_compact.assert_called_once_with("01_bronze/market_data/us_equity")
 
-    def test_delta_migrate_resolves_canonical_medallion_paths(self):
+    def test_delta_migrate_resolves_canonical_medallion_paths(self) -> None:
         """Regression test (P0): delta-migrate must resolve dataset ids to canonical paths."""
         with patch("equity_lake.storage.delta.migrate_parquet_to_delta", return_value=True) as mock_migrate:
             result = runner.invoke(app, ["delta-migrate", "--markets", "us", "--dry-run"])
@@ -436,7 +474,7 @@ class TestNativeCommands:
         assert result.exit_code == 0
         mock_migrate.assert_called_once_with("01_bronze/market_data/us_equity", dry_run=True)
 
-    def test_delta_command_accepts_full_medallion_path(self):
+    def test_delta_command_accepts_full_medallion_path(self) -> None:
         """Full medallion paths pass through unchanged (no double-resolution)."""
         with patch("equity_lake.storage.delta.compact_delta", return_value={}) as mock_compact:
             result = runner.invoke(
@@ -447,19 +485,25 @@ class TestNativeCommands:
         assert result.exit_code == 0
         mock_compact.assert_called_once_with("01_bronze/market_data/us_equity")
 
-    def test_forecast_train_prints_training_summary(self):
+    def test_forecast_train_prints_training_summary(self) -> None:
         class FakeForecaster:
-            def __init__(self, model_dir=None, model_mode="v1_direction"):
+            def __init__(
+                self,
+                model_dir: str | None = None,
+                model_mode: str = "v1_direction",
+                candidate_strategies: list[dict[str, Any]] | None = None,
+            ) -> None:
                 self.model_dir = model_dir
                 self.model_mode = model_mode
+                assert candidate_strategies
 
-            def train_model(self, ticker, start_date, end_date, tune_hyperparams=False, validate=True):
+            def train_model(self, ticker: str, start_date: date, end_date: date, tune_hyperparams: bool = False, validate: bool = True) -> None:
                 assert ticker == "AAPL"
                 assert start_date == date(2024, 1, 1)
                 assert end_date == date(2024, 2, 1)
                 assert validate is True
 
-            def last_training_summary(self):
+            def last_training_summary(self) -> dict[str, Any]:
                 return {
                     "ticker": "AAPL",
                     "trained_on": "2024-02-01",
@@ -479,7 +523,7 @@ class TestNativeCommands:
                     },
                 }
 
-            def close(self):
+            def close(self) -> None:
                 return None
 
         with patch("equity_lake.ml.forecasting.PriceForecaster", FakeForecaster):
@@ -507,7 +551,7 @@ class TestNativeCommands:
 
 
 class TestIngestFailureContract:
-    def test_ingest_exits_nonzero_on_required_market_failure(self):
+    def test_ingest_exits_nonzero_on_required_market_failure(self) -> None:
         """Mirror of the pipeline command: required price markets failing exit 1."""
         outcomes = {
             "us_equity": SourceOutcome(SourceStatus.FAILED, error="boom"),
@@ -519,20 +563,20 @@ class TestIngestFailureContract:
         assert "us_equity: failed (boom)" in result.stdout
         assert "Ingestion failed for required markets: us_equity" in result.stdout
 
-    def test_ingest_exits_zero_when_required_markets_skip_existing(self):
+    def test_ingest_exits_zero_when_required_markets_skip_existing(self) -> None:
         outcomes = {"us_equity": SourceOutcome(SourceStatus.SKIPPED_EXISTING)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "us"])
         assert result.exit_code == 0
         assert "us_equity: skipped_existing" in result.stdout
 
-    def test_ingest_exits_zero_for_optional_enrichment_failure(self):
+    def test_ingest_exits_zero_for_optional_enrichment_failure(self) -> None:
         outcomes = {"us_news": SourceOutcome(SourceStatus.FAILED, error="no key")}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--markets", "us_news"])
         assert result.exit_code == 0
 
-    def test_ingest_exits_zero_for_not_scheduled_required_market(self):
+    def test_ingest_exits_zero_for_not_scheduled_required_market(self) -> None:
         """W03/D04: a closed required market is a planned skip, not a failure."""
         outcomes = {"us_equity": SourceOutcome(SourceStatus.NOT_SCHEDULED)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):
@@ -544,7 +588,7 @@ class TestIngestFailureContract:
 class TestPipelineExitMatrix:
     """W03/D04: not_scheduled is a planned skip and never flips the CLI exit status."""
 
-    def test_pipeline_not_scheduled_scope_exits_zero(self):
+    def test_pipeline_not_scheduled_scope_exits_zero(self) -> None:
         results = {
             "ingestion": {"success": True, "not_scheduled": ["us_equity"], "required_failures": []},
             "features": {"success": True, "skipped": True, "reason": "not_scheduled_scope"},
@@ -554,7 +598,7 @@ class TestPipelineExitMatrix:
             result = runner.invoke(app, ["pipeline", "--date", "2024-11-28", "--markets", "us_equity"])
         assert result.exit_code == 0
 
-    def test_pipeline_required_failure_still_exits_nonzero(self):
+    def test_pipeline_required_failure_still_exits_nonzero(self) -> None:
         results = {
             "ingestion": {"success": False, "not_scheduled": [], "required_failures": ["us_equity"]},
             "features": {"success": False, "reason": "required price source failed"},
@@ -566,7 +610,7 @@ class TestPipelineExitMatrix:
 
 
 class TestPipelineSaveResults:
-    def _success_results(self) -> dict:  # type: ignore[no-untyped-def]
+    def _success_results(self) -> dict[str, Any]:
         return {
             "ingestion": {"success": True},
             "features": {"success": True},
@@ -594,17 +638,32 @@ class TestPipelineSaveResults:
 
 class TestFinnhubSecretsHygiene:
     @pytest.mark.parametrize("cmd", ["news", "sentiment", "transcripts", "ratings"])
-    def test_no_api_key_option(self, cmd: str):
+    def test_no_api_key_option(self, cmd: str) -> None:
         """--api-key leaks secrets into shell history/process lists; env-only."""
         result = runner.invoke(app, [cmd, "--help"])
         assert result.exit_code == 0
         assert "--api-key" not in result.stdout
 
 
+class TestSecProcessOption:
+    def test_sec_help_preserves_process_flag_and_explains_cost_gate(self) -> None:
+        result = runner.invoke(app, ["sec", "--help"])
+        assert result.exit_code == 0
+        assert "--process" in result.stdout
+        assert "actual-cost" in result.stdout
+
+    def test_sec_process_fails_before_fetch_without_cost_adapter(self) -> None:
+        with patch("equity_lake.sources.sec_fulltext.SECFilingFetcher") as fetcher:
+            result = runner.invoke(app, ["sec", "--process"])
+        assert result.exit_code == 1
+        assert "no bounded provider actual-cost adapter" in result.stdout
+        fetcher.assert_not_called()
+
+
 class TestSecWriteFailureContract:
-    def test_sec_write_failure_exits_nonzero(self):
+    def test_sec_write_failure_exits_nonzero(self) -> None:
         class FakeSecFetcher:
-            def __init__(self, tickers=None, lookback_days=120): ...
+            def __init__(self, tickers: list[str] | None = None, lookback_days: int = 120) -> None: ...
 
             def fetch(self, trading_date):  # type: ignore[no-untyped-def]
                 return pl.DataFrame({"ticker": ["AAPL"], "body": ["10-K excerpt"]})
@@ -617,9 +676,9 @@ class TestSecWriteFailureContract:
         assert result.exit_code == 1
         assert "Failed to write SEC bronze data" in result.stdout
 
-    def test_financials_write_failure_exits_nonzero(self):
+    def test_financials_write_failure_exits_nonzero(self) -> None:
         class FakeFinancialsFetcher:
-            def __init__(self, tickers=None, lookback_days=120): ...
+            def __init__(self, tickers: list[str] | None = None, lookback_days: int = 120) -> None: ...
 
             def fetch(self, trading_date):  # type: ignore[no-untyped-def]
                 return pl.DataFrame({"ticker": ["AAPL"], "total_assets": [1.0]})
@@ -644,7 +703,7 @@ class TestPerMarketDateResolution:
     US_SESSIONS = {date(2026, 9, 30)} | {date(2026, 10, d) for d in range(1, 10)}
 
     @staticmethod
-    def _mocked_calendar():
+    def _mocked_calendar() -> tuple[Any, Any]:
         from equity_lake.core.paths import canonical_market
 
         def fake_is_trading_day(market: str, d: date) -> bool:
@@ -653,15 +712,15 @@ class TestPerMarketDateResolution:
 
         class _FixedToday(date):
             @classmethod
-            def today(cls) -> date:
-                return date(2026, 10, 9)
+            def today(cls) -> Self:
+                return cls(2026, 10, 9)
 
         return (
             patch("equity_lake.core.calendar.is_trading_day", side_effect=fake_is_trading_day),
             patch("equity_lake.core.dates.date", _FixedToday),
         )
 
-    def test_single_cn_market_resolves_cn_trading_date(self):
+    def test_single_cn_market_resolves_cn_trading_date(self) -> None:
         cal_patch, today_patch = self._mocked_calendar()
         with cal_patch, today_patch, patch("equity_lake.pipeline.execute_eod_pipeline", return_value={}) as mock_pipeline:
             result = runner.invoke(app, ["pipeline", "--markets", "cn_ashare"])
@@ -669,14 +728,14 @@ class TestPerMarketDateResolution:
         # XSHG last session before 2026-10-09 is 2026-09-30 (Golden Week), not 2026-10-08.
         assert mock_pipeline.call_args.kwargs["trading_date"] == date(2026, 9, 30)
 
-    def test_single_market_short_alias_resolves_same_calendar(self):
+    def test_single_market_short_alias_resolves_same_calendar(self) -> None:
         cal_patch, today_patch = self._mocked_calendar()
         with cal_patch, today_patch, patch("equity_lake.pipeline.execute_eod_pipeline", return_value={}) as mock_pipeline:
             result = runner.invoke(app, ["pipeline", "--markets", "cn"])
         assert result.exit_code == 0
         assert mock_pipeline.call_args.kwargs["trading_date"] == date(2026, 9, 30)
 
-    def test_multi_market_run_falls_back_to_us_calendar_with_warning(self):
+    def test_multi_market_run_falls_back_to_us_calendar_with_warning(self) -> None:
         cal_patch, today_patch = self._mocked_calendar()
         with (
             cal_patch,
@@ -692,11 +751,11 @@ class TestPerMarketDateResolution:
 
 
 class TestBacktestCleanError:
-    def test_backtest_engine_failure_exits_cleanly(self):
+    def test_backtest_engine_failure_exits_cleanly(self) -> None:
         class BoomEngine:
-            def __init__(self, **kwargs): ...
+            def __init__(self, **kwargs: Any) -> None: ...
 
-            def run(self):
+            def run(self) -> NoReturn:
                 raise RuntimeError("data missing")
 
         with patch("equity_lake.backtesting.VectorBacktestEngine", BoomEngine):
@@ -708,7 +767,7 @@ class TestBacktestCleanError:
 class TestDemoSeedSafety:
     _summary = {"tickers": 3, "rows": 100, "days": 10, "source": "synthetic", "path": "data/sample", "dry_run": False}
 
-    def test_demo_seed_defaults_to_sample_lake(self):
+    def test_demo_seed_defaults_to_sample_lake(self) -> None:
         with patch("equity_lake.devtools.seed_demo.seed_demo", return_value=dict(self._summary)) as mock_seed:
             result = runner.invoke(app, ["demo", "seed"])
         assert result.exit_code == 0
@@ -716,7 +775,7 @@ class TestDemoSeedSafety:
         assert kwargs["lake_dir"] is None  # module default resolves to data/sample
         assert kwargs["overwrite_production_lake"] is False
 
-    def test_demo_seed_dry_run_flag_passthrough(self):
+    def test_demo_seed_dry_run_flag_passthrough(self) -> None:
         dry_summary = {**self._summary, "dry_run": True}
         with patch("equity_lake.devtools.seed_demo.seed_demo", return_value=dry_summary) as mock_seed:
             result = runner.invoke(app, ["demo", "seed", "--dry-run"])
@@ -724,20 +783,20 @@ class TestDemoSeedSafety:
         assert mock_seed.call_args.kwargs["dry_run"] is True
         assert "Would seed" in result.stdout
 
-    def test_demo_seed_production_lake_abort_without_confirmation(self):
+    def test_demo_seed_production_lake_abort_without_confirmation(self) -> None:
         with patch("equity_lake.devtools.seed_demo.seed_demo") as mock_seed:
             result = runner.invoke(app, ["demo", "seed", "--lake", str(LAKE_DIR)], input="n\n")
         assert result.exit_code == 1
         mock_seed.assert_not_called()
 
-    def test_demo_seed_production_lake_aborts_on_eof_without_confirmation(self):
+    def test_demo_seed_production_lake_aborts_on_eof_without_confirmation(self) -> None:
         """Non-interactive runs (no stdin) must abort the overwrite, not seed."""
         with patch("equity_lake.devtools.seed_demo.seed_demo") as mock_seed:
             result = runner.invoke(app, ["demo", "seed", "--lake", str(LAKE_DIR)], input="")
         assert result.exit_code != 0
         mock_seed.assert_not_called()
 
-    def test_demo_seed_production_lake_confirmed_proceeds(self):
+    def test_demo_seed_production_lake_confirmed_proceeds(self) -> None:
         with patch("equity_lake.devtools.seed_demo.seed_demo", return_value=dict(self._summary)) as mock_seed:
             result = runner.invoke(app, ["demo", "seed", "--lake", str(LAKE_DIR)], input="y\n")
         assert result.exit_code == 0
@@ -745,13 +804,13 @@ class TestDemoSeedSafety:
         assert kwargs["overwrite_production_lake"] is True
         assert kwargs["lake_dir"] == LAKE_DIR
 
-    def test_demo_seed_production_lake_flag_skips_prompt(self):
+    def test_demo_seed_production_lake_flag_skips_prompt(self) -> None:
         with patch("equity_lake.devtools.seed_demo.seed_demo", return_value=dict(self._summary)) as mock_seed:
             result = runner.invoke(app, ["demo", "seed", "--lake", str(LAKE_DIR), "--overwrite-production-lake"])
         assert result.exit_code == 0
         assert mock_seed.call_args.kwargs["overwrite_production_lake"] is True
 
-    def test_demo_seed_overwrite_flag_requires_lake(self):
+    def test_demo_seed_overwrite_flag_requires_lake(self) -> None:
         with patch("equity_lake.devtools.seed_demo.seed_demo") as mock_seed:
             result = runner.invoke(app, ["demo", "seed", "--overwrite-production-lake"])
         assert result.exit_code == 1
@@ -759,7 +818,7 @@ class TestDemoSeedSafety:
 
 
 class TestQueryDefaults:
-    def test_query_db_default_is_canonical_constant(self):
+    def test_query_db_default_is_canonical_constant(self) -> None:
         from equity_lake.core.paths import DUCKDB_DEFAULT_PATH
 
         result = runner.invoke(app, ["query", "--help"])
@@ -767,18 +826,18 @@ class TestQueryDefaults:
         assert DUCKDB_DEFAULT_PATH.name in result.stdout
 
 
-def _iter_command_paths():
+def _iter_command_paths() -> Iterator[tuple[str, ...]]:
     """Enumerate every command path registered on the unified CLI.
 
     Reads the live Typer registry, so new commands are covered automatically.
     """
 
-    def walk(group, prefix=()):
+    def walk(group: typer.Typer, prefix: tuple[str, ...] = ()) -> Iterator[tuple[str, ...]]:
         for cmd in group.registered_commands:
             if cmd.name:
                 yield (*prefix, cmd.name)
         for sub in group.registered_groups:
-            if sub.name:
+            if sub.name and sub.typer_instance is not None:
                 yield from walk(sub.typer_instance, (*prefix, sub.name))
 
     yield from walk(app)
@@ -788,7 +847,7 @@ class TestFullHelpScan:
     """Every registered command must render --help cleanly (handoff 04 §7 debt)."""
 
     @pytest.mark.parametrize("cmd", sorted(_iter_command_paths()), ids=lambda c: " ".join(c))
-    def test_command_help_renders(self, cmd):
+    def test_command_help_renders(self, cmd: tuple[str, ...]) -> None:
         result = runner.invoke(app, [*cmd, "--help"])
         assert result.exit_code == 0, f"{' '.join(cmd)} --help failed:\n{result.stdout}"
         assert result.stdout.strip(), f"{' '.join(cmd)} --help produced no help text"
@@ -797,7 +856,7 @@ class TestFullHelpScan:
 class TestMonitorExitCode:
     """`equity monitor` must fail (exit 1) when the pipeline is unhealthy."""
 
-    def _invoke_monitor(self, healthy: bool):
+    def _invoke_monitor(self, healthy: bool) -> Result:
         with patch("equity_lake.monitoring.health.PipelineMonitor") as monitor_cls:
             inst = monitor_cls.return_value
             inst.run_health_check.return_value = healthy
@@ -805,12 +864,12 @@ class TestMonitorExitCode:
             result = runner.invoke(app, ["monitor"])
         return result
 
-    def test_exits_zero_when_healthy(self):
+    def test_exits_zero_when_healthy(self) -> None:
         result = self._invoke_monitor(healthy=True)
         assert result.exit_code == 0
         assert "HEALTHY" in result.stdout
 
-    def test_exits_one_when_unhealthy(self):
+    def test_exits_one_when_unhealthy(self) -> None:
         result = self._invoke_monitor(healthy=False)
         assert result.exit_code == 1
         assert "ISSUES" in result.stdout
@@ -819,12 +878,12 @@ class TestMonitorExitCode:
 class TestW02ExitContract:
     """W02: deterministic exits for success, degradation, coverage, limits, dry-run."""
 
-    def _pipeline(self, results, args=None):
+    def _pipeline(self, results: dict[str, Any], args: list[str] | None = None) -> tuple[Result, MagicMock]:
         with patch("equity_lake.pipeline.execute_eod_pipeline", return_value=results) as mock_pipeline:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", *(args or [])])
         return result, mock_pipeline
 
-    def test_full_success_exits_zero(self):
+    def test_full_success_exits_zero(self) -> None:
         results = {
             "scope": {"tickers": ["AAPL"]},
             "ingestion": {"success": True, "partial": False, "optional_failures": []},
@@ -834,7 +893,7 @@ class TestW02ExitContract:
         result, _ = self._pipeline(results)
         assert result.exit_code == 0
 
-    def test_coverage_failure_exits_nonzero(self):
+    def test_coverage_failure_exits_nonzero(self) -> None:
         """W02/F07 (D02): missing requested ticker coverage fails the run."""
         results = {
             "scope": {"tickers": ["AAPL", "MSFT"]},
@@ -849,7 +908,7 @@ class TestW02ExitContract:
         result, _ = self._pipeline(results)
         assert result.exit_code == 1
 
-    def test_explicit_skips_exit_zero(self):
+    def test_explicit_skips_exit_zero(self) -> None:
         results = {
             "scope": {"tickers": ["AAPL"]},
             "ingestion": {"success": True, "skipped": True, "reason": "skip_ingestion"},
@@ -859,7 +918,7 @@ class TestW02ExitContract:
         result, _ = self._pipeline(results)
         assert result.exit_code == 0
 
-    def test_enrichment_only_planned_skip_exits_zero(self):
+    def test_enrichment_only_planned_skip_exits_zero(self) -> None:
         results = {
             "scope": {"tickers": [], "enrichment_only": True},
             "ingestion": {"success": True},
@@ -869,7 +928,7 @@ class TestW02ExitContract:
         result, _ = self._pipeline(results)
         assert result.exit_code == 0
 
-    def test_explicit_empty_ticker_scope_is_rejected(self):
+    def test_explicit_empty_ticker_scope_is_rejected(self) -> None:
         """W02/F06 (D02): `--tickers ''` is an explicit empty scope, not 'all'."""
         with patch("equity_lake.pipeline.execute_eod_pipeline") as mock_pipeline:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--tickers", ""])
@@ -877,13 +936,13 @@ class TestW02ExitContract:
         assert "empty scope" in result.stdout
         mock_pipeline.assert_not_called()
 
-    def test_comma_only_ticker_scope_is_rejected(self):
+    def test_comma_only_ticker_scope_is_rejected(self) -> None:
         with patch("equity_lake.pipeline.execute_eod_pipeline") as mock_pipeline:
             result = runner.invoke(app, ["pipeline", "--date", "2024-01-01", "--tickers", ", ,"])
         assert result.exit_code == 1
         mock_pipeline.assert_not_called()
 
-    def test_dry_run_save_results_writes_nothing(self, tmp_path):
+    def test_dry_run_save_results_writes_nothing(self, tmp_path: Path) -> None:
         """W02/F25: --save-results under --dry-run must persist nothing."""
         results = {
             "scope": {"tickers": ["AAPL"]},
@@ -900,7 +959,7 @@ class TestW02ExitContract:
         assert "skipped" in result.stdout.lower()
         assert list(tmp_path.glob("pipeline_results_*.json")) == []
 
-    def test_save_results_writes_json_when_not_dry_run(self, tmp_path):
+    def test_save_results_writes_json_when_not_dry_run(self, tmp_path: Path) -> None:
         """The reader/writer seam still persists a normal run's results."""
         results = {
             "scope": {"tickers": ["AAPL"]},
@@ -923,14 +982,14 @@ class TestW02ExitContract:
         assert payload["scope"]["tickers"] == ["AAPL"]
         assert payload["features"]["coverage"]["produced"] == ["AAPL"]
 
-    def test_ingest_rejects_explicit_empty_ticker_scope(self, tmp_path):
+    def test_ingest_rejects_explicit_empty_ticker_scope(self, tmp_path: Path) -> None:
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion") as mock_ingest:
             result = runner.invoke(app, ["ingest", "--date", "2024-01-01", "--tickers", ""])
         assert result.exit_code == 1
         assert "empty scope" in result.stdout
         mock_ingest.assert_not_called()
 
-    def test_ingest_dry_run_never_reports_written(self):
+    def test_ingest_dry_run_never_reports_written(self) -> None:
         """W02/F25: a direct ingest dry-run reports dry_run, not written."""
         outcomes = {"us_equity": SourceOutcome(SourceStatus.DRY_RUN)}
         with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes):

@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 import exchange_calendars as xc
 import structlog
 
+from equity_lake.core.instruments import InstrumentKey  # pyright: ignore[reportMissingImports] -- uv resolves the new untracked source module
 from equity_lake.core.paths import PRICE_MARKETS, SHORT_TO_LONG
 
 logger = structlog.get_logger()
@@ -28,6 +29,23 @@ _MARKET_TO_EXCHANGE: dict[str, tuple[str, ...]] = {market: entry.exchanges for m
 _MARKET_TZ: dict[str, str] = {market: entry.timezone for market, entry in PRICE_MARKETS.items()}
 
 _calendar_cache: dict[str, xc.ExchangeCalendar] = {}
+
+# Canonical MIC to exchange_calendars identifiers. MIC is instrument identity;
+# calendar identifiers are a separate dependency-specific vocabulary.
+_MIC_TO_CALENDAR: dict[str, str] = {
+    "XNYS": "XNYS",
+    "XNAS": "XNAS",
+    "XSHG": "XSHG",
+    # Shenzhen and Shanghai A-shares share the mainland exchange-session and
+    # public-holiday schedule contract used by this lake. exchange_calendars
+    # does not provide a supported XSHE calendar, so both venues deliberately
+    # use XSHG's mainland session calendar while identity retains the true MIC.
+    "XSHE": "XSHG",
+    "XHKG": "XHKG",
+    "XSES": "XSES",
+    "XTKS": "JPX",
+    "XKRX": "XKRX",
+}
 
 
 def _get_calendar(exchange: str) -> xc.ExchangeCalendar:
@@ -76,6 +94,25 @@ def trading_days_between(market: str, start: date, end: date) -> list[date]:
     return sorted(session.date() for session in common)
 
 
+def is_instrument_trading_day(instrument: InstrumentKey, d: date) -> bool:
+    """Check the exact instrument venue, not a multi-exchange market union."""
+    calendar_name = _MIC_TO_CALENDAR.get(instrument.mic)
+    if calendar_name is None:
+        raise ValueError(f"No exchange calendar configured for MIC {instrument.mic!r}")
+    return bool(_get_calendar(calendar_name).is_session(d))
+
+
+def instrument_sessions_between(instrument: InstrumentKey, start: date, end: date) -> list[date]:
+    """Return sessions for one exact MIC, including HK/SG single-venue days."""
+    if end < start:
+        return []
+    calendar_name = _MIC_TO_CALENDAR.get(instrument.mic)
+    if calendar_name is None:
+        raise ValueError(f"No exchange calendar configured for MIC {instrument.mic!r}")
+    sessions = _get_calendar(calendar_name).sessions_in_range(start, end)
+    return [session.date() for session in sessions]
+
+
 def count_trading_days(market: str, start: date, end: date) -> int:
     return len(trading_days_between(market, start, end))
 
@@ -113,6 +150,8 @@ def market_now(market: str) -> date:
 __all__ = [
     "classify_market_sessions",
     "count_trading_days",
+    "instrument_sessions_between",
+    "is_instrument_trading_day",
     "is_trading_day",
     "market_now",
     "market_timezone",

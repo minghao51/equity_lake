@@ -76,6 +76,7 @@ class HKSGEquityFetcher(YFinanceBaseFetcher):
             tickers=hk_list + sg_list,
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
+            ticker_config=ticker_config,
             batch_size=self.DEFAULT_BATCH_SIZE,
         )
         self.hk_tickers = hk_list

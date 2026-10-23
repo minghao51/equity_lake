@@ -7,6 +7,7 @@ from typing import Any, Protocol, runtime_checkable
 import httpx
 import structlog
 
+from equity_lake.core.logging import redact_secrets
 from equity_lake.core.retry import build_retry_decorator
 
 logger = structlog.get_logger()
@@ -15,10 +16,17 @@ logger = structlog.get_logger()
 @build_retry_decorator(attempts=3, wait_multiplier=0.5, wait_min=0.25, wait_max=5.0, log=logger)
 def _deliver_webhook(url: str, payload: dict[str, Any], timeout: float) -> httpx.Response:
     """POST one alert payload; delivery is retried by tenacity (3 attempts, exponential backoff)."""
-    with httpx.Client(timeout=timeout) as client:
-        response = client.post(url, json=payload, headers={"Content-Type": "application/json"})
-        response.raise_for_status()
-        return response
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.post(url, json=payload, headers={"Content-Type": "application/json"})
+            response.raise_for_status()
+            return response
+    except httpx.HTTPStatusError as exc:
+        # Preserve safe diagnostics without forwarding credential-bearing URLs
+        # into tenacity\'s retry logger or our terminal failure log.
+        raise RuntimeError(f"webhook delivery failed (HTTPStatusError, status={exc.response.status_code})") from None
+    except Exception as exc:
+        raise RuntimeError(f"webhook delivery failed ({type(exc).__name__})") from None
 
 
 @runtime_checkable
@@ -45,13 +53,14 @@ class WebhookAlerter:
             "alerts": alerts,
             "metrics": metrics or {},
         }
+        safe_url = redact_secrets({"webhook_url": self.url})["webhook_url"]
         try:
             response = _deliver_webhook(self.url, payload, self.timeout)
-            logger.info("webhook_alert_sent", url=self.url, status=response.status_code, alert_count=len(alerts))
+            logger.info("webhook_alert_sent", url=safe_url, status=response.status_code, alert_count=len(alerts))
         except Exception as exc:
             # Delivery already retried by tenacity; log the outcome loudly so a
             # lost alert is visible instead of silently swallowed.
-            logger.error("webhook_alert_delivery_failed", url=self.url, error=str(exc), alert_count=len(alerts))
+            logger.error("webhook_alert_delivery_failed", url=safe_url, error=str(exc), alert_count=len(alerts))
 
 
 class CompositeAlerter:

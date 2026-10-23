@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import runpy
+
 import pytest
 
-from equity_lake.catalog.datasets import (
+from equity_lake.catalog.datasets import (  # type: ignore[import-untyped]
     ALL_DATASETS,
     BRONZE_DATASETS,
     GOLD_DATASETS,
@@ -12,7 +14,7 @@ from equity_lake.catalog.datasets import (
     PLATINUM_DATASETS,
     SILVER_DATASETS,
 )
-from equity_lake.catalog.models import DatasetEntry
+from equity_lake.catalog.models import DatasetEntry  # type: ignore[import-untyped]
 
 VALID_LAYERS = {"bronze", "silver", "gold", "platinum"}
 
@@ -58,42 +60,92 @@ class TestPathConventions:
             assert ds.path.endswith("/"), f"Dataset {ds.name} path doesn't end with /: {ds.path!r}"
 
     def test_paths_derive_from_core_paths_constants(self) -> None:
-        # Entry paths must be built from core.paths constants (not duplicated
-        # literals) so layout changes can't silently drift from the catalog.
+        # Execute the source in a temporary namespace to compare against the
+        # canonical definitions without reloading or unisolating runtime paths.
         from pathlib import Path
 
-        from equity_lake.core import paths as core_paths
+        from equity_lake.core import paths as runtime_paths  # type: ignore[import-untyped]
+
+        source_paths = runpy.run_path(str(Path(runtime_paths.__file__).resolve()))
+        project_root = source_paths["PROJECT_ROOT"]
 
         def rel(directory: Path) -> str:
-            return directory.relative_to(core_paths.PROJECT_ROOT).as_posix() + "/"
+            return directory.relative_to(project_root).as_posix() + "/"
 
         expected = {
-            rel(core_paths.US_EQUITY_DIR),
-            rel(core_paths.CN_ASHARE_DIR),
-            rel(core_paths.HK_SG_EQUITY_DIR),
-            rel(core_paths.JPX_EQUITY_DIR),
-            rel(core_paths.KRX_EQUITY_DIR),
-            rel(core_paths.BRONZE_MACRO_DIR),
-            rel(core_paths.BRONZE_RAW_ARTICLES_DIR),
-            rel(core_paths.BRONZE_CORPORATE_ACTIONS_DIR),
-            rel(core_paths.SILVER_NEWS_SENTIMENT_DIR),
-            rel(core_paths.SILVER_SOCIAL_SENTIMENT_DIR),
-            rel(core_paths.SILVER_PROCESSED_ARTICLES_DIR),
-            rel(core_paths.SILVER_ANALYST_RATINGS_DIR),
-            rel(core_paths.SILVER_SEC_EXTRACTIONS_DIR),
-            rel(core_paths.SILVER_SEC_FINANCIALS_DIR),
-            rel(core_paths.SILVER_CORPORATE_ACTIONS_DIR),
-            rel(core_paths.GOLD_FEATURES_DIR),
-            rel(core_paths.PLATINUM_PREDICTIONS_DIR),
+            rel(source_paths["US_EQUITY_DIR"]),
+            rel(source_paths["CN_ASHARE_DIR"]),
+            rel(source_paths["HK_SG_EQUITY_DIR"]),
+            rel(source_paths["JPX_EQUITY_DIR"]),
+            rel(source_paths["KRX_EQUITY_DIR"]),
+            rel(source_paths["BRONZE_MACRO_DIR"]),
+            rel(source_paths["BRONZE_RAW_ARTICLES_DIR"]),
+            rel(source_paths["BRONZE_CORPORATE_ACTIONS_DIR"]),
+            rel(source_paths["SILVER_NEWS_SENTIMENT_DIR"]),
+            rel(source_paths["SILVER_SOCIAL_SENTIMENT_DIR"]),
+            rel(source_paths["SILVER_PROCESSED_ARTICLES_DIR"]),
+            rel(source_paths["SILVER_ANALYST_RATINGS_DIR"]),
+            rel(source_paths["SILVER_SEC_EXTRACTIONS_DIR"]),
+            rel(source_paths["SILVER_SEC_FINANCIALS_DIR"]),
+            rel(source_paths["SILVER_CORPORATE_ACTIONS_DIR"]),
+            rel(source_paths["SILVER_CORPORATE_ACTIONS_DIR"].parent / "corporate_action_coverage"),
+            rel(source_paths["GOLD_FEATURES_DIR"]),
+            rel(source_paths["PLATINUM_PREDICTIONS_DIR"]),
         }
         actual = {ds.path for ds in ALL_DATASETS}
         assert actual == expected, f"Catalog paths drifted from core.paths constants: {actual ^ expected}"
+
+        repository_data = runtime_paths.PROJECT_ROOT / "data"
+        repository_logs = runtime_paths.PROJECT_ROOT / "logs"
+        for name, value in vars(runtime_paths).items():
+            if isinstance(value, Path):
+                assert not value.is_relative_to(repository_data), f"{name} is not isolated during catalog test: {value}"
+                assert not value.is_relative_to(repository_logs), f"{name} is not isolated during catalog test: {value}"
 
 
 class TestDatasetContent:
     def test_all_datasets_have_columns(self) -> None:
         for ds in ALL_DATASETS:
             assert len(ds.columns) > 0, f"Dataset {ds.name} has no columns"
+
+    def test_shared_feature_and_prediction_catalogs_include_identity(self) -> None:
+        expected_identity = {"market": "string", "mic": "string", "symbol": "string", "ticker": "string", "identity_schema_version": "int8"}
+        for name in ("technical_features", "predictions"):
+            dataset = next(ds for ds in ALL_DATASETS if ds.name == name)
+            columns = {column.name: column.dtype for column in dataset.columns}
+            assert {column: columns.get(column) for column in expected_identity} == expected_identity
+
+    def test_action_coverage_catalog_is_separate_and_versioned(self) -> None:
+        dataset = next(ds for ds in ALL_DATASETS if ds.name == "corporate_action_coverage")
+        columns = {column.name: column.dtype for column in dataset.columns}
+        assert dataset.layer == "silver"
+        assert dataset.partition == "coverage_end"
+        assert columns["market"] == "string"
+        assert columns["mic"] == "string"
+        assert columns["symbol"] == "string"
+        assert columns["source_available_at"] == "datetime"
+        assert columns["source_valid_until"] == "datetime"
+        assert columns["coverage_schema_version"] == "int8"
+        assert "source_valid_until" in [column.name for column in dataset.columns]
+
+    def test_gold_features_catalog_source_proof_metadata_is_explicit(self) -> None:
+        dataset = next(ds for ds in ALL_DATASETS if ds.name == "technical_features")
+        columns = {column.name: column.dtype for column in dataset.columns}
+        assert columns["action_source_valid_until"] == "datetime"
+        assert columns["action_source_available_at"] == "datetime"
+        assert columns["action_coverage_source"] == "string"
+        assert columns["action_coverage_start"] == "date"
+        assert columns["action_coverage_end"] == "date"
+        assert columns["action_coverage_schema_version"] == "int8"
+
+    def test_gold_catalog_includes_all_action_proof_columns_and_identity(self) -> None:
+        from equity_lake.core.availability import FEATURE_ACTION_COVERAGE_PROOF_COLUMNS  # type: ignore[import-untyped]
+
+        dataset = next(ds for ds in ALL_DATASETS if ds.name == "technical_features")
+        catalog_columns = {column.name for column in dataset.columns}
+        proof_identity_columns = {"action_coverage_market", "action_coverage_mic", "action_coverage_symbol"}
+        assert proof_identity_columns.issubset(catalog_columns)
+        assert set(FEATURE_ACTION_COVERAGE_PROOF_COLUMNS).issubset(catalog_columns)
 
     def test_all_datasets_have_description(self) -> None:
         for ds in ALL_DATASETS:

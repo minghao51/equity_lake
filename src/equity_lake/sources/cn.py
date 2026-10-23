@@ -21,6 +21,7 @@ class CNAshareFetcher(MarketDataFetcher):
     """Fetch China A-share EOD data using akshare."""
 
     source_name = "akshare"
+    market = "cn"
 
     def __init__(
         self,
@@ -147,6 +148,7 @@ class CNAshareFetcher(MarketDataFetcher):
                     rename={"开盘": "open", "最高": "high", "最低": "low", "收盘": "close", "成交量": "volume"},
                     columns=STANDARD_COLUMNS,
                 )
+                frame = self._attach_source_identity(frame)
                 unique_tickers = int(frame["ticker"].n_unique()) if "ticker" in frame.columns else 0
                 logger.info(
                     "fetch_cn_ashare_completed",

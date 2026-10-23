@@ -23,8 +23,7 @@ from hamilton import base
 from hamilton.plugins import h_polars
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
-
-FEATURE_SCHEMA_VERSION = 4
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
 
 #: Raw bronze passthrough nodes in ``TECHNICAL_FEATURES``. They are emitted
 #: from the *validated* frame at assembly time (F02 row alignment): requesting

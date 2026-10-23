@@ -17,11 +17,50 @@ import structlog
 
 from equity_lake.core.polars_utils import ensure_columns
 from equity_lake.core.schemas import ANALYST_RATING_COLUMNS
-from equity_lake.sources.base import MarketDataFetcher, _empty_frame
+from equity_lake.sources.base import MarketDataFetcher, TransientError, _empty_frame
 
 logger = structlog.get_logger()
 
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
+
+
+def _safe_error_type(exc: BaseException) -> str:
+    """Return a bounded exception class name without serializing its message."""
+    return type(exc).__name__[:80]
+
+
+def _bounded_status_code(status_code: object) -> int | None:
+    if isinstance(status_code, int) and not isinstance(status_code, bool) and 100 <= status_code <= 599:
+        return status_code
+    return None
+
+
+def _safe_status_code(exc: BaseException) -> int | None:
+    """Return only a valid HTTP status from an exception or its direct cause."""
+    for candidate in (exc, exc.__cause__):
+        if candidate is None:
+            continue
+        response = getattr(candidate, "response", None)
+        status_code = getattr(candidate, "status_code", None)
+        if status_code is None:
+            status_code = getattr(response, "status_code", None)
+        if (bounded_status_code := _bounded_status_code(status_code)) is not None:
+            return bounded_status_code
+    return None
+
+
+class _AnalystRequestError(Exception):
+    """Credential-safe request failure retaining only bounded diagnostic fields."""
+
+    def __init__(self, endpoint: str, error_type: str, status_code: int | None):
+        self.endpoint = endpoint[:40]
+        self.error_type = error_type[:80]
+        self.status_code = _bounded_status_code(status_code)
+        super().__init__("Finnhub analyst ratings request failed")
+
+
+class _TransientAnalystRequestError(_AnalystRequestError, TransientError):
+    """Safe analyst request failure classified for the shared tenacity retry seam."""
 
 
 class AnalystRatingFetcher(MarketDataFetcher):
@@ -63,15 +102,37 @@ class AnalystRatingFetcher(MarketDataFetcher):
                 row = self._fetch_ticker(ticker, trading_date)
                 if row:
                     all_rows.append(row)
+            except _AnalystRequestError as exc:
+                logger.error(
+                    "analyst_rating_request_failed",
+                    ticker=ticker,
+                    endpoint=exc.endpoint,
+                    error_type=exc.error_type,
+                    status_code=exc.status_code,
+                )
             except Exception as exc:
-                logger.error("analyst_rating_failed", ticker=ticker, error=str(exc))
+                logger.error(
+                    "analyst_rating_failed",
+                    ticker=ticker,
+                    error_type=_safe_error_type(exc),
+                    status_code=_safe_status_code(exc),
+                )
 
         if not all_rows:
             logger.warning("No analyst ratings fetched")
             return _empty_frame()
 
-        df = pl.DataFrame(all_rows)
-        df = ensure_columns(df, ANALYST_RATING_COLUMNS)
+        try:
+            df = pl.DataFrame(all_rows)
+            df = ensure_columns(df, ANALYST_RATING_COLUMNS)
+        except Exception as exc:
+            logger.error(
+                "analyst_ratings_normalization_failed",
+                error_type=_safe_error_type(exc),
+                status_code=_safe_status_code(exc),
+            )
+            raise RuntimeError("Analyst ratings normalization failed") from None
+
         logger.info("Fetched analyst ratings", rows=df.height)
         return df
 
@@ -84,6 +145,14 @@ class AnalystRatingFetcher(MarketDataFetcher):
                 return None
 
             latest = rec_data[0]
+            if not isinstance(latest, dict):
+                logger.warning(
+                    "analyst_rating_invalid_recommendation_item",
+                    ticker=ticker,
+                    response_type=type(latest).__name__,
+                )
+                return None
+
             strong_buy = int(latest.get("strongBuy", 0))
             buy = int(latest.get("buy", 0))
             hold = int(latest.get("hold", 0))
@@ -129,25 +198,39 @@ class AnalystRatingFetcher(MarketDataFetcher):
 
         return self._retry_on_failure(_fetch)  # type: ignore[no-any-return]
 
-    def _get_recommendation(self, ticker: str) -> list[dict[str, Any]]:
-        url = f"{FINNHUB_BASE_URL}/stock/recommendation"
+    def _get_json(self, ticker: str, endpoint: str) -> Any:
+        url = f"{FINNHUB_BASE_URL}/stock/{endpoint}"
         params = {"symbol": ticker, "token": self.api_key}
-        with httpx.Client(timeout=10) as client:
-            resp = client.get(url, params=params)
-            resp.raise_for_status()
-            data: Any = resp.json()
+        response: httpx.Response | None = None
+        try:
+            with httpx.Client(timeout=10) as client:
+                response = client.get(url, params=params)
+                response.raise_for_status()
+                return response.json()
+        except Exception as exc:
+            status_code = _safe_status_code(exc)
+            if status_code is None and response is not None:
+                status_code = _bounded_status_code(response.status_code)
+            retryable_status = status_code is not None and (status_code >= 500 or status_code in (408, 429))
+            retryable_transport = isinstance(exc, (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError))
+            error_type = _safe_error_type(exc)
+            if retryable_status or retryable_transport:
+                raise _TransientAnalystRequestError(endpoint, error_type, status_code) from None
+            raise _AnalystRequestError(endpoint, error_type, status_code) from None
+
+    def _get_recommendation(self, ticker: str) -> list[Any]:
+        data = self._get_json(ticker, "recommendation")
         if not isinstance(data, list):
+            logger.warning("analyst_rating_invalid_recommendation_response", ticker=ticker, response_type=type(data).__name__)
             return []
         return data
 
     def _get_price_target(self, ticker: str) -> dict[str, Any] | None:
-        url = f"{FINNHUB_BASE_URL}/stock/price-target"
-        params = {"symbol": ticker, "token": self.api_key}
-        with httpx.Client(timeout=10) as client:
-            resp = client.get(url, params=params)
-            resp.raise_for_status()
-            data: Any = resp.json()
-        if not isinstance(data, dict) or not data:
+        data = self._get_json(ticker, "price-target")
+        if not isinstance(data, dict):
+            logger.warning("analyst_rating_invalid_price_target_response", ticker=ticker, response_type=type(data).__name__)
+            return None
+        if not data:
             return None
         return data
 

@@ -64,10 +64,19 @@ def forecast(
 
     For model training prefer ``equity ml train`` (surfaces ``--backend``).
     """
+    from equity_lake.ml.candidates import DEFAULT_BACKTEST_STRATEGY
     from equity_lake.ml.forecasting import PriceForecaster
+    from equity_lake.signals.config import load_signal_config
 
     _init_logging(verbose)
-    forecaster = PriceForecaster(model_dir=model_dir, model_mode=model_mode)
+    signal_config = load_signal_config()
+    configured = signal_config.ml.get("candidate_strategies") or signal_config.backtest.get("strategies")
+    candidate_strategies = (
+        [strategy.model_dump() if hasattr(strategy, "model_dump") else dict(strategy) for strategy in configured]
+        if configured
+        else [dict(DEFAULT_BACKTEST_STRATEGY)]
+    )
+    forecaster = PriceForecaster(model_dir=model_dir, model_mode=model_mode, candidate_strategies=candidate_strategies)
 
     if mode == "train":
         start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
@@ -105,37 +114,107 @@ def forecast(
 def signal_scan(
     fmt: Annotated[str, typer.Option("--format", "-f", help="json, md, or table")] = "table",
     date_str: Annotated[str | None, typer.Option("--date", "-d", help="Target date YYYY-MM-DD")] = None,
-    watchlist: Annotated[str | None, typer.Option("--watchlist", "-w", help="Watchlist config path")] = None,
-    config: Annotated[str | None, typer.Option("--config", "-c", help="Signal config path")] = None,
+    watchlist: Annotated[str | None, typer.Option("--watchlist", "-w", help="Explicit legacy ticker-only watchlist YAML; requires --market")] = None,
+    market: Annotated[
+        Literal["us_equity", "cn_ashare", "hk_sg_equity", "jpx_equity", "krx_equity"] | None,
+        typer.Option("--market", help="Canonical market for an explicit legacy watchlist; never inferred from ticker text"),
+    ] = None,
+    mic: Annotated[
+        str | None,
+        typer.Option("--mic", help="Exact MIC for legacy symbols; required when source configuration is ambiguous"),
+    ] = None,
+    ticker_config: Annotated[
+        str | None,
+        typer.Option("--ticker-config", help="Active source ticker configuration used to resolve legacy membership"),
+    ] = None,
+    config: Annotated[
+        str | None,
+        typer.Option("--config", "-c", help="Selected signal config; custom v2 candidates remain bound to this file"),
+    ] = None,
     output: Annotated[str | None, typer.Option("--output", "-o", help="Save output to file")] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Don't save history")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Preview scope without scanning, inference, or writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Scan watchlist and generate signals."""
-    from equity_lake.signals.config import load_signal_config, load_watchlist
-    from equity_lake.signals.scanner import SignalScanner
+    """Scan watchlist and generate signals; dry-run only previews the plan."""
+    import yaml
+
+    from equity_lake.signals.config import load_legacy_watchlist, load_signal_config
+    from equity_lake.signals.models import Watchlist
 
     _init_logging(verbose)
     watchlist_path = Path(watchlist) if watchlist else None
+    ticker_config_path = Path(ticker_config) if ticker_config else None
     config_path = Path(config) if config else None
 
     try:
-        wl = load_watchlist(watchlist_path)
+        if watchlist_path is not None:
+            if market is None:
+                raise ValueError("--market is required with a legacy ticker-only --watchlist; bare ticker identity is never guessed")
+            legacy = load_legacy_watchlist(watchlist_path)
+            from equity_lake.signals.tracking import _resolve_configured_instrument
+
+            instruments = [_resolve_configured_instrument(symbol, market, mic, ticker_config_path) for symbol in legacy.tickers]
+            wl = legacy
+        else:
+            if market is not None or mic is not None:
+                raise ValueError("--market/--mic selection applies only to an explicit legacy --watchlist")
+            from equity_lake.signals.tracking import load_private_watchlist
+
+            managed = load_private_watchlist(ticker_config_path=ticker_config_path)
+            instruments = [item.instrument for item in managed.instruments]
+            wl = Watchlist(name=managed.name, tickers=list(dict.fromkeys(item.instrument.symbol for item in managed.instruments)))
         sc = load_signal_config(config_path)
-    except FileNotFoundError as exc:
-        typer.secho(f"Config file not found: {exc}", fg=typer.colors.RED)
+        if fmt not in {"json", "md", "table"}:
+            raise ValueError(f"Unknown format: {fmt}. Use: json, md, table")
+        target_date = _resolve_date(date_str)
+    except (OSError, ValueError, TypeError, RuntimeError, yaml.YAMLError) as exc:
+        typer.secho(f"Invalid scan configuration: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1) from exc
 
-    scanner = SignalScanner(sc, wl)
-    target_date = _resolve_date(date_str)
+    if dry_run:
+        typer.echo(
+            json.dumps(
+                {
+                    "status": "planned",
+                    "reason": "dry_run",
+                    "date": target_date.isoformat(),
+                    "watchlist": wl.name,
+                    "tickers": wl.tickers,
+                    "instruments": [instrument.model_dump() for instrument in instruments],
+                    "generators": [name for name in ("backtest", "sentiment", "ml") if sc.is_generator_enabled(name)],
+                    "format": fmt,
+                    "output": output,
+                },
+                indent=2,
+            )
+        )
+        return
+
+    from equity_lake.core.paths import ensure_dirs
+    from equity_lake.signals.history import save_scan_report
+    from equity_lake.signals.models import SignalScanReport
+    from equity_lake.signals.scanner import SignalScanner
+
+    ensure_dirs()
+    scanner = SignalScanner(sc, wl, instruments=instruments)
     signals = scanner.scan(target_date)
     formatted = scanner.format_signals(signals, fmt)
 
     if output:
-        Path(output).write_text(formatted)
+        Path(output).write_text(formatted, encoding="utf-8")
         typer.echo(f"Saved to {output}")
     else:
         typer.echo(formatted)
 
-    if not dry_run and signals:
+    report = getattr(scanner, "last_report", None)
+    if isinstance(report, SignalScanReport):
+        report_path = save_scan_report(report)
+        counts = json.dumps(report.outcome_counts, sort_keys=True)
+        typer.secho(f"Signal scan status: {report.status}; outcomes={counts}; report={report_path}", err=True)
+
+    if signals:
         scanner.save_history(signals)
+
+    if isinstance(report, SignalScanReport) and report.status == "failed":
+        typer.secho("All required scan evaluations failed; see the saved scan report for per-generator outcomes.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)

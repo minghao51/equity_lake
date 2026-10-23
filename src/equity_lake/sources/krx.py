@@ -47,7 +47,8 @@ class KRXEquityFetcher(MarketDataFetcher):
         ticker_config: TickerConfig | None = None,
         filters: dict[str, Any] | None = None,
     ):
-        super().__init__(retry_attempts, retry_delay)
+        ticker_config = ticker_config or TickerConfig()
+        super().__init__(retry_attempts, retry_delay, ticker_config=ticker_config)
         if tickers is not None:
             self.tickers = tickers
             logger.info("Using explicit ticker list: %s tickers", len(tickers))
@@ -107,6 +108,7 @@ class KRXEquityFetcher(MarketDataFetcher):
 
             frame = pd.concat(all_frames, ignore_index=True)
             frame = standardize_columns(frame, rename={"adj close": "adj_close", "adjclose": "adj_close"}, columns=STANDARD_COLUMNS)
+            frame = self._attach_source_identity(frame)
             unique_tickers = frame["ticker"].n_unique() if "ticker" in frame.columns else 0
             logger.info("Fetched %s rows for %s unique KRX tickers", frame.height, unique_tickers)
             return frame

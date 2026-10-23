@@ -66,6 +66,7 @@ class TestSECFilingFetch:
 
     def test_fetch_returns_bronze_schema(self):
         fetcher = SECFilingFetcher(tickers=["AAPL"])
+        fetcher._ticker_cik_cache = {"AAPL": 320193}
 
         article = {
             "article_id": "test-id",
@@ -81,19 +82,28 @@ class TestSECFilingFetch:
             "date": date(2024, 1, 15),
         }
 
-        with patch.object(fetcher, "_fetch_ticker", return_value=[article]):
+        with (
+            patch("httpx.Client.get", side_effect=AssertionError("unexpected SEC HTTP GET")) as mock_get,
+            patch.object(fetcher, "_fetch_ticker", return_value=[article]),
+        ):
             df = fetcher.fetch(date(2024, 1, 15))
 
+        mock_get.assert_not_called()
         assert not df.is_empty()
         assert set(BRONZE_ARTICLE_COLUMNS).issubset(set(df.columns))
         assert df.row(0, named=True)["source_type"] == "sec_filing"
 
     def test_fetch_handles_ticker_error(self):
         fetcher = SECFilingFetcher(tickers=["AAPL", "MSFT"])
+        fetcher._ticker_cik_cache = {"AAPL": 320193, "MSFT": 789019}
 
-        with patch.object(fetcher, "_fetch_ticker", side_effect=Exception("network error")):
+        with (
+            patch("httpx.Client.get", side_effect=AssertionError("unexpected SEC HTTP GET")) as mock_get,
+            patch.object(fetcher, "_fetch_ticker", side_effect=Exception("network error")),
+        ):
             df = fetcher.fetch(date(2024, 1, 15))
 
+        mock_get.assert_not_called()
         assert df.is_empty()
 
     def test_extract_sections_finds_risk_factors_and_mda(self):

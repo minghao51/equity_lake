@@ -182,12 +182,22 @@ def sec_filings(
     date_str: Annotated[str | None, typer.Option("--date", help="Trading date")] = None,
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers")] = None,
     lookback_days: Annotated[int, typer.Option("--lookback", help="Filing lookback days")] = 120,
-    process_silver: Annotated[bool, typer.Option("--process", help="Process bronze to silver via LLM")] = False,
+    process_silver: Annotated[
+        bool,
+        typer.Option("--process", help="Unavailable until SEC processing has bounded provider actual-cost reporting"),
+    ] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Skip writes")] = False,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Fetch SEC 10-K/10-Q filings from EDGAR and optionally process to silver."""
+    """Fetch SEC 10-K/10-Q filings; --process currently fails closed without bounded cost reporting."""
     _init_logging(verbose)
+    if process_silver:
+        typer.secho(
+            "SEC --process is disabled: no bounded provider actual-cost adapter is available. "
+            "Omit --process to fetch filings without LLM processing.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
 
     from equity_lake.core.dates import resolve_trading_date
     from equity_lake.core.logging import timer
@@ -214,19 +224,7 @@ def sec_filings(
             typer.secho("Failed to write SEC bronze data", fg=typer.colors.RED)
             raise typer.Exit(1)
 
-    if process_silver and not dry_run:
-        typer.echo("Processing SEC bronze to silver...")
-        from equity_lake.ingestion.sec_processor import process_sec_bronze_to_silver
-
-        with timer("sec_to_silver"):
-            success = process_sec_bronze_to_silver(trading_date)
-
-        if success:
-            typer.secho("SEC processing complete", fg=typer.colors.GREEN)
-        else:
-            typer.secho("SEC processing failed or no new sections", fg=typer.colors.YELLOW)
-    else:
-        typer.secho("SEC filing ingestion complete", fg=typer.colors.GREEN)
+    typer.secho("SEC filing ingestion complete", fg=typer.colors.GREEN)
 
 
 @app.command("corporate-actions")

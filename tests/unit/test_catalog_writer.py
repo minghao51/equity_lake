@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
-from equity_lake.catalog.builder import build_catalog
-from equity_lake.catalog.models import Catalog
-from equity_lake.catalog.writer import catalog_to_jsonl, write_catalog_jsonl
+import pytest
+
+from equity_lake.catalog.builder import build_catalog  # type: ignore[import-untyped]
+from equity_lake.catalog.models import Catalog  # type: ignore[import-untyped]
+from equity_lake.catalog.writer import catalog_to_jsonl, write_catalog_jsonl  # type: ignore[import-untyped]
 
 
 class TestJsonlFormat:
@@ -60,7 +63,7 @@ class TestRoundTrip:
 
 
 class TestWriteToFile:
-    def test_write_to_custom_path(self, tmp_path) -> None:
+    def test_write_to_custom_path(self, tmp_path: Path) -> None:
         catalog = build_catalog()
         custom = tmp_path / "test_catalog.jsonl"
         result = write_catalog_jsonl(catalog, path=custom)
@@ -69,8 +72,11 @@ class TestWriteToFile:
         content = custom.read_text()
         assert len(content.strip().split("\n")) > 0
 
-    def test_default_path_creates_file(self) -> None:
+    def test_default_path_creates_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         catalog: Catalog = build_catalog()
+        # Exercise the default-path branch without overwriting the tracked catalog.
+        monkeypatch.setattr("equity_lake.core.paths.PROJECT_ROOT", tmp_path)
         result = write_catalog_jsonl(catalog)
+        assert result == tmp_path / "data" / "catalog.jsonl"
         assert result.exists()
         assert result.suffix == ".jsonl"

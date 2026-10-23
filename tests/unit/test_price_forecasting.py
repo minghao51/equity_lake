@@ -1,43 +1,93 @@
 """Regression tests for price forecasting model selection."""
 
+import hashlib
+import json
 from datetime import date
 from pathlib import Path
-from typing import Any
+from runpy import run_path
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.ml.candidates import build_candidate_frame
-from equity_lake.ml.forecasting import PriceForecaster
-from equity_lake.ml.labeling import apply_triple_barrier_labels
+from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    AVAILABILITY_SCHEMA_VERSION,
+    PRICE_ADJUSTMENT_VERSION,
+)
+from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    IDENTITY_SCHEMA_VERSION,
+    InstrumentKey,
+)
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
+from equity_lake.ml.candidates import build_candidate_frame  # type: ignore[import-untyped]
+from equity_lake.ml.forecasting import ModelIncompatibleError, PriceForecaster  # type: ignore[import-untyped]
+from equity_lake.ml.labeling import apply_triple_barrier_labels  # type: ignore[import-untyped]
+
+_pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
+synthetic_feature_proof_columns = _pit_fixtures["synthetic_feature_proof_columns"]
+with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]
 
 
-def _noop_feature_loader_init(self) -> None:
+def _noop_feature_loader_init(self: object) -> None:
     return None
+
+
+def _with_action_proof(frame: pd.DataFrame | pl.DataFrame) -> pd.DataFrame | pl.DataFrame:
+    if isinstance(frame, pl.DataFrame):
+        identities = frame.select("market", "mic", "symbol").unique().to_dicts()
+        if len(identities) != 1:
+            raise ValueError("Synthetic feature fixture must contain one canonical instrument")
+        instrument = InstrumentKey(**identities[0])
+        return with_synthetic_feature_proof(frame, instrument)
+
+    identities = frame[["market", "mic", "symbol"]].drop_duplicates()
+    if len(identities) != 1:
+        raise ValueError("Synthetic feature fixture must contain one canonical instrument")
+    instrument = InstrumentKey(**identities.iloc[0].to_dict())
+    if bool(frame["ticker"].isna().any()) or set(frame["ticker"].astype(str).unique()) != {instrument.symbol}:
+        raise ValueError(f"Synthetic feature ticker does not match {instrument.display_key}")
+    columns = synthetic_feature_proof_columns(instrument, frame["date"].tolist())
+    result = frame.copy()
+    for name, values in columns.items():
+        result[name] = values
+    return result
 
 
 def _make_training_frame(ticker: str, periods: int = 80) -> pd.DataFrame:
     dates = pd.date_range("2024-01-01", periods=periods, freq="B")
     close = pd.Series(range(100, 100 + periods), dtype=float)
-    return pd.DataFrame(
-        {
-            "ticker": [ticker] * len(dates),
-            "date": dates,
-            "open": close,
-            "high": close + 1,
-            "low": close - 1,
-            "close": close,
-            "volume": [1_000_000] * len(dates),
-            "next_day_return": [0.01 if i % 2 == 0 else -0.01 for i in range(len(dates))],
-            "rsi_14": [50.0 + (i % 5) for i in range(len(dates))],
-            "macd": [0.1 * (i % 3) for i in range(len(dates))],
-        }
+    return cast(
+        pd.DataFrame,
+        _with_action_proof(
+            pd.DataFrame(
+                {
+                    "market": ["us_equity"] * len(dates),
+                    "mic": ["XNAS"] * len(dates),
+                    "symbol": [ticker] * len(dates),
+                    "identity_schema_version": [IDENTITY_SCHEMA_VERSION] * len(dates),
+                    "ticker": [ticker] * len(dates),
+                    "date": dates,
+                    "open": close,
+                    "high": close + 1,
+                    "low": close - 1,
+                    "close": close,
+                    "volume": [1_000_000] * len(dates),
+                    "next_day_return": [0.01 if i % 2 == 0 else -0.01 for i in range(len(dates))],
+                    "label_available_date": [dates[i + 1] if i + 1 < len(dates) else pd.NaT for i in range(len(dates))],
+                    "feature_schema_version": [FEATURE_SCHEMA_VERSION] * len(dates),
+                    "price_adjustment_version": [PRICE_ADJUSTMENT_VERSION] * len(dates),
+                    "availability_schema_version": [AVAILABILITY_SCHEMA_VERSION] * len(dates),
+                    "rsi_14": [50.0 + (i % 5) for i in range(len(dates))],
+                    "macd": [0.1 * (i % 3) for i in range(len(dates))],
+                }
+            )
+        ),
     )
 
 
-def test_backtest_handles_null_target_on_final_row(monkeypatch, tmp_path) -> None:
+def test_backtest_handles_null_target_on_final_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A1 (handoff 08): the DAG target (``next_day_return > 0`` via shift(-1)) is
     null on the final features row; ``backtest()`` must drop null-target rows
     (mirroring ``_prepare_training_frame``'s consumers) instead of raising
@@ -47,7 +97,9 @@ def test_backtest_handles_null_target_on_final_row(monkeypatch, tmp_path) -> Non
     frame = _make_training_frame("AAPL", periods=40)
     frame.loc[frame.index[-1], "next_day_return"] = None
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
@@ -58,19 +110,20 @@ def test_backtest_handles_null_target_on_final_row(monkeypatch, tmp_path) -> Non
 
         assert not result.is_empty()
         # The null-target final row must be excluded, not scored.
-        last_frame_date = pd.Timestamp(frame["date"].iloc[-1])
-        assert result["date"].max() < last_frame_date
+        last_frame_date = str(frame["date"].iloc[-1])[:10]
+        result_last_date = str(result["date"].max())[:10]
+        assert result_last_date < last_frame_date
         assert result["actual"].null_count() == 0
         assert set(result["prediction"].unique()).issubset({0, 1})
     finally:
         forecaster.close()
 
 
-def test_backtest_fits_with_training_scale_pos_weight(monkeypatch, tmp_path) -> None:
+def test_backtest_fits_with_training_scale_pos_weight(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A3 (handoff 08): ``backtest()`` retrains must use the same
     ``scale_pos_weight`` semantics as ``train_model`` (class-weighted fit),
     not an unweighted estimator."""
-    from equity_lake.ml.backends import build_estimator as real_build_estimator
+    from equity_lake.ml.backends import build_estimator as real_build_estimator  # type: ignore[import-untyped]
 
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
@@ -79,14 +132,16 @@ def test_backtest_fits_with_training_scale_pos_weight(monkeypatch, tmp_path) -> 
     # 2 positives / 5 negatives -> scale_pos_weight = 5 / 2 = 2.5.
     frame["next_day_return"] = [0.01 if i % 4 == 0 else -0.01 for i in range(len(frame))]
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
 
     recorded: list[float | None] = []
 
-    def _recording_build_estimator(backend, params=None, **kwargs):
+    def _recording_build_estimator(backend: str, params: dict[str, Any] | None = None, **kwargs: Any) -> Any:
         recorded.append(kwargs.get("scale_pos_weight"))
         return real_build_estimator(backend, params, **kwargs)
 
@@ -102,7 +157,7 @@ def test_backtest_fits_with_training_scale_pos_weight(monkeypatch, tmp_path) -> 
         forecaster.close()
 
 
-def test_backtest_predicts_with_optimized_threshold(monkeypatch, tmp_path) -> None:
+def test_backtest_predicts_with_optimized_threshold(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A3 (handoff 08): backtest predictions must apply the optimized decision
     threshold (the backtest analog of live ``predict()``'s stored
     ``optimized_threshold``), not a fixed 0.5 cut."""
@@ -110,7 +165,9 @@ def test_backtest_predicts_with_optimized_threshold(monkeypatch, tmp_path) -> No
 
     frame = _make_training_frame("AAPL", periods=40)
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
@@ -126,7 +183,7 @@ def test_backtest_predicts_with_optimized_threshold(monkeypatch, tmp_path) -> No
         def __init__(self) -> None:
             self.calls = 0
 
-        def predict_proba(self, X: Any) -> np.ndarray:
+        def predict_proba(self: Any, X: Any) -> np.ndarray:
             n = int(np.asarray(X).shape[0])
             if n == 1:
                 p = stub_probabilities[self.calls % len(stub_probabilities)]
@@ -153,7 +210,7 @@ def test_backtest_predicts_with_optimized_threshold(monkeypatch, tmp_path) -> No
         forecaster.close()
 
 
-def test_tune_hyperparameters_raises_when_no_purged_fold_fits(monkeypatch, tmp_path) -> None:
+def test_tune_hyperparameters_raises_when_no_purged_fold_fits(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A2 (handoff 08): short history must raise a clear error advising a longer
     window — the old code silently fell back to unpurged ``KFold(2)``, leaking
     test data into hyperparameter tuning exactly when history is shortest."""
@@ -177,19 +234,20 @@ def test_tune_hyperparameters_raises_when_no_purged_fold_fits(monkeypatch, tmp_p
         forecaster.close()
 
 
-def test_get_feature_columns_excludes_labels_and_barriers() -> None:
+def test_get_feature_columns_excludes_labels_and_barriers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Feature columns must never include the label or triple-barrier bookkeeping.
 
     Regression test for a label-leakage bug where ``NON_FEATURE_COLUMNS`` omitted
     ``target`` / ``barrier_start_idx`` / ``barrier_end_idx``, causing the model to
     train on its own labels.
     """
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     frame = _make_training_frame("AAPL")
     frame["target"] = 1
     frame["barrier_start_idx"] = 0
     frame["barrier_end_idx"] = 5
 
-    forecaster = PriceForecaster(model_dir="/tmp")
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
     features = forecaster._get_feature_columns(frame)
 
     assert "target" not in features
@@ -200,41 +258,67 @@ def test_get_feature_columns_excludes_labels_and_barriers() -> None:
     assert "macd" in features
 
 
-def test_resolve_model_path_uses_latest_model_not_after_target_date(tmp_path) -> None:
+def test_resolve_model_path_uses_latest_model_not_after_target_date(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Historical inference should not pick a model trained in the future."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     forecaster = PriceForecaster(model_dir=str(tmp_path))
     try:
-        (tmp_path / "AAPL_xgboost_v1_direction_2026-05-01.pkl").write_bytes(b"old")
-        (tmp_path / "AAPL_xgboost_v1_direction_2026-06-01.pkl").write_bytes(b"new")
-        (tmp_path / "AAPL_xgboost_v1_direction_2026-07-01.pkl").write_bytes(b"future")
+        instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
+        artifacts = [
+            forecaster._build_model_filename(instrument, date(2026, 5, 1)),
+            forecaster._build_model_filename(instrument, date(2026, 6, 1)),
+            forecaster._build_model_filename(instrument, date(2026, 7, 1)),
+        ]
+        actual_refit_dates = [date(2026, 5, 1), date(2026, 6, 20), date(2026, 6, 1)]
+        for filename, refit_boundary in zip(artifacts, actual_refit_dates, strict=True):
+            path = tmp_path / filename
+            path.write_bytes(b"synthetic")
+            path.with_suffix(".training_metadata.json").write_text(
+                json.dumps(
+                    {
+                        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+                        "instrument": instrument.model_dump(mode="json"),
+                        "ticker": instrument.symbol,
+                        "provenance_version": 3,
+                        "artifact_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                        "model_mode": "v1_direction",
+                        "backend": "xgboost",
+                        "model_file": path.name,
+                        "trained_on": str(refit_boundary),
+                        "refit_boundary": str(refit_boundary),
+                    }
+                )
+            )
 
-        resolved = forecaster._resolve_model_path("AAPL", date(2026, 6, 15))
+        resolved = forecaster._resolve_model_path(instrument, date(2026, 6, 15))
 
         assert resolved is not None
-        assert resolved.name == "AAPL_xgboost_v1_direction_2026-06-01.pkl"
+        assert resolved.name == artifacts[2]
     finally:
         forecaster.close()
 
 
-def test_resolve_model_path_supports_legacy_v1_artifacts(tmp_path) -> None:
+def test_resolve_model_path_rejects_legacy_artifacts_without_identity_provenance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     forecaster = PriceForecaster(model_dir=str(tmp_path))
     try:
         (tmp_path / "AAPL_xgboost_2026-06-01.pkl").write_bytes(b"legacy")
 
         resolved = forecaster._resolve_model_path("AAPL", date(2026, 6, 15))
 
-        assert resolved is not None
-        assert resolved.name == "AAPL_xgboost_2026-06-01.pkl"
+        assert resolved is None
     finally:
         forecaster.close()
 
 
-def test_train_model_writes_validation_metadata(monkeypatch, tmp_path) -> None:
-    def _noop_setup(self) -> None:
+def test_train_model_writes_validation_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def _noop_setup(self: object) -> None:
         return None
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
-        return _make_training_frame(ticker)
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
+        return _make_training_frame(str(ticker))
 
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
@@ -261,12 +345,15 @@ def test_train_model_writes_validation_metadata(monkeypatch, tmp_path) -> None:
         summary = forecaster.load_training_summary("AAPL", date(2024, 4, 30))
         assert summary is not None
         assert summary["validation_fold_count"] >= 0
-        assert Path(tmp_path / "AAPL_xgboost_v1_direction_2024-04-30.training_summary.json").exists()
+        instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
+        summary_name = f"instrument-v{IDENTITY_SCHEMA_VERSION}-{instrument.artifact_token}_xgboost_v1_direction_2024-04-30.training_summary.json"
+        summary_path = tmp_path / summary_name
+        assert summary_path.exists()
     finally:
         forecaster.close()
 
 
-def test_v2_meta_label_training_frame_uses_candidate_events(monkeypatch, tmp_path) -> None:
+def test_v2_meta_label_training_frame_uses_candidate_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
     forecaster = PriceForecaster(
         model_dir=str(tmp_path),
@@ -277,6 +364,10 @@ def test_v2_meta_label_training_frame_uses_candidate_events(monkeypatch, tmp_pat
         dates = pd.date_range("2024-01-01", periods=10, freq="B")
         df = pd.DataFrame(
             {
+                "market": ["us_equity"] * len(dates),
+                "mic": ["XNAS"] * len(dates),
+                "symbol": ["AAPL"] * len(dates),
+                "identity_schema_version": [IDENTITY_SCHEMA_VERSION] * len(dates),
                 "ticker": ["AAPL"] * len(dates),
                 "date": dates,
                 "open": [100, 101, 102, 103, 104, 105, 106, 107, 108, 109],
@@ -284,12 +375,16 @@ def test_v2_meta_label_training_frame_uses_candidate_events(monkeypatch, tmp_pat
                 "low": [99, 100, 101, 102, 103, 104, 105, 106, 107, 108],
                 "close": [100, 101, 102, 103, 104, 107, 108, 109, 110, 111],
                 "volume": [1_000_000] * len(dates),
+                "feature_schema_version": [FEATURE_SCHEMA_VERSION] * len(dates),
+                "price_adjustment_version": [PRICE_ADJUSTMENT_VERSION] * len(dates),
+                "availability_schema_version": [AVAILABILITY_SCHEMA_VERSION] * len(dates),
                 "volatility_20": [0.02] * len(dates),
                 "next_day_return": [0.01] * len(dates),
                 "rsi_14": [55.0] * len(dates),
                 "macd": [0.2] * len(dates),
             }
         )
+        df = cast(pd.DataFrame, _with_action_proof(df))
 
         training_df = forecaster._prepare_training_frame(df)
 
@@ -343,25 +438,39 @@ def test_candidate_generation_returns_empty_when_no_candidates() -> None:
 
 def test_triple_barrier_uses_low_volatility_floor() -> None:
     dates = pd.date_range("2024-01-01", periods=4, freq="B")
-    full_df = pd.DataFrame(
-        {
-            "ticker": ["AAPL"] * len(dates),
-            "date": dates,
-            "open": [100.0, 100.5, 101.0, 101.5],
-            "high": [100.4, 100.9, 101.3, 101.7],
-            "low": [99.8, 100.1, 100.6, 101.0],
-            "close": [100.0, 100.6, 101.1, 101.5],
-            "volatility_20": [0.0, 0.0, 0.0, 0.0],
-        }
+    full_df = _with_action_proof(
+        pd.DataFrame(
+            {
+                "market": ["us_equity"] * len(dates),
+                "mic": ["XNAS"] * len(dates),
+                "symbol": ["AAPL"] * len(dates),
+                "ticker": ["AAPL"] * len(dates),
+                "date": dates,
+                "open": [100.0, 100.5, 101.0, 101.5],
+                "high": [100.4, 100.9, 101.3, 101.7],
+                "low": [99.8, 100.1, 100.6, 101.0],
+                "close": [100.0, 100.6, 101.1, 101.5],
+                "price_adjustment_version": [PRICE_ADJUSTMENT_VERSION] * len(dates),
+                "availability_schema_version": [AVAILABILITY_SCHEMA_VERSION] * len(dates),
+                "volatility_20": [0.0, 0.0, 0.0, 0.0],
+            }
+        )
     )
-    candidates = pd.DataFrame(
-        {
-            "ticker": ["AAPL"],
-            "date": [dates[0]],
-            "candidate_action": ["BUY"],
-            "candidate_source": ["momentum"],
-            "candidate_score": [0.2],
-        }
+    candidates = _with_action_proof(
+        pd.DataFrame(
+            {
+                "market": ["us_equity"],
+                "mic": ["XNAS"],
+                "symbol": ["AAPL"],
+                "ticker": ["AAPL"],
+                "date": [dates[0]],
+                "candidate_action": ["BUY"],
+                "candidate_source": ["momentum"],
+                "candidate_score": [0.2],
+                "price_adjustment_version": [PRICE_ADJUSTMENT_VERSION],
+                "availability_schema_version": [AVAILABILITY_SCHEMA_VERSION],
+            }
+        )
     )
 
     labeled = apply_triple_barrier_labels(
@@ -376,13 +485,14 @@ def test_triple_barrier_uses_low_volatility_floor() -> None:
     assert labeled["lower_barrier_return"][0] == 0.005
 
 
-def test_train_model_handles_sparse_optional_feature_columns(monkeypatch, tmp_path) -> None:
+def test_train_model_handles_sparse_optional_feature_columns(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
-        frame = _make_training_frame(ticker)
-        frame["social_sentiment_score"] = [None] * len(frame)
-        return frame
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pl.DataFrame:
+        frame = pl.from_pandas(_make_training_frame(str(ticker)))
+        return frame.with_columns(pl.Series("social_sentiment_score", [None] * frame.height, dtype=pl.Float64))
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
 
@@ -395,32 +505,45 @@ def test_train_model_handles_sparse_optional_feature_columns(monkeypatch, tmp_pa
             max_model_age_days=0,
         )
         assert forecaster.last_training_summary() is not None
+        metadata = forecaster.load_training_metadata("AAPL", date(2024, 4, 30))
+        assert metadata is not None
+        assert metadata["feature_dtypes"]["social_sentiment_score"] == "Float64"
+        assert metadata["missing_value_policy"] == "native_nan-v1"
     finally:
         forecaster.close()
 
 
-def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
+def test_v2_training_persists_audit_artifact(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load_features(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
         dates = pd.date_range("2024-01-01", periods=30, freq="B")
         close = [100.0, 102.0, 101.0, 103.0, 102.0, 104.0, 103.0, 105.0, 104.0, 106.0] * 3
         frame = pd.DataFrame(
             {
-                "ticker": [ticker] * len(dates),
+                "market": ["us_equity"] * len(dates),
+                "mic": ["XNAS"] * len(dates),
+                "symbol": ["AAPL"] * len(dates),
+                "identity_schema_version": [IDENTITY_SCHEMA_VERSION] * len(dates),
+                "ticker": ["AAPL"] * len(dates),
                 "date": dates,
                 "open": close,
                 "high": [value + 1.2 for value in close],
                 "low": [value - 1.2 for value in close],
                 "close": close,
                 "volume": [1_000_000] * len(dates),
+                "feature_schema_version": [FEATURE_SCHEMA_VERSION] * len(dates),
+                "price_adjustment_version": [PRICE_ADJUSTMENT_VERSION] * len(dates),
+                "availability_schema_version": [AVAILABILITY_SCHEMA_VERSION] * len(dates),
                 "next_day_return": [0.01 if i % 2 == 0 else -0.01 for i in range(len(dates))],
                 "rsi_14": [50.0 + (i % 5) for i in range(len(dates))],
                 "macd": [0.1 * ((i % 4) - 1) for i in range(len(dates))],
                 "volatility_20": [0.02] * len(dates),
             }
         )
-        return frame
+        return cast(pd.DataFrame, _with_action_proof(frame))
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
 
@@ -437,7 +560,9 @@ def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
             max_model_age_days=0,
         )
 
-        audit_path = tmp_path / "AAPL_xgboost_v2_meta_label_2024-02-15.training_audit.parquet"
+        instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
+        audit_name = f"instrument-v{IDENTITY_SCHEMA_VERSION}-{instrument.artifact_token}_xgboost_v2_meta_label_2024-02-15.training_audit.parquet"
+        audit_path = tmp_path / audit_name
         assert audit_path.exists()
 
         audit_df = pl.read_parquet(audit_path)
@@ -457,12 +582,14 @@ def test_v2_training_persists_audit_artifact(monkeypatch, tmp_path) -> None:
         forecaster.close()
 
 
-def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatch, tmp_path) -> None:
+def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
     training_frame = _make_training_frame("AAPL")
 
-    def _load_training(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
+    def _load_training(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
         return training_frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _load_training)
@@ -478,26 +605,31 @@ def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatc
 
         prediction_date = date(2024, 4, 19)
 
-        def _load_scoring(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
+        def _load_scoring(
+            self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+        ) -> pd.DataFrame:
             scoring = training_frame[training_frame["date"] <= pd.Timestamp(prediction_date)].copy()
             return scoring.drop(columns=["macd"]).assign(extra_feature=1.0)
 
         monkeypatch.setattr(PriceForecaster, "load_features", _load_scoring)
 
-        prediction = forecaster.predict("AAPL", prediction_date)
-
-        assert prediction["ticker"] == "AAPL"
-        assert prediction["model_mode"] == "v1_direction"
+        model_loads: list[Path] = []
+        monkeypatch.setattr(PriceForecaster, "_load_model", lambda _self, model_path: model_loads.append(model_path))
+        with pytest.raises(ModelIncompatibleError, match="feature names/dtypes"):
+            forecaster.predict("AAPL", prediction_date)
+        assert model_loads == []
     finally:
         forecaster.close()
 
 
-def test_class_balance_recorded_in_metadata(monkeypatch, tmp_path) -> None:
+def test_class_balance_recorded_in_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Imbalanced training set should record class_balance and scale_pos_weight."""
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
-        frame = _make_training_frame(ticker, periods=120)
+    def _fake_load(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
+        frame = _make_training_frame(str(ticker), periods=120)
         frame["next_day_return"] = [0.01 if i % 5 == 0 else -0.01 for i in range(len(frame))]
         return frame
 
@@ -515,12 +647,14 @@ def test_class_balance_recorded_in_metadata(monkeypatch, tmp_path) -> None:
         forecaster.close()
 
 
-def test_optimized_threshold_recorded_in_metadata(monkeypatch, tmp_path) -> None:
+def test_optimized_threshold_recorded_in_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Validation set with clear class separation should produce a non-default threshold."""
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
-        frame = _make_training_frame(ticker, periods=120)
+    def _fake_load(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
+        frame = _make_training_frame(str(ticker), periods=120)
         return frame
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)
@@ -535,12 +669,14 @@ def test_optimized_threshold_recorded_in_metadata(monkeypatch, tmp_path) -> None
         forecaster.close()
 
 
-def test_shap_feature_importance_recorded_when_shap_available(monkeypatch, tmp_path) -> None:
+def test_shap_feature_importance_recorded_when_shap_available(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """If SHAP is installed, training metadata should include top features."""
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 
-    def _fake_load(self, ticker: str, start_date: date, end_date: date, *, require_available_by: date | None = None) -> pd.DataFrame:
-        return _make_training_frame(ticker, periods=120)
+    def _fake_load(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
+        return _make_training_frame(str(ticker), periods=120)
 
     monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)
     forecaster = PriceForecaster(model_dir=str(tmp_path))

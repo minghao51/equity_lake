@@ -9,12 +9,24 @@ the bounded report/repair path.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
+from runpy import run_path
+from typing import cast
 
 import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.features.labels import (
+from equity_lake.core.availability import (  # type: ignore[import-untyped]
+    AVAILABILITY_SCHEMA_VERSION,
+    PRICE_ADJUSTMENT_VERSION,
+    AvailabilityContractError,
+)
+from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    InstrumentKey,
+)
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
+from equity_lake.features.labels import (  # type: ignore[import-untyped]
     AVAILABILITY_COLUMN,
     TARGET_COLUMN,
     apply_label_repair,
@@ -22,7 +34,10 @@ from equity_lake.features.labels import (
     finalize_preceding_labels,
     scan_label_repair,
 )
-from equity_lake.storage.delta import DeltaMergeError, read_delta, update_delta_columns
+from equity_lake.storage.delta import DeltaMergeError, read_delta, update_delta_columns  # type: ignore[import-untyped]
+
+_pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
+with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]
 
 # ---------------------------------------------------------------------------
 # Temporary-lake helpers (real Delta writes, no mocked row counts)
@@ -30,10 +45,12 @@ from equity_lake.storage.delta import DeltaMergeError, read_delta, update_delta_
 
 
 def _weekdays_ending(end: date, n: int) -> list[date]:
+    from equity_lake.core.calendar import is_trading_day  # type: ignore[import-untyped]
+
     days: list[date] = []
     current = end
     while len(days) < n:
-        if current.weekday() < 5:
+        if current.weekday() < 5 and is_trading_day("us_equity", current):
             days.append(current)
         current -= timedelta(days=1)
     return sorted(days)
@@ -45,6 +62,10 @@ def _price_frame(ticker: str, days: list[date]) -> pl.DataFrame:
     close = [100.0 + 8 * math.sin(i / 2.5) + i * 0.05 for i in range(len(days))]
     return pl.DataFrame(
         {
+            "market": ["us_equity"] * len(days),
+            "mic": ["XNAS"] * len(days),
+            "symbol": [ticker] * len(days),
+            "identity_schema_version": [1] * len(days),
             "ticker": [ticker] * len(days),
             "date": days,
             "open": [value - 0.5 for value in close],
@@ -56,16 +77,48 @@ def _price_frame(ticker: str, days: list[date]) -> pl.DataFrame:
     )
 
 
-def _prepare_lake(tmp_path, monkeypatch, frames: list[pl.DataFrame]) -> None:
+def _prepare_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frames: list[pl.DataFrame]) -> None:
+    import exchange_calendars as xc
+
+    from equity_lake.core.availability import ActionCoverageProof  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table  # type: ignore[import-untyped]
+    from equity_lake.storage.delta import merge_delta
+
     market_dir = tmp_path / "01_bronze" / "market_data" / "us_equity"
     market_dir.mkdir(parents=True, exist_ok=True)
     write_deltalake(str(market_dir), pl.concat(frames).to_arrow(), mode="append")
     for module in ("equity_lake.features.engineering", "equity_lake.storage.delta", "equity_lake.features.labels"):
         monkeypatch.setattr(f"{module}.LAKE_DIR", tmp_path)
 
+    calendar = xc.get_calendar("XNAS")
+    proofs = []
+    for frame in frames:
+        for identity in frame.select("market", "mic", "symbol").unique().to_dicts():
+            dates = frame.filter(pl.col("symbol") == identity["symbol"])["date"].to_list()
+            coverage_start = min(dates)
+            for coverage_end in dates:
+                close = calendar.session_close(coverage_end.isoformat()).to_pydatetime()
+                proofs.append(
+                    ActionCoverageProof(
+                        **identity,
+                        source="synthetic-test-complete-window",
+                        coverage_start=coverage_start,
+                        coverage_end=coverage_end,
+                        source_available_at=close - timedelta(minutes=1),
+                        source_valid_until=close,
+                    ).model_dump()
+                )
+    merge_delta(
+        pl.DataFrame(proofs),
+        corporate_action_coverage_table("us_equity"),
+        key_columns=["market", "mic", "symbol", "source", "coverage_start", "coverage_end"],
+        partition_by=["coverage_end"],
+        lake_dir=tmp_path,
+    )
+
 
 def _run_job(day: date, tickers: list[str]) -> tuple[pl.DataFrame, dict[str, object]]:
-    from equity_lake.features import run_feature_job
+    from equity_lake.features import run_feature_job  # type: ignore[import-untyped]
 
     diagnostics: dict[str, object] = {}
     frame = run_feature_job(
@@ -73,12 +126,13 @@ def _run_job(day: date, tickers: list[str]) -> tuple[pl.DataFrame, dict[str, obj
         output_start_date=day,
         output_end_date=day,
         diagnostics=diagnostics,
+        instruments=[InstrumentKey(market="us_equity", mic="XNAS", symbol=ticker) for ticker in tickers],
     )
     return frame, diagnostics
 
 
-def _gold(tmp_path) -> pl.DataFrame:
-    return read_delta("03_gold/features", lake_dir=tmp_path).sort(["ticker", "date"])
+def _gold(tmp_path: Path) -> pl.DataFrame:
+    return cast(pl.DataFrame, read_delta("03_gold/features", lake_dir=tmp_path)).sort(["market", "mic", "symbol", "date"])
 
 
 def _row(frame: pl.DataFrame, ticker: str, day: date) -> dict[str, object]:
@@ -90,6 +144,10 @@ def _row(frame: pl.DataFrame, ticker: str, day: date) -> dict[str, object]:
 def _seed_row(ticker: str, day: date, close: float) -> pl.DataFrame:
     return pl.DataFrame(
         {
+            "market": ["us_equity"],
+            "mic": ["XNAS"],
+            "symbol": [ticker],
+            "identity_schema_version": [1],
             "ticker": [ticker],
             "date": [day],
             "close": [close],
@@ -104,7 +162,7 @@ def _seed_row(ticker: str, day: date, close: float) -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 
-def test_multi_session_finalization(tmp_path, monkeypatch):
+def test_multi_session_finalization(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     days = _weekdays_ending(date(2024, 3, 6), 80)
     sessions = days[-3:]
     frames = [
@@ -139,7 +197,7 @@ def test_multi_session_finalization(tmp_path, monkeypatch):
     assert _row(gold, "HALT", s1)[AVAILABILITY_COLUMN] is None
     labels = diagnostics["label_finalization"]
     assert isinstance(labels, dict)
-    assert labels["pending_keys"] == [{"ticker": "HALT", "date": str(s1)}]
+    assert labels["pending_keys"] == [{"market": "us_equity", "mic": "XNAS", "symbol": "HALT", "ticker": "HALT", "date": str(s1)}]
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +205,7 @@ def test_multi_session_finalization(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_weekend_next_session_finalizes_friday_on_monday(tmp_path, monkeypatch):
+def test_weekend_next_session_finalizes_friday_on_monday(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monday = date(2024, 3, 4)
     days = _weekdays_ending(monday, 80)
     friday = days[-2]
@@ -164,7 +222,7 @@ def test_weekend_next_session_finalizes_friday_on_monday(tmp_path, monkeypatch):
     assert _row(gold, "AAPL", friday)[TARGET_COLUMN] == pytest.approx(close[monday] / close[friday] - 1)
 
 
-def test_exchange_holiday_next_session_uses_next_observed_bar(tmp_path, monkeypatch):
+def test_exchange_holiday_next_session_uses_next_observed_bar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from equity_lake.core.calendar import is_trading_day
 
     holiday = date(2024, 1, 15)  # MLK Day
@@ -191,7 +249,7 @@ def test_exchange_holiday_next_session_uses_next_observed_bar(tmp_path, monkeypa
 # ---------------------------------------------------------------------------
 
 
-def test_rerun_is_idempotent_and_preserves_prior_feature_values(tmp_path, monkeypatch):
+def test_rerun_is_idempotent_and_preserves_prior_feature_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0, s1 = days[-2], days[-1]
     _prepare_lake(tmp_path, monkeypatch, [_price_frame("AAPL", days)])
@@ -213,7 +271,7 @@ def test_rerun_is_idempotent_and_preserves_prior_feature_values(tmp_path, monkey
     assert _row(after_replay, "AAPL", s0) == d0_first
 
 
-def test_label_only_update_touches_no_feature_columns_or_rows(tmp_path, monkeypatch):
+def test_label_only_update_touches_no_feature_columns_or_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0, s1 = days[-2], days[-1]
     _prepare_lake(tmp_path, monkeypatch, [_price_frame("AAPL", days)])
@@ -235,7 +293,7 @@ def test_label_only_update_touches_no_feature_columns_or_rows(tmp_path, monkeypa
     assert snapshot_before["rsi_14"].null_count() == prior_after["rsi_14"].null_count()
 
 
-def test_update_delta_columns_never_inserts_unmatched_and_rejects_missing_table(tmp_path, monkeypatch):
+def test_update_delta_columns_never_inserts_unmatched_and_rejects_missing_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("equity_lake.storage.delta.LAKE_DIR", tmp_path)
     table = "03_gold/features"
     existing = pl.DataFrame(
@@ -277,7 +335,7 @@ def test_update_delta_columns_never_inserts_unmatched_and_rejects_missing_table(
 # ---------------------------------------------------------------------------
 
 
-def test_filter_as_of_available_excludes_later_and_unknown_availability():
+def test_filter_as_of_available_excludes_later_and_unknown_availability() -> None:
     frame = pl.DataFrame(
         {
             "ticker": ["AAPL", "AAPL", "AAPL"],
@@ -296,21 +354,27 @@ def test_filter_as_of_available_excludes_later_and_unknown_availability():
     assert filter_as_of_available(legacy, date(2024, 1, 2), strict=False).height == 3
 
 
-def test_feature_loader_enforces_as_of_cutoff(tmp_path, monkeypatch):
-    from equity_lake.ml.feature_loader import FeatureLoader
+def test_feature_loader_enforces_as_of_cutoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
 
     gold_dir = tmp_path / "03_gold" / "features"
     gold_dir.parent.mkdir(parents=True, exist_ok=True)
     frame = pl.DataFrame(
         {
+            "market": ["us_equity", "us_equity"],
+            "mic": ["XNAS", "XNAS"],
+            "symbol": ["AAPL", "AAPL"],
+            "identity_schema_version": [1, 1],
             "ticker": ["AAPL", "AAPL"],
             "date": [date(2024, 1, 2), date(2024, 1, 3)],
             "close": [100.0, 101.0],
+            "feature_schema_version": [FEATURE_SCHEMA_VERSION, FEATURE_SCHEMA_VERSION],
             "rsi_14": [50.0, 51.0],
             TARGET_COLUMN: [0.01, 0.02],
             AVAILABILITY_COLUMN: [date(2024, 1, 10), date(2024, 1, 3)],
         }
     )
+    frame = with_synthetic_feature_proof(frame, InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL"))
     write_deltalake(str(gold_dir), frame.to_arrow(), mode="append", partition_by=["date"])
     monkeypatch.setattr("equity_lake.ml.feature_loader.GOLD_FEATURES_DIR", gold_dir)
 
@@ -324,12 +388,46 @@ def test_feature_loader_enforces_as_of_cutoff(tmp_path, monkeypatch):
         loader.close()
 
 
-def test_model_feature_list_excludes_availability_metadata():
-    from equity_lake.ml.forecasting import NON_FEATURE_COLUMNS, PriceForecaster
+def test_feature_loader_marks_legacy_source_expiry_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from equity_lake.ml.feature_loader import FeatureLoader
+
+    gold_dir = tmp_path / "03_gold" / "features"
+    gold_dir.parent.mkdir(parents=True, exist_ok=True)
+    legacy = pl.DataFrame(
+        {
+            "market": ["us_equity"],
+            "mic": ["XNAS"],
+            "symbol": ["AAPL"],
+            "identity_schema_version": [1],
+            "ticker": ["AAPL"],
+            "date": [date(2024, 1, 2)],
+            "feature_schema_version": [FEATURE_SCHEMA_VERSION],
+            "price_adjustment_version": [PRICE_ADJUSTMENT_VERSION],
+            "availability_schema_version": [AVAILABILITY_SCHEMA_VERSION],
+            "action_coverage": pl.Series([1], dtype=pl.Int8),
+            "action_source_age_days": pl.Series([0], dtype=pl.Int32),
+        }
+    )
+    write_deltalake(str(gold_dir), legacy.to_arrow(), mode="append", partition_by=["date"])
+    monkeypatch.setattr("equity_lake.ml.feature_loader.GOLD_FEATURES_DIR", gold_dir)
+    loader = FeatureLoader()
+    try:
+        with pytest.raises(AvailabilityContractError, match="source-availability proof is unavailable"):
+            loader.load_features("AAPL", date(2024, 1, 1), date(2024, 1, 31))
+    finally:
+        loader.close()
+
+
+def test_model_feature_list_excludes_availability_metadata() -> None:
+    from equity_lake.ml.forecasting import NON_FEATURE_COLUMNS, PriceForecaster  # type: ignore[import-untyped]
 
     assert AVAILABILITY_COLUMN in NON_FEATURE_COLUMNS
     frame = pl.DataFrame(
         {
+            "market": ["us_equity"],
+            "mic": ["XNAS"],
+            "symbol": ["AAPL"],
+            "identity_schema_version": [1],
             "ticker": ["AAPL"],
             "date": [date(2024, 1, 2)],
             "rsi_14": [50.0],
@@ -337,6 +435,7 @@ def test_model_feature_list_excludes_availability_metadata():
             AVAILABILITY_COLUMN: [None],
         }
     )
+    frame = with_synthetic_feature_proof(frame, InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL"))
     forecaster = PriceForecaster(model_dir="/tmp")
     try:
         features = forecaster._get_feature_columns(frame)
@@ -345,6 +444,12 @@ def test_model_feature_list_excludes_availability_metadata():
     assert AVAILABILITY_COLUMN not in features
     assert TARGET_COLUMN not in features
     assert "rsi_14" in features
+    assert "action_coverage" in features
+    assert "action_source_age_days" in features
+    assert "action_source_valid_until" not in features
+    assert "action_source_available_at" not in features
+    assert "action_coverage_start" not in features
+    assert "action_coverage_end" not in features
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +457,7 @@ def test_model_feature_list_excludes_availability_metadata():
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_finalization_writes_nothing(tmp_path, monkeypatch):
+def test_dry_run_finalization_writes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from equity_lake.features.labels import add_label_availability
 
     days = _weekdays_ending(date(2024, 3, 6), 80)
@@ -375,7 +480,7 @@ def test_dry_run_finalization_writes_nothing(tmp_path, monkeypatch):
     assert _row(_gold(tmp_path), "AAPL", s0)[TARGET_COLUMN] is not None
 
 
-def test_scan_and_repair_report_first(tmp_path, monkeypatch):
+def test_scan_and_repair_report_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0, s1 = days[-2], days[-1]
     _prepare_lake(tmp_path, monkeypatch, [_price_frame("AAPL", days)])
@@ -404,7 +509,7 @@ def test_scan_and_repair_report_first(tmp_path, monkeypatch):
     assert scan_label_repair(start=s0, end=s0, tickers=["AAPL"], lake_dir=tmp_path).finalizable_count == 0
 
 
-def test_scan_reports_pending_when_next_bar_missing(tmp_path, monkeypatch):
+def test_scan_reports_pending_when_next_bar_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0 = days[-2]
     _prepare_lake(tmp_path, monkeypatch, [_price_frame("AAPL", days[:-1])])  # ends at s0
@@ -419,10 +524,10 @@ def test_scan_reports_pending_when_next_bar_missing(tmp_path, monkeypatch):
     assert apply_label_repair(plan, lake_dir=tmp_path) == 0
 
 
-def test_cli_label_repair_is_report_only_by_default(tmp_path, monkeypatch):
+def test_cli_label_repair_is_report_only_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from typer.testing import CliRunner
 
-    from equity_lake.cli.__main__ import app
+    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
 
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0, s1 = days[-2], days[-1]
@@ -452,7 +557,7 @@ def test_cli_label_repair_is_report_only_by_default(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_filter_as_of_available_strict_false_keeps_unknown_availability_rows():
+def test_filter_as_of_available_strict_false_keeps_unknown_availability_rows() -> None:
     frame = pl.DataFrame(
         {
             "ticker": ["AAPL", "AAPL", "AAPL"],
@@ -469,7 +574,7 @@ def test_filter_as_of_available_strict_false_keeps_unknown_availability_rows():
     assert filter_as_of_available(frame, date(2024, 1, 2))["date"].to_list() == [date(2024, 1, 3)]
 
 
-def test_replay_recomputing_finalized_label_logs_divergence(tmp_path, monkeypatch):
+def test_replay_recomputing_finalized_label_logs_divergence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from structlog.testing import capture_logs
 
     days = _weekdays_ending(date(2024, 3, 6), 80)
@@ -501,7 +606,7 @@ def test_replay_recomputing_finalized_label_logs_divergence(tmp_path, monkeypatc
     assert _row(_gold(tmp_path), "AAPL", s0)[TARGET_COLUMN] != finalized_before
 
 
-def test_scan_reports_availability_unknown_legacy_rows(tmp_path, monkeypatch):
+def test_scan_reports_availability_unknown_legacy_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0 = days[-2]
     _prepare_lake(tmp_path, monkeypatch, [_price_frame("AAPL", days)])

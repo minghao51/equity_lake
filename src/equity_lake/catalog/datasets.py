@@ -33,6 +33,7 @@ from equity_lake.core.schemas import (
     ANALYST_RATING_COLUMNS,
     BRONZE_ARTICLE_COLUMNS,
     CORPORATE_ACTION_COLUMNS,
+    CORPORATE_ACTION_COVERAGE_COLUMNS,
     MACRO_COLUMNS,
     NEWS_COLUMNS,
     SEC_EXTRACTION_COLUMNS,
@@ -65,7 +66,28 @@ _GOLD_DESCRIPTION = "Hamilton-computed technical indicators and external-data en
 # "unknown". Cross-referenced against core/schemas.py column constants.
 _DTYPE_MAP: dict[str, str] = {
     # Identifiers & categorical text
+    "market": "string",
+    "mic": "string",
+    "symbol": "string",
     "ticker": "string",
+    "exchange": "string",
+    "identity_provenance": "string",
+    "identity_schema_version": "int8",
+    "feature_schema_version": "int8",
+    "availability_schema_version": "int8",
+    "action_coverage": "int8",
+    "action_source_age_days": "int32",
+    "action_coverage_market": "string",
+    "action_coverage_mic": "string",
+    "action_coverage_symbol": "string",
+    "action_coverage_source": "string",
+    "action_coverage_status": "string",
+    "action_coverage_schema_version": "int8",
+    "action_coverage_start": "date",
+    "action_coverage_end": "date",
+    "action_source_available_at": "datetime",
+    "action_source_valid_until": "datetime",
+    "price_adjustment_version": "string",
     "source": "string",
     "action": "string",
     "indicator": "string",
@@ -105,6 +127,12 @@ _DTYPE_MAP: dict[str, str] = {
     "filing_date": "datetime",
     "ingested_at": "datetime",
     "ex_date": "date",
+    "coverage_start": "date",
+    "coverage_end": "date",
+    "coverage_status": "string",
+    "coverage_schema_version": "int8",
+    "source_available_at": "datetime",
+    "source_valid_until": "datetime",
     # Counts / integers
     "mention_count": "int64",
     "strong_buy": "int64",
@@ -306,9 +334,23 @@ SILVER_DATASETS: list[DatasetEntry] = [
         path=_rel_path(SILVER_CORPORATE_ACTIONS_DIR),
         description=f"Validated corporate actions ({_list_to_str(CORPORATE_ACTION_COLUMNS)}). "
         "Typed, deduplicated dividend and split rows gated by the pointblank "
-        "corporate-action schema; input for read-time price adjustment (ADR-0011).",
+        "corporate-action schema; input for read-time split-only adjustment (ADR-0015).",
         format="delta",
         columns=_columns_from_list(CORPORATE_ACTION_COLUMNS),
+    ),
+    DatasetEntry(
+        name="corporate_action_coverage",
+        layer="silver",
+        path=_rel_path(SILVER_CORPORATE_ACTIONS_DIR.parent / "corporate_action_coverage"),
+        description=(
+            f"Source-scoped action-coverage assertions ({_list_to_str(CORPORATE_ACTION_COVERAGE_COLUMNS)}). "
+            "Complete empty windows prove no actions within the recorded instrument/source date interval. "
+            "coverage_end scopes event dates; source_available_at is the publication clock; "
+            "source_valid_until is the source-issued freshness endpoint."
+        ),
+        format="delta",
+        partition="coverage_end",
+        columns=_columns_from_list(CORPORATE_ACTION_COVERAGE_COLUMNS),
     ),
 ]
 
@@ -326,7 +368,26 @@ GOLD_DATASETS: list[DatasetEntry] = [
         f"{_GOLD_DESCRIPTION}",
         format="delta",
         columns=[
+            ColumnInfo(name="market", dtype="string"),
+            ColumnInfo(name="mic", dtype="string"),
+            ColumnInfo(name="symbol", dtype="string"),
             ColumnInfo(name="ticker", dtype="string"),
+            ColumnInfo(name="identity_schema_version", dtype="int8"),
+            ColumnInfo(name="feature_schema_version", dtype="int8"),
+            ColumnInfo(name="price_adjustment_version", dtype="string"),
+            ColumnInfo(name="availability_schema_version", dtype="int8"),
+            ColumnInfo(name="action_coverage", dtype="int8"),
+            ColumnInfo(name="action_source_age_days", dtype="int32"),
+            ColumnInfo(name="action_coverage_market", dtype="string"),
+            ColumnInfo(name="action_coverage_mic", dtype="string"),
+            ColumnInfo(name="action_coverage_symbol", dtype="string"),
+            ColumnInfo(name="action_coverage_source", dtype="string"),
+            ColumnInfo(name="action_coverage_start", dtype="date"),
+            ColumnInfo(name="action_coverage_end", dtype="date"),
+            ColumnInfo(name="action_source_available_at", dtype="datetime"),
+            ColumnInfo(name="action_source_valid_until", dtype="datetime"),
+            ColumnInfo(name="action_coverage_status", dtype="string"),
+            ColumnInfo(name="action_coverage_schema_version", dtype="int8"),
             ColumnInfo(name="date", dtype="datetime"),
             ColumnInfo(name="open", dtype="float64"),
             ColumnInfo(name="high", dtype="float64"),
@@ -369,7 +430,6 @@ GOLD_DATASETS: list[DatasetEntry] = [
                 dtype="date",
                 description="Session on which next_day_return became computable; null when pending or unknown (legacy rows, ADR-0014)",
             ),
-            ColumnInfo(name="feature_schema_version", dtype="int8"),
         ],
     ),
 ]
@@ -387,7 +447,11 @@ PLATINUM_DATASETS: list[DatasetEntry] = [
         "XGBoost model outputs with probability and direction classification.",
         format="delta",
         columns=[
+            ColumnInfo(name="market", dtype="string"),
+            ColumnInfo(name="mic", dtype="string"),
+            ColumnInfo(name="symbol", dtype="string"),
             ColumnInfo(name="ticker", dtype="string"),
+            ColumnInfo(name="identity_schema_version", dtype="int8"),
             ColumnInfo(name="date", dtype="datetime"),
             ColumnInfo(name="direction", dtype="string", description="up / down / flat"),
             ColumnInfo(name="probability", dtype="float64", description="Prediction confidence 0.0–1.0"),

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import polars as pl
 import structlog
 
 from equity_lake.core.paths import DATA_DIR, SIGNALS_DIR
-from equity_lake.signals.models import SIGNAL_RECORD_SCHEMA, Signal, SignalRecord
+from equity_lake.signals.models import SIGNAL_RECORD_SCHEMA, Signal, SignalRecord, SignalScanReport
 from equity_lake.storage.delta import merge_delta, migrate_parquet_to_delta, read_delta
 
 logger = structlog.get_logger(__name__)
@@ -37,9 +38,25 @@ def save_signals(signals: list[Signal], target_date: date) -> None:
     merge_delta(
         frame,
         table="signals",
-        key_columns=["ticker", "date", "signal_type"],
+        key_columns=["market", "mic", "ticker", "date", "signal_type"],
         lake_dir=DATA_DIR,
     )
+
+
+def save_scan_report(report: SignalScanReport, data_dir: Path | None = None) -> Path:
+    """Persist one structured scan report under the auxiliary data boundary.
+
+    The report is revalidated at this write seam; it never enters the cataloged
+    medallion lake or the legacy signal-history Delta table.
+    """
+    validated = SignalScanReport.model_validate(report.model_dump())
+    reports_dir = (data_dir or DATA_DIR) / "signal_scans"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    target = reports_dir / f"{validated.target_date.isoformat()}-{validated.run_id}.json"
+    temporary = target.with_suffix(".json.tmp")
+    temporary.write_text(validated.model_dump_json(indent=2), encoding="utf-8")
+    temporary.replace(target)
+    return target
 
 
 def load_signals(target_date: date) -> list[Signal]:

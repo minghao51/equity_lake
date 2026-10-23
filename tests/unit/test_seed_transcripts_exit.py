@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import polars as pl
 
-from equity_lake.devtools.seed_transcripts import main, seed_transcripts_silver
+from equity_lake.devtools.seed_transcripts import main, seed_transcripts_silver  # type: ignore[import-untyped]
 
 
 def _hf_frame() -> pl.DataFrame:
@@ -26,7 +26,7 @@ def _hf_frame() -> pl.DataFrame:
 class TestMainExitCodes:
     def _run(self, monkeypatch, bronze_ok: bool, silver_ok: bool, argv: list[str]) -> int:  # type: ignore[no-untyped-def]
         monkeypatch.setattr("sys.argv", ["seed_transcripts", *argv])
-        return main()
+        return int(main())
 
     def test_main_returns_zero_when_all_steps_ok(self, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
         monkeypatch.setattr("equity_lake.devtools.seed_transcripts._ensure_cached", lambda force: tmp_path / "hf.parquet")
@@ -35,7 +35,7 @@ class TestMainExitCodes:
             patch("equity_lake.devtools.seed_transcripts.seed_transcripts_bronze", return_value={"rows": 2, "ok": True}),
             patch("equity_lake.devtools.seed_transcripts.seed_transcripts_silver", return_value={"rows": 2, "ok": True}),
         ):
-            assert self._run(monkeypatch, True, True, []) == 0
+            assert self._run(monkeypatch, True, True, ["--dry-run"]) == 0
 
     def test_main_returns_one_when_bronze_fails(self, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
         monkeypatch.setattr("equity_lake.devtools.seed_transcripts._ensure_cached", lambda force: tmp_path / "hf.parquet")
@@ -44,16 +44,13 @@ class TestMainExitCodes:
             patch("equity_lake.devtools.seed_transcripts.seed_transcripts_bronze", return_value={"rows": 0, "ok": False}),
             patch("equity_lake.devtools.seed_transcripts.seed_transcripts_silver", return_value={"rows": 2, "ok": True}),
         ):
-            assert self._run(monkeypatch, False, True, []) == 1
+            assert self._run(monkeypatch, False, True, ["--skip-silver"]) == 1
 
-    def test_main_returns_one_when_silver_fails(self, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
-        monkeypatch.setattr("equity_lake.devtools.seed_transcripts._ensure_cached", lambda force: tmp_path / "hf.parquet")
-        monkeypatch.setattr("equity_lake.devtools.seed_transcripts._load_hf", lambda path: _hf_frame())
-        with (
-            patch("equity_lake.devtools.seed_transcripts.seed_transcripts_bronze", return_value={"rows": 2, "ok": True}),
-            patch("equity_lake.devtools.seed_transcripts.seed_transcripts_silver", return_value={"rows": 0, "ok": False}),
-        ):
-            assert self._run(monkeypatch, True, False, []) == 1
+    def test_main_rejects_paid_silver_request_before_download(self, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+        download = MagicMock(side_effect=AssertionError("network/cache access must not happen"))
+        monkeypatch.setattr("equity_lake.devtools.seed_transcripts._ensure_cached", download)
+        assert self._run(monkeypatch, True, False, []) == 1
+        download.assert_not_called()
 
     def test_main_dry_run_plumbs_flag(self, tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
         monkeypatch.setattr("equity_lake.devtools.seed_transcripts._ensure_cached", lambda force: tmp_path / "hf.parquet")
@@ -68,6 +65,17 @@ class TestMainExitCodes:
 
 
 class TestSilverDryRun:
+    def test_silver_non_dry_run_fails_closed_without_provider_or_write(self):  # type: ignore[no-untyped-def]
+        with (
+            patch("equity_lake.ingestion.llm_processor.run_llm_processing") as llm,
+            patch("equity_lake.storage.delta.merge_delta") as merge,
+        ):
+            summary = seed_transcripts_silver(_hf_frame(), ["AAPL"], datetime.now(UTC).replace(tzinfo=None))
+        llm.assert_not_called()
+        merge.assert_not_called()
+        assert summary["ok"] is False
+        assert summary["mode"] == "paid_processing_disabled"
+
     def test_silver_dry_run_spends_no_llm_tokens(self):  # type: ignore[no-untyped-def]
         with patch("equity_lake.ingestion.llm_processor.run_llm_processing") as llm:
             summary = seed_transcripts_silver(_hf_frame(), ["AAPL"], datetime.now(UTC).replace(tzinfo=None), dry_run=True)

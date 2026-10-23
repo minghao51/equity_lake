@@ -13,31 +13,59 @@ from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_market
 from equity_lake.core.paths import LAKE_DIR
 
 
-def _resolve_dataset_paths(markets: list[str]) -> list[str]:
-    """Resolve delta-maintenance dataset identifiers to canonical medallion paths.
+def _resolve_dataset_paths(markets: list[str], lake_dir: Path | None = None) -> list[str]:
+    """Resolve maintenance identifiers to safe, effective paths under the lake root.
 
-    Accepts short names (``us``), canonical long keys (``us_equity``), table
-    routes (``features``/``predictions``), or full medallion paths
-    (``01_bronze/market_data/us_equity``) and returns the canonical path used
-    by the Delta writer. Runtime data lives under the numbered medallion
-    layout; without this resolution the delta-* commands would silently target
-    ``data/lake/<name>`` (a nonexistent table).
+    Accept short and canonical price-market names, mapped dataset/table routes,
+    full lake-relative medallion paths, and other safe lake-relative paths.
+    Unknown relative paths pass through for compatibility; absolute paths,
+    traversal components, and symlink targets outside the configured lake are
+    rejected. In-root symlinks are normalized to their effective route.
     """
     from equity_lake.core.paths import PRICE_MARKETS, SHORT_TO_LONG, canonical_market
     from equity_lake.ingestion.types import MARKET_DIR_MAP
 
+    try:
+        lake_root = (lake_dir or LAKE_DIR).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("Cannot safely resolve the configured lake root") from exc
+
+    if not markets:
+        raise ValueError("At least one Delta-maintenance target is required")
+
     resolved: list[str] = []
-    for market in markets:
-        if market in PRICE_MARKETS or market in SHORT_TO_LONG:
-            # Price market in either vocabulary -> canonical key -> medallion path.
-            resolved.append(MARKET_DIR_MAP[canonical_market(market)])
-        else:
-            # Dataset identifier / table route already in the map, or a full
-            # medallion path / unknown identifier — pass it through so the
-            # storage layer can report a missing/unknown table rather than
-            # silently mis-targeting.
-            resolved.append(MARKET_DIR_MAP.get(market, market))
+    for raw_market in markets:
+        market = raw_market.strip()
+        if not market:
+            raise ValueError("Delta-maintenance target identifiers must not be empty")
+        requested_path = Path(market)
+        if requested_path.is_absolute():
+            raise ValueError(f"Delta-maintenance target {market!r} must be lake-relative, not absolute")
+        if ".." in requested_path.parts:
+            raise ValueError(f"Delta-maintenance target {market!r} must not contain a '..' path component")
+
+        route = MARKET_DIR_MAP[canonical_market(market)] if market in PRICE_MARKETS or market in SHORT_TO_LONG else MARKET_DIR_MAP.get(market, market)
+
+        route_path = Path(route)
+        if route_path.is_absolute() or ".." in route_path.parts:
+            raise ValueError(f"Resolved Delta-maintenance route for {market!r} is not lake-relative")
+        try:
+            target_path = (lake_root / route_path).resolve()
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise ValueError(f"Cannot safely resolve Delta-maintenance target {market!r}") from exc
+        if not target_path.is_relative_to(lake_root):
+            raise ValueError(f"Delta-maintenance target {market!r} resolves outside the configured lake root")
+        resolved.append(target_path.relative_to(lake_root).as_posix())
     return resolved
+
+
+def _resolve_maintenance_targets(markets: str) -> list[str]:
+    """Validate and resolve the complete comma-separated CLI target list."""
+    try:
+        return _resolve_dataset_paths(markets.split(","))
+    except ValueError as exc:
+        typer.secho(f"Invalid Delta-maintenance target list: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
 
 
 @app.command("ingest")
@@ -358,7 +386,7 @@ def delta_vacuum(
     from equity_lake.storage.delta import vacuum_delta
 
     _init_logging(verbose)
-    dataset_paths = _resolve_dataset_paths([m.strip() for m in markets.split(",")])
+    dataset_paths = _resolve_maintenance_targets(markets)
     for market in dataset_paths:
         files = vacuum_delta(market, retention_hours=retention_hours, dry_run=dry_run)
         label = "would remove" if dry_run else "removed"
@@ -376,7 +404,7 @@ def delta_compact(
     from equity_lake.storage.delta import compact_delta
 
     _init_logging(verbose)
-    dataset_paths = _resolve_dataset_paths([m.strip() for m in markets.split(",")])
+    dataset_paths = _resolve_maintenance_targets(markets)
     for market in dataset_paths:
         metrics = compact_delta(market)
         if metrics:
@@ -398,7 +426,7 @@ def delta_migrate(
     from equity_lake.storage.delta import migrate_parquet_to_delta
 
     _init_logging(verbose)
-    dataset_paths = _resolve_dataset_paths([m.strip() for m in markets.split(",")])
+    dataset_paths = _resolve_maintenance_targets(markets)
     for market in dataset_paths:
         ok = migrate_parquet_to_delta(market, dry_run=dry_run)
         status = "OK" if ok else "SKIPPED/FAILED"

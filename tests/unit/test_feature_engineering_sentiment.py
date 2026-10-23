@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.features.engineering import FeatureEngineer
+from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
 
 
 def test_zscore_cross_sectional_normalizes_per_date() -> None:
@@ -28,8 +30,8 @@ def test_zscore_cross_sectional_normalizes_per_date() -> None:
 
     for date_value in enriched["date"].unique():
         per_date = enriched.filter(pl.col("date") == date_value)
-        mean_z = per_date["rsi_14_zscore"].mean()
-        std_z = per_date["rsi_14_zscore"].std()
+        mean_z = cast(float, per_date["rsi_14_zscore"].mean())
+        std_z = cast(float, per_date["rsi_14_zscore"].std())
         assert abs(mean_z) < 1e-6
         assert abs(std_z - 1.0) < 1e-3
 
@@ -55,8 +57,7 @@ def test_zscore_cross_sectional_skips_metadata_columns() -> None:
 def test_zscore_cross_sectional_stats_ignore_null_values() -> None:
     """A7 (handoff 08): per-date mean/std must be computed on non-null values
     only — nulls (e.g. missing enrichments for some tickers) must not bias the
-    cross-sectional statistics. Null inputs are imputed to 0.0 in the final z
-    expression alone."""
+    cross-sectional statistics and must remain unavailable in the z-score output."""
     engineer = FeatureEngineer.__new__(FeatureEngineer)
     frame = pd.DataFrame(
         {
@@ -70,16 +71,14 @@ def test_zscore_cross_sectional_stats_ignore_null_values() -> None:
 
     # Statistics over the two non-null values only.
     non_null = pl.Series([1.0, 3.0])
-    mean = non_null.mean()
-    std = non_null.std()
+    mean = cast(float, non_null.mean())
+    std = cast(float, non_null.std())
     eps = 1e-8
 
     zscores = enriched["rsi_14_zscore"].to_list()
     assert zscores[0] == pytest.approx((1.0 - mean) / (std + eps))
     assert zscores[1] == pytest.approx((3.0 - mean) / (std + eps))
-    # The null input is imputed to 0.0 in the z expression only.
-    assert zscores[2] == pytest.approx((0.0 - mean) / (std + eps))
-    # The original column keeps its null (not overwritten).
+    # Missing predictors stay unavailable rather than becoming a neutral zero.
+    assert zscores[2] is None
     assert enriched["rsi_14"].null_count() == 1
-    # No nulls leak into the zscore output.
-    assert enriched["rsi_14_zscore"].null_count() == 0
+    assert enriched["rsi_14_zscore"].null_count() == 1

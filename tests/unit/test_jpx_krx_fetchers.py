@@ -1,5 +1,8 @@
 """Unit tests for JPX and KRX market fetchers."""
 
+# Legacy test methods are not in the strict mypy application target.
+# mypy: disable-error-code="no-untyped-def,import-untyped"
+
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -7,7 +10,83 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import polars as pl
 
+from equity_lake.core.config import TickerConfig
+from equity_lake.core.config_models import MarketConfig, TickerMetadata
 from equity_lake.sources import JPXEquityFetcher, KRXEquityFetcher
+from equity_lake.sources.hk_sg import HKSGEquityFetcher
+from equity_lake.sources.us import USEquityFetcher
+
+
+def _ticker_config(market: str, exchange: str, symbols: list[str]) -> TickerConfig:
+    return TickerConfig(
+        markets={
+            market: MarketConfig(
+                currency="JPY",
+                tickers=[TickerMetadata(symbol=symbol, name=symbol, exchange=exchange, sector="Tech") for symbol in symbols],
+            )
+        }
+    )
+
+
+def test_yfinance_fetch_paths_attach_venue_identity_and_keep_hk_sg_collision(monkeypatch):
+    date_index = pd.DatetimeIndex(["2024-01-02"], name="Date")
+    provider_frame = pd.DataFrame(
+        {"Open": [10.0], "High": [11.0], "Low": [9.0], "Close": [10.5], "Volume": [100]},
+        index=date_index,
+    )
+    monkeypatch.setattr("equity_lake.sources.base.yf.download", lambda *args, **kwargs: provider_frame)
+    cases = [
+        (USEquityFetcher(tickers=["US1"], ticker_config=_ticker_config("us", "NASDAQ", ["US1"])), ("us_equity", "XNAS", "US1")),
+        (JPXEquityFetcher(tickers=["JP1"], ticker_config=_ticker_config("jpx", "TSE", ["JP1"])), ("jpx_equity", "XTKS", "JP1")),
+        (HKSGEquityFetcher(hk_tickers=["HK1"], sg_tickers=[], ticker_config=_ticker_config("hk", "HKEX", ["HK1"])), ("hk_sg_equity", "XHKG", "HK1")),
+    ]
+    for fetcher, expected in cases:
+        result = fetcher.fetch(date(2024, 1, 2))
+        assert result.select("market", "mic", "symbol").rows() == [expected]
+        assert result["identity_provenance"].to_list() == ["current_ticker_config"]
+
+    dual_config = TickerConfig(
+        markets={
+            "hk": MarketConfig(currency="HKD", tickers=[TickerMetadata(symbol="DUP", name="HK", exchange="HKEX", sector="Tech")]),
+            "sg": MarketConfig(currency="SGD", tickers=[TickerMetadata(symbol="DUP", name="SG", exchange="SGX", sector="Tech")]),
+        }
+    )
+    dual_fetcher = HKSGEquityFetcher(hk_tickers=["DUP"], sg_tickers=["DUP"], ticker_config=dual_config)
+
+    def fetch_dual_venue(_tickers, _start, _end):
+        return [
+            pd.DataFrame(
+                {
+                    "ticker": ["DUP"],
+                    "date": [date(2024, 1, 2)],
+                    "open": [10.0],
+                    "high": [11.0],
+                    "low": [9.0],
+                    "close": [10.5],
+                    "volume": [100],
+                    "exchange": ["HKEX"],
+                }
+            ),
+            pd.DataFrame(
+                {
+                    "ticker": ["DUP"],
+                    "date": [date(2024, 1, 2)],
+                    "open": [20.0],
+                    "high": [21.0],
+                    "low": [19.0],
+                    "close": [20.5],
+                    "volume": [200],
+                    "exchange": ["SGX"],
+                }
+            ),
+        ]
+
+    monkeypatch.setattr(dual_fetcher, "_download_batch", fetch_dual_venue)
+    dual_result = dual_fetcher.fetch(date(2024, 1, 2))
+    assert dual_result.select("market", "mic", "symbol").unique().sort("mic").rows() == [
+        ("hk_sg_equity", "XHKG", "DUP"),
+        ("hk_sg_equity", "XSES", "DUP"),
+    ]
 
 
 def _yf_multi_ticker_frame(tickers: list[str]) -> pd.DataFrame:
@@ -84,7 +163,7 @@ class TestJPXEquityFetcher:
         mock_download.return_value = _yf_multi_ticker_frame(["7203.T", "6758.T", "9984.T"])
 
         tickers = ["7203.T", "6758.T", "9984.T"]
-        fetcher = JPXEquityFetcher(tickers=tickers, batch_size=2)
+        fetcher = JPXEquityFetcher(tickers=tickers, batch_size=2, ticker_config=_ticker_config("jpx", "TSE", tickers))
         result = fetcher.fetch(date(2024, 1, 1))
 
         assert mock_download.call_count == 2
@@ -116,7 +195,7 @@ class TestJPXEquityFetcher:
             index=pd.DatetimeIndex(["2024-01-01"]),
         )
 
-        fetcher = JPXEquityFetcher(tickers=["7203.T"], batch_size=500)
+        fetcher = JPXEquityFetcher(tickers=["7203.T"], batch_size=500, ticker_config=_ticker_config("jpx", "TSE", ["7203.T"]))
         result = fetcher.fetch(date(2024, 1, 1))
 
         assert "open" in result.columns
@@ -143,7 +222,7 @@ class TestJPXEquityFetcher:
             index=pd.DatetimeIndex(["2024-01-01"]),
         )
 
-        fetcher = JPXEquityFetcher(tickers=["7203.T"], batch_size=500)
+        fetcher = JPXEquityFetcher(tickers=["7203.T"], batch_size=500, ticker_config=_ticker_config("jpx", "TSE", ["7203.T"]))
         result = fetcher.fetch(date(2024, 1, 1))
 
         assert not result.is_empty()
@@ -219,7 +298,7 @@ class TestKRXEquityFetcher:
         mock_module = SimpleNamespace(DataReader=MagicMock(return_value=mock_df))
 
         with patch.dict("sys.modules", {"FinanceDataReader": mock_module}):
-            fetcher = KRXEquityFetcher(tickers=["005930"])
+            fetcher = KRXEquityFetcher(tickers=["005930"], ticker_config=_ticker_config("krx", "KRX", ["005930"]))
             result = fetcher.fetch(date(2024, 1, 1))
 
         mock_module.DataReader.assert_called_once_with("005930", "2024-01-01", "2024-01-02")

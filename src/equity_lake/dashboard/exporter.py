@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,24 +10,12 @@ from typing import Any
 import duckdb
 
 from equity_lake.core.config import get_settings
+from equity_lake.core.logging import redact_secrets as _redact_secrets
 from equity_lake.core.paths import LOGS_DIR
 from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, load_update_history, summarize_dataset
 
 # Update-history rows rendered on the static Updates page.
 _EXPORT_HISTORY_LIMIT = 20
-
-_REDACTED = "***REDACTED***"
-_SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key)", re.IGNORECASE)
-
-
-def _redact_secrets(obj: Any) -> Any:
-    """Recursively replace values whose key looks like a secret with REDACTED."""
-    if isinstance(obj, dict):
-        return {k: (_REDACTED if _SECRET_KEY_RE.search(k) else _redact_secrets(v)) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_redact_secrets(item) for item in obj]
-    return obj
-
 
 NAV_LINKS = [
     ("Overview", "index.html"),
@@ -59,13 +46,13 @@ class DashboardExporter:
 
         payload = {
             "generated_at": datetime.now(UTC).isoformat(),
-            "project": self.settings.project.model_dump(),
+            "project": _redact_secrets(self.settings.project.model_dump()),
             "summary": {
                 "datasets_available": len(available_datasets),
                 "tracked_datasets": len(datasets),
                 "latest_update": last_updated,
             },
-            "schedule": self.settings.schedule.model_dump(),
+            "schedule": _redact_secrets(self.settings.schedule.model_dump()),
             "datasets": datasets,
             "health": self._load_health_report(),
             "updates": self._load_updates(),
@@ -283,8 +270,7 @@ class DashboardExporter:
         <article class="card">
           <div class="eyebrow">Automation</div>
           <p class="muted">
-            GitHub Actions cron: {payload["schedule"]["cron"]}
-            ({payload["schedule"]["timezone"]})
+            GitHub Actions cron (UTC): {payload["schedule"]["cron"]}
           </p>
         </article>
         <article class="card">

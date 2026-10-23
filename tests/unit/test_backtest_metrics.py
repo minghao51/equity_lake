@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
+from pathlib import Path
+from runpy import run_path
 
 import numpy as np
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine
-from equity_lake.backtesting.metrics import (
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine  # type: ignore[import-untyped]
+from equity_lake.backtesting.metrics import (  # type: ignore[import-untyped]
     DEFAULT_RISK_FREE_RATE,
     TRADING_DAYS_PER_YEAR,
     equity_curve_metrics,
     sharpe_ratio,
 )
-from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy
+from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+
+_pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
+prepare_preloaded_backtest_data = _pit_fixtures["prepare_preloaded_backtest_data"]
+us_equity_session_dates = _pit_fixtures["us_equity_session_dates"]
 
 
 def _series(values: list[float]) -> pl.Series:
@@ -60,12 +67,7 @@ def test_equity_curve_metrics_accepts_dataframe_with_equity_column() -> None:
 
 def _ohlcv(closes: list[float], ticker: str = "TEST") -> pl.DataFrame:
     start = date(2025, 1, 1)
-    dates: list[date] = []
-    d = start
-    while len(dates) < len(closes):
-        if d.weekday() < 5:
-            dates.append(d)
-        d += timedelta(days=1)
+    dates = us_equity_session_dates(start, len(closes))
     return pl.DataFrame(
         {
             "ticker": [ticker] * len(closes),
@@ -84,13 +86,14 @@ def test_engine_headline_metrics_use_the_shared_helper() -> None:
     """result.sharpe/total_return/max_drawdown == shared helper on result.equity_curve."""
     closes = [100.0] * 25 + [100.0 + 1.0 * i for i in range(1, 40)] + [139.0 - 1.5 * i for i in range(1, 40)]
     data = _ohlcv(closes)
+    dates = data["date"].to_list()
     engine = VectorBacktestEngine(
         strategy=SMACrossoverStrategy(params={"fast_period": 5, "slow_period": 20}),
         tickers=["TEST"],
-        start_date=data["date"].min(),
-        end_date=data["date"].max(),
+        start_date=dates[0],
+        end_date=dates[-1],
         initial_cash=10_000.0,
-        preloaded_data=data,
+        preloaded_data=prepare_preloaded_backtest_data(data, InstrumentKey(market="us_equity", mic="XNAS", symbol="TEST")),
     )
     result = engine.run()
 
@@ -104,12 +107,13 @@ def test_engine_headline_metrics_use_the_shared_helper() -> None:
 def test_engine_with_preloaded_data_never_creates_a_data_loader() -> None:
     """Arena engines (preloaded_data) must not open DuckDB connections (B3)."""
     data = _ohlcv([100.0] * 40)
+    dates = data["date"].to_list()
     engine = VectorBacktestEngine(
         strategy=SMACrossoverStrategy(params={"fast_period": 5, "slow_period": 20}),
         tickers=["TEST"],
-        start_date=data["date"].min(),
-        end_date=data["date"].max(),
-        preloaded_data=data,
+        start_date=dates[0],
+        end_date=dates[-1],
+        preloaded_data=prepare_preloaded_backtest_data(data, InstrumentKey(market="us_equity", mic="XNAS", symbol="TEST")),
     )
     assert engine.data_loader is None
     engine.run()
@@ -117,12 +121,13 @@ def test_engine_with_preloaded_data_never_creates_a_data_loader() -> None:
 
 
 @pytest.mark.skipif(not POLARS_BACKTEST_AVAILABLE, reason="polars-backtest not installed")
-def test_engine_stats_failure_goes_to_warnings_list_not_metrics(monkeypatch) -> None:
+def test_engine_stats_failure_goes_to_warnings_list_not_metrics(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failing get_stats() lands in BacktestResult.warnings; metrics stay floats."""
     from polars_backtest.namespace import BacktestNamespace
 
     closes = [100.0 + 1.0 * i for i in range(40)]
     data = _ohlcv(closes)
+    dates = data["date"].to_list()
 
     class _FailingStatsReport:
         @property
@@ -141,13 +146,16 @@ def test_engine_stats_failure_goes_to_warnings_list_not_metrics(monkeypatch) -> 
     engine = VectorBacktestEngine(
         strategy=SMACrossoverStrategy(params={"fast_period": 5, "slow_period": 20}),
         tickers=["TEST"],
-        start_date=data["date"].min(),
-        end_date=data["date"].max(),
-        preloaded_data=data,
+        start_date=dates[0],
+        end_date=dates[-1],
+        preloaded_data=prepare_preloaded_backtest_data(data, InstrumentKey(market="us_equity", mic="XNAS", symbol="TEST")),
     )
     result = engine.run()
 
-    assert result.warnings and "stats boom" in result.warnings[0]
+    assert result.warnings == [
+        "Backtest execution and trade prices use a split-neutral return index, not raw vendor quotes",
+        "stats unavailable: stats boom",
+    ]
     # metrics must remain dict[str, float] — no str smuggled in via a "warning" key
     assert all(isinstance(v, float) for v in result.metrics.values())
     assert "warning" not in result.metrics
@@ -156,9 +164,9 @@ def test_engine_stats_failure_goes_to_warnings_list_not_metrics(monkeypatch) -> 
     assert result.sharpe_ratio == pytest.approx(shared["sharpe_ratio"])
 
 
-def test_engine_install_message_says_group_not_extra(monkeypatch) -> None:
+def test_engine_install_message_says_group_not_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The ImportError install hint must match the uv dependency-group reality."""
-    import equity_lake.backtesting.engine as engine_mod
+    import equity_lake.backtesting.engine as engine_mod  # type: ignore[import-untyped]
 
     monkeypatch.setattr(engine_mod, "POLARS_BACKTEST_AVAILABLE", False)
     engine = VectorBacktestEngine(

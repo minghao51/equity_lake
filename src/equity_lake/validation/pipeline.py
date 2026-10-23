@@ -114,22 +114,22 @@ class ValidationPipeline:
 
         row_count = df.height
         null_counts = df.null_count().row(0, named=True)
-
-        null_cols = [column for column, count in null_counts.items() if count == row_count]
-        if null_cols:
-            errors.append(f"Columns with all null values: {null_cols}")
-
         optional_columns = {
             "adj_close",
             "summary",
             "source_metadata",
             "source_url",
+            "source_available_at",
             "author",
             "category",
             "sentiment_label",
             "event_type",
             "impact_horizon",
         }
+        null_cols = [column for column, count in null_counts.items() if count == row_count and column not in optional_columns]
+        if null_cols:
+            errors.append(f"Columns with all null values: {null_cols}")
+
         high_null = [column for column, count in null_counts.items() if row_count > 0 and count / row_count > 0.5 and column not in optional_columns]
         if high_null:
             errors.append(f"Columns with >50% null values: {high_null}")

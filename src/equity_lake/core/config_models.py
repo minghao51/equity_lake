@@ -9,13 +9,16 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from equity_lake.core.paths import CONFIG_DIR
+
+if TYPE_CHECKING:
+    from equity_lake.core.instruments import InstrumentKey
 
 logger = structlog.get_logger(__name__)
 
@@ -44,6 +47,17 @@ class TickerMetadata(BaseModel):
         if not value or not value.strip():
             raise ValueError("Exchange cannot be empty")
         return value.strip()
+
+    def instrument_key(self, market: str) -> InstrumentKey:
+        """Build a key for an explicitly configured current instrument.
+
+        This is suitable for scoped requests and new source rows. It is not
+        historical provenance and must never be used to relabel ticker-only
+        lake rows or old model artifacts.
+        """
+        from .instruments import InstrumentKey  # pyright: ignore[reportMissingImports] -- source import verified by uv
+
+        return InstrumentKey.from_exchange(market, self.exchange, self.symbol)
 
     @field_validator("priority")
     @classmethod
@@ -226,11 +240,15 @@ class TickerConfigRoot(BaseModel):
                 if not ticker.tags:
                     warnings.append(f"Ticker {ticker.symbol} ({market_name}) has no tags")
         for group_name, group_config in self.groups.items():
-            if not isinstance(group_config.tickers, list):
+            if isinstance(group_config.tickers, list):
+                for symbol in group_config.tickers:
+                    if self.get_ticker_metadata(symbol) is None:
+                        warnings.append(f"Group '{group_name}' references unknown ticker: {symbol}")
                 continue
-            for symbol in group_config.tickers:
-                if self.get_ticker_metadata(symbol) is None:
-                    warnings.append(f"Group '{group_name}' references unknown ticker: {symbol}")
+            for market_name, symbols in group_config.tickers.items():
+                for symbol in symbols:
+                    if self.get_ticker_metadata(symbol, market=market_name) is None:
+                        warnings.append(f"Group '{group_name}' references unknown ticker for market '{market_name}': {symbol}")
         return {"errors": errors, "warnings": warnings}
 
     @staticmethod

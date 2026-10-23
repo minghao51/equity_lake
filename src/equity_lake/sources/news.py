@@ -17,6 +17,20 @@ from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardiz
 logger = structlog.get_logger()
 
 
+def _safe_status_code(exc: BaseException) -> int | None:
+    """Return an integer HTTP status without serializing provider errors."""
+    for candidate in (exc, exc.__cause__):
+        if candidate is None:
+            continue
+        response = getattr(candidate, "response", None)
+        status_code = getattr(candidate, "status_code", None)
+        if status_code is None:
+            status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            return status_code
+    return None
+
+
 # Finnhub API endpoint
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 
@@ -79,11 +93,8 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         # Initialize sentiment analyzer
         try:
             self.sentiment_analyzer = SentimentAnalyzer(method=sentiment_method)
-        except ImportError as e:
-            logger.warning(
-                "Sentiment analyzer not available: %s. Proceeding without sentiment.",
-                e,
-            )
+        except ImportError as exc:
+            logger.warning("sentiment_analyzer_unavailable", error_type=type(exc).__name__)
             self.sentiment_analyzer = None
 
         logger.info(
@@ -180,6 +191,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
             "token": self.api_key,
         }
 
+        status_code: int | None = None
         try:
             response = self._retry_on_failure(
                 httpx.get,
@@ -187,33 +199,43 @@ class FinnhubNewsFetcher(MarketDataFetcher):
                 params=params,
                 timeout=10,
             )
+            response_status_code = getattr(response, "status_code", None)
+            if isinstance(response_status_code, int) and not isinstance(response_status_code, bool):
+                status_code = response_status_code
             response.raise_for_status()
+            data = response.json()
+
+            if not isinstance(data, list):
+                logger.warning("finnhub_news_unexpected_response_format", ticker=ticker, data_type=type(data).__name__)
+                return []
+
+            # Limit articles per ticker
+            articles = data[: self.max_articles_per_ticker]
+
+            # Parse articles
+            parsed_articles = []
+            for article in articles:
+                try:
+                    parsed = self._parse_article(article, ticker)
+                    if parsed:
+                        parsed_articles.append(parsed)
+                except Exception as exc:
+                    logger.warning("finnhub_news_article_parse_failed", ticker=ticker, error_type=type(exc).__name__)
+                    continue
+
+            logger.debug("Fetched %s articles for %s", len(parsed_articles), ticker)
+            return parsed_articles
         except Exception as exc:
-            logger.error("API request failed for %s: %s", ticker, exc)
+            exception_status_code = _safe_status_code(exc)
+            if exception_status_code is not None:
+                status_code = exception_status_code
+            logger.error(
+                "finnhub_news_request_failed",
+                ticker=ticker,
+                error_type=type(exc).__name__,
+                status_code=status_code,
+            )
             return []
-
-        data = response.json()
-
-        if not isinstance(data, list):
-            logger.warning("Unexpected response format for %s: %s", ticker, type(data))
-            return []
-
-        # Limit articles per ticker
-        articles = data[: self.max_articles_per_ticker]
-
-        # Parse articles
-        parsed_articles = []
-        for article in articles:
-            try:
-                parsed = self._parse_article(article, ticker)
-                if parsed:
-                    parsed_articles.append(parsed)
-            except Exception as exc:
-                logger.warning("Failed to parse article for %s: %s", ticker, exc)
-                continue
-
-        logger.debug("Fetched %s articles for %s", len(parsed_articles), ticker)
-        return parsed_articles
 
     def _parse_article(self, article: dict, ticker: str) -> dict[str, Any] | None:
         """
@@ -235,7 +257,7 @@ class FinnhubNewsFetcher(MarketDataFetcher):
         try:
             dt = datetime.fromtimestamp(datetime_str, tz=UTC) if isinstance(datetime_str, int) else datetime.fromisoformat(str(datetime_str))
         except (ValueError, TypeError, OverflowError) as exc:
-            logger.warning("Dropping article for %s with unparseable timestamp %r: %s", ticker, datetime_str, exc)
+            logger.warning("news_article_timestamp_invalid", ticker=ticker, error_type=type(exc).__name__)
             return None
 
         return {

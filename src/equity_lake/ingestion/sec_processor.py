@@ -1,20 +1,16 @@
-"""LLM batch processor for SEC filing section analysis.
+"""SEC filing section extraction models and bounded Bronze-to-Silver entrypoint.
 
-Uses ``AsyncOpenAI`` with DeepSeek's OpenAI-compatible API to extract
-risk sentiment, guidance direction, management tone, and key risks from
-10-K/10-Q filing sections. Same tenacity retry + fallback pattern
-as ``llm_processor.py``, via shared ``BaseLLMBatchProcessor``.
-
-Process flow:
-    bronze (source_type="sec_filing") → this processor → silver/sec_extractions
+Unbounded LLM processor helpers fail closed until a bounded provider adapter
+reports actual cost. ``process_sec_bronze_to_silver`` requires explicit replay
+scope and an authorized cost-reporting callback for paid work.
 """
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import json
 from datetime import date
+from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -22,6 +18,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from equity_lake.ingestion.llm_base import BaseLLMBatchProcessor
+from equity_lake.ingestion.replay import EstimateBatchCost, ProcessBatch, ReplayAuthorizationError, ReplayScope
 
 logger = structlog.get_logger()
 
@@ -30,9 +27,10 @@ def _parse_metadata(raw: Any) -> dict[str, Any]:
     """Safely parse source_metadata JSON, returning empty dict on failure."""
     if not raw:
         return {}
-    with contextlib.suppress(json.JSONDecodeError, TypeError):
+    try:
         return json.loads(raw) if isinstance(raw, str) else raw if isinstance(raw, dict) else {}
-    return {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 SEC_SYSTEM_PROMPT = """You are a financial SEC filing analyst. Analyze the provided filing sections and return results as JSON.
@@ -86,7 +84,7 @@ class SECBatchExtraction(BaseModel):
 
 
 class SECSectionProcessor(BaseLLMBatchProcessor[SECBatchExtraction, SECSectionExtraction]):
-    """Batch-process SEC filing sections via DeepSeek for structured extraction.
+    """Legacy SEC extraction formatter; inherited direct provider calls fail closed.
 
     Args:
         batch_size: Number of sections per API call (default 5 — SEC text is dense).
@@ -189,31 +187,55 @@ class SECSectionProcessor(BaseLLMBatchProcessor[SECBatchExtraction, SECSectionEx
 
 
 def run_sec_processing(bronze_df: pl.DataFrame, batch_size: int = 5) -> pl.DataFrame:
-    """Synchronous wrapper for SEC section batch processing."""
-    processor = SECSectionProcessor(batch_size=batch_size)
-    return asyncio.run(processor.process_all(bronze_df))
+    """Fail closed: corpus-wide SEC processing has no bounded actual-cost adapter."""
+    del bronze_df, batch_size
+    raise ReplayAuthorizationError(
+        "run_sec_processing is disabled because it cannot enforce a scoped spend cap or report provider actual cost. "
+        "Use process_sec_bronze_to_silver with an explicitly authorized bounded callback."
+    )
 
 
-def process_sec_bronze_to_silver(trading_date: date, diagnostics: dict[str, Any] | None = None) -> bool:
-    """Process unprocessed SEC filing sections from bronze to silver.
+def process_sec_bronze_to_silver(
+    trading_date: date,
+    *,
+    scope: ReplayScope | None = None,
+    process_batch: ProcessBatch | None = None,
+    estimate_batch_cost: EstimateBatchCost | None = None,
+    paid_processing_authorized: bool = False,
+    approved_estimate: Decimal | None = None,
+    actual_spend_cap: Decimal = Decimal("0"),
+    checkpoint_path: Path | None = None,
+    diagnostics: dict[str, Any] | None = None,
+) -> bool:
+    """Run SEC extraction through the same explicitly scoped bounded replay.
 
-    Delegates to :func:`process_unstructured_to_silver` with SEC-specific
-    parameters (``source_type="sec_filing"``, dedicated silver table).
-
-    Args:
-        trading_date: The trading date to process sections for.
-        diagnostics: Optional out-dict (see ``process_unstructured_to_silver``).
-
-    Returns:
-        True if silver write succeeded, False otherwise.
+    Paid work is disabled by default. Authorized processing requires a bounded
+    callback with a per-batch estimate and provider-reported actual cost.
     """
     from equity_lake.core.paths import SEC_EXTRACTIONS_DIR
     from equity_lake.ingestion.bronze_silver import process_unstructured_to_silver
 
+    if scope is None:
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update({"mode": "processing_failed", "error": "explicit replay scope is required"})
+        return False
+    if scope.source != "sec_filing":
+        if diagnostics is not None:
+            diagnostics.clear()
+            diagnostics.update({"mode": "processing_failed", "error": "SEC replay scope source must be sec_filing"})
+        return False
+
     return process_unstructured_to_silver(
         trading_date,
+        scope=scope,
         source_type_filter="sec_filing",
-        process_fn=run_sec_processing,
+        process_batch=process_batch,
+        estimate_batch_cost=estimate_batch_cost,
+        paid_processing_authorized=paid_processing_authorized,
+        approved_estimate=approved_estimate,
+        actual_spend_cap=actual_spend_cap,
+        checkpoint_path=checkpoint_path,
         silver_path=SEC_EXTRACTIONS_DIR,
         silver_table_name="02_silver/sec_extractions",
         silver_key_columns=["article_id"],

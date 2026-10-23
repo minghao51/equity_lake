@@ -1,13 +1,13 @@
 """News sentiment signal generator."""
 
-from contextlib import suppress
 from datetime import date, timedelta
 
 import duckdb
 import structlog
 
+from equity_lake.core.instruments import InstrumentKey
 from equity_lake.core.paths import US_NEWS_DIR
-from equity_lake.signals.generators.base import SignalGenerator
+from equity_lake.signals.generators.base import GenerationOutcome, SignalGenerator
 from equity_lake.signals.models import Signal
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
@@ -28,101 +28,110 @@ class SentimentSignalGenerator(SignalGenerator):
         self.min_articles = config.get("min_articles", 3)
         self.lookback_days = config.get("lookback_days", 7)
         self.con = duckdb.connect(":memory:")
+        self.setup_error: str | None = None
         self._setup_view()
 
     def _setup_view(self) -> None:
         """Create DuckDB view for locally stored news sentiment data."""
-        sql = f"""
-        CREATE OR REPLACE VIEW news_data AS
-        SELECT * FROM {duckdb_scan_for(US_NEWS_DIR)}
-        """
-        with suppress(Exception):
-            self.con.execute(sql)
+        scan = duckdb_scan_for(US_NEWS_DIR)
+        try:
+            if scan.startswith("delta_scan("):
+                relation = self.con.table_function("delta_scan", [str(US_NEWS_DIR)])
+            else:
+                relation = self.con.read_parquet(str(US_NEWS_DIR / "**" / "*.parquet"), hive_partitioning=True)
+            relation.create_view("news_data", replace=True)
+        except Exception as exc:
+            self.setup_error = str(exc)
+            logger.warning("sentiment_signal_view_unavailable", error=self.setup_error)
 
-    def _load_sentiment_summary(self, ticker: str, start_date: date, target_date: date) -> dict | None:
+    def _load_sentiment_summary(self, ticker: InstrumentKey, start_date: date, target_date: date) -> dict | None:
         """Load aggregated sentiment for a ticker from local news history."""
         query = """
         SELECT
-            AVG(sentiment_score) AS avg_sentiment,
-            COUNT(*) AS article_count
+            AVG(sentiment_score) FILTER (WHERE sentiment_score IS NOT NULL AND isfinite(sentiment_score)) AS avg_sentiment,
+            COUNT(*) AS raw_article_count,
+            COUNT(*) FILTER (WHERE sentiment_score IS NOT NULL AND isfinite(sentiment_score)) AS usable_article_count
         FROM news_data
         WHERE ticker = ?
+          AND market = ?
+          AND mic = ?
           AND date >= ?
           AND date <= ?
         """
 
-        try:
-            row = self.con.execute(query, [ticker, start_date, target_date]).fetchone()
-        except Exception as exc:
-            logger.warning("sentiment_generator_query_failed", ticker=ticker, error=str(exc))
-            return None
+        row = self.con.execute(query, [ticker.symbol, ticker.market, ticker.mic, start_date, target_date]).fetchone()
 
         if row is None:
             return None
 
-        avg_sentiment, article_count = row
-        if article_count == 0:
+        avg_sentiment, raw_article_count, usable_article_count = row
+        if raw_article_count == 0:
             return None
 
         return {
-            "avg_sentiment": float(avg_sentiment or 0.0),
-            "article_count": int(article_count),
+            "avg_sentiment": float(avg_sentiment) if avg_sentiment is not None else None,
+            "article_count": int(usable_article_count),
+            "raw_article_count": int(raw_article_count),
+            "usable_article_count": int(usable_article_count),
         }
 
-    def generate(self, ticker: str, target_date: date) -> Signal | None:
-        """Generate signal based on news sentiment.
+    def generate(self, instrument: InstrumentKey, target_date: date) -> Signal | None:
+        """Generate a signal while preserving the signal-or-None API."""
+        return self.generate_outcome(instrument, target_date).signal
 
-        Args:
-            ticker: Stock symbol
-            target_date: Date to generate signal for
-
-        Returns:
-            Signal with action based on sentiment score
-        """
-        # Enablement is gated once, at scanner construction time.
-        # Calculate date range for news lookup
+    def generate_outcome(self, instrument: InstrumentKey, target_date: date) -> GenerationOutcome:
+        """Evaluate available news and distinguish neutral from missing coverage."""
+        if instrument.market != "us_equity":
+            return GenerationOutcome(status="unavailable", detail=f"sentiment enrichment is unsupported for {instrument.market}")
+        if self.setup_error is not None:
+            return GenerationOutcome(status="unavailable", detail=f"news view unavailable: {self.setup_error}")
         start_date = target_date - timedelta(days=self.lookback_days)
+        try:
+            sentiment_data = self._load_sentiment_summary(instrument, start_date, target_date)
+        except Exception as exc:
+            return GenerationOutcome(status="unavailable", detail=f"canonical sentiment coverage unavailable ({type(exc).__name__})")
+        if sentiment_data is None:
+            return GenerationOutcome(status="unavailable", detail="no sentiment history in lookback window")
 
-        sentiment_data = self._load_sentiment_summary(ticker, start_date, target_date)
-        if not sentiment_data:
-            return None
-
-        # Extract sentiment score and article count
-        avg_sentiment = sentiment_data.get("avg_sentiment", 0)
-        article_count = sentiment_data.get("article_count", 0)
-
-        # Check minimum article threshold
+        article_count = int(sentiment_data.get("usable_article_count", sentiment_data.get("article_count", 0)))
+        raw_article_count = int(sentiment_data.get("raw_article_count", sentiment_data.get("article_count", article_count)))
+        coverage_detail = f"sentiment coverage: {article_count} usable scored rows of {raw_article_count} rows"
+        if article_count == 0:
+            return GenerationOutcome(status="unavailable", detail=f"no usable finite sentiment scores; {coverage_detail}")
         if article_count < self.min_articles:
-            return None
+            return GenerationOutcome(
+                status="unavailable",
+                detail=f"insufficient sentiment coverage: {coverage_detail}; need {self.min_articles} usable scored rows",
+            )
 
-        # Generate signal based on sentiment
+        avg_sentiment = sentiment_data.get("avg_sentiment")
+        if avg_sentiment is None:
+            return GenerationOutcome(status="unavailable", detail=f"no usable finite sentiment scores; {coverage_detail}")
+
         if avg_sentiment >= self.buy_threshold:
-            return Signal(
-                ticker=ticker,
+            signal = Signal(
+                ticker=instrument.symbol,
                 date=target_date,
                 signal_type="sentiment",
                 action="BUY",
                 confidence=65.0,
-                reasoning=f"Positive sentiment: {avg_sentiment:.2f} from {article_count} articles",
-                metadata={
-                    "sentiment_score": avg_sentiment,
-                    "article_count": article_count,
-                    "lookback_days": self.lookback_days,
-                },
+                reasoning=f"Positive sentiment: {avg_sentiment:.2f} from {article_count} scored articles ({raw_article_count} total rows)",
+                metadata={"sentiment_score": avg_sentiment, "article_count": raw_article_count, "lookback_days": self.lookback_days},
+                market=instrument.market,
+                mic=instrument.mic,
             )
-        elif avg_sentiment <= self.sell_threshold:
-            return Signal(
-                ticker=ticker,
+            return GenerationOutcome(status="signal", signal=signal, detail=coverage_detail)
+        if avg_sentiment <= self.sell_threshold:
+            signal = Signal(
+                ticker=instrument.symbol,
                 date=target_date,
                 signal_type="sentiment",
                 action="SELL",
                 confidence=60.0,
-                reasoning=f"Negative sentiment: {avg_sentiment:.2f} from {article_count} articles",
-                metadata={
-                    "sentiment_score": avg_sentiment,
-                    "article_count": article_count,
-                    "lookback_days": self.lookback_days,
-                },
+                reasoning=f"Negative sentiment: {avg_sentiment:.2f} from {article_count} scored articles ({raw_article_count} total rows)",
+                metadata={"sentiment_score": avg_sentiment, "article_count": raw_article_count, "lookback_days": self.lookback_days},
+                market=instrument.market,
+                mic=instrument.mic,
             )
-
-        return None
+            return GenerationOutcome(status="signal", signal=signal, detail=coverage_detail)
+        return GenerationOutcome(status="no_condition", detail=coverage_detail)

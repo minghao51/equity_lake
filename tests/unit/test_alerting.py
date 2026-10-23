@@ -2,16 +2,14 @@
 
 from unittest.mock import MagicMock, patch
 
-from equity_lake.monitoring.alerting import (
-    CompositeAlerter,
-    ConsoleAlerter,
-    WebhookAlerter,
-    build_alerter,
-)
+import httpx
+import pytest
+
+from equity_lake.monitoring.alerting import CompositeAlerter, ConsoleAlerter, WebhookAlerter, build_alerter  # type: ignore[import-untyped]
 
 
 class TestConsoleAlerter:
-    def test_send_alert_prints(self, capsys) -> None:
+    def test_send_alert_prints(self, capsys: pytest.CaptureFixture[str]) -> None:
         alerter = ConsoleAlerter()
         alerter.send_alert(["test alert"], severity="warning")
         captured = capsys.readouterr()
@@ -19,22 +17,30 @@ class TestConsoleAlerter:
 
 
 class TestWebhookAlerter:
-    def test_send_alert_posts_json(self, mock_httpx_client) -> None:
+    def test_send_alert_posts_json_without_logging_webhook_url(self, mock_httpx_client: MagicMock) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = MagicMock()
         mock_httpx_client.post.return_value = mock_response
+        credential_url = "https://hooks.example.test/services/R01-SYNTHETIC?signature=secret-r01"
 
-        with patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client):
-            alerter = WebhookAlerter(url="https://example.com/webhook")
+        with (
+            patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client),
+            patch("equity_lake.monitoring.alerting.logger") as mock_logger,
+        ):
+            alerter = WebhookAlerter(url=credential_url)
             alerter.send_alert(["alert1", "alert2"], severity="critical")
 
         mock_httpx_client.post.assert_called_once()
         call_kwargs = mock_httpx_client.post.call_args
+        assert call_kwargs.args[0] == credential_url
         assert call_kwargs.kwargs["json"]["severity"] == "critical"
         assert call_kwargs.kwargs["json"]["alerts"] == ["alert1", "alert2"]
+        mock_logger.info.assert_called_once()
+        assert mock_logger.info.call_args.kwargs["url"] == "***REDACTED***"
+        assert credential_url not in repr(mock_logger.info.call_args)
 
-    def test_send_alert_retries_failed_delivery(self, mock_httpx_client) -> None:
+    def test_send_alert_retries_failed_delivery(self, mock_httpx_client: MagicMock) -> None:
         """Delivery goes through core/retry.py tenacity: 3 attempts, then a loud error log."""
         mock_httpx_client.post.side_effect = Exception("connection error")
 
@@ -49,7 +55,43 @@ class TestWebhookAlerter:
         mock_logger.error.assert_called_once()
         assert mock_logger.error.call_args.args[0] == "webhook_alert_delivery_failed"
 
-    def test_send_alert_recovers_on_retry(self, mock_httpx_client) -> None:
+    def test_send_alert_redacts_url_from_failure_exception_log(self, mock_httpx_client: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+        credential_url = "https://hooks.example.test/services/R01-SYNTHETIC?signature=secret-r01"
+        mock_httpx_client.post.side_effect = Exception(f"connection failed for {credential_url}")
+
+        with (
+            patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client),
+            patch("equity_lake.monitoring.alerting.logger") as mock_logger,
+        ):
+            alerter = WebhookAlerter(url=credential_url)
+            alerter.send_alert(["alert"], severity="critical")
+
+        assert mock_httpx_client.post.call_count == 3
+        mock_logger.error.assert_called_once()
+        log_call = mock_logger.error.call_args
+        assert log_call.args[0] == "webhook_alert_delivery_failed"
+        assert log_call.kwargs["url"] == "***REDACTED***"
+        assert log_call.kwargs["error"] == "webhook delivery failed (Exception)"
+        assert credential_url not in repr(log_call)
+        captured = capsys.readouterr()
+        assert credential_url not in captured.out + captured.err
+
+    def test_status_failure_keeps_safe_diagnostics(self, mock_httpx_client: MagicMock) -> None:
+        credential_url = "https://hooks.example.test/secret-r01?token=synthetic"
+        request = httpx.Request("POST", credential_url)
+        mock_httpx_client.post.return_value = httpx.Response(503, request=request)
+        with (
+            patch("equity_lake.monitoring.alerting.httpx.Client", return_value=mock_httpx_client),
+            patch("equity_lake.monitoring.alerting.logger") as mock_logger,
+        ):
+            WebhookAlerter(credential_url).send_alert(["synthetic"], severity="error")
+        assert mock_httpx_client.post.call_count == 3
+        error = mock_logger.error.call_args.kwargs["error"]
+        assert "HTTPStatusError" in error
+        assert "status=503" in error
+        assert credential_url not in repr(mock_logger.error.call_args)
+
+    def test_send_alert_recovers_on_retry(self, mock_httpx_client: MagicMock) -> None:
         """A transient failure on attempt 1 is retried and delivers successfully."""
         ok_response = MagicMock()
         ok_response.status_code = 200

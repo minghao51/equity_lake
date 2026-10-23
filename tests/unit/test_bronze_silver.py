@@ -1,14 +1,20 @@
 """Tests for bronze-to-silver transform."""
 
+from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import polars as pl
+import pytest
 
-from equity_lake.ingestion.bronze_silver import _get_processed_ids, _write_silver_generic
+from equity_lake.ingestion.bronze_silver import MARKET_WIDE_INSTRUMENT, _get_processed_ids, _write_silver_generic  # type: ignore[import-untyped]
+from equity_lake.ingestion.replay import PaidWorkBudget, ReplayBatchResult, ReplayItem, ReplayScope  # type: ignore[import-untyped]
 
 
-def _silver_article_row(**overrides) -> dict:
+def _silver_article_row(**overrides: Any) -> dict[str, Any]:
     row = {
         "article_id": "art-1",
         "ticker": "AAPL",
@@ -33,11 +39,11 @@ def _silver_article_row(**overrides) -> dict:
 class TestWriteSilverGeneric:
     """The production silver write path (``_write_silver_generic``); ``write_silver`` was removed as dead code."""
 
-    def test_empty_df_returns_false(self):
+    def test_empty_df_returns_false(self) -> None:
         result = _write_silver_generic(pl.DataFrame(), "02_silver/processed_articles", ["article_id", "ticker"])
         assert result is False
 
-    def test_writes_with_correct_table_name(self):
+    def test_writes_with_correct_table_name(self) -> None:
         df = pl.DataFrame(
             {
                 "article_id": ["art-1"],
@@ -70,23 +76,23 @@ class TestWriteSilverGeneric:
 class TestSilverQualityGate:
     """B3: silver merges enforce the pointblank article contract (ADR-0007)."""
 
-    def test_generic_write_rejects_out_of_range_sentiment(self):
+    def test_generic_write_rejects_out_of_range_sentiment(self) -> None:
         df = pl.DataFrame([_silver_article_row(sentiment_score=5.0), _silver_article_row(article_id="art-2")])
         with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
             assert _write_silver_generic(df, "02_silver/processed_articles", ["article_id", "ticker"]) is False
         mock_merge.assert_not_called()
 
-    def test_generic_write_accepts_valid_rows(self):
+    def test_generic_write_accepts_valid_rows(self) -> None:
         df = pl.DataFrame([_silver_article_row(), _silver_article_row(article_id="art-2", ticker=None)])
         with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
             assert _write_silver_generic(df, "02_silver/processed_articles", ["article_id", "ticker"]) is True
         mock_merge.assert_called_once()
 
-    def test_generic_silver_rejects_null_article_id(self):
+    def test_generic_silver_rejects_null_article_id(self) -> None:
         df = pl.DataFrame({"article_id": [None], "ticker": ["AAPL"]})
         assert _write_silver_generic(df, "02_silver/sec_extractions", ["article_id"]) is False
 
-    def test_generic_silver_allows_null_ticker(self):
+    def test_generic_silver_allows_null_ticker(self) -> None:
         """Market-wide news pairs (all-null ticker) are legitimate silver rows."""
         df = pl.DataFrame({"article_id": ["a-1", "a-2"], "ticker": [None, None]})
         with patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True) as mock_merge:
@@ -95,23 +101,30 @@ class TestSilverQualityGate:
 
 
 class TestGetProcessedIds:
-    def test_returns_empty_set_on_error(self):
-        from pathlib import Path
+    def test_unrecognized_silver_state_fails_closed(self, tmp_path: Path) -> None:
+        unrecognized = tmp_path / "silver"
+        unrecognized.mkdir()
+        (unrecognized / "unexpected.txt").write_text("unrecognized", encoding="utf-8")
 
-        with patch("equity_lake.ingestion.bronze_silver.SILVER_PROCESSED_ARTICLES_DIR"):
-            result = _get_processed_ids(Path("/nonexistent"), date(2026, 6, 14))
-            assert result == set()
+        with pytest.raises(RuntimeError, match="Unable to read silver dedup table"):
+            _get_processed_ids(unrecognized, date(2026, 6, 14))
 
 
 class TestProcessBronzeToSilver:
-    def test_no_bronze_returns_false(self):
+    def test_no_bronze_returns_false(self, tmp_path: Path) -> None:
+        scope = ReplayScope(
+            source="rss",
+            trading_date=date(2026, 6, 14),
+            market="us_equity",
+            instruments=(MARKET_WIDE_INSTRUMENT,),
+        )
         with patch("equity_lake.ingestion.bronze_silver.read_bronze", return_value=pl.DataFrame()):
             from equity_lake.ingestion.bronze_silver import process_bronze_to_silver
 
-            result = process_bronze_to_silver(date(2026, 6, 14))
+            result = process_bronze_to_silver(date(2026, 6, 14), scope=scope, checkpoint_path=tmp_path / "checkpoint.json")
             assert result is False
 
-    def test_all_processed_returns_true(self):
+    def test_all_processed_returns_true(self, tmp_path: Path) -> None:
         bronze_df = pl.DataFrame(
             {
                 "article_id": ["art-1", "art-2"],
@@ -133,10 +146,16 @@ class TestProcessBronzeToSilver:
         ):
             from equity_lake.ingestion.bronze_silver import process_bronze_to_silver
 
-            result = process_bronze_to_silver(date(2026, 6, 14))
+            scope = ReplayScope(
+                source="rss",
+                trading_date=date(2026, 6, 14),
+                market="us_equity",
+                instruments=(MARKET_WIDE_INSTRUMENT,),
+            )
+            result = process_bronze_to_silver(date(2026, 6, 14), scope=scope, checkpoint_path=tmp_path / "checkpoint.json")
             assert result is True
 
-    def test_filters_already_processed(self):
+    def test_filters_already_processed(self, tmp_path: Path) -> None:
         bronze_df = pl.DataFrame(
             {
                 "article_id": ["art-1", "art-2", "art-3"],
@@ -152,19 +171,45 @@ class TestProcessBronzeToSilver:
                 "date": [date(2026, 6, 14)] * 3,
             }
         )
+        durable_ids = {"art-1"}
+        scope = ReplayScope(
+            source="rss",
+            trading_date=date(2026, 6, 14),
+            market="us_equity",
+            instruments=(MARKET_WIDE_INSTRUMENT,),
+        )
+        captured: list[tuple[str, ...]] = []
+
+        def process_batch(batch: Sequence[ReplayItem], _budget: PaidWorkBudget) -> ReplayBatchResult:
+            item_ids = tuple(item.item_id for item in batch)
+            captured.append(item_ids)
+            return ReplayBatchResult(
+                rows=[{"article_id": item_id, "ticker": None, "date": date(2026, 6, 14)} for item_id in item_ids],
+                actual_cost=Decimal("0.02"),
+            )
+
+        def write_silver(frame: pl.DataFrame, _table: str, _keys: list[str]) -> bool:
+            durable_ids.update(str(item_id) for item_id in frame["article_id"].to_list())
+            return True
+
         with (
             patch("equity_lake.ingestion.bronze_silver.read_bronze", return_value=bronze_df),
-            patch("equity_lake.ingestion.bronze_silver._get_processed_ids", return_value={"art-1"}),
-            patch("equity_lake.ingestion.llm_processor.run_llm_processing") as mock_llm,
-            patch("equity_lake.ingestion.bronze_silver.merge_delta", return_value=True),
-            patch("equity_lake.ingestion.bronze_silver._load_known_tickers", return_value=[]),
+            patch("equity_lake.ingestion.bronze_silver._get_processed_ids", side_effect=lambda *_: set(durable_ids)),
+            patch("equity_lake.ingestion.bronze_silver._write_silver_generic", side_effect=write_silver),
         ):
             from equity_lake.ingestion.bronze_silver import process_bronze_to_silver
 
-            mock_llm.return_value = pl.DataFrame({"article_id": ["art-2", "art-3"], "ticker": [None, None]})
-            result = process_bronze_to_silver(date(2026, 6, 14))
+            result = process_bronze_to_silver(
+                date(2026, 6, 14),
+                scope=scope,
+                process_batch=process_batch,
+                estimate_batch_cost=lambda batch: Decimal("0.10") * len(batch),
+                paid_processing_authorized=True,
+                approved_estimate=Decimal("0.50"),
+                actual_spend_cap=Decimal("1.00"),
+                checkpoint_path=tmp_path / "checkpoint.json",
+            )
 
-            passed_df = mock_llm.call_args[0][0]
-            assert passed_df.height == 2
-            assert "art-1" not in passed_df["article_id"].to_list()
+            assert captured == [("art-2", "art-3")]
+            assert durable_ids == {"art-1", "art-2", "art-3"}
             assert result is True

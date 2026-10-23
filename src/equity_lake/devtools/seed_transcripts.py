@@ -2,34 +2,31 @@
 
 Loads the full S&P 500 earnings-transcripts dataset
 (``kurry/sp500_earnings_transcripts`` — ~33k transcripts, 2005-2025) into bronze
-``01_bronze/raw_articles`` as an expandable base, then enriches a ticker-scoped
-subset to silver ``02_silver/processed_articles`` via the production DeepSeek
-article processor (:func:`run_llm_processing`).
+``01_bronze/raw_articles`` as an expandable base, and can preview a ticker-scoped subset for silver ``02_silver/processed_articles``.
+Paid enrichment is fail-closed until a bounded provider adapter reports actual cost.
 
 Why a devtools script (not a production source): the dataset is a static snapshot,
 not a live feed. Bronze holds the full base for future ticker expansion; silver
-enrichment is scoped per-run to bound DeepSeek token cost (the article LLM truncates
-each body to 2000 chars, batched 15/call). The script mirrors the SEC bronze schema
+enrichment is deliberately disabled until a bounded provider actual-cost adapter
+exists. The script mirrors the SEC bronze schema
 exactly (ticker in ``source_metadata``; ``published_at``/``fetched_at`` cast to
 microseconds to match the existing table) — no schema, catalog, CLI, or boundary
 changes.
 
 Re-runnable: deterministic ``article_id`` (``uuid5`` over ``symbol/year/quarter``)
-keeps bronze merges idempotent; silver merges upsert on ``(article_id, ticker)``.
+keeps bronze merges idempotent. Real Silver writes are currently rejected.
 
 Usage::
 
-    uv run python -m equity_lake.devtools.seed_transcripts \\
-        --tickers AAPL,MSFT,GOOGL
+    uv run python -m equity_lake.devtools.seed_transcripts --skip-silver
     uv run python -m equity_lake.devtools.seed_transcripts --dry-run  # preview: no lake writes or LLM tokens
 
 Exit code: 0 only when every requested step (bronze/silver) reports ``ok=True``;
 any failure exits 1.
 
-Caveat: once the full base is in bronze, the production
-``equity pipeline --markets us_earnings_transcripts`` would attempt to enrich *all*
-bronze transcripts (no pre-LLM ticker scope). Enrich the HF base via this script,
-not the production pipeline, until a pre-LLM ticker scope is added.
+Non-dry-run executions that request Silver enrichment exit before download or
+bronze writes. Dry-run previews the requested scope; ``--skip-silver`` permits
+bronze-only loading.
 """
 
 from __future__ import annotations
@@ -53,7 +50,6 @@ HF_DATASET = "kurry/sp500_earnings_transcripts"
 HF_PARQUET_URL = f"https://huggingface.co/datasets/{HF_DATASET}/resolve/main/parquet_files/part-0.parquet"
 HF_DATASET_URL = f"https://huggingface.co/datasets/{HF_DATASET}"
 BRONZE_MARKET = "01_bronze/raw_articles"
-SILVER_MARKET = "02_silver/processed_articles"
 SOURCE_TYPE = "earnings_transcript"
 SOURCE_NAME = "huggingface:kurry/sp500_earnings_transcripts"
 CACHE_PATH = DATA_DIR / ".cache" / "hf_sp500_earnings.parquet"
@@ -71,9 +67,13 @@ def _ensure_cached(*, force: bool) -> Path:
     logger.info("seed_transcripts_download_start", url=HF_PARQUET_URL)
     with httpx.stream("GET", HF_PARQUET_URL, follow_redirects=True, timeout=httpx.Timeout(30.0, read=None)) as resp:
         resp.raise_for_status()
-        with open(CACHE_PATH, "wb") as fh:
-            for chunk in resp.iter_bytes(chunk_size=1 << 20):
-                fh.write(chunk)
+        try:
+            with open(CACHE_PATH, "wb") as fh:
+                for chunk in resp.iter_bytes(chunk_size=1 << 20):
+                    fh.write(chunk)
+        except OSError as exc:
+            CACHE_PATH.unlink(missing_ok=True)
+            raise RuntimeError(f"Unable to cache the transcript dataset at {CACHE_PATH}") from exc
     logger.info("seed_transcripts_download_done", size_mb=round(CACHE_PATH.stat().st_size / 1e6, 1))
     return CACHE_PATH
 
@@ -135,7 +135,10 @@ def seed_transcripts_bronze(hf: pl.DataFrame, fetch_ts: datetime, *, dry_run: bo
     from equity_lake.storage.delta import DeltaMergeError, merge_delta
 
     df = _to_bronze(hf, fetch_ts)
-    n_tickers = df["source_metadata"].map_elements(lambda s: json.loads(s).get("ticker"), return_dtype=pl.Utf8).n_unique()
+    try:
+        n_tickers = df["source_metadata"].map_elements(lambda value: json.loads(value).get("ticker"), return_dtype=pl.Utf8).n_unique()
+    except (json.JSONDecodeError, TypeError, AttributeError) as exc:
+        raise ValueError("generated transcript metadata contains an invalid ticker record") from exc
     if dry_run:
         summary: dict[str, Any] = {"rows": df.height, "tickers": int(n_tickers), "ok": True, "dry_run": True}
         logger.info("seed_transcripts_bronze_dry_run", **summary)
@@ -150,16 +153,12 @@ def seed_transcripts_bronze(hf: pl.DataFrame, fetch_ts: datetime, *, dry_run: bo
 
 
 def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: datetime, *, dry_run: bool = False) -> dict[str, Any]:
-    """Enrich a ticker-scoped subset to silver ``02_silver/processed_articles``.
+    """Preview a ticker scope; paid Silver enrichment fails closed until bounded cost reporting exists.
 
-    Filtering happens on the in-memory HF frame (which carries the ticker) because
-    ticker is not a bronze column — this is what keeps the DeepSeek cost scoped
-    instead of enriching the whole 33k-row base. With ``dry_run=True`` the LLM
-    step and the silver merge are skipped entirely (no tokens spent); the summary
-    previews the rows a real run would process.
+    Filtering happens on the in-memory HF frame because ticker is not a bronze
+    column. ``dry_run=True`` previews the scope without paid processing or writes.
+    A real run is rejected rather than calling the unbounded legacy LLM helper.
     """
-    from equity_lake.ingestion.llm_processor import run_llm_processing
-    from equity_lake.storage.delta import DeltaMergeError, merge_delta
 
     wanted = {t.strip().upper() for t in tickers if t.strip()}
     scoped = hf.filter(pl.col("symbol").str.to_uppercase().is_in(sorted(wanted)))
@@ -179,19 +178,17 @@ def seed_transcripts_silver(hf: pl.DataFrame, tickers: list[str], fetch_ts: date
         logger.info("seed_transcripts_silver_dry_run", **summary)
         return summary
 
-    silver = run_llm_processing(bronze)
-    if silver.is_empty():
-        logger.warning("seed_transcripts_silver_no_output")
-        return {"rows": 0, "tickers": 0, "ok": False}
-
-    try:
-        ok = merge_delta(silver, SILVER_MARKET, key_columns=["article_id", "ticker"])
-    except DeltaMergeError:
-        ok = False
-    n_tickers = int(silver["ticker"].n_unique()) if "ticker" in silver.columns and ok else 0
-    summary = {"rows": int(silver.height) if ok else 0, "tickers": n_tickers, "ok": ok}
-    logger.info("seed_transcripts_silver_complete", **summary)
-    return summary
+    logger.error(
+        "seed_transcripts_silver_disabled",
+        reason="no bounded provider actual-cost adapter is available; no LLM call or Silver write was attempted",
+    )
+    return {
+        "rows": 0,
+        "tickers": 0,
+        "ok": False,
+        "mode": "paid_processing_disabled",
+        "error": "transcript LLM processing is disabled until bounded provider actual-cost reporting is available",
+    }
 
 
 def main() -> int:
@@ -213,6 +210,13 @@ def main() -> int:
     args = parser.parse_args()
 
     setup_structured_logging(level="DEBUG" if args.verbose else "INFO")
+    if not args.skip_silver and not args.dry_run:
+        logger.error(
+            "seed_transcripts_paid_processing_disabled",
+            reason="no bounded provider actual-cost adapter is available; no download, bronze write, or LLM call was attempted",
+        )
+        return 1
+
     fetch_ts = datetime.now(UTC).replace(tzinfo=None)
 
     hf: pl.DataFrame | None = None

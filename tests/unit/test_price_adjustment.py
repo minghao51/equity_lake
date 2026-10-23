@@ -6,36 +6,113 @@ time so that day-over-day returns across an ex-date become continuous.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
+from typing import Any, Literal, cast
 
 import polars as pl
 import pytest
 
-from equity_lake.storage.lake_reader import factor_snapshot, with_price_adjustment
+from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    ActionCoverageProof,
+    AvailabilityContractError,
+)
+from equity_lake.storage.lake_reader import factor_snapshot  # type: ignore[import-untyped]
+from equity_lake.storage.lake_reader import with_price_adjustment as _strict_with_price_adjustment
+
+_SOURCE_TIME = datetime(2023, 12, 29, 20, 0, tzinfo=UTC)
 
 
 def _prices(rows: list[tuple[str, date, float, float, float, float, float]]) -> pl.DataFrame:
     return pl.DataFrame(
-        rows,
-        schema={
-            "ticker": pl.String,
-            "date": pl.Date,
-            "open": pl.Float64,
-            "high": pl.Float64,
-            "low": pl.Float64,
-            "close": pl.Float64,
-            "volume": pl.Float64,
+        {
+            "market": ["us_equity"] * len(rows),
+            "mic": ["XNYS"] * len(rows),
+            "symbol": [row[0] for row in rows],
+            "ticker": [row[0] for row in rows],
+            "date": [row[1] for row in rows],
+            "open": [row[2] for row in rows],
+            "high": [row[3] for row in rows],
+            "low": [row[4] for row in rows],
+            "close": [row[5] for row in rows],
+            "volume": [row[6] for row in rows],
         },
-        orient="row",
+        schema_overrides={"date": pl.Date},
     )
 
 
 def _actions(rows: list[tuple[str, date, str, float]]) -> pl.DataFrame:
     return pl.DataFrame(
-        rows,
-        schema={"ticker": pl.String, "ex_date": pl.Date, "action": pl.String, "value": pl.Float64},
-        orient="row",
+        {
+            "market": ["us_equity"] * len(rows),
+            "mic": ["XNYS"] * len(rows),
+            "symbol": [row[0] for row in rows],
+            "ticker": [row[0] for row in rows],
+            "ex_date": [row[1] for row in rows],
+            "action": [row[2] for row in rows],
+            "value": [row[3] for row in rows],
+            "source_available_at": [_SOURCE_TIME] * len(rows),
+        },
+        schema_overrides={"ex_date": pl.Date},
     )
+
+
+def _ticker_only_action(symbol: str, ex_date: date, *, source: str = "synthetic-test-complete-window") -> pl.DataFrame:
+    """Match the production corporate-action columns, which carry no MIC identity."""
+    return pl.DataFrame(
+        {
+            "ticker": [symbol],
+            "ex_date": [ex_date],
+            "action": ["split"],
+            "value": [0.5],
+            "source": [source],
+            "ingested_at": [datetime(2024, 1, 2)],
+            "source_available_at": [_SOURCE_TIME],
+        },
+        schema_overrides={"ex_date": pl.Date},
+    )
+
+
+def _coverage_proof(mic: str, symbol: str, start: date, end: date, *, source: str = "synthetic-test-complete-window") -> ActionCoverageProof:
+    return ActionCoverageProof(
+        market="us_equity",
+        mic=mic,
+        symbol=symbol,
+        source=source,
+        coverage_start=start,
+        coverage_end=end,
+        source_available_at=_SOURCE_TIME,
+        source_valid_until=datetime(2030, 1, 1, tzinfo=UTC),
+    )
+
+
+def _coverage(prices: pl.DataFrame, as_of: date | None) -> list[ActionCoverageProof]:
+    if prices.is_empty():
+        return []
+    decision_date = as_of or max(prices["date"].to_list())
+    return [
+        ActionCoverageProof(
+            market=market,
+            mic=mic,
+            symbol=symbol,
+            source="synthetic-test-complete-window",
+            coverage_start=min(prices.filter((pl.col("market") == market) & (pl.col("mic") == mic) & (pl.col("symbol") == symbol))["date"]),
+            coverage_end=decision_date,
+            source_available_at=_SOURCE_TIME,
+            source_valid_until=datetime(2030, 1, 1, tzinfo=UTC),
+        )
+        for market, mic, symbol in prices.select("market", "mic", "symbol").unique().iter_rows()
+    ]
+
+
+def with_price_adjustment(
+    prices: pl.DataFrame,
+    actions: pl.DataFrame,
+    *,
+    method: Literal["split_only", "total_return"] = "split_only",
+    as_of: date | None = None,
+) -> pl.DataFrame:
+    """Use explicit synthetic coverage fixtures with the production strict API."""
+    return cast(pl.DataFrame, _strict_with_price_adjustment(prices, actions, coverage=_coverage(prices, as_of), method=method, as_of=as_of))
 
 
 D01, D02, D03, D04, D05 = date(2024, 1, 1), date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4), date(2024, 1, 5)
@@ -85,104 +162,123 @@ class TestSplitAdjustment:
 
 
 class TestDividendAdjustment:
-    def test_total_return_step_uses_prev_close(self) -> None:
-        # $0.50 dividend with prior close 25.00 -> step 1 - 0.02 = 0.98.
-        prices = _prices(
-            [
-                ("A", D01, 25.0, 25.0, 25.0, 25.0, 1.0),
-                ("A", D02, 25.0, 25.0, 25.0, 25.0, 1.0),  # ex-date row: uses D01 close
-                ("A", D03, 25.0, 25.0, 25.0, 25.0, 1.0),
-            ]
-        )
+    def test_total_return_mode_is_rejected(self) -> None:
+        prices = _prices([("A", D01, 25.0, 25.0, 25.0, 25.0, 1.0)])
         actions = _actions([("A", D02, "dividend", 0.5)])
-        out = with_price_adjustment(prices, actions, method="total_return")
-        assert out["close"].to_list() == pytest.approx([25.0 * 0.98, 25.0, 25.0])
-
-    def test_ex_date_own_close_never_feeds_step(self) -> None:
-        # If the ex-date close differed from prev close, the step must use prev.
-        prices = _prices(
-            [
-                ("A", D01, 20.0, 20.0, 20.0, 20.0, 1.0),
-                ("A", D02, 50.0, 50.0, 50.0, 50.0, 1.0),  # ex-date: dividend 10
-            ]
-        )
-        actions = _actions([("A", D02, "dividend", 10.0)])
-        out = with_price_adjustment(prices, actions, method="total_return")
-        # step = 1 - 10/20 = 0.5 (from D01 close), NOT 1 - 10/50 = 0.8.
-        assert out["close"].to_list() == pytest.approx([10.0, 50.0])
-
-    def test_dividend_without_prior_close_dropped(self) -> None:
-        prices = _prices([("A", D02, 25.0, 25.0, 25.0, 25.0, 1.0)])
-        actions = _actions([("A", D02, "dividend", 0.5)])
-        out = with_price_adjustment(prices, actions, method="total_return")
-        assert out["close"].to_list() == pytest.approx([25.0])
-
-    def test_same_day_split_and_dividend_compose(self) -> None:
-        # Split and dividend on the SAME ex-date: steps must multiply, not
-        # compete for the asof match.
-        prices = _prices(
-            [
-                ("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0),
-                ("A", D02, 50.0, 50.0, 50.0, 50.0, 1.0),  # split 0.5 AND dividend $1 on this date
-                ("A", D03, 50.0, 50.0, 50.0, 50.0, 1.0),
-            ]
-        )
-        actions = _actions([("A", D02, "split", 0.5), ("A", D02, "dividend", 1.0)])
-        out = with_price_adjustment(prices, actions, method="total_return")
-        # Combined step for pre-event rows: 0.5 * (1 - 1/100) = 0.495.
-        assert out["close"].to_list() == pytest.approx([49.5, 50.0, 50.0])
-
-    def test_split_and_dividend_compose(self) -> None:
-        prices = _prices(
-            [
-                ("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0),
-                ("A", D02, 50.0, 50.0, 50.0, 50.0, 1.0),  # split ex-date
-                ("A", D03, 50.0, 50.0, 50.0, 50.0, 1.0),  # dividend ex-date ($1, prev close 50 -> 0.98)
-                ("A", D04, 50.0, 50.0, 50.0, 50.0, 1.0),
-            ]
-        )
-        actions = _actions([("A", D02, "split", 0.5), ("A", D03, "dividend", 1.0)])
-        out = with_price_adjustment(prices, actions, method="total_return")
-        # D01: split 0.5 * dividend 0.98; D02: dividend 0.98; rest 1.0.
-        assert out["close"].to_list() == pytest.approx([49.0, 49.0, 50.0, 50.0])
+        with pytest.raises(ValueError, match="split-only"):
+            with_price_adjustment(prices, actions, method="total_return")
 
 
 class TestGuardsAndSemantics:
     def test_as_of_hides_later_events(self) -> None:
-        prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0), ("A", D04, 50.0, 50.0, 50.0, 50.0, 1.0)])
+        prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0), ("A", D02, 100.0, 100.0, 100.0, 100.0, 1.0)])
         actions = _actions([("A", D04, "split", 0.5)])
         out = with_price_adjustment(prices, actions, as_of=D02)
-        assert out["close"].to_list() == pytest.approx([100.0, 50.0])
+        assert out["close"].to_list() == pytest.approx([100.0, 100.0])
 
     def test_as_of_keeps_earlier_events(self) -> None:
-        prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0), ("A", D04, 50.0, 50.0, 50.0, 50.0, 1.0)])
+        prices = _prices(
+            [
+                ("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0),
+                ("A", D02, 50.0, 50.0, 50.0, 50.0, 1.0),
+                ("A", D03, 50.0, 50.0, 50.0, 50.0, 1.0),
+            ]
+        )
         actions = _actions([("A", D02, "split", 0.5)])
         out = with_price_adjustment(prices, actions, as_of=D03)
-        assert out["close"].to_list() == pytest.approx([50.0, 50.0])
+        assert out["close"].to_list() == pytest.approx([50.0, 50.0, 50.0])
 
     def test_unknown_method_raises(self) -> None:
         prices = _prices([("A", D01, 1.0, 1.0, 1.0, 1.0, 1.0)])
         actions = _actions([("A", D02, "split", 0.5)])
         with pytest.raises(ValueError, match="Unknown adjustment method"):
-            with_price_adjustment(prices, actions, method="pandas")  # type: ignore[arg-type]
+            invalid_method: Any = "pandas"
+            _strict_with_price_adjustment(prices, actions, coverage=_coverage(prices, None), method=invalid_method)
+
+    def test_missing_coverage_fails_closed(self) -> None:
+        prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        with pytest.raises(AvailabilityContractError, match="coverage is unknown"):
+            _strict_with_price_adjustment(prices, _actions([]))
+
+    def test_missing_source_validity_is_unavailable(self) -> None:
+        prices = _prices([("A", D02, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        proof = _coverage(prices, None)[0].model_dump()
+        proof.pop("source_valid_until")
+        with pytest.raises(AvailabilityContractError, match="source_valid_until"):
+            _strict_with_price_adjustment(prices, _actions([]), coverage=pl.DataFrame([proof]))
+
+    def test_action_source_must_match_coverage_proof(self) -> None:
+        prices = _prices([("A", D02, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        actions = _actions([("A", D02, "split", 0.5)]).with_columns(pl.lit("yahoo").alias("source"))
+        with pytest.raises(AvailabilityContractError, match="does not match its coverage proof"):
+            _strict_with_price_adjustment(prices, actions, coverage=_coverage(prices, None))
+
+    @pytest.mark.parametrize("mic", ["XNYS", "XNAS"])
+    def test_ticker_only_action_rejects_mic_collision_outside_price_scope(self, mic: str) -> None:
+        prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0)]).with_columns(pl.lit(mic).alias("mic"))
+        proofs = [_coverage_proof("XNYS", "A", D01, D02), _coverage_proof("XNAS", "A", D01, D02)]
+        with pytest.raises(AvailabilityContractError, match="identity is ambiguous"):
+            _strict_with_price_adjustment(prices, _ticker_only_action("A", D02), coverage=proofs, as_of=D02)
+
+    def test_ticker_only_action_resolves_unique_source_proof(self) -> None:
+        prices = _prices([("UNIQUE", D01, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        proof = _coverage_proof("XNYS", "UNIQUE", D01, D02)
+        out = _strict_with_price_adjustment(prices, _ticker_only_action("UNIQUE", D02), coverage=[proof], as_of=D02)
+        assert out["close"].to_list() == pytest.approx([50.0])
+
+    def test_duplicate_same_identity_proofs_do_not_create_ambiguity(self) -> None:
+        prices = _prices([("UNIQUE", D01, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        proof = _coverage_proof("XNYS", "UNIQUE", D01, D02)
+        out = _strict_with_price_adjustment(prices, _ticker_only_action("UNIQUE", D02), coverage=[proof, proof], as_of=D02)
+        assert out["close"].to_list() == pytest.approx([50.0])
+
+    def test_ticker_only_event_cannot_borrow_other_source_window(self) -> None:
+        prices = _prices([("A", D02, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        requested_proof = _coverage_proof("XNYS", "A", D02, D02)
+        other_window = _coverage_proof("XNYS", "A", D01, D01, source="other-provider")
+        with pytest.raises(AvailabilityContractError, match="outside the requested coverage window"):
+            _strict_with_price_adjustment(
+                prices,
+                _ticker_only_action("A", D01, source="other-provider"),
+                coverage=[requested_proof, other_window],
+                as_of=D02,
+            )
+
+    def test_source_expiry_must_reach_decision_session_close(self) -> None:
+        prices = _prices([("A", D02, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        proof = _coverage(prices, None)[0].model_dump()
+        proof["source_valid_until"] = datetime(2024, 1, 2, 20, 0, tzinfo=UTC)
+        with pytest.raises(AvailabilityContractError, match="valid through cutoff"):
+            _strict_with_price_adjustment(prices, _actions([]), coverage=pl.DataFrame([proof]))
+
+    def test_source_issued_expiry_replaces_arbitrary_age_limit(self) -> None:
+        old_day = date(2024, 2, 1)
+        prices = _prices([("A", old_day, 100.0, 100.0, 100.0, 100.0, 1.0)])
+        proof = _coverage(prices, None)
+        out = _strict_with_price_adjustment(prices, _actions([]), coverage=proof)
+        assert out["action_source_age_days"][0] > 7
+        assert out["action_source_available_at"][0] == proof[0].source_available_at
+        assert out["action_source_valid_until"][0] == proof[0].source_valid_until
+        assert out["action_coverage_start"][0] == proof[0].coverage_start
+        assert out["action_coverage_end"][0] == proof[0].coverage_end
 
     def test_empty_actions_passthrough(self) -> None:
         prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0)])
         actions = _actions([])
         out = with_price_adjustment(prices, actions)
-        assert out.equals(prices)
+        assert out["close"].to_list() == prices["close"].to_list()
+        assert out["action_coverage"].to_list() == [1]
 
-    def test_no_ohlc_passthrough(self) -> None:
-        prices = pl.DataFrame({"ticker": ["A"], "date": [D01], "volume": [1.0]})
-        actions = _actions([("A", D02, "split", 0.5)])
-        out = with_price_adjustment(prices, actions)
-        assert out.equals(prices)
+    def test_no_ohlc_fails_closed(self) -> None:
+        prices = pl.DataFrame({"market": ["us_equity"], "mic": ["XNYS"], "symbol": ["A"], "ticker": ["A"], "date": [D01], "volume": [1.0]})
+        with pytest.raises(AvailabilityContractError, match="no OHLC"):
+            _strict_with_price_adjustment(prices, _actions([]), coverage=_coverage(prices, None))
 
-    def test_volume_and_adj_close_untouched(self) -> None:
+    def test_volume_scales_and_adj_close_is_untouched(self) -> None:
         prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 5_000.0)]).with_columns(pl.lit(95.0).alias("adj_close"))
         actions = _actions([("A", D02, "split", 0.5)])
-        out = with_price_adjustment(prices, actions)
-        assert out["volume"].to_list() == [5_000.0]
+        out = with_price_adjustment(prices, actions, as_of=D02)
+        assert out["volume"].to_list() == [10_000.0]
         assert out["adj_close"].to_list() == [95.0]
         assert out["close"].to_list() == pytest.approx([50.0])
 
@@ -214,22 +310,21 @@ class TestGuardsAndSemantics:
         # Row order preserved: D03, D01, D02 -> factors 1.0, 0.25, 0.5.
         assert out["close"].to_list() == pytest.approx([50.0, 25.0, 25.0])
 
-    def test_missing_price_column_raises(self) -> None:
-        prices = pl.DataFrame({"date": [D01], "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0]})
-        actions = _actions([("A", D02, "split", 0.5)])
-        with pytest.raises(ValueError, match="ticker"):
-            with_price_adjustment(prices, actions)
+    def test_missing_price_identity_fails_closed(self) -> None:
+        prices = pl.DataFrame({"date": [D01], "open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0], "ticker": ["A"]})
+        with pytest.raises(AvailabilityContractError, match="price identity is unknown"):
+            _strict_with_price_adjustment(prices, _actions([]), coverage=_coverage(_prices([("A", D01, 1, 1, 1, 1, 1)]), None))
 
     def test_missing_action_column_raises(self) -> None:
         prices = _prices([("A", D01, 1.0, 1.0, 1.0, 1.0, 1.0)])
         with pytest.raises(ValueError, match="ex_date"):
             with_price_adjustment(prices, pl.DataFrame({"ticker": ["A"], "action": ["split"], "value": [0.5]}))
 
-    def test_unknown_action_rows_ignored(self) -> None:
+    def test_unknown_action_rows_fail_closed(self) -> None:
         prices = _prices([("A", D01, 100.0, 100.0, 100.0, 100.0, 1.0), ("A", D02, 50.0, 50.0, 50.0, 50.0, 1.0)])
         actions = _actions([("A", D02, "merger", 0.5)])
-        out = with_price_adjustment(prices, actions)
-        assert out["close"].to_list() == pytest.approx([100.0, 50.0])
+        with pytest.raises(AvailabilityContractError, match="unknown corporate action"):
+            with_price_adjustment(prices, actions)
 
     def test_empty_prices_passthrough(self) -> None:
         prices = _prices([])

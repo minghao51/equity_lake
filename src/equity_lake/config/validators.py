@@ -12,14 +12,22 @@ from equity_lake.signals.models import SignalConfig
 from equity_lake.signals.models import Watchlist as SignalWatchlist
 
 
-def validate_tickers(filepath: Path) -> list[str]:
+class ValidationErrors(list[str]):
+    """List-compatible validation errors with nonfatal ticker warnings."""
+
+    def __init__(self, errors: list[str] | None = None) -> None:
+        super().__init__(errors or [])
+        self.warnings: list[str] = []
+
+
+def validate_tickers(filepath: Path) -> ValidationErrors:
     """Validate tickers.yaml structure and content via the canonical models.
 
     Structural checks (required fields, types, duplicate symbols) are enforced
     by the pydantic ``TickerConfigRoot`` model; content-format checks (symbol
     regex, unknown group references) come from ``TickerConfigRoot.validate_config``.
     """
-    errors: list[str] = []
+    errors = ValidationErrors()
 
     if not filepath.exists():
         errors.append(f"File not found: {filepath}")
@@ -56,6 +64,7 @@ def validate_tickers(filepath: Path) -> list[str]:
 
     result = instance.validate_config()
     errors.extend(result["errors"])
+    errors.warnings.extend(result["warnings"])
     return errors
 
 

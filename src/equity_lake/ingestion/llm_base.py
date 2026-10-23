@@ -1,8 +1,9 @@
-"""Base class for LLM batch processors.
+"""Base utilities for legacy LLM batch processors.
 
-Provides the shared async infrastructure (DeepSeek client init, tenacity
-retry, concurrent batch processing, fallback handling) used by both
-``DeepSeekBatchProcessor`` (articles) and ``SECSectionProcessor`` (SEC filings).
+Client construction remains available for compatibility, but direct batch and
+corpus-processing calls fail closed until a bounded provider adapter can report
+actual cost. The supported paid-work boundary is an explicitly authorized replay
+callback with finite estimates and provider-reported actual costs.
 
 Subclasses provide:
     - ``system_prompt``: LLM system prompt text
@@ -16,7 +17,6 @@ Subclasses provide:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 from abc import ABC, abstractmethod
 from typing import Any
@@ -24,9 +24,9 @@ from typing import Any
 import polars as pl
 import structlog
 from openai import AsyncOpenAI
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
-from equity_lake.core.retry import build_retry_decorator
+from equity_lake.ingestion.replay import ReplayAuthorizationError
 
 logger = structlog.get_logger()
 
@@ -52,7 +52,7 @@ class RetryableError(Exception):
 
 
 class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
-    """Generic async batch processor for LLM-based extraction.
+    """Legacy LLM processor whose unbounded execution methods are disabled.
 
     Args:
         batch_size: Number of items per API call.
@@ -78,81 +78,23 @@ class BaseLLMBatchProcessor[BatchT: BaseModel, ItemT: BaseModel](ABC):
         self.semaphore = asyncio.Semaphore(max_concurrency)
         self.max_body_chars = max_body_chars
 
-        self._retry_decorator = build_retry_decorator(
-            attempts=3,
-            wait_multiplier=1,
-            wait_min=2,
-            wait_max=30,
-            retry_on=RetryableError,
-            log=logger,
+    async def process_batch(self, batch: list[dict[str, Any]]) -> BatchT:
+        """Reject direct provider calls without bounded authorization/cost accounting."""
+        del batch
+        raise ReplayAuthorizationError(
+            "Direct LLM batch calls are disabled until a bounded provider adapter reports actual cost. "
+            "Use an explicitly authorized replay callback with estimate and actual-cost reporting."
         )
 
-    async def process_batch(self, batch: list[dict[str, Any]]) -> BatchT:
-        @self._retry_decorator
-        async def _call() -> BatchT:
-            async with self.semaphore:
-                user_content = self._format_batch(batch)
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": self.system_prompt},
-                        {"role": "user", "content": user_content},
-                    ],
-                    response_format={"type": "json_object"},
-                    max_tokens=8192,
-                )
-
-                content = response.choices[0].message.content
-                if not content or not content.strip():
-                    raise RetryableError("DeepSeek returned empty content")
-
-                try:
-                    parsed = json.loads(content)
-                except json.JSONDecodeError as e:
-                    raise RetryableError(f"Invalid JSON: {e}") from e
-
-                try:
-                    return self.batch_model.model_validate(parsed)  # type: ignore[return-value]
-                except ValidationError as e:
-                    raise RetryableError(f"Validation failed: {e}") from e
-
-        result: BatchT = await _call()
-        return result
-
     async def process_all(self, bronze_df: pl.DataFrame) -> pl.DataFrame:
+        """Reject corpus-wide processing, which cannot enforce a scoped spend cap."""
         if bronze_df.is_empty():
             logger.warning("llm_empty_bronze_input", log_label=self.log_label)
             return pl.DataFrame()
-
-        rows = bronze_df.to_dicts()
-        batches = [rows[i : i + self.batch_size] for i in range(0, len(rows), self.batch_size)]
-
-        logger.info(
-            f"{self.log_label} batch processing starting",
-            total_items=len(rows),
-            batch_count=len(batches),
+        raise ReplayAuthorizationError(
+            "Unbounded LLM corpus processing is disabled until a bounded provider adapter reports actual cost. "
+            "Use an explicitly authorized replay callback with estimate and actual-cost reporting."
         )
-
-        tasks = [self.process_batch(b) for b in batches]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        extracted: list[ItemT] = []
-        failed_count = 0
-
-        for i, result in enumerate(results):
-            if isinstance(result, BaseException):
-                failed_count += len(batches[i])
-                logger.warning(
-                    f"{self.log_label} batch failed, using fallback",
-                    error=str(result),
-                    batch_size=len(batches[i]),
-                )
-                extracted.extend(self._fallback(batches[i]))
-            else:
-                extracted.extend(result.items)  # type: ignore[attr-defined]
-
-        logger.info("llm_processing_complete", log_label=self.log_label, extracted=len(extracted), failed=failed_count)
-        return self._to_silver_df(extracted, bronze_df)
 
     @abstractmethod
     def _format_batch(self, batch: list[dict[str, Any]]) -> str:

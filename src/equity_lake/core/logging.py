@@ -7,6 +7,7 @@ and automatic timing metrics for better observability.
 
 import contextvars
 import logging
+import re
 import sys
 import time
 import uuid
@@ -21,6 +22,18 @@ import structlog
 _correlation_id: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="")
 _configured_log_files: set[Path] = set()
 _logging_initialized = False
+_SECRET_KEY_RE = re.compile(r"(api[_-]?key|secret|token|password|credential|private[_-]?key|webhook[_-]?url)", re.IGNORECASE)
+
+
+def redact_secrets(obj: Any) -> Any:
+    """Recursively redact sensitive settings before logging or rendering them."""
+    if isinstance(obj, dict):
+        return {
+            key: ("***REDACTED***" if isinstance(key, str) and _SECRET_KEY_RE.search(key) else redact_secrets(value)) for key, value in obj.items()
+        }
+    if isinstance(obj, list):
+        return [redact_secrets(item) for item in obj]
+    return obj
 
 
 def get_correlation_id() -> str:
@@ -101,6 +114,11 @@ def setup_structured_logging(
         _logging_initialized = True
     else:
         logging.getLogger().setLevel(getattr(logging, level.upper()))
+
+    # HTTP client debug/info events include credential-bearing URL paths/query
+    # strings. Emit our sanitized operational events instead of raw wire logs.
+    for name in ("httpx", "httpcore", "urllib3", "requests"):
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     # Build structlog processors
     processors: list[Any] = [
@@ -198,4 +216,5 @@ __all__ = [
     "timer",
     "correlation_context",
     "get_correlation_id",
+    "redact_secrets",
 ]

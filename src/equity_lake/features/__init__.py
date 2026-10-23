@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
 import structlog
+
+from equity_lake.core.instruments import InstrumentKey  # pyright: ignore[reportMissingImports] -- source import verified by uv
 
 if TYPE_CHECKING:
     from equity_lake.features.engineering import FeatureEngineer
@@ -55,6 +58,7 @@ def run_feature_job(
     include_analyst_ratings: bool = False,
     include_sec_features: bool = False,
     diagnostics: dict[str, Any] | None = None,
+    instruments: Sequence[InstrumentKey] | None = None,
 ) -> pl.DataFrame:
     """Generate features over a warm-up window, then persist the requested range.
 
@@ -84,20 +88,36 @@ def run_feature_job(
             include_analyst_ratings=include_analyst_ratings,
             include_sec_features=include_sec_features,
             diagnostics=engineer_diagnostics,
+            instruments=instruments,
         )
     finally:
         engineer.close()
 
+    phase1_skipped: dict[str, str] = dict(engineer_diagnostics.get("phase1_skipped", {}))
+    requested_instruments = list(instruments or ())
+    requested_symbol_counts: dict[str, int] = {}
+    for instrument in requested_instruments:
+        requested_symbol_counts[instrument.symbol] = requested_symbol_counts.get(instrument.symbol, 0) + 1
     if diagnostics is not None:
         # Fill early so even the no-output error paths below report scope with
-        # reason codes rather than an empty payload.
-        phase1_skipped: dict[str, str] = dict(engineer_diagnostics.get("phase1_skipped", {}))
+        # reason codes rather than an empty payload. Identity fields are
+        # additive; legacy ticker diagnostics remain available to callers.
+        missing_instruments = {
+            instrument.display_key: phase1_skipped.get(instrument.display_key, phase1_skipped.get(instrument.symbol, "missing_output_bar"))
+            for instrument in requested_instruments
+        }
+        missing_tickers = {
+            instrument.symbol if requested_symbol_counts[instrument.symbol] == 1 else instrument.display_key: reason
+            for instrument, reason in zip(requested_instruments, missing_instruments.values(), strict=True)
+        }
         diagnostics.clear()
         diagnostics.update(
             {
-                "requested": list(tickers),
+                "requested": [instrument.symbol for instrument in requested_instruments] if instruments is not None else list(tickers),
+                "requested_instruments": [instrument.model_dump() for instrument in requested_instruments],
                 "produced": [],
-                "missing": {t: phase1_skipped.get(t, "missing_output_bar") for t in tickers},
+                "missing": missing_tickers if instruments is not None else {t: phase1_skipped.get(t, "missing_output_bar") for t in tickers},
+                "missing_instruments": missing_instruments,
                 "phase1_skipped": phase1_skipped,
             }
         )
@@ -112,9 +132,13 @@ def run_feature_job(
     # runs that compute the target carry label metadata; ``compute_target=False``
     # neither stamps availability nor finalizes labels.
     if compute_target:
-        from equity_lake.features.labels import add_label_availability
+        from equity_lake.features.labels import AVAILABILITY_COLUMN, TARGET_COLUMN, add_label_availability
 
         features_df = add_label_availability(features_df)
+        if TARGET_COLUMN in features_df.columns:
+            features_df = features_df.with_columns(pl.col(TARGET_COLUMN).cast(pl.Float64, strict=False))
+        if AVAILABILITY_COLUMN in features_df.columns:
+            features_df = features_df.with_columns(pl.col(AVAILABILITY_COLUMN).cast(pl.Date, strict=False))
 
     output_df = features_df.filter((pl.col("date") >= pl.lit(output_start_date)) & (pl.col("date") <= pl.lit(output_end_date)))
 
@@ -122,9 +146,33 @@ def run_feature_job(
         raise NoFeatureHistoryError("No features generated for the requested output window")
 
     if diagnostics is not None:
-        produced = sorted(output_df["ticker"].drop_nulls().unique().to_list()) if "ticker" in output_df.columns else []
-        diagnostics["produced"] = produced
-        diagnostics["missing"] = {t: phase1_skipped.get(t, "missing_output_bar") for t in tickers if t not in produced}
+        produced_instruments = (
+            [InstrumentKey(**row) for row in output_df.select("market", "mic", "symbol").unique().sort(["market", "mic", "symbol"]).to_dicts()]
+            if {"market", "mic", "symbol"}.issubset(output_df.columns)
+            else []
+        )
+        diagnostics["produced"] = (
+            [instrument.symbol for instrument in produced_instruments]
+            if instruments is not None
+            else sorted(output_df["ticker"].drop_nulls().unique().to_list())
+            if "ticker" in output_df.columns
+            else []
+        )
+        diagnostics["produced_instruments"] = [instrument.model_dump() for instrument in produced_instruments]
+        if instruments is not None:
+            produced_keys = {instrument.tuple for instrument in produced_instruments}
+            missing_keys = [instrument for instrument in requested_instruments if instrument.tuple not in produced_keys]
+            diagnostics["missing_instruments"] = {
+                instrument.display_key: phase1_skipped.get(instrument.display_key, phase1_skipped.get(instrument.symbol, "missing_output_bar"))
+                for instrument in missing_keys
+            }
+            diagnostics["missing"] = {
+                instrument.symbol if requested_symbol_counts[instrument.symbol] == 1 else instrument.display_key: reason
+                for instrument, reason in zip(missing_keys, diagnostics["missing_instruments"].values(), strict=True)
+            }
+        else:
+            produced_symbols = set(diagnostics["produced"])
+            diagnostics["missing"] = {t: phase1_skipped.get(t, "missing_output_bar") for t in tickers if t not in produced_symbols}
 
     from equity_lake.ingestion.writers import upsert_dataset
 

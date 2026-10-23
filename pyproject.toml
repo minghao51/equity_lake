@@ -254,7 +254,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = ["--strict-markers", "--strict-config", "-ra", "-q", "--durations=10", "--import-mode=importlib"]
+addopts = ["--strict-markers", "--strict-config", "-ra", "-q", "--durations=10", "--import-mode=importlib", "-m", "not network and not integration"]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 markers = [

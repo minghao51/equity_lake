@@ -1,18 +1,20 @@
 """Tests for the SEC section LLM processor."""
 
+import asyncio
 import json
 from datetime import date, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import SEC_EXTRACTION_COLUMNS
-from equity_lake.ingestion.sec_processor import SECSectionExtraction, SECSectionProcessor
+from equity_lake.core.schemas import SEC_EXTRACTION_COLUMNS  # type: ignore[import-untyped]
+from equity_lake.ingestion.replay import ReplayAuthorizationError  # type: ignore[import-untyped]
+from equity_lake.ingestion.sec_processor import SECSectionExtraction, SECSectionProcessor, run_sec_processing  # type: ignore[import-untyped]
 
 
 @pytest.fixture
-def mock_bronze_df():
+def mock_bronze_df() -> pl.DataFrame:
     return pl.DataFrame(
         [
             {
@@ -41,18 +43,18 @@ def mock_bronze_df():
 
 
 class TestSECSectionProcessorInit:
-    def test_requires_api_key(self):
+    def test_requires_api_key(self) -> None:
         with patch.dict("os.environ", {}, clear=True), pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
             SECSectionProcessor()
 
-    def test_init_with_key(self):
+    def test_init_with_key(self) -> None:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = SECSectionProcessor(batch_size=3)
             assert proc.batch_size == 3
 
 
 class TestSECProcessing:
-    def test_to_silver_df_produces_correct_schema(self, mock_bronze_df):
+    def test_to_silver_df_produces_correct_schema(self, mock_bronze_df: pl.DataFrame) -> None:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = SECSectionProcessor()
 
@@ -80,7 +82,7 @@ class TestSECProcessing:
         assert row["section_type"] == "risk_factors"
         assert row["risk_sentiment"] == -0.5
 
-    def test_neutral_fallback_returns_extractions(self, mock_bronze_df):
+    def test_neutral_fallback_returns_extractions(self, mock_bronze_df: pl.DataFrame) -> None:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = SECSectionProcessor()
 
@@ -92,7 +94,7 @@ class TestSECProcessing:
         assert results[0].risk_sentiment == 0.0
         assert results[0].guidance_direction == "none"
 
-    def test_format_batch_includes_ticker_and_section(self, mock_bronze_df):
+    def test_format_batch_includes_ticker_and_section(self, mock_bronze_df: pl.DataFrame) -> None:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = SECSectionProcessor()
 
@@ -101,48 +103,27 @@ class TestSECProcessing:
         assert "AAPL" in formatted
         assert "risk_factors" in formatted
 
-    def test_process_all_handles_empty_df(self):
+    def test_process_all_handles_empty_df(self) -> None:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = SECSectionProcessor()
 
         result = pytest.importorskip("asyncio").run(proc.process_all(pl.DataFrame()))
         assert result.is_empty()
 
-    def test_process_all_returns_silver_df(self, mock_bronze_df):
-        mock_batch_result = json.dumps(
-            {
-                "items": [
-                    {
-                        "id": "sec-001",
-                        "ticker": "AAPL",
-                        "section_type": "risk_factors",
-                        "risk_sentiment": -0.6,
-                        "key_risks": ["supply chain"],
-                        "guidance_direction": "negative",
-                        "forward_statements": ["headwinds expected"],
-                        "management_tone": -0.3,
-                        "new_vs_repeated": "new",
-                        "summary": "Increased risk factors identified.",
-                    }
-                ]
-            }
-        )
-
-        mock_choice = type(
-            "MockChoice",
-            (),
-            {"message": type("MockMsg", (), {"content": mock_batch_result})},
-        )()
-        mock_response = type("MockResp", (), {"choices": [mock_choice]})()
-
+    def test_process_all_rejects_unbounded_paid_call(self, mock_bronze_df: pl.DataFrame) -> None:
         with patch.dict("os.environ", {"DEEPSEEK_API_KEY": "test-key"}):
             proc = SECSectionProcessor()
-            proc.client.chat.completions.create = AsyncMock(return_value=mock_response)
+        with (
+            patch.object(proc.client.chat.completions, "create") as create,
+            pytest.raises(ReplayAuthorizationError, match="Unbounded LLM corpus processing"),
+        ):
+            asyncio.run(proc.process_all(mock_bronze_df))
+        create.assert_not_called()
 
-            import asyncio
-
-            df = asyncio.run(proc.process_all(mock_bronze_df))
-
-        assert not df.is_empty()
-        assert df.row(0, named=True)["risk_sentiment"] == -0.6
-        assert df.row(0, named=True)["ticker"] == "AAPL"
+    def test_legacy_sec_helper_fails_before_processor_construction(self, mock_bronze_df: pl.DataFrame) -> None:
+        with (
+            patch("equity_lake.ingestion.sec_processor.SECSectionProcessor") as processor,
+            pytest.raises(ReplayAuthorizationError, match="run_sec_processing is disabled"),
+        ):
+            run_sec_processing(mock_bronze_df)
+        processor.assert_not_called()

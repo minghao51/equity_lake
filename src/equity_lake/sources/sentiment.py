@@ -16,6 +16,20 @@ from equity_lake.sources.base import MarketDataFetcher
 logger = structlog.get_logger()
 
 
+def _safe_status_code(exc: BaseException) -> int | None:
+    """Return an integer HTTP status without serializing provider errors."""
+    for candidate in (exc, exc.__cause__):
+        if candidate is None:
+            continue
+        response = getattr(candidate, "response", None)
+        status_code = getattr(candidate, "status_code", None)
+        if status_code is None:
+            status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int) and not isinstance(status_code, bool):
+            return status_code
+    return None
+
+
 # Finnhub API endpoint
 FINNHUB_BASE_URL = "https://finnhub.io/api/v1"
 
@@ -149,14 +163,19 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
             )
             response.raise_for_status()
         except Exception as exc:
-            logger.error("API request failed for %s: %s", ticker, exc)
+            logger.error(
+                "finnhub_sentiment_request_failed",
+                ticker=ticker,
+                error_type=type(exc).__name__,
+                status_code=_safe_status_code(exc),
+            )
             return []
 
         # Parse JSON response
         try:
             data = response.json()
         except Exception as exc:
-            logger.error("Failed to parse JSON response for %s: %s", ticker, exc)
+            logger.error("finnhub_sentiment_json_parse_failed", ticker=ticker, error_type=type(exc).__name__)
             return []
 
         if not isinstance(data, dict):
@@ -240,10 +259,10 @@ class FinnhubSocialSentimentFetcher(MarketDataFetcher):
 
         except Exception as exc:
             logger.warning(
-                "Failed to parse sentiment metric for %s from %s: %s",
-                ticker,
-                source,
-                exc,
+                "finnhub_sentiment_metric_parse_failed",
+                ticker=ticker,
+                source=source,
+                error_type=type(exc).__name__,
             )
             return None
 

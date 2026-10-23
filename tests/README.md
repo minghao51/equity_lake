@@ -7,13 +7,12 @@ layout is organized by scope first and feature second.
 
 ```text
 tests/
-├── conftest.py                 # Shared fixtures, auto-mark hook
+├── conftest.py                 # Shared synthetic fixtures, auto-mark hook
 ├── integration/               # Cross-module integration coverage (auto-marked)
-├── unit/                      # Focused unit coverage (auto-marked)
-└── fixtures/                  # Static test fixtures
+└── unit/                      # Focused unit coverage (auto-marked)
 ```
 
-Tests are auto-marked by directory: `unit/` → `@pytest.mark.unit`, `integration/` → `@pytest.mark.integration` + `@pytest.mark.slow`. No need for manual markers unless overriding.
+Tests are auto-marked by directory: `unit/` → `@pytest.mark.unit`, `integration/` → `@pytest.mark.integration` + `@pytest.mark.slow`. Add `@pytest.mark.network` to any test that needs internet or provider credentials; the collection guard excludes those tests unless `--run-network` is supplied.
 
 ## Current Coverage Areas
 
@@ -23,17 +22,45 @@ Tests are auto-marked by directory: `unit/` → `@pytest.mark.unit`, `integratio
 ## Common Commands
 
 ```bash
+# Default selection is offline and excludes network and integration tests.
 uv run pytest -v
-uv run pytest tests/unit -v
-uv run pytest tests/integration -v
-uv run pytest -m unit -v
-uv run pytest -m integration -v
-uv run pytest -m "not slow" -v
+uv run pytest tests/unit -v -m "unit and not network and not integration"
+
+# Explicitly opt into integration and network-dependent coverage only when safe.
+uv run pytest --run-network -m integration -v
+uv run pytest --run-network -m "network or integration" -v
+
+uv run pytest -m "slow and not network and not integration" -v
 uv run pytest --cov=src/equity_lake --cov-report=term
 ```
 
-Use `make test`, `make test-unit`, and `make test-integration` when you want
-the standard project wrappers.
+The default pytest configuration explicitly selects `not network and not
+integration`; GitHub Actions uses the same selection. A collection guard also
+deselects `network`-marked tests when a command-line marker expression (such as
+`-m unit`) overrides that default. A subprocess regression exercises this with
+the real `tests/conftest.py`, rather than only a simulated collection hook.
+
+Before test collection, `tests/conftest.py` redirects default runtime data,
+model, and log roots to a unique `/tmp` directory for each pytest process (and
+each xdist worker), including already-imported Equity Lake path aliases.
+`PROJECT_ROOT`, configuration paths, and the tracked catalog remain anchored to
+the checkout. Runtime roots stay redirected throughout every test. The catalog
+path-layout contract executes `core.paths` source in a temporary `runpy`
+namespace to compare canonical constants without reloading the public module or
+restoring checkout paths; it invokes no directory-creation function.
+
+This is temporary-path isolation, not an OS sandbox or a guarantee against
+arbitrary test code accessing explicit checkout paths, network services, or
+external credentials. It redirects the application's default roots only.
+`--run-network` is the deliberate opt-in; `make test-network` includes
+integration tests because some older integration tests are not individually
+marked `network`. Those commands may contact external services and require
+credentials supplied outside the test runner; they do not load `.env` through
+dotenvx.
+
+The default `make test` target does not load dotenvx and runs only the offline,
+non-integration selection. Use `make test-unit` for offline unit tests and
+`make test-network` only when external access is authorized.
 
 ## Conventions
 
@@ -51,25 +78,9 @@ the standard project wrappers.
 
 ### GitHub Actions Workflow
 
-```yaml
-name: Quality
-
-on: [push, pull_request]
-
-jobs:
-  quality:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --group dev
-      - run: uv run ruff check .
-      - run: uv run mypy src
-      - run: uv run pytest -q
-```
+GitHub Actions runs Ruff lint and format checks, mypy, and pytest with the
+explicit fast selection `-m "not network and not integration"`. Network and
+integration tests are not part of that CI job.
 
 ---
 
@@ -77,7 +88,7 @@ jobs:
 
 ### Successful Test Run
 
-```
+```text
 tests/unit/test_fetchers.py::TestUSEquityFetcherBatching::test_initialization_with_default_batch_size PASSED
 tests/unit/test_fetchers.py::TestUSEquityFetcherBatching::test_initialization_with_custom_batch_size PASSED
 tests/unit/test_fetchers.py::TestUSEquityFetcherBatching::test_chunked_splits_tickers_correctly PASSED
@@ -115,22 +126,24 @@ tests/unit/test_fetchers.py::TestFetcherIntegration::test_hybrid_fetcher_reliabi
 
 ### Issue: Import Error for efinance
 
-```
+```text
 ImportError: efinance is not installed
 ```
 
 **Solution**:
+
 ```bash
 uv sync
 ```
 
 ### Issue: Tests Not Found
 
-```
+```text
 ERROR: file or module not found: tests/unit/test_fetchers.py
 ```
 
 **Solution**:
+
 ```bash
 # Run from project root
 cd /path/to/equity_lake
@@ -139,11 +152,12 @@ uv run pytest tests/unit/test_fetchers.py -v
 
 ### Issue: Mock Not Working
 
-```
+```text
 AttributeError: <MagicMock> does not have attribute 'stock'
 ```
 
 **Solution**: Ensure you're mocking at the right location:
+
 ```python
 # ✅ Correct
 @patch('equity_lake.sources.cn_efinance.efinance')

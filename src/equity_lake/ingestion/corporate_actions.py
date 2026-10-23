@@ -20,6 +20,7 @@ direct calls to :func:`ingest_corporate_actions`.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
@@ -27,7 +28,9 @@ from typing import Any, cast
 import polars as pl
 import structlog
 
+from equity_lake.core.availability import ActionCoverageProof  # pyright: ignore[reportMissingImports] -- source import verified by uv
 from equity_lake.core.paths import canonical_market
+from equity_lake.core.schemas import CORPORATE_ACTION_COVERAGE_SCHEMA, CORPORATE_ACTION_SCHEMA
 
 logger = structlog.get_logger()
 
@@ -43,6 +46,37 @@ def corporate_actions_table(market: str, layer: str = "bronze") -> str:
 
     root = cast(Path, getattr(paths, f"{layer.upper()}_CORPORATE_ACTIONS_DIR"))
     return f"{root.parent.name}/{root.name}/{canonical_market(market)}"
+
+
+def corporate_action_coverage_table(market: str) -> str:
+    """Lake-relative Silver table path for source-scoped action coverage.
+
+    Coverage is a separate typed dataset so a verified empty/no-action window
+    is representable without inventing an action event.
+    """
+    from equity_lake.core import paths
+
+    root = paths.SILVER_CORPORATE_ACTIONS_DIR
+    return f"{root.parent.name}/corporate_action_coverage/{canonical_market(market)}"
+
+
+def load_corporate_action_inputs(market: str, *, lake_dir: Path | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Read Silver action events and their separate verified coverage proofs.
+
+    Missing tables are returned as typed empty frames; strict consumers then
+    reject the absent proof instead of interpreting emptiness as no actions.
+    """
+    from equity_lake.storage.delta import DeltaReadError, read_delta
+
+    try:
+        actions = read_delta(corporate_actions_table(market, "silver"), lake_dir=lake_dir)
+    except DeltaReadError:
+        actions = pl.DataFrame(schema=CORPORATE_ACTION_SCHEMA)
+    try:
+        coverage = read_delta(corporate_action_coverage_table(market), lake_dir=lake_dir)
+    except DeltaReadError:
+        coverage = pl.DataFrame(schema=CORPORATE_ACTION_COVERAGE_SCHEMA)
+    return actions, coverage
 
 
 def max_stored_ex_dates(market: str) -> dict[str, date]:
@@ -82,6 +116,7 @@ def ingest_corporate_actions(
     tickers: list[str] | None = None,
     dry_run: bool = False,
     fetcher: Any = None,
+    coverage_proofs: Sequence[ActionCoverageProof] | None = None,
 ) -> dict[str, Any]:
     """Fetch corporate actions for *market* and write bronze + silver.
 
@@ -148,37 +183,76 @@ def ingest_corporate_actions(
     )
 
     df = fetcher.fetch_corporate_actions(since_by_ticker=since_by_ticker)
+    proof_values = coverage_proofs if coverage_proofs is not None else getattr(fetcher, "action_coverage_proofs", ())
+    proofs = [proof if isinstance(proof, ActionCoverageProof) else ActionCoverageProof.model_validate(proof) for proof in proof_values]
+    for proof in proofs:
+        if proof.market != canonical_market(market):
+            raise ValueError(f"Coverage proof market {proof.market!r} does not match ingest route {market!r}")
+    coverage_frame = pl.DataFrame([proof.as_row() for proof in proofs]) if proofs else pl.DataFrame()
 
-    if df.is_empty():
-        logger.info("corporate_actions_no_new_events", market=market, since=since)
-        return {"ok": True, "fetched": 0, "since": since, "market": market, "since_by_ticker": since_by_ticker}
+    if df.is_empty() and not proofs:
+        logger.info("corporate_actions_no_new_events_unverified_coverage", market=market, since=since)
+        return {"ok": True, "fetched": 0, "coverage_written": 0, "since": since, "market": market, "since_by_ticker": since_by_ticker}
 
     trading_date = date.today()
-    bronze_ok = upsert_dataset(
-        df,
-        corporate_actions_table(market, "bronze"),
-        trading_date,
-        dry_run=dry_run,
-        partition_by=["ex_date"],
-    )
-    silver_ok = upsert_dataset(
-        df,
-        corporate_actions_table(market, "silver"),
-        trading_date,
-        dry_run=dry_run,
-        partition_by=["ex_date"],
-    )
+    bronze_ok = True
+    silver_ok = True
+    if not df.is_empty():
+        bronze_ok = upsert_dataset(
+            df,
+            corporate_actions_table(market, "bronze"),
+            trading_date,
+            dry_run=dry_run,
+            partition_by=["ex_date"],
+        )
+        silver_ok = upsert_dataset(
+            df,
+            corporate_actions_table(market, "silver"),
+            trading_date,
+            dry_run=dry_run,
+            partition_by=["ex_date"],
+        )
+    coverage_ok = True
+    if not coverage_frame.is_empty():
+        coverage_ok = upsert_dataset(
+            coverage_frame,
+            corporate_action_coverage_table(market),
+            trading_date,
+            dry_run=dry_run,
+            partition_by=["coverage_end"],
+        )
 
     if dry_run:
-        logger.info("corporate_actions_dry_run", market=market, rows=df.height)
-        return {"ok": True, "fetched": df.height, "since": since, "market": market, "since_by_ticker": since_by_ticker}
+        logger.info("corporate_actions_dry_run", market=market, rows=df.height, coverage_rows=coverage_frame.height)
+        return {
+            "ok": True,
+            "fetched": df.height,
+            "coverage_written": coverage_frame.height,
+            "since": since,
+            "market": market,
+            "since_by_ticker": since_by_ticker,
+        }
 
-    ok = bool(bronze_ok and silver_ok)
+    ok = bool(bronze_ok and silver_ok and coverage_ok)
     if not ok:
-        logger.error("corporate_actions_write_failed", market=market, bronze=bronze_ok, silver=silver_ok)
+        logger.error("corporate_actions_write_failed", market=market, bronze=bronze_ok, silver=silver_ok, coverage=coverage_ok)
     else:
-        logger.info("corporate_actions_ingested", market=market, rows=df.height, since=since)
-    return {"ok": ok, "fetched": df.height, "since": since, "market": market, "since_by_ticker": since_by_ticker}
+        logger.info("corporate_actions_ingested", market=market, rows=df.height, coverage_rows=coverage_frame.height, since=since)
+    return {
+        "ok": ok,
+        "fetched": df.height,
+        "coverage_written": coverage_frame.height,
+        "since": since,
+        "market": market,
+        "since_by_ticker": since_by_ticker,
+    }
 
 
-__all__ = ["corporate_actions_table", "ingest_corporate_actions", "max_stored_ex_date", "max_stored_ex_dates"]
+__all__ = [
+    "corporate_action_coverage_table",
+    "corporate_actions_table",
+    "ingest_corporate_actions",
+    "load_corporate_action_inputs",
+    "max_stored_ex_date",
+    "max_stored_ex_dates",
+]

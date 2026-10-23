@@ -20,12 +20,14 @@ app = typer.Typer(
 
 
 @app.callback()
-def _main_callback() -> None:
-    """Ensure runtime directories exist before any command runs."""
-    ensure_dirs()
+def _main_callback(ctx: typer.Context) -> None:
+    """Defer signal paths until dry-run is known; keep doctor read-only."""
+    if ctx.invoked_subcommand not in {"signal", "doctor", "tracking"}:
+        ensure_dirs()
 
 
 signal_app = typer.Typer(help="Signal scanning for equity watchlists")
+tracking_app = typer.Typer(help="Private canonical watchlists, readiness, and opportunity delivery")
 dashboard_app = typer.Typer(help="Dashboard build and serve")
 bootstrap_app = typer.Typer(help="Data bootstrapping and sample generation")
 config_app = typer.Typer(help="Configuration management")

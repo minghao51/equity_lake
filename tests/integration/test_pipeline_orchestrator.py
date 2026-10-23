@@ -1,5 +1,9 @@
 """Tests for the EOD pipeline executor (pipeline.py)."""
 
+# These legacy integration fixtures predate strict annotations; production code
+# and unit-level identity fixtures carry the strict types.
+# mypy: disable-error-code="no-untyped-def,import-untyped"
+
 from datetime import date
 
 from equity_lake.core.config import TickerConfig
@@ -101,16 +105,23 @@ def test_authorized_history_recovery_is_scoped_and_forwards_dry_run(monkeypatch)
     import polars as pl
 
     feature_calls = iter([pl.DataFrame({"ticker": ["AAPL"]})])
+    first_feature_call = True
 
     def run_feature_job(**kwargs):
-        if not hasattr(run_feature_job, "called"):
-            run_feature_job.called = True
+        nonlocal first_feature_call
+        if first_feature_call:
+            first_feature_call = False
             raise NoFeatureHistoryError("No features generated")
         return next(feature_calls)
 
     monkeypatch.setattr("equity_lake.pipeline.run_feature_job", run_feature_job)
     backfill_calls = []
-    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or _backfill_result(1))
+
+    def record_backfill(**kwargs):
+        backfill_calls.append(kwargs)
+        return _backfill_result(1)
+
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", record_backfill)
 
     results = execute_eod_pipeline(
         trading_date=date(2024, 1, 2),
@@ -145,7 +156,12 @@ def test_backfill_feature_history_scopes_tickers_only_callers(monkeypatch):
     """A tickers-only caller must not trigger an unscoped all-ticker backfill."""
 
     backfill_calls = []
-    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or _backfill_result(3))
+
+    def record_backfill(**kwargs):
+        backfill_calls.append(kwargs)
+        return _backfill_result(3)
+
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", record_backfill)
 
     # Tickers-only caller: previously forwarded explicit_tickers=None → unscoped 120-day all-ticker backfill.
     written = _backfill_feature_history(date(2024, 1, 2), ["MSFT", "NVDA"], ["us_equity"], TickerConfig())
@@ -169,7 +185,12 @@ def test_authorized_history_recovery_scopes_backfill_to_price_markets(monkeypatc
     """Recovery only re-ingests required price markets, not enrichments."""
 
     backfill_calls = []
-    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", lambda **kwargs: backfill_calls.append(kwargs) or _backfill_result(1))
+
+    def record_backfill(**kwargs):
+        backfill_calls.append(kwargs)
+        return _backfill_result(1)
+
+    monkeypatch.setattr("equity_lake.pipeline.backfill_date_range", record_backfill)
     monkeypatch.setattr(
         "equity_lake.pipeline.run_feature_job",
         lambda **_: (_ for _ in ()).throw(NoFeatureHistoryError("No features generated")),
@@ -397,7 +418,7 @@ def test_execute_eod_pipeline_feature_stage(monkeypatch):
 def test_execute_eod_pipeline_ml_stage(monkeypatch):
     """ML stage should record per-ticker inference results."""
 
-    def fake_run_prediction_job(*, trading_date, tickers):
+    def fake_run_prediction_job(*, trading_date, tickers, **_kwargs):
         return True, {
             "AAPL": {
                 "success": True,
@@ -594,7 +615,12 @@ def test_feature_write_failure_still_reports_coverage(monkeypatch):
     results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=["AAPL"], skip_ml=True)
 
     assert results["features"]["success"] is False
-    assert results["features"]["coverage"] == {"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}}
+    coverage = results["features"]["coverage"]
+    assert coverage["requested"] == ["AAPL"]
+    assert coverage["produced"] == ["AAPL"]
+    assert coverage["missing"] == {}
+    assert coverage["requested_instruments"] == [{"market": "us_equity", "mic": "XNAS", "symbol": "AAPL"}]
+    assert coverage["produced_instruments"] == coverage["requested_instruments"]
     assert "Feature write" in results["features"]["error"]
 
 
@@ -616,7 +642,15 @@ def test_feature_job_crash_does_not_fabricate_coverage_reasons(monkeypatch):
     )
 
     assert results["features"]["success"] is False
-    assert results["features"]["coverage"] == {"requested": ["AAPL", "MSFT"], "produced": [], "missing": {}}
+    coverage = results["features"]["coverage"]
+    assert coverage["requested"] == ["AAPL", "MSFT"]
+    assert coverage["produced"] == []
+    assert coverage["missing"] == {}
+    assert coverage["requested_instruments"] == [
+        {"market": "us_equity", "mic": "XNAS", "symbol": "AAPL"},
+        {"market": "us_equity", "mic": "XNAS", "symbol": "MSFT"},
+    ]
+    assert coverage["produced_instruments"] == []
 
 
 def test_explicit_empty_scope_is_rejected_not_broadened():
@@ -693,11 +727,11 @@ def test_feature_coverage_failure_fails_stage_and_blocks_ml(monkeypatch):
     results = execute_eod_pipeline(trading_date=date(2024, 1, 2), markets=["us_equity"], tickers=["AAPL", "MSFT"])
 
     assert results["features"]["success"] is False
-    assert results["features"]["coverage"] == {
-        "requested": ["AAPL", "MSFT"],
-        "produced": ["AAPL"],
-        "missing": {"MSFT": "insufficient_history"},
-    }
+    coverage = results["features"]["coverage"]
+    assert coverage["requested"] == ["AAPL", "MSFT"]
+    assert coverage["produced"] == ["AAPL"]
+    assert coverage["missing"] == {"MSFT": "insufficient_history"}
+    assert coverage["missing_instruments"] == {"us_equity/XNAS/MSFT": "insufficient_history"}
     assert "MSFT=insufficient_history" in results["features"]["error"]
     assert results["ml"]["skipped"] is True
 
@@ -722,7 +756,12 @@ def test_full_coverage_reports_requested_produced_missing(monkeypatch):
     )
 
     assert results["features"]["success"] is True
-    assert results["features"]["coverage"] == {"requested": ["AAPL"], "produced": ["AAPL"], "missing": {}}
+    coverage = results["features"]["coverage"]
+    assert coverage["requested"] == ["AAPL"]
+    assert coverage["produced"] == ["AAPL"]
+    assert coverage["missing"] == {}
+    assert coverage["requested_instruments"] == [{"market": "us_equity", "mic": "XNAS", "symbol": "AAPL"}]
+    assert coverage["produced_instruments"] == coverage["requested_instruments"]
 
 
 def test_optional_failure_is_visible_and_non_blocking(monkeypatch):
@@ -800,7 +839,7 @@ def test_bronze_to_silver_no_work_is_a_skip_not_a_failure(monkeypatch):
 
     monkeypatch.setattr("equity_lake.pipeline.run_daily_ingestion", lambda **_: {"us_equity": _WRITTEN, "rss_news": _WRITTEN})
 
-    def no_bronze(trading_date, diagnostics=None):
+    def no_bronze(trading_date, diagnostics=None, scope=None):
         if diagnostics is not None:
             diagnostics.update({"mode": "no_bronze_data"})
         return False
@@ -820,7 +859,7 @@ def test_bronze_to_silver_no_work_is_a_skip_not_a_failure(monkeypatch):
     assert stage["skipped"] is True
     assert stage["reason"] == "no_bronze_work"
 
-    def processing_failed(trading_date, diagnostics=None):
+    def processing_failed(trading_date, diagnostics=None, scope=None):
         if diagnostics is not None:
             diagnostics.update({"mode": "processing_failed", "error": "llm quota"})
         return False
@@ -971,7 +1010,7 @@ class TestPipelineSessionScheduling:
         )
 
         assert results["ingestion"]["success"] is True
-        assert results["ingestion"]["not_scheduled"] == ["us_equity"]
+        assert results["ingestion"]["not_scheduled"] == []
         assert results["ingestion"]["required_failures"] == []
         assert results["ingestion"]["partial"] is False
         assert results["scope"]["not_scheduled"] == ["us_equity"]
@@ -998,7 +1037,7 @@ class TestPipelineSessionScheduling:
         results = execute_eod_pipeline(trading_date=date(2024, 1, 1), markets=["us_equity", "cn_ashare"])
 
         assert results["ingestion"]["success"] is True
-        assert results["ingestion"]["not_scheduled"] == ["cn_ashare", "us_equity"]
+        assert results["ingestion"]["not_scheduled"] == []
         assert results["ingestion"]["required_failures"] == []
         assert results["scope"]["not_scheduled"] == ["us_equity", "cn_ashare"]
         assert results["features"] == {"success": True, "skipped": True, "reason": "not_scheduled_scope"}

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import date, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import polars as pl
@@ -17,10 +17,14 @@ import structlog
 import yfinance as yf
 
 from equity_lake.core.config import TickerConfig
+from equity_lake.core.instruments import InstrumentIdentityError, LegacyIdentityUnavailableError
 from equity_lake.core.polars_utils import ensure_polars
 from equity_lake.core.schemas import STANDARD_COLUMNS
 from equity_lake.core.ticker_utils import cn_to_yahoo_symbol
 from equity_lake.sources.base import MarketDataFetcher, _empty_frame, standardize_columns
+
+if TYPE_CHECKING:
+    from equity_lake.sources.cn_efinance import CNEfinanceFetcher as _CNEfinanceFetcher
 
 try:
     from equity_lake.sources.cn_efinance import CNEfinanceFetcher
@@ -45,6 +49,7 @@ class CNHybridFetcher(MarketDataFetcher):
     """
 
     source_name = "cn_hybrid"
+    market = "cn"
 
     def __init__(
         self,
@@ -101,10 +106,10 @@ class CNHybridFetcher(MarketDataFetcher):
             self.configured_ticker_count = min(len(configured_tickers), self.stock_limit)
 
         # Initialize fetchers
-        self.efinance_fetcher: CNEfinanceFetcher | None = None
+        self.efinance_fetcher: _CNEfinanceFetcher | None = None
         self.akshare_fetcher: CNAshareFetcher | None = None
 
-        if self.enable_efinance:
+        if self.enable_efinance and CNEfinanceFetcher is not None:
             try:
                 self.efinance_fetcher = CNEfinanceFetcher(
                     retry_attempts=max(retry_attempts, 4),
@@ -193,7 +198,7 @@ class CNHybridFetcher(MarketDataFetcher):
             auto_adjust=False,
             threads=True,
         )
-        if data.empty:
+        if data is None or data.empty:
             return _empty_frame()
 
         frames: list[pd.DataFrame] = []
@@ -208,7 +213,10 @@ class CNHybridFetcher(MarketDataFetcher):
             for symbol in yf_symbols:
                 if symbol not in symbols_available:
                     continue
-                frame = data[symbol].copy()
+                symbol_data = data[symbol]
+                if not isinstance(symbol_data, pd.DataFrame):
+                    continue
+                frame = symbol_data.copy()
                 frame["ticker"] = symbol_to_code[symbol]
                 frame["date"] = trading_date
                 frames.append(frame)
@@ -270,6 +278,8 @@ class CNHybridFetcher(MarketDataFetcher):
                     )
                     return self._standardize_output(efinance_result)
 
+            except (InstrumentIdentityError, LegacyIdentityUnavailableError):
+                raise
             except Exception as exc:
                 logger.warning(
                     "efinance_fetch_failed",
@@ -307,6 +317,8 @@ class CNHybridFetcher(MarketDataFetcher):
                     if yfinance_rows > 0:
                         results.append(("yfinance", yfinance_result))
 
+            except (InstrumentIdentityError, LegacyIdentityUnavailableError):
+                raise
             except Exception as exc:
                 logger.error(
                     "akshare_fetch_failed",
@@ -340,7 +352,8 @@ class CNHybridFetcher(MarketDataFetcher):
         Returns:
             DataFrame with STANDARD_COLUMNS only
         """
-        return standardize_columns(df, columns=STANDARD_COLUMNS)
+        standardized = standardize_columns(df, columns=STANDARD_COLUMNS)
+        return self._attach_source_identity(standardized)
 
 
 __all__ = ["CNHybridFetcher"]

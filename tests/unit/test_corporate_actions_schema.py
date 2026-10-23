@@ -11,9 +11,9 @@ from datetime import date, datetime, timedelta
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import CORPORATE_ACTION_COLUMNS
-from equity_lake.ingestion import writers
-from equity_lake.validation.schemas import SCHEMA_REGISTRY, CorporateActionSchema
+from equity_lake.core.schemas import CORPORATE_ACTION_REQUIRED_COLUMNS  # type: ignore[import-untyped]
+from equity_lake.ingestion import writers  # type: ignore[import-untyped]
+from equity_lake.validation.schemas import SCHEMA_REGISTRY, CorporateActionSchema  # type: ignore[import-untyped]
 
 _CORPORATE_ACTION_MARKETS = ("corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions")
 
@@ -45,7 +45,7 @@ def _valid_actions(n: int = 3) -> pl.DataFrame:
             "ingested_at": datetime(2026, 6, 2, 12, 0),
         },
     ]
-    return pl.DataFrame(rows[:n])
+    return pl.DataFrame([dict(row, source_available_at=None) for row in rows[:n]])
 
 
 class TestCorporateActionSchema:
@@ -110,7 +110,7 @@ class TestCorporateActionsWriterWiring:
         df = _valid_actions()
         for market in _CORPORATE_ACTION_MARKETS:
             assert writers.validate_schema(df, market), market
-            for col in CORPORATE_ACTION_COLUMNS:
+            for col in CORPORATE_ACTION_REQUIRED_COLUMNS:
                 assert not writers.validate_schema(df.drop(col), market), f"{market} missing {col}"
 
     def test_validate_schema_rejects_all_null_required_column(self) -> None:

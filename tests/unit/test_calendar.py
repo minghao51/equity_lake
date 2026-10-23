@@ -5,13 +5,16 @@ from datetime import date
 import exchange_calendars as xc
 import pytest
 
-from equity_lake.core.calendar import (
+from equity_lake.core.calendar import (  # type: ignore[import-untyped]
     count_trading_days,
+    instrument_sessions_between,
+    is_instrument_trading_day,
     is_trading_day,
     market_now,
     market_timezone,
     trading_days_between,
 )
+from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
 
 
 class TestIsTradingDay:
@@ -67,6 +70,15 @@ class TestTradingDaysBetween:
         start, end = date(2026, 6, 1), date(2026, 6, 5)
         assert trading_days_between("us", start, end) == trading_days_between("us_equity", start, end)
         assert is_trading_day("hk_sg", date(2026, 6, 2)) is is_trading_day("hk_sg_equity", date(2026, 6, 2))
+
+
+def test_szse_uses_documented_shared_mainland_session_calendar() -> None:
+    start, end = date(2024, 4, 29), date(2024, 5, 6)
+    szse = InstrumentKey(market="cn_ashare", mic="XSHE", symbol="000001")
+    xshg = {session.date() for session in xc.get_calendar("XSHG").sessions_in_range(start, end)}
+    assert set(instrument_sessions_between(szse, start, end)) == xshg
+    assert is_instrument_trading_day(szse, date(2024, 5, 1)) is False
+    assert is_instrument_trading_day(szse, date(2024, 4, 30)) is True
 
 
 class TestIsTradingDayHkSg:

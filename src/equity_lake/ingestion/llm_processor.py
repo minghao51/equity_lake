@@ -1,14 +1,11 @@
-"""DeepSeek LLM batch processor for unstructured article extraction.
+"""Legacy DeepSeek article processor definitions.
 
-Uses ``AsyncOpenAI`` with DeepSeek's OpenAI-compatible API endpoint.
-Structured output via ``response_format={'type': 'json_object'}`` and
-Pydantic validation. Retries via tenacity (handles DeepSeek's known
-empty-content bug and JSON parse errors). VADER fallback on persistent failure.
+Direct batch/corpus processing is fail-closed until a bounded provider adapter
+reports actual costs. Data formatting and extraction models remain available.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -17,6 +14,7 @@ import structlog
 from pydantic import BaseModel, Field
 
 from equity_lake.ingestion.llm_base import BaseLLMBatchProcessor, RetryableError
+from equity_lake.ingestion.replay import ReplayAuthorizationError
 
 logger = structlog.get_logger()
 
@@ -77,10 +75,7 @@ class BatchExtraction(BaseModel):
 
 
 class DeepSeekBatchProcessor(BaseLLMBatchProcessor[BatchExtraction, ArticleExtraction]):
-    """Batch-process raw bronze articles via DeepSeek for structured extraction.
-
-    Articles are grouped into batches by source type. Each batch is a single
-    API call. Failed batches fall back to VADER sentiment.
+    """Legacy extraction formatter; inherited direct provider calls fail closed.
 
     Args:
         batch_size: Number of articles per API call (default 15).
@@ -183,12 +178,12 @@ class DeepSeekBatchProcessor(BaseLLMBatchProcessor[BatchExtraction, ArticleExtra
 
 
 def run_llm_processing(bronze_df: pl.DataFrame, batch_size: int = 15) -> pl.DataFrame:
-    """Synchronous wrapper for async batch processing.
-
-    Convenience function for use in non-async contexts (e.g. CLI commands).
-    """
-    processor = DeepSeekBatchProcessor(batch_size=batch_size)
-    return asyncio.run(processor.process_all(bronze_df))
+    """Fail closed: this corpus-wide helper cannot enforce or report paid-work bounds."""
+    del bronze_df, batch_size
+    raise ReplayAuthorizationError(
+        "run_llm_processing is disabled because it cannot enforce a scoped spend cap or report provider actual cost. "
+        "Use an explicitly authorized bounded replay callback."
+    )
 
 
 __all__ = [

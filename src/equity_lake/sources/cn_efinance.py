@@ -36,6 +36,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
     """
 
     source_name = "efinance"
+    market = "cn"
 
     def __init__(
         self,
@@ -197,6 +198,7 @@ class CNEfinanceFetcher(MarketDataFetcher):
 
                 frame = pl.concat(frames, how="vertical_relaxed")
                 frame = frame.filter(~pl.all_horizontal(pl.all().is_null()))
+                frame = self._attach_source_identity(frame)
                 unique_tickers = int(frame["ticker"].n_unique()) if "ticker" in frame.columns else 0
 
                 logger.info(

@@ -1,7 +1,7 @@
 import polars as pl
 import structlog
 
-from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.strategy.base import BaseStrategy, strategy_identity_columns
 
 logger = structlog.get_logger(__name__)
 
@@ -41,10 +41,11 @@ class BBMeanReversionStrategy(BaseStrategy):
         num_std = self.get_param("num_std")
         use_trend_filter = self.get_param("use_trend_filter")
 
-        data = data.sort(["ticker", "date"])
+        self._identity_columns = strategy_identity_columns(data)
+        data = data.sort([*self._identity_columns, "date"])
 
-        sma = pl.col("close").rolling_mean(window_size=period).over("ticker")
-        std = pl.col("close").rolling_std(window_size=period).over("ticker")
+        sma = pl.col("close").rolling_mean(window_size=period).over(self._identity_columns)
+        std = pl.col("close").rolling_std(window_size=period).over(self._identity_columns)
 
         cols = [
             sma.alias("middle_band"),
@@ -52,7 +53,7 @@ class BBMeanReversionStrategy(BaseStrategy):
             (sma - num_std * std).alias("lower_band"),
         ]
         if use_trend_filter:
-            cols.append(pl.col("close").rolling_mean(window_size=200).over("ticker").alias("trend_filter"))
+            cols.append(pl.col("close").rolling_mean(window_size=200).over(self._identity_columns).alias("trend_filter"))
 
         self._data_with_indicators = data.with_columns(cols)
         logger.info("BBMeanReversionStrategy initialized", period=period, num_std=num_std)
@@ -60,7 +61,7 @@ class BBMeanReversionStrategy(BaseStrategy):
     def generate_weights(self, data: pl.DataFrame) -> pl.DataFrame:
         df = self._data_with_indicators
         below_lower = pl.col("close") < pl.col("lower_band")
-        prev_below = (pl.col("close").shift(1).over("ticker")) < (pl.col("lower_band").shift(1).over("ticker"))
+        prev_below = (pl.col("close").shift(1).over(self._identity_columns)) < (pl.col("lower_band").shift(1).over(self._identity_columns))
         entry = below_lower & ~prev_below
         # Opposite event: close back at/above the middle band ends the trade.
         exit_signal = pl.col("close") >= pl.col("middle_band")
@@ -79,11 +80,11 @@ class BBMeanReversionStrategy(BaseStrategy):
             .then(0.0)
             .otherwise(None)
             .forward_fill()
-            .over("ticker")
+            .over(self._identity_columns)
             .fill_null(0.0)
         )
 
-        return df.with_columns(weight.alias("weight")).select("date", "ticker", "weight")
+        return df.with_columns(weight.alias("weight")).select("date", *self._identity_columns, "weight")
 
 
 __all__ = ["BBMeanReversionStrategy"]

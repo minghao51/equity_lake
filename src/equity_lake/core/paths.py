@@ -87,6 +87,11 @@ PLATINUM_PREDICTIONS_DIR = PLATINUM_DIR / "predictions"
 # Auxiliary tables (outside the medallion lake) — signal history bookkeeping
 # ---------------------------------------------------------------------------
 SIGNALS_DIR = DATA_DIR / "signals"
+# Private tracking state lives outside the medallion lake and generated catalog.
+WATCHLISTS_DIR = DATA_DIR / "watchlists"
+PRIVATE_WATCHLIST_PATH = WATCHLISTS_DIR / "watchlist.yaml"
+TRACKING_DIR = DATA_DIR / "tracking"
+TRACKING_DB_PATH = TRACKING_DIR / "tracking.sqlite3"
 # Research artifacts (FindingCards, backtest & risk reports) — NOT cataloged.
 FINDINGS_DIR = DATA_DIR / "findings"
 # Data-quality profiles written by the explicit `equity validate profile` CLI path
@@ -221,6 +226,7 @@ __all__ = [
     "OPTIONAL_ENRICHMENT_MARKETS",
     "PLATINUM_DIR",
     "PLATINUM_PREDICTIONS_DIR",
+    "PRIVATE_WATCHLIST_PATH",
     "PRICE_MARKETS",
     "PriceMarket",
     "PROJECT_ROOT",
@@ -228,6 +234,9 @@ __all__ = [
     "SEC_EXTRACTIONS_DIR",
     "SHORT_TO_LONG",
     "SIGNALS_DIR",
+    "TRACKING_DB_PATH",
+    "TRACKING_DIR",
+    "WATCHLISTS_DIR",
     "SILVER_ANALYST_RATINGS_DIR",
     "SILVER_CORPORATE_ACTIONS_DIR",
     "SILVER_DIR",

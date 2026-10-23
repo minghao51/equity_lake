@@ -7,6 +7,7 @@ import cost unless the app is actually built/served.
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - present only for type checkers
@@ -19,6 +20,8 @@ def create_app() -> FastAPI:
 
     from equity_lake.api.routers import backtests, findings, health, models, predictions, signals
 
+    private_tracking_router = import_module("equity_lake.api.routers.tracking").router
+
     app = FastAPI(
         title="Equity Lake API",
         version="0.1.0",
@@ -27,6 +30,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(findings.router)
     app.include_router(signals.router)
+    app.include_router(private_tracking_router)
     app.include_router(models.router)
     app.include_router(predictions.router)
     app.include_router(backtests.router)

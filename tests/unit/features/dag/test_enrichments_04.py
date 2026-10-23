@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from unittest.mock import MagicMock
 
 import duckdb
 import polars as pl
 import pytest
-from deltalake import write_deltalake
 from hamilton import base, driver
 from hamilton.plugins import h_polars
 
-from equity_lake.features.dag import enrichments_04
-from equity_lake.features.dag.enrichments_04 import (
+from equity_lake.features.dag import enrichments_04  # type: ignore[import-untyped]
+from equity_lake.features.dag.enrichments_04 import (  # type: ignore[import-untyped]
     _add_cross_modal,
     _merge_news_sentiment,
     _merge_social_sentiment,
@@ -106,52 +105,13 @@ def test_enriched_features_preserves_columns(features_df: pl.DataFrame, mock_con
         assert col in result.columns
 
 
-def test_merge_enriched_sentiment_populates_columns(features_df: pl.DataFrame, monkeypatch, tmp_path) -> None:
-    """Regression test for missing GROUP BY (P0).
-
-    Without ``GROUP BY ticker, date``, the aggregate query raised a DuckDB
-    error that was swallowed, leaving enriched columns zero-filled forever.
-    """
-    import contextlib
-
-    # Build a silver processed_articles Delta table with two articles for AAPL
-    # on the same date — forces the aggregate to actually group.
-    silver_dir = tmp_path / "processed_articles"
-    articles = pl.DataFrame(
-        {
-            "ticker": ["AAPL", "AAPL", "MSFT"],
-            "date": [date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 1)],
-            "filing_date": [date(2024, 1, 1), date(2024, 1, 1), date(2024, 1, 1)],
-            "sentiment_score": [0.8, 0.6, -0.3],
-            "sentiment_label": ["bullish", "bullish", "bearish"],
-            "confidence": [0.9, 0.7, 0.8],
-            "market_relevance": [0.95, 0.6, 0.5],
-            "source_type": ["news", "reddit", "news"],
-            "impact_horizon": ["short", "medium", "short"],
-        }
-    )
-    write_deltalake(str(silver_dir), articles.to_arrow(), mode="append")
-
-    # Point the module-level constant at the temp dir
-    monkeypatch.setattr(enrichments_04, "SILVER_PROCESSED_ARTICLES_DIR", silver_dir)
-
-    # Real DuckDB connection with delta extension
-    conn = duckdb.connect(":memory:")
-    with contextlib.suppress(Exception):
-        conn.execute("INSTALL delta; LOAD delta;")
-
-    from equity_lake.features.dag.enrichments_04 import _merge_enriched_sentiment
-
-    result = _merge_enriched_sentiment(features_df, conn, date(2024, 1, 1), date(2024, 1, 2))
-
-    # AAPL had two bullish articles on 2024-01-01 → enriched columns must be populated
-    aapl_row = result.filter((pl.col("ticker") == "AAPL") & (pl.col("date") == date(2024, 1, 1)))
-    assert aapl_row.height == 1
-    assert aapl_row["enriched_article_count"][0] == 2
-    assert aapl_row["enriched_sentiment_mean"][0] == pytest.approx(0.7)
-    assert aapl_row["bullish_ratio"][0] == pytest.approx(1.0)
-    # social_volume counts reddit + stocktwits sources (one reddit here)
-    assert aapl_row["social_volume"][0] == 1
+def test_legacy_enriched_sentiment_is_explicitly_unavailable(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
+    """Ticker-only enriched sentiment has no trusted identity or source clock."""
+    result = enrichments_04._merge_enriched_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 2))
+    assert result["enriched_available"].to_list() == [0] * features_df.height
+    assert result["enriched_article_count"].null_count() == features_df.height
+    assert result["enriched_sentiment_mean"].null_count() == features_df.height
+    assert result["social_volume"].null_count() == features_df.height
 
 
 def test_enrichment_chain_nodes_exposed() -> None:
@@ -169,6 +129,17 @@ def test_enrichment_chain_nodes_exposed() -> None:
         "enriched_features",
     ]:
         assert expected in node_names, f"{expected} node missing from enrichment chain"
+
+
+def test_macro_enrichment_metadata_describes_fail_closed_availability() -> None:
+    """The catalog description must match the macro node's current behavior."""
+    macro_node = next(node for node in _build_driver().list_available_variables() if node.name == "macro_enriched")
+
+    assert macro_node.tags["description"] == (
+        "Fail closed: macro values remain null until persisted source vintages verify point-in-time availability (ADR-0015)"
+    )
+    assert "unavailable" in (enrichments_04.macro_enriched.__doc__ or "")
+    assert "verified" in (enrichments_04.__doc__ or "")
 
 
 def _populated_news_agg() -> pl.DataFrame:
@@ -209,38 +180,65 @@ def _raising_conn(exc: Exception) -> MagicMock:
     return conn
 
 
-def test_news_merge_error_path_keeps_feature_schema(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
-    """A5 (handoff 08): a transient DuckDB/Polars error must not change the news
-    feature column set — the error path returns the same zero-filled defaults
-    as the no-data path, so train/inference schemas stay stable."""
-    mock_conn.execute.return_value.pl.return_value = _populated_news_agg()
-    success = _merge_news_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
-    assert {"avg_daily_sentiment", "sentiment_ewma_3d", "sentiment_ewma_30d"}.issubset(success.columns)
-
-    mock_conn.execute.return_value.pl.return_value = pl.DataFrame()
-    no_data = _merge_news_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
-    error = _merge_news_sentiment(features_df, _raising_conn(duckdb.Error("table missing")), date(2024, 1, 1), date(2024, 1, 31))
-
-    assert error.columns == success.columns == no_data.columns
-    assert error.height == features_df.height
-    # Zero-filled defaults, not silent column loss.
-    assert set(error["news_count"].to_list()) == {0}
+def test_news_without_identity_or_provenance_is_unavailable(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
+    result = _merge_news_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
+    assert result.height == features_df.height
+    assert result["news_available"].to_list() == [0] * features_df.height
+    assert result["news_count"].null_count() == features_df.height
+    assert result["avg_daily_sentiment"].null_count() == features_df.height
 
 
-def test_social_merge_error_path_keeps_feature_schema(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
-    """A5 (handoff 08): a transient error in the social merge must not change the
-    social feature column set downstream."""
-    mock_conn.execute.return_value.pl.return_value = _populated_social_agg()
-    success = _merge_social_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
-    assert {"social_sentiment_score", "social_momentum", "social_sentiment_ewma_30d"}.issubset(success.columns)
+def test_social_without_identity_or_provenance_is_unavailable(features_df: pl.DataFrame, mock_conn: MagicMock) -> None:
+    result = _merge_social_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
+    assert result.height == features_df.height
+    assert result["social_available"].to_list() == [0] * features_df.height
+    assert result["social_mention_count"].null_count() == features_df.height
+    assert result["social_sentiment_score"].null_count() == features_df.height
 
-    mock_conn.execute.return_value.pl.return_value = pl.DataFrame()
-    no_data = _merge_social_sentiment(features_df, mock_conn, date(2024, 1, 1), date(2024, 1, 31))
-    error = _merge_social_sentiment(features_df, _raising_conn(duckdb.Error("table missing")), date(2024, 1, 1), date(2024, 1, 31))
 
-    assert error.columns == success.columns == no_data.columns
-    assert error.height == features_df.height
-    assert set(error["social_mention_count"].to_list()) == {0}
+def test_social_partial_source_null_metrics_and_duplicates_stay_distinct(monkeypatch: pytest.MonkeyPatch, mock_conn: MagicMock) -> None:
+    source_time = datetime(2024, 1, 2, 15, 0, tzinfo=UTC)
+    observations = pl.DataFrame(
+        {
+            "market": ["us_equity"] * 3,
+            "mic": ["XNYS"] * 3,
+            "symbol": ["AAPL"] * 3,
+            "ticker": ["AAPL"] * 3,
+            "date": [date(2024, 1, 2)] * 3,
+            "datetime": [source_time, source_time, source_time.replace(hour=16)],
+            "source": ["reddit", "reddit", "twitter"],
+            "source_available_at": [source_time, source_time, source_time.replace(hour=16)],
+            "mention_count": [5, 5, 0],
+            "score": [0.2, 0.2, None],
+            "positive_score": [2.0, 2.0, None],
+            "negative_score": [None, None, None],
+        }
+    )
+    monkeypatch.setattr(enrichments_04.pl, "read_delta", lambda _path: observations)
+    features = pl.DataFrame(
+        {
+            "market": ["us_equity", "us_equity"],
+            "mic": ["XNYS", "XNYS"],
+            "symbol": ["AAPL", "AAPL"],
+            "ticker": ["AAPL", "AAPL"],
+            "date": [date(2024, 1, 3), date(2024, 1, 12)],
+        }
+    )
+
+    result = _merge_social_sentiment(features, mock_conn, date(2024, 1, 1), date(2024, 1, 12))
+    assert result["social_available"].to_list() == [1, 0]
+    assert result["social_sentiment_score"][0] == pytest.approx(0.2)
+    assert result["social_sentiment_score"][1] is None
+    assert result["social_mention_count"].to_list() == [5, None]
+    assert result["social_reddit_mentions"].to_list() == [5, None]
+    assert result["social_reddit_available"].to_list() == [1, 0]
+    # A source-reported zero is measured; a source with no row is unavailable.
+    assert result["social_twitter_mentions"].to_list() == [0, None]
+    assert result["social_twitter_available"].to_list() == [1, 0]
+    assert result["social_positive_score"].to_list() == [2.0, None]
+    assert result["social_positive_available"].to_list() == [1, 0]
+    assert result["social_negative_score"].null_count() == 2
+    assert result["social_negative_available"].to_list() == [0, 0]
 
 
 def test_social_momentum_5d_reuses_computed_momentum(mock_conn: MagicMock) -> None:
@@ -274,12 +272,9 @@ def test_social_momentum_5d_reuses_computed_momentum(mock_conn: MagicMock) -> No
     merged = _merge_social_sentiment(features, mock_conn, dates[0], dates[-1])
     cross = _add_cross_modal(merged)
 
-    # Both output names present (schema unchanged) and perfectly correlated —
-    # aliasing keeps them bit-identical.
+    # Unavailable social values stay null through cross-modal calculations.
     assert "social_sentiment_momentum" in cross.columns
     assert "social_sentiment_momentum_5d" in cross.columns
-    assert cross["social_sentiment_momentum_5d"].to_list() == cross["social_sentiment_momentum"].to_list()
-
-    # Values identical to the pre-fix independent diff(5) recompute.
-    expected = pl.DataFrame({"score": scores}).with_columns(pl.col("score").diff(5).fill_null(0.0))["score"].to_list()
-    assert cross["social_sentiment_momentum_5d"].to_list() == expected
+    assert cross["social_available"].to_list() == [0] * len(dates)
+    assert cross["social_sentiment_momentum_5d"].null_count() == len(dates)
+    assert cross["social_sentiment_momentum"].null_count() == len(dates)

@@ -6,6 +6,21 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+INSTRUMENT_COLUMNS = ("market", "mic", "symbol")
+
+
+def strategy_identity_columns(data: pl.DataFrame) -> list[str]:
+    """Choose composite identity keys when present, retaining ticker-only compatibility."""
+    return list(INSTRUMENT_COLUMNS) if set(INSTRUMENT_COLUMNS).issubset(data.columns) else ["ticker"]
+
+
+def strategy_weight_columns(data: pl.DataFrame) -> list[str]:
+    """Keys emitted by strategies and consumed by the engine's date join."""
+    keys = ["date", *strategy_identity_columns(data)]
+    if "ticker" in data.columns and "ticker" not in keys:
+        keys.append("ticker")
+    return keys
+
 
 class BaseStrategy(ABC):
     """

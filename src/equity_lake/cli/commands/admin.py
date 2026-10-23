@@ -5,28 +5,31 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from click.core import ParameterSource
 
 from equity_lake.cli._app import bootstrap_app, config_app, validate_app
 
 
 @config_app.command("show")
 def config_show() -> None:
-    """Show full configuration."""
+    """Show configuration with sensitive values redacted."""
     from equity_lake.core.config import load_settings
+    from equity_lake.core.logging import redact_secrets
 
     settings = load_settings()
-    typer.echo(json.dumps(settings.model_dump(), indent=2))
+    typer.echo(json.dumps(redact_secrets(settings.model_dump()), indent=2))
 
 
 @config_app.command("get")
 def config_get(
     path: Annotated[str, typer.Argument(help="Dotted config path (e.g. storage.data_dir)")],
 ) -> None:
-    """Get a specific config value."""
+    """Get a config value, redacting sensitive keys and nested values."""
     from equity_lake.core.config import load_settings
+    from equity_lake.core.logging import redact_secrets
 
     settings = load_settings()
-    data = settings.model_dump()
+    data = redact_secrets(settings.model_dump())
     current: Any = data
     for segment in path.split("."):
         if not isinstance(current, dict):
@@ -39,12 +42,15 @@ def config_get(
 
 @config_app.command("validate")
 def config_validate(
-    tickers: Annotated[str, typer.Option("--tickers", "-t", help="Path to tickers.yaml")] = "config/tickers.yaml",
-    watchlist: Annotated[str, typer.Option("--watchlist", "-w", help="Path to watchlist.yaml")] = "config/watchlist.yaml",
-    signals: Annotated[str, typer.Option("--signals", "-s", help="Path to signals.yaml")] = "config/signals.yaml",
-    all_configs: Annotated[bool, typer.Option("--all", help="Validate all config files")] = False,
+    ctx: typer.Context,
+    tickers: Annotated[str, typer.Option("--tickers", "-t", help="Path to tickers.yaml (always validated)")] = "config/tickers.yaml",
+    watchlist: Annotated[
+        str, typer.Option("--watchlist", "-w", help="Additional watchlist YAML (not selected by default)")
+    ] = "config/watchlist.yaml",
+    signals: Annotated[str, typer.Option("--signals", "-s", help="Additional signals YAML (not selected by default)")] = "config/signals.yaml",
+    all_configs: Annotated[bool, typer.Option("--all", help="Also validate watchlist and signals; default scope is tickers only")] = False,
 ) -> None:
-    """Validate YAML configuration files (tickers, watchlist, signals)."""
+    """Validate tickers.yaml by default; explicitly select other YAML files or use --all."""
     from pathlib import Path
 
     from equity_lake.config.validators import (
@@ -56,30 +62,32 @@ def config_validate(
     tickers_path = Path(tickers)
     watchlist_path = Path(watchlist)
     signals_path = Path(signals)
-    default_watchlist = Path("config/watchlist.yaml")
-    default_signals = Path("config/signals.yaml")
-
     all_errors: list[str] = []
+    has_warnings = False
 
     typer.echo(f"Validating {tickers_path}...")
     errors = validate_tickers(tickers_path)
     all_errors.extend(errors)
-    typer.echo(f"  {'OK' if not errors else f'{len(errors)} error(s)'}")
+    ticker_warnings = getattr(errors, "warnings", [])
+    has_warnings = bool(ticker_warnings)
+    status = "OK" if not errors else f"{len(errors)} error(s)"
+    if ticker_warnings and not errors:
+        status += f" ({len(ticker_warnings)} warning(s))"
+    typer.echo(f"  {status}")
+    for warning in ticker_warnings:
+        typer.secho(f"  Warning: {warning}", fg=typer.colors.YELLOW)
 
     selected_configs: list[tuple[str, Path, Any]] = []
-    if all_configs or watchlist_path != default_watchlist:
+    if all_configs or ctx.get_parameter_source("watchlist") is ParameterSource.COMMANDLINE:
         selected_configs.append(("watchlist", watchlist_path, validate_watchlist))
-    if all_configs or signals_path != default_signals:
+    if all_configs or ctx.get_parameter_source("signals") is ParameterSource.COMMANDLINE:
         selected_configs.append(("signals", signals_path, validate_signals))
 
     for _name, path, validator in selected_configs:
-        if path.exists():
-            typer.echo(f"Validating {path}...")
-            errors = validator(path)
-            all_errors.extend(errors)
-            typer.echo(f"  {'OK' if not errors else f'{len(errors)} error(s)'}")
-        else:
-            typer.echo(f"Skipping {path} (not found)")
+        typer.echo(f"Validating {path}...")
+        errors = validator(path)
+        all_errors.extend(errors)
+        typer.echo(f"  {'OK' if not errors else f'{len(errors)} error(s)'}")
 
     if all_errors:
         typer.secho("\nValidation FAILED:", fg=typer.colors.RED)
@@ -87,18 +95,20 @@ def config_validate(
             typer.secho(f"  {error}", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    typer.secho("\nAll validations passed!", fg=typer.colors.GREEN)
+    summary = "\nAll validations passed with warnings." if has_warnings else "\nAll validations passed!"
+    typer.secho(summary, fg=typer.colors.YELLOW if has_warnings else typer.colors.GREEN)
 
 
 @config_app.command("export")
 def config_export(
     output: Annotated[str | None, typer.Argument(help="Output file path")] = None,
 ) -> None:
-    """Export configuration to a file."""
+    """Export redacted configuration to a file or stdout."""
     from equity_lake.core.config import load_settings
+    from equity_lake.core.logging import redact_secrets
 
     settings = load_settings()
-    rendered = json.dumps(settings.model_dump(), indent=2)
+    rendered = json.dumps(redact_secrets(settings.model_dump()), indent=2)
     if output:
         Path(output).write_text(rendered, encoding="utf-8")
         typer.echo(f"exported:{output}")

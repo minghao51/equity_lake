@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+from runpy import run_path
+
 import numpy as np
 import pandas as pd
 
-from equity_lake.ml.labeling import apply_triple_barrier_labels
-from equity_lake.ml.sample_weights import (
+from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.ml.labeling import apply_triple_barrier_labels  # type: ignore[import-untyped]
+from equity_lake.ml.sample_weights import (  # type: ignore[import-untyped]
     compute_sample_uniqueness,
     compute_uniqueness_weights,
 )
+
+_pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
+synthetic_action_coverage_proof = _pit_fixtures["synthetic_action_coverage_proof"]
+synthetic_feature_proof_columns = _pit_fixtures["synthetic_feature_proof_columns"]
 
 
 def test_compute_sample_uniqueness_single_sample() -> None:
@@ -58,6 +67,11 @@ def test_compute_uniqueness_weights_from_labeled_frame() -> None:
             "candidate_score": [0.1, 0.2, 0.3],
         }
     )
+    instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
+    proof = synthetic_action_coverage_proof(instrument, date.fromisoformat(str(dates[0])[:10]), date.fromisoformat(str(dates[-1])[:10]))
+    for frame in (full_df, candidates):
+        for name, values in synthetic_feature_proof_columns(instrument, frame["date"].tolist(), proof=proof).items():
+            frame[name] = values
 
     labeled = apply_triple_barrier_labels(
         candidates,

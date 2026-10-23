@@ -1,7 +1,7 @@
 import polars as pl
 import structlog
 
-from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.strategy.base import BaseStrategy, strategy_identity_columns
 
 logger = structlog.get_logger(__name__)
 
@@ -35,21 +35,23 @@ class SMACrossoverStrategy(BaseStrategy):
         slow_period = self.get_param("slow_period")
         use_ema = self.get_param("use_ema")
 
-        data = data.sort(["ticker", "date"])
+        self._identity_columns = strategy_identity_columns(data)
+        data = data.sort([*self._identity_columns, "date"])
 
         if use_ema:
             fast_ma = data.with_columns(
-                pl.col("close").ewm_mean(span=fast_period).over("ticker").alias("fast_ma"),
-                pl.col("close").ewm_mean(span=slow_period).over("ticker").alias("slow_ma"),
+                pl.col("close").ewm_mean(span=fast_period).over(self._identity_columns).alias("fast_ma"),
+                pl.col("close").ewm_mean(span=slow_period).over(self._identity_columns).alias("slow_ma"),
             )
         else:
             fast_ma = data.with_columns(
-                pl.col("close").rolling_mean(window_size=fast_period).over("ticker").alias("fast_ma"),
-                pl.col("close").rolling_mean(window_size=slow_period).over("ticker").alias("slow_ma"),
+                pl.col("close").rolling_mean(window_size=fast_period).over(self._identity_columns).alias("fast_ma"),
+                pl.col("close").rolling_mean(window_size=slow_period).over(self._identity_columns).alias("slow_ma"),
             )
 
-        self.indicators["fast_ma"] = fast_ma.select("date", "ticker", "fast_ma")
-        self.indicators["slow_ma"] = fast_ma.select("date", "ticker", "slow_ma")
+        indicator_keys = ["date", *self._identity_columns]
+        self.indicators["fast_ma"] = fast_ma.select(*indicator_keys, "fast_ma")
+        self.indicators["slow_ma"] = fast_ma.select(*indicator_keys, "slow_ma")
         self._data_with_indicators = fast_ma
 
         logger.info(
@@ -62,13 +64,13 @@ class SMACrossoverStrategy(BaseStrategy):
     def generate_weights(self, data: pl.DataFrame) -> pl.DataFrame:
         df = self._data_with_indicators
         fast_above = pl.col("fast_ma") > pl.col("slow_ma")
-        prev_fast_above = (pl.col("fast_ma").shift(1).over("ticker")) > (pl.col("slow_ma").shift(1).over("ticker"))
+        prev_fast_above = (pl.col("fast_ma").shift(1).over(self._identity_columns)) > (pl.col("slow_ma").shift(1).over(self._identity_columns))
 
         golden_cross_now = fast_above & ~prev_fast_above
         cross_under_now = ~fast_above & prev_fast_above
         # First bar where both MAs exist: the cross events are null there (no
         # previous value), so seed the state with the observed regime instead.
-        first_valid = fast_above.is_not_null() & fast_above.shift(1).over("ticker").is_null()
+        first_valid = fast_above.is_not_null() & fast_above.shift(1).over(self._identity_columns).is_null()
 
         # Enter on the golden cross, hold until the cross-under: emit the event
         # weight and forward-fill the state between events (0.0 before the first
@@ -82,11 +84,11 @@ class SMACrossoverStrategy(BaseStrategy):
             .then(0.0)
             .otherwise(None)
             .forward_fill()
-            .over("ticker")
+            .over(self._identity_columns)
             .fill_null(0.0)
         )
 
-        return df.with_columns(weight.alias("weight")).select("date", "ticker", "weight")
+        return df.with_columns(weight.alias("weight")).select("date", *self._identity_columns, "weight")
 
 
 __all__ = ["SMACrossoverStrategy"]

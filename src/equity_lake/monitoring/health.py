@@ -508,9 +508,16 @@ class PipelineMonitor:
             "alerts": self.alerts,
             "metrics": self.metrics,
             "timestamp": datetime.now(tz=UTC).isoformat(),
+            "healthy": bool(self.check_results) and all(self.check_results.values()),
+            "check_results": self.check_results,
         }
 
-        with open(output_file, "w") as f:
-            json.dump(report, f, indent=2, default=str)
+        try:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(report, f, indent=2, default=str)
+        except OSError:
+            logger.exception("health_report_save_failed", output_file=str(output_file))
+            raise
 
         logger.info("health_report_saved", output_file=str(output_file))

@@ -1,16 +1,18 @@
 """Unit tests for daily EOD data ingestion orchestration."""
 
 from datetime import date
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion
-from equity_lake.ingestion.types import SourceStatus
-from equity_lake.ingestion.writers import upsert_dataset, validate_schema
-from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher
+from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion  # type: ignore[import-untyped]
+from equity_lake.ingestion.types import SourceStatus  # type: ignore[import-untyped]
+from equity_lake.ingestion.writers import upsert_dataset, validate_schema  # type: ignore[import-untyped]
+from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher  # type: ignore[import-untyped]
 
 # =============================================================================
 # Test Market Data Fetchers
@@ -20,14 +22,14 @@ from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetc
 class TestUSEquityFetcher:
     """Tests for US equity data fetcher."""
 
-    def test_initialization(self):
+    def test_initialization(self) -> None:
         """Test fetcher initialization."""
         fetcher = USEquityFetcher()
         assert fetcher.tickers is not None
         assert len(fetcher.tickers) > 0
         assert "AAPL" in fetcher.tickers
 
-    def test_initialization_custom_tickers(self):
+    def test_initialization_custom_tickers(self) -> None:
         """Test fetcher with custom tickers."""
         custom_tickers = ["AAPL", "GOOGL"]
         fetcher = USEquityFetcher(tickers=custom_tickers)
@@ -36,7 +38,7 @@ class TestUSEquityFetcher:
     @pytest.mark.slow
     @pytest.mark.integration
     @pytest.mark.network
-    def test_fetch_real_data(self):
+    def test_fetch_real_data(self) -> None:
         """Test fetching real data from yfinance (integration test)."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
         trading_date = date(2024, 1, 2)  # Known trading day
@@ -51,7 +53,7 @@ class TestUSEquityFetcher:
 class TestCNAshareFetcher:
     """Tests for China A-share data fetcher."""
 
-    def test_initialization(self):
+    def test_initialization(self) -> None:
         """Test fetcher initialization."""
         fetcher = CNAshareFetcher()
         assert fetcher is not None
@@ -59,7 +61,7 @@ class TestCNAshareFetcher:
     @pytest.mark.slow
     @pytest.mark.integration
     @pytest.mark.network
-    def test_fetch_real_data(self):
+    def test_fetch_real_data(self) -> None:
         """Test fetching real data from akshare (integration test)."""
         fetcher = CNAshareFetcher()
         trading_date = date(2024, 1, 2)  # Known trading day
@@ -74,7 +76,7 @@ class TestCNAshareFetcher:
 class TestHKSGEquityFetcher:
     """Tests for HK/SG equity data fetcher."""
 
-    def test_initialization(self):
+    def test_initialization(self) -> None:
         """Test fetcher initialization."""
         fetcher = HKSGEquityFetcher()
         assert fetcher.hk_tickers is not None
@@ -90,7 +92,7 @@ class TestHKSGEquityFetcher:
 class TestPartitionedParquetWriter:
     """Tests for Parquet writer."""
 
-    def test_upsert_dataset(self, tmp_path, sample_ohlcv_data):
+    def test_upsert_dataset(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """Test writing DataFrame to Delta storage."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             success = upsert_dataset(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
@@ -103,13 +105,13 @@ class TestPartitionedParquetWriter:
         dt = DeltaTable(str(market_dir))
         assert dt.version() >= 0
 
-    def test_write_empty_dataframe(self, tmp_path):
+    def test_write_empty_dataframe(self, tmp_path: Path) -> None:
         """Test writing empty DataFrame."""
         success = upsert_dataset(pd.DataFrame(), "us_equity", date(2024, 1, 1), dry_run=False)
 
         assert success is False
 
-    def test_write_dry_run(self, tmp_path, sample_ohlcv_data):
+    def test_write_dry_run(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """Test dry run mode."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             success = upsert_dataset(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=True)
@@ -125,12 +127,12 @@ class TestPartitionedParquetWriter:
 class TestSchemaValidation:
     """Tests for schema validation."""
 
-    def test_valid_schema(self, sample_ohlcv_data):
+    def test_valid_schema(self, sample_ohlcv_data: pl.DataFrame) -> None:
         """Test validation of valid schema."""
         is_valid = validate_schema(sample_ohlcv_data, "test")
         assert is_valid is True
 
-    def test_missing_required_columns(self):
+    def test_missing_required_columns(self) -> None:
         """Test validation with missing columns."""
         invalid_data = pd.DataFrame(
             {
@@ -143,7 +145,7 @@ class TestSchemaValidation:
         is_valid = validate_schema(invalid_data, "test")
         assert is_valid is False
 
-    def test_all_null_column(self):
+    def test_all_null_column(self) -> None:
         """Test validation with all-null column."""
         data_with_nulls = pd.DataFrame(
             {
@@ -175,7 +177,7 @@ class TestSchemaValidation:
 class TestOutcomeTruthfulness:
     """Optional failures stay visible; no-data, dry-run, and failure are distinct."""
 
-    def test_optional_failure_is_failed_not_skipped_existing(self, tmp_path):
+    def test_optional_failure_is_failed_not_skipped_existing(self, tmp_path: Path) -> None:
         """W02/F08: optional market failures are FAILED with their cause — not a
         success-shaped SKIPPED_EXISTING; the pipeline decides blocking/exit."""
         with (
@@ -189,7 +191,7 @@ class TestOutcomeTruthfulness:
         assert results["macro"].succeeded is False
         assert "macro timeout" in (results["macro"].error or "")
 
-    def test_empty_fetch_is_no_data(self, tmp_path):
+    def test_empty_fetch_is_no_data(self, tmp_path: Path) -> None:
         """W02/F10: a genuine empty fetch is NO_DATA, never a write or a skip."""
         with (
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=pl.DataFrame()),
@@ -201,11 +203,11 @@ class TestOutcomeTruthfulness:
         assert results["macro"].status is SourceStatus.NO_DATA
         assert results["macro"].succeeded is False
 
-    def test_parallel_write_exception_is_isolated_and_other_market_survives(self, tmp_path, sample_ohlcv_data):
+    def test_parallel_write_exception_is_isolated_and_other_market_survives(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """W02/F09: a write exception in one market must not erase the run; the
         other market writes, the failing market is FAILED with its root cause."""
 
-        def fake_write(df, market, trading_date, dry_run):
+        def fake_write(df: pl.DataFrame, market: str, trading_date: date, dry_run: bool) -> bool:
             if market == "us_equity":
                 raise ValueError("disk full")
             return True
@@ -223,11 +225,11 @@ class TestOutcomeTruthfulness:
         assert results["cn_ashare"].status is SourceStatus.WRITTEN
         assert results["cn_ashare"].succeeded is True
 
-    def test_serial_write_exception_matches_parallel_isolation(self, tmp_path, sample_ohlcv_data):
+    def test_serial_write_exception_matches_parallel_isolation(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """W02/F09: the serial path isolates write exceptions with the same
         statuses and retained cause as the parallel path."""
 
-        def fake_write(df, market, trading_date, dry_run):
+        def fake_write(df: pl.DataFrame, market: str, trading_date: date, dry_run: bool) -> bool:
             if market == "us_equity":
                 raise ValueError("disk full")
             return True
@@ -244,10 +246,10 @@ class TestOutcomeTruthfulness:
         assert "disk full" in (results["us_equity"].error or "")
         assert results["cn_ashare"].status is SourceStatus.WRITTEN
 
-    def test_parallel_fetch_failure_retains_cause(self, tmp_path):
+    def test_parallel_fetch_failure_retains_cause(self, tmp_path: Path) -> None:
         """W02/F08/F10: a parallel fetch failure reaches the outcome with cause."""
 
-        def failing_fetch(market, trading_date, **kwargs):
+        def failing_fetch(market: str, trading_date: date, **kwargs: Any) -> None:
             raise RuntimeError(f"provider down for {market}")
 
         with (
@@ -266,12 +268,12 @@ class TestOutcomeTruthfulness:
 class TestPipelineIntegration:
     """Integration tests for the ingestion pipeline."""
 
-    def test_fetch_market_data_invalid_market(self):
+    def test_fetch_market_data_invalid_market(self) -> None:
         """W02/F10: an unknown market raises instead of returning a misleading None."""
         with pytest.raises(ValueError, match="Unknown market"):
             fetch_market_data("invalid_market", date(2024, 1, 1))
 
-    def test_fetch_market_data_cn_uses_hybrid_fetcher(self):
+    def test_fetch_market_data_cn_uses_hybrid_fetcher(self) -> None:
         """CN ingestion should use the hybrid fetcher with built-in fallback."""
         sample = pd.DataFrame(
             {
@@ -295,7 +297,7 @@ class TestPipelineIntegration:
         assert result is not None
         assert not result.is_empty()
 
-    def test_run_daily_ingestion_dry_run(self, tmp_path, sample_ohlcv_data):
+    def test_run_daily_ingestion_dry_run(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """Test daily ingestion in dry-run mode."""
         with patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch:
             mock_fetch.return_value = sample_ohlcv_data
@@ -313,7 +315,7 @@ class TestPipelineIntegration:
         # W02/F25: a direct dry-run never claims a write; the status is DRY_RUN.
         assert results["us_equity"].status is SourceStatus.DRY_RUN
 
-    def test_skip_existing_marks_already_present_as_success(self, tmp_path, sample_ohlcv_data):
+    def test_skip_existing_marks_already_present_as_success(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """Regression test (P0): an idempotent rerun must not drop already-present markets.
 
         Previously ``_filter_markets_with_gaps`` dropped already-present markets
@@ -326,11 +328,11 @@ class TestPipelineIntegration:
         """
         # ``us`` already has the date -> skipped as already-present.
         # ``cn`` is missing -> fetched (we return sample data so the write succeeds).
-        from equity_lake.core.config import TickerConfig
+        from equity_lake.core.config import TickerConfig  # type: ignore[import-untyped]
 
         us_tickers = set(TickerConfig().get_tickers_for_market("us", active_only=True))
 
-        def coverage(market, market_dir, trading_date, con):
+        def coverage(market: str, market_dir: Path, trading_date: date, con: Any) -> tuple[bool, set[str]]:
             return (True, us_tickers) if market == "us_equity" else (False, set())
 
         with (
@@ -352,7 +354,7 @@ class TestPipelineIntegration:
         # W02/F25: dry-run cn is simulated (DRY_RUN), never WRITTEN.
         assert results["cn_ashare"].status is SourceStatus.DRY_RUN
 
-    def test_corrupt_partition_not_treated_as_present(self, tmp_path, sample_ohlcv_data):
+    def test_corrupt_partition_not_treated_as_present(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """A partition that exists but fails schema validation must be re-fetched.
 
         Regression guard for the partition-validity check: previously any
@@ -381,7 +383,7 @@ class TestPipelineIntegration:
         assert results["us_equity"].status is SourceStatus.DRY_RUN
         assert results["cn_ashare"].status is SourceStatus.DRY_RUN
 
-    def test_write_partition_structure(self, tmp_path, sample_ohlcv_data):
+    def test_write_partition_structure(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """Test that Delta table is created on write."""
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             upsert_dataset(sample_ohlcv_data, "us_equity", date(2024, 1, 1), dry_run=False)
@@ -404,7 +406,7 @@ class TestDateHandling:
     """Tests for date handling and edge cases."""
 
     @pytest.mark.network
-    def test_weekend_date(self):
+    def test_weekend_date(self) -> None:
         """Test handling of weekend dates."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
         weekend_date = date(2024, 1, 6)  # Saturday
@@ -414,7 +416,7 @@ class TestDateHandling:
         assert isinstance(df, pl.DataFrame)
 
     @pytest.mark.network
-    def test_future_date(self):
+    def test_future_date(self) -> None:
         """Test handling of future dates."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
         future_date = date(2030, 1, 1)
@@ -433,7 +435,7 @@ class TestPerformance:
     """Performance tests for data ingestion."""
 
     @pytest.mark.slow
-    def test_large_ticker_list(self):
+    def test_large_ticker_list(self) -> None:
         """Test fetching with large ticker list."""
         large_ticker_list = [f"TICKER{i}" for i in range(100)]
         fetcher = USEquityFetcher(tickers=large_ticker_list)
@@ -442,7 +444,7 @@ class TestPerformance:
         assert len(fetcher.tickers) == 100
 
     @pytest.mark.network
-    def test_concurrent_fetches(self):
+    def test_concurrent_fetches(self) -> None:
         """Test that multiple fetches don't interfere."""
         fetcher = USEquityFetcher(tickers=["AAPL"])
         trading_date = date(2024, 1, 2)
@@ -465,6 +467,7 @@ def _ohlcv_frame(tickers: list[str], trading_date: date) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "ticker": list(tickers),
+            "mic": ["XNAS"] * len(tickers),
             "date": [trading_date] * len(tickers),
             "open": [100.0] * len(tickers),
             "high": [101.0] * len(tickers),
@@ -475,6 +478,7 @@ def _ohlcv_frame(tickers: list[str], trading_date: date) -> pl.DataFrame:
         },
         schema={
             "ticker": pl.Utf8,
+            "mic": pl.Utf8,
             "date": pl.Date,
             "open": pl.Float64,
             "high": pl.Float64,
@@ -499,11 +503,11 @@ class TestExplicitScopeOrchestration:
             ("krx_equity", ["005930"]),
         ],
     )
-    def test_each_price_market_receives_exact_scoped_tickers(self, tmp_path, market, tickers) -> None:
+    def test_each_price_market_receives_exact_scoped_tickers(self, tmp_path: Path, market: str, tickers: list[str]) -> None:
         """W03/F04: explicit scope reaches all five price markets, not just US."""
         captured: list[tuple[str, list[str] | None]] = []
 
-        def spy(mkt, trading_date, **kwargs):
+        def spy(mkt: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append((mkt, kwargs.get("explicit_tickers")))
             return pl.DataFrame()
 
@@ -516,11 +520,11 @@ class TestExplicitScopeOrchestration:
 
         assert captured == [(market, tickers)]
 
-    def test_empty_explicit_list_never_broadens(self, tmp_path) -> None:
+    def test_empty_explicit_list_never_broadens(self, tmp_path: Path) -> None:
         """W03/F04: ``[]`` is preserved end to end and never becomes the configured universe."""
         captured: list[list[str] | None] = []
 
-        def spy(mkt, trading_date, **kwargs):
+        def spy(mkt: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append(kwargs.get("explicit_tickers"))
             return pl.DataFrame()
 
@@ -534,14 +538,15 @@ class TestExplicitScopeOrchestration:
         assert captured == [[]]
         assert results["us_equity"].status is SourceStatus.NO_DATA
 
-    def test_ambiguous_multi_market_rejects_before_any_fetch(self, tmp_path) -> None:
+    def test_ambiguous_multi_market_rejects_before_any_fetch(self, tmp_path: Path) -> None:
         """W03/F04: an ambiguous multi-market ticker raises and performs no fetch."""
-        from equity_lake.core.config_models import MarketConfig, TickerConfigRoot, TickerMetadata
+        from equity_lake.core.config import TickerConfig
+        from equity_lake.core.config_models import MarketConfig, TickerMetadata  # type: ignore[import-untyped]
 
         def meta(symbol: str) -> TickerMetadata:
             return TickerMetadata(symbol=symbol, name=symbol, exchange="TEST", sector="Tech")
 
-        config = TickerConfigRoot(
+        config = TickerConfig(
             markets={
                 "us": MarketConfig(currency="USD", tickers=[meta("DUP")]),
                 "cn": MarketConfig(currency="CNY", tickers=[meta("DUP")]),
@@ -554,7 +559,7 @@ class TestExplicitScopeOrchestration:
             run_daily_ingestion(date(2024, 1, 2), ["us_equity", "cn_ashare"], ticker_config=config, explicit_tickers=["DUP"])
         mock_fetch.assert_not_called()
 
-    def test_parallel_branch_uses_per_market_scope(self, tmp_path) -> None:
+    def test_parallel_branch_uses_per_market_scope(self, tmp_path: Path) -> None:
         """W03/F04: the parallel branch also receives the per-market resolved list."""
         from equity_lake.core.config import TickerConfig
 
@@ -563,7 +568,7 @@ class TestExplicitScopeOrchestration:
         cn_ticker = config.get_tickers_for_market("cn", active_only=True)[0]
         captured: dict[str, list[str] | None] = {}
 
-        def spy(mkt, trading_date, **kwargs):
+        def spy(mkt: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured[mkt] = kwargs.get("explicit_tickers")
             return pl.DataFrame()
 
@@ -588,17 +593,17 @@ class TestTickerAwareExistingData:
     """W03/F05: existing-date checks must prove requested-ticker completeness."""
 
     @staticmethod
-    def _write_partition(tmp_path, tickers: list[str], trading_date: date) -> None:
+    def _write_partition(tmp_path: Path, tickers: list[str], trading_date: date) -> None:
         with patch("equity_lake.storage.delta.LAKE_DIR", tmp_path):
             assert upsert_dataset(_ohlcv_frame(tickers, trading_date), "01_bronze/market_data/us_equity", trading_date, dry_run=False) is True
 
-    def test_partial_partition_is_not_skipped_and_fetches_only_missing(self, tmp_path) -> None:
+    def test_partial_partition_is_not_skipped_and_fetches_only_missing(self, tmp_path: Path) -> None:
         """One ticker present + one absent -> not skipped; scoped fetch targets the missing ticker."""
         trading_date = date(2024, 1, 2)
         self._write_partition(tmp_path, ["AAPL"], trading_date)
         captured: list[list[str] | None] = []
 
-        def spy(mkt, trading_date, **kwargs):
+        def spy(mkt: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append(kwargs.get("explicit_tickers"))
             return pl.DataFrame()
 
@@ -612,7 +617,7 @@ class TestTickerAwareExistingData:
         assert results["us_equity"].status is not SourceStatus.SKIPPED_EXISTING
         assert captured == [["MSFT"]]  # the late-added ticker is the only fetch scope
 
-    def test_unspecified_scope_incomplete_partition_fetches_fetcher_default(self, tmp_path) -> None:
+    def test_unspecified_scope_incomplete_partition_fetches_fetcher_default(self, tmp_path: Path) -> None:
         """W03 review: an unspecified (None) request never fetches an over-broad explicit list.
 
         The configured-scope coverage check decides *whether* to fetch; the fetch
@@ -630,7 +635,7 @@ class TestTickerAwareExistingData:
         self._write_partition(tmp_path, ["AAPL"], trading_date)
         captured: list[list[str] | None] = []
 
-        def spy(mkt, trading_date, **kwargs):
+        def spy(mkt: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append(kwargs.get("explicit_tickers"))
             return pl.DataFrame()
 
@@ -644,7 +649,7 @@ class TestTickerAwareExistingData:
         assert results["us_equity"].status is not SourceStatus.SKIPPED_EXISTING
         assert captured == [None]  # fetcher default, not an explicit ticker list
 
-    def test_complete_partition_is_skipped_without_fetch(self, tmp_path) -> None:
+    def test_complete_partition_is_skipped_without_fetch(self, tmp_path: Path) -> None:
         """Every requested ticker present in a valid partition -> SKIPPED_EXISTING."""
         trading_date = date(2024, 1, 2)
         self._write_partition(tmp_path, ["AAPL", "MSFT"], trading_date)
@@ -659,13 +664,13 @@ class TestTickerAwareExistingData:
         assert results["us_equity"].status is SourceStatus.SKIPPED_EXISTING
         mock_fetch.assert_not_called()
 
-    def test_corrupt_partition_is_refetched_in_full(self, tmp_path) -> None:
+    def test_corrupt_partition_is_refetched_in_full(self, tmp_path: Path) -> None:
         """A schema-invalid partition cannot prove presence, so the full scope is fetched."""
         trading_date = date(2024, 1, 2)
         self._write_partition(tmp_path, ["AAPL"], trading_date)
         captured: list[list[str] | None] = []
 
-        def spy(mkt, trading_date, **kwargs):
+        def spy(mkt: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append(kwargs.get("explicit_tickers"))
             return pl.DataFrame()
 
@@ -679,7 +684,7 @@ class TestTickerAwareExistingData:
 
         assert captured == [["AAPL", "MSFT"]]
 
-    def test_direct_ingest_dry_run_writes_nothing(self, tmp_path, sample_ohlcv_data) -> None:
+    def test_direct_ingest_dry_run_writes_nothing(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """W03: a direct ingest dry-run leaves no partition on disk."""
         with (
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data),
@@ -700,7 +705,7 @@ class TestTickerAwareExistingData:
 class TestSessionScheduling:
     """Closed price markets are `not_scheduled`: planned skips, never failures."""
 
-    def test_closed_market_is_not_scheduled_and_never_fetched(self, tmp_path) -> None:
+    def test_closed_market_is_not_scheduled_and_never_fetched(self, tmp_path: Path) -> None:
         """An explicit date on a closed exchange is a planned skip, not NO_DATA/FAILED."""
         with (
             patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch,
@@ -714,11 +719,11 @@ class TestSessionScheduling:
         assert results["us_equity"].error is None
         mock_fetch.assert_not_called()
 
-    def test_closed_market_does_not_block_open_market(self, tmp_path, sample_ohlcv_data) -> None:
+    def test_closed_market_does_not_block_open_market(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """A US holiday must not stop an open market's fetch."""
         captured: list[str] = []
 
-        def spy(market, trading_date, **kwargs):
+        def spy(market: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append(market)
             return sample_ohlcv_data
 
@@ -733,11 +738,11 @@ class TestSessionScheduling:
         assert results["us_equity"].status is SourceStatus.NOT_SCHEDULED
         assert results["cn_ashare"].status is SourceStatus.DRY_RUN
 
-    def test_parallel_branch_classifies_closed_market_before_fetch(self, tmp_path, sample_ohlcv_data) -> None:
+    def test_parallel_branch_classifies_closed_market_before_fetch(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """The parallel branch also marks the closed market not_scheduled and fetches only the open one."""
         captured: list[str] = []
 
-        def spy(market, trading_date, **kwargs):
+        def spy(market: str, trading_date: date, **kwargs: Any) -> pl.DataFrame:
             captured.append(market)
             return sample_ohlcv_data
 
@@ -752,7 +757,7 @@ class TestSessionScheduling:
         assert results["us_equity"].status is SourceStatus.NOT_SCHEDULED
         assert results["cn_ashare"].status is SourceStatus.DRY_RUN
 
-    def test_scheduled_session_with_empty_fetch_still_blocks(self, tmp_path) -> None:
+    def test_scheduled_session_with_empty_fetch_still_blocks(self, tmp_path: Path) -> None:
         """A genuinely empty fetch on a scheduled session stays NO_DATA (a failure)."""
         with (
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=pl.DataFrame()),
@@ -764,7 +769,7 @@ class TestSessionScheduling:
         assert results["cn_ashare"].status is SourceStatus.NO_DATA
         assert results["cn_ashare"].succeeded is False
 
-    def test_hk_sg_union_session_still_fetches(self, tmp_path, sample_ohlcv_data) -> None:
+    def test_hk_sg_union_session_still_fetches(self, tmp_path: Path, sample_ohlcv_data: pl.DataFrame) -> None:
         """An XHKG-only session schedules hk_sg_equity (union) rather than skipping it."""
         with (
             patch("equity_lake.ingestion.orchestrator.fetch_market_data", return_value=sample_ohlcv_data) as mock_fetch,
@@ -776,7 +781,7 @@ class TestSessionScheduling:
         mock_fetch.assert_called_once()
         assert results["hk_sg_equity"].status is SourceStatus.DRY_RUN
 
-    def test_hk_sg_common_holiday_is_not_scheduled(self, tmp_path) -> None:
+    def test_hk_sg_common_holiday_is_not_scheduled(self, tmp_path: Path) -> None:
         """When both XHKG and XSES are closed, hk_sg_equity is a planned skip."""
         with (
             patch("equity_lake.ingestion.orchestrator.fetch_market_data") as mock_fetch,
