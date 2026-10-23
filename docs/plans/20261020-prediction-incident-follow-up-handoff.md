@@ -10,7 +10,7 @@ This handoff preserves its initial pending state as a historical snapshot. Curre
 
 ## Start here and preserve the baseline
 
-Read `AGENTS.md`, [the documentation map](../README.md), [the incident report](../finding/20261018-prediction-test-write-investigation.md), this handoff, and [the current findings register](../finding/20261016-repository-review-and-equity-alerts.md). Then inspect the actual relevant source, tests, contracts, and accepted ADRs before proposing any code change. Do not restart C00–C10, repeat the original repository audit, replay old decisions, or discard reviewed work.
+Read `AGENTS.md`, [the documentation map](https://github.com/minghao/equity_lake/blob/main/docs/README.md), [the incident report](../finding/20261018-prediction-test-write-investigation.md), this handoff, and [the current findings register](../finding/20261016-repository-review-and-equity-alerts.md). Then inspect the actual relevant source, tests, contracts, and accepted ADRs before proposing any code change. Do not restart C00–C10, repeat the original repository audit, replay old decisions, or discard reviewed work.
 
 At the start of this documentation task, runtime fields were checked before reading reports:
 

@@ -3,7 +3,10 @@ site_description: Local-first equity EOD data pipeline
 site_url: https://minghao.github.io/equity_lake
 repo_name: equity_lake
 repo_url: https://github.com/minghao/equity_lake
-exclude_docs: 'README.md|catalog/.*|archive/.*'
+exclude_docs: |
+  /README.md
+  /catalog/
+  /archive/
 
 theme:
   name: material

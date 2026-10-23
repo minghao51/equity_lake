@@ -132,3 +132,11 @@ No blanket cleanup, direct Parquet deletion, vacuum, table reset, guessed canoni
 ## Historical boundaries
 
 C00–C10 implementation/offline-contract acceptance remains accepted for its recorded scope. It is not production operational readiness and does not answer I01. The Oct18 incident report remains the source for its historical inspection methods, evidence limits, and row/version facts. No prior suite was rerun for this status note. This document records status and constraints; it is not self-approval or a new policy/authorization. The `/tmp` evidence paths above are host-local and may not exist elsewhere.
+
+## Repository review and validation — 2026-10-23
+
+- Reviewed local history: `f010fb6ed2268ca5709a9281654cc32ef6a36aeb` (eight accepted ADRs; 8 files), `bca1029afd97d0d619738f2a5cb88ec53f1c902a` (integrated code/tests; 169 files), and `d8249df5b706cfb544488bc2bd828ee0b2d18f2a` (guide/incident closure; 23 files). These are existing local commits, not newly pushed work.
+- Saved offline code-validation evidence in `/tmp/equity-worktree-validation-Luna-02/hostsource`: serial and parallel suites each **1,586 passed**; Ruff, formatting, configured `mypy src` (170 source files), and temporary DAG/catalog comparison passed. These historical code gates were not rerun for this docs-only update; no code changed after them.
+- Separate, non-configured `mypy --strict src` reported **49 errors across 23 files** (46 previously known; 3 additional strict-only annotation findings at `ml/validation.py:71,165` and `signals/scanner.py:60`). It did not pass and is not the configured mypy gate.
+- The initial offline MkDocs strict build after the exclusion/link corrections passed at **2026-10-23T10:52:11Z** with **0 warnings**. Material's MkDocs 2.0 notice and omitted-navigation/excluded-file notices were informational. Final-state docs validation is captured separately; this documentation update makes no code-test or production-readiness claim.
+- Unrelated P2 tracking and CLI/config follow-ups remain separate from this docs-only update.

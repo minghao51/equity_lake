@@ -63,7 +63,7 @@ force.
 ## 1. Start here
 
 Continue in `/home/howt/work/equity_lake` using the **existing worktree**. Read
-`AGENTS.md`, [the documentation map](../README.md), the linked report, accepted
+`AGENTS.md`, [the documentation map](https://github.com/minghao/equity_lake/blob/main/docs/README.md), the linked report, accepted
 ADRs, and relevant canonical contracts/skills before implementation. Do not
 repeat the repository audit or redo the completed operational batch. Revalidate
 individual open findings against current source before editing them.

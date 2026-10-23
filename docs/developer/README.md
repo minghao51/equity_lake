@@ -23,6 +23,6 @@ Boundary and architecture changes require an accepted ADR before implementation.
 
 Superseded notes, implementation reports, and archived scripts:
 
-- [Archive](../archive/README.md) — Superseded docs and one-time migration scripts retained for audit
+- [Archive](https://github.com/minghao/equity_lake/blob/main/docs/archive/README.md) — Superseded docs and one-time migration scripts retained for audit
 - [Reports](../reports/README.md) — Operational analyses and handoff notes kept in the repo
 - Git history — superseded implementation details and older experiments that are no longer published as active docs

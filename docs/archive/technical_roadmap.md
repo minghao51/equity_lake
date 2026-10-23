@@ -4,8 +4,8 @@
 > active plan — it predates the Typer CLI migration and cites a "v0.4.0" that
 > does not match `pyproject.toml` (0.1.0). The current roadmap, implementation
 > map, and phase handoffs live in
-> [`docs/plans/20260804-portfolio-roadmap.md`](plans/20260804-portfolio-roadmap.md)
-> and [`docs/plans/20260804-portfolio-implementation-map.md`](plans/20260804-portfolio-implementation-map.md).
+> [`docs/plans/20260804-portfolio-roadmap.md`](../plans/20260804-portfolio-roadmap.md)
+> and [`docs/plans/20260804-portfolio-implementation-map.md`](../plans/20260804-portfolio-implementation-map.md).
 
 ## Executive Summary
 
