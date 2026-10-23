@@ -90,4 +90,4 @@ data need stands. yfinance exposes `Ticker.dividends` / `Ticker.splits` and
 
 ## Status
 
-Proposed — implementation begins only after the owner accepts this ADR.
+Accepted (2026-08-31), consistent with the header and decision index.

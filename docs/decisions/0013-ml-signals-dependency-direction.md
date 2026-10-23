@@ -1,7 +1,7 @@
 # ADR-0013: One-Way Dependency — `signals` May Import `ml`, Never the Reverse
 
-**Status:** Proposed
-**Recorded:** 2026-09-10
+**Status:** Accepted decision; implementation and offline-contract review accepted 2026-10-18. Operational readiness is not implied.
+**Recorded:** 2026-09-10; owner acceptance recorded 2026-10-17.
 **Deciders:** Repository owner
 **Related:** ADR-0002 (import boundary tests), ADR-0012 (boundary coverage
 extension)
@@ -70,7 +70,22 @@ real debugging trap.
 - Enforcement: adding `"signals"` to `ml`'s forbidden set makes regression of
   this decision a CI failure, not a code-review hope.
 
-## Status
+## Owner acceptance and implementation status
 
-Proposed — implementation begins only after the owner accepts this ADR
-(handoff `docs/handoffs/20260910-03-ml-signals-cycle-tier2.md`).
+The owner approved this decision with: **“Approve 1-9 and C10 implementation”.**
+The accepted contract is the one-way `signals` → `ml` dependency with
+caller-resolved, explicit candidate-strategy injection, import-boundary
+enforcement, and the existing on-demand prediction behavior retained. Source
+followed this direction at the 2026-10-17 status snapshot, when independent
+implementation review remained in progress. See the 2026-10-18
+implementation/offline-contract acceptance supplement below; neither policy nor
+implementation acceptance implies live operational readiness.
+
+## Implementation/offline-contract acceptance supplement — 2026-10-18
+
+The one-way `signals` → `ml` implementation, explicit candidate-strategy
+injection, import-boundary enforcement, and retained on-demand prediction
+contract were independently reviewed and accepted with the C10 offline gates.
+The final reviewer returned no C10 must-fix. This acceptance is limited to
+implementation and offline contracts; it makes no alpha, live-provider, or
+production-readiness claim and does not authorize operational activity.
