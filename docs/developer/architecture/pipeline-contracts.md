@@ -22,7 +22,9 @@ This page is the operational contract for `equity pipeline`.
 | Bronze-to-Silver no-work | Missing bronze corpus or an all-already-processed corpus is a planned skip (`no_bronze_work` / `already_processed`), not a source failure; processing and write failures stay failed with their cause. |
 | Feature input validity | Invalid required price input (null keys, non-positive OHLC, negative volume, violated price relationships) fails the per-ticker feature computation — never silently drops rows (W01/D01). |
 | EOD join keys | All feature/enrichment joins use `pl.Date` keys; malformed date keys raise. Undefined ratios (zero baselines) are null, never infinity. |
-| Feature schema compatibility | `FEATURE_SCHEMA_VERSION = 4` (ADR-0014). The new Gold column `label_available_date` is additive: pre-W03 readers tolerate the extra column, and the training/backtest loaders strict-exclude rows whose availability is unknown or after the cutoff. Installed models do not treat `label_available_date` or the target columns as predictors (`NON_FEATURE_COLUMNS`). |
+| Canonical shared identity (ADR-0016) | Shared feature/model/signal/watchlist keys are `(market, MIC, symbol)` (plus `date` for observations). MIC comes from explicit supported source/config mapping; ticker spelling is never used to infer venue. Unknown or ambiguous legacy rows/models fail closed unless trusted historical provenance proves one unique identity. No automatic key rewrite or collapse occurs. |
+| Feature schema and point-in-time adjustment (ADR-0015) | `FEATURE_SCHEMA_VERSION = 7`, `availability_schema_version = 4`, and action-coverage proof schema version `2`. Strict Gold rows include `identity_schema_version`, `price_adjustment_version`, `action_coverage`, `action_source_age_days`, and persisted proof columns `action_coverage_market`, `action_coverage_mic`, `action_coverage_symbol`, `action_coverage_source`, `action_coverage_start`, `action_coverage_end`, `action_source_available_at`, `action_source_valid_until`, `action_coverage_status`, and `action_coverage_schema_version`. Proof identity must equal the feature row's own `(market, MIC, symbol)`; its timezone-aware source clock maps to the first observable venue session and its source-issued expiry must cover the decision-session close. Missing/unverified proof makes adjusted output unavailable, not neutral or raw. Unknown/incompatible legacy features and models are unavailable, not rewritten or auto-retrained. Native yfinance corporate-action ingestion currently supplies no verified source clock, complete-coverage assertion, or source-issued expiry. No guessed TTL, ingestion-time substitute, raw fallback, or cash-dividend adjustment is used. |
+| Label availability (ADR-0014) | Gold `label_available_date` records when `next_day_return` became computable. Training/backtests strict-exclude labels whose availability is unknown or after their cutoff; availability and target columns are excluded from predictors (`NON_FEATURE_COLUMNS`). |
 | Label lifecycle (ADR-0014) | On session D the preceding observed session's label (`next_day_return`) is finalized from D's bar and stamped `label_available_date = D`. "Next observation" is the next exchange session with a valid bar for the instrument; a missing next-session bar leaves the label pending and is reported. Finalization is a matched-only, label-column-only Delta update — it never inserts keys, evolves the schema, or touches feature columns. `compute_target=False` neither stamps availability nor finalizes. |
 | As-of eligibility (ADR-0014) | Training and backtests exclude labels whose `label_available_date` is after the cutoff; legacy rows with unknown availability (column absent or null) are strict-excluded by default. A documented tolerance is opt-in only and is not used by the default path. |
 | Bronze-to-Silver failure | Only consumers of that Silver output are degraded. |
@@ -62,9 +64,27 @@ data/lake/04_platinum/predictions/
 ```
 
 Tables are Delta tables partitioned by `date`; the underlying table files are
-Parquet. Market data is keyed by `ticker,date`. Enrichments use the natural
+Parquet. Shared price/feature/model/signal observations are keyed by canonical `market,MIC,symbol,date`; legacy `ticker` is only a compatibility alias, not a global key. Enrichments use the natural
 keys defined in `ingestion/writers.py` (for example `indicator,date`,
 `url`, or `ticker,date,filing_type`).
+
+## Bounded Delta evolution and replay (ADR-0017)
+
+The keyed Delta writer adds nullable columns through native schema evolution;
+it does not read and rewrite the full table for additive evolution. Optimistic
+concurrency conflicts refresh the committed snapshot and retry at most three
+times. Unsupported evolution and exhausted conflicts remain visible failures.
+
+Bronze-to-Silver replay requires an explicit source/date/market/instrument
+scope, is capped at 100 selected items per invocation and 25 per batch, and
+uses Pydantic-validated auxiliary checkpoint/spend-ledger state separate from
+authoritative Silver. Silver durability is re-read before checkpoint advancement; the
+checkpoint alone never suppresses work. Historical replay does not notify.
+Paid work defaults to zero authorization and requires a finite cumulative
+estimate, separate actual-spend cap, per-batch estimate, and provider-reported
+actual cost. No current paid-provider adapter exists for unbounded LLM helpers;
+`equity sec --process` deliberately exits nonzero before fetch. These paths are
+not paid-runtime-ready.
 
 ## Execution and recovery
 
@@ -74,10 +94,13 @@ orchestrator. Writes use Delta merge/upsert and are therefore repeatable for
 the configured natural key; this is not a generic claim about arbitrary
 external Delta tables.
 
-History recovery is never implicit. When authorized, the pipeline logs the
-120-day range, markets, ticker count, explicit tickers, and dry-run mode before
-calling the scoped backfill. Post-run verification is `equity monitor`, the
-pipeline result JSON, and the focused contract tests.
+History recovery is never implicit. When separately authorized, the pipeline
+logs the 120-day range, markets, ticker count, explicit tickers, and dry-run
+mode before calling the scoped backfill. Do not run production migration,
+repair, or backfill as a consequence of documentation or implementation review;
+compatibility checks are report-first on scoped temporary copies. Post-run
+verification is `equity monitor`, the pipeline result JSON, and the focused
+contract tests.
 
 ## Label lifecycle, availability, and repair (ADR-0014)
 

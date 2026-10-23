@@ -1,12 +1,40 @@
 # Delta Lake Maintenance
 
-All lake tables are date-partitioned Delta tables with Parquet data files stored
-in the numbered medallion layout (`data/lake/01_bronze/` … `04_platinum/`) — see
-[the medallion layout decision](../decisions/0001-medallion-layout-and-generated-catalog.md).
-Every ingest and feature run appends or merges into these tables, so over time
-the underlying files accumulate: superseded versions from merges, and small-file
+Cataloged lake tables are Delta tables with Parquet data files stored in the
+numbered medallion layout (`data/lake/01_bronze/` … `04_platinum/`); partition
+columns are dataset-specific (for example, `date` or corporate-action
+`ex_date`) — see [the medallion layout decision](../decisions/0001-medallion-layout-and-generated-catalog.md).
+Repeated ingests and feature runs can append or merge into date-partitioned
+tables, so their files accumulate superseded merge versions and small-file
 sprawl from repeated daily appends. The `equity delta-*` commands are the
 maintenance surface for that accumulation.
+
+## Additive evolution, concurrency, and replay status
+
+Keyed `merge_delta` now uses native Delta nullable additive schema evolution;
+it does not seed a rewritten copy of the entire existing table. Optimistic
+concurrency conflicts refresh the committed table snapshot before retry, with a
+maximum of three attempts. Incompatible types, unsupported evolution, corrupt
+state, and retry exhaustion remain visible failures. This is the implementation
+contract under ADR-0017, not authorization to migrate a production table.
+
+Bronze-to-Silver replay now requires explicit source/date/market/instrument
+scope. It processes at most 100 items per invocation in batches of at most 25,
+uses Pydantic-validated auxiliary spend-ledger and checkpoint files independent
+of authoritative Silver state, and advances its checkpoint only after rereading
+durable Silver.
+Historical replay does not send notifications. Paid work remains zero by
+default and needs a separate finite cumulative estimate, actual-spend cap,
+batch estimate, and provider-reported actual cost. No actual-cost adapter is
+available for the unbounded LLM helper or SEC path: `equity sec --process`
+intentionally exits nonzero before fetching. These paths are not
+paid-runtime-ready.
+
+ADR-0017 implementation/offline-contract review was accepted with C10 on
+2026-10-18. This offline acceptance is not production readiness. Compatibility
+or migration validation remains report-first on scoped temporary copies. Do not
+infer production migration, repair, replay, or spend authorization from these
+capabilities.
 
 ## When to run maintenance
 
@@ -70,8 +98,10 @@ uv run equity delta-compact --markets jpx_equity,krx_equity
 | `--markets`, `-m` | `us_equity,cn_ashare,hk_sg_equity` | Comma-separated tables to compact |
 | `--verbose`, `-v` | off | Debug logging |
 
-There is no `--dry-run` flag; compaction is a table rewrite that preserves
-table contents and is safe to run at any time. Output per table:
+There is no `--dry-run` flag; compaction rewrites table files. Treat it as a
+mutating maintenance operation, not as an implementation-review check. Establish
+scope and verify on a temporary copy before any separately authorized
+production operation. Output per table:
 
 ```text
   us_equity: added=12 removed=1541
@@ -101,16 +131,35 @@ uv run equity delta-migrate
 | `--dry-run` | **off** | Preview row counts without writing |
 | `--verbose`, `-v` | off | Debug logging |
 
-Unlike vacuum, `--dry-run` defaults to **off** here, so check first if you are
-unsure of a table's state. During migration the old `date=` directories are
-moved into a `.pre_delta_backup/` sibling directory rather than deleted; the
-backup can be removed once the migrated table is verified. Output per table is
-`OK` or `SKIPPED/FAILED` (missing directory or unreadable Parquet).
+Unlike vacuum, `--dry-run` defaults to **off** here, so the first invocation
+can mutate files. Use report-first inspection and a scoped temporary copy for
+compatibility checks; the existence of this command is not production
+migration authorization. During an explicitly authorized migration the old
+`date=` directories are moved into a `.pre_delta_backup/` sibling directory
+rather than deleted. Preserve and verify that snapshot before any rollback or
+cleanup. Output per table is `OK` or `SKIPPED/FAILED` (missing directory or
+unreadable Parquet).
 
-## Market identifiers
+## Market identifiers and path containment
 
-All three commands accept short names (`us`), long table names (`us_equity`),
-or full medallion paths (`01_bronze/market_data/us_equity`).
+All three commands accept short market aliases (`us`), canonical market names
+(`us_equity`), named dataset routes (`features`, `predictions`, and the mapped
+dataset identifiers), full lake-relative medallion paths
+(`01_bronze/market_data/us_equity`), and other safe lake-relative table paths.
+A catalog-only allowlist is not imposed, so noncatalog Delta tables within the
+lake remain addressable.
+
+Targets are resolved relative to the configured lake root. Absolute paths and
+any path containing a `..` component are rejected. Symlinks resolving within
+the lake are allowed and normalized to their effective relative route;
+symlinks resolving outside the lake are rejected. The complete comma-separated
+`--markets` list is validated before any vacuum, compaction, or migration call;
+an invalid target exits nonzero without invoking maintenance for any target.
+
+This is CLI-only operator containment. It does not change the generic storage
+path handling used for auxiliary Delta artifacts outside the lake, and it is
+not an OS boundary or protection against a malicious concurrent symlink swap.
+See [ADR-0019](../decisions/0019-cli-delta-maintenance-lake-containment.md).
 
 ## Typical maintenance flow
 

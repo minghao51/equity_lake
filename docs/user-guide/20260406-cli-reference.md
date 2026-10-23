@@ -20,10 +20,19 @@ logging, and mutating commands accept `--dry-run` to simulate without writes.
 | Ingestion & data | `ingest`, `backfill`, `auto-backfill`, `label-repair`, `sync`, `macro`, `pipeline` |
 | Unstructured & news | `news`, `sentiment`, `transcripts`, `ratings`, `sec`, `financials` |
 | Intelligence & ML | `forecast`, `ml compare`, `ml ablate`, `ml train` |
-| Analysis | `query`, `signal scan`, `backtest`, `arena run`, `report backtest` |
+| Analysis | `query`, `signal scan`, `signal history`, `tracking`, `backtest`, `arena run`, `report backtest` |
 | Maintenance & ops | `monitor`, `delta-vacuum`, `delta-compact`, `delta-migrate`, `catalog-generate`, `dashboard build`, `dashboard serve` |
 | Config & validation | `config show`, `config get`, `config validate`, `config export`, `validate check`, `validate profile`, `validate drift` |
-| Utilities | `bootstrap sample`, `demo seed`, `api serve` |
+| Utilities | `doctor`, `bootstrap sample`, `demo seed`, `api serve` |
+
+`doctor --watchlist … --ticker-config … --as-of YYYY-MM-DD` reports read-only
+observations for canonical instruments across the configured markets; it does
+not write, infer, or backfill. Observed dates are not a configured freshness
+policy. `signal history --date YYYY-MM-DD --limit N` reads existing Delta or
+legacy Parquet history without migration. Both history options are required.
+See the [private tracking guide](20261016-private-tracking-preview.md) for the
+`equity tracking` YAML CRUD, readiness, local event, and opt-in delivery
+workflow. These observation commands do not send notifications.
 
 ## Ingestion & data
 
@@ -232,20 +241,21 @@ dotenvx run -- uv run equity ratings --tickers AAPL,MSFT
 
 ### `equity sec`
 
-Fetch SEC 10-K/10-Q filings from EDGAR full-text search and optionally process
-them to silver.
+Fetch SEC 10-K/10-Q filings from EDGAR full-text search. `--process` currently
+fails closed before fetch because no bounded provider actual-cost adapter is
+available; no LLM processing is runtime-ready.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--date` | str | resolved trading date | Trading date |
 | `--tickers`, `-t` | str | all configured | Comma-separated tickers |
 | `--lookback` | int | `120` | Filing lookback days |
-| `--process` | flag | off | Process bronze to silver via LLM |
+| `--process` | flag | off | Currently exits nonzero before fetching; no bounded provider actual-cost adapter is available |
 | `--dry-run` | flag | off | Skip writes |
 
 ```bash
 dotenvx run -- uv run equity sec --tickers AAPL --lookback 90
-dotenvx run -- uv run equity sec --tickers AAPL --process
+# Avoid --process: it intentionally exits nonzero before fetching.
 ```
 
 ### `equity financials`
@@ -387,15 +397,28 @@ Scan watchlist and generate signals.
 |---|---|---|---|
 | `--format`, `-f` | str | `table` | `json`, `md`, or `table` |
 | `--date`, `-d` | str | resolved trading date | Target date `YYYY-MM-DD` |
-| `--watchlist`, `-w` | str | `config/watchlist.yaml` | Watchlist config path |
+| `--watchlist`, `-w` | str | managed private watchlist | Explicit legacy ticker-only YAML; requires `--market` |
+| `--market` | str | — | Canonical market for an explicit legacy ticker-only list |
+| `--mic` | str | — | Exact MIC for legacy entries when required to disambiguate |
+| `--ticker-config` | str | configured universe | Active source configuration used to resolve identities |
 | `--config`, `-c` | str | `config/signals.yaml` | Signal config path |
 | `--output`, `-o` | str | stdout | Save output to file |
-| `--dry-run` | flag | off | Don't save history |
+| `--dry-run` | flag | off | Print a plan; no scanning, inference, report/history writes or runtime directory creation |
 
 ```bash
 uv run equity signal scan
 uv run equity signal scan --format json --output signals.json
 ```
+
+### `equity tracking`
+
+Private canonical watchlist and outbox operations are exposed as `equity
+tracking list|add|update|remove|migrate-legacy|settings|scan|readiness|inbox|digest|schedule|deliver`.
+This is a local workflow; watchlist changes do not fetch/backfill data. See the
+[private tracking guide](20261016-private-tracking-preview.md) for field-level
+options and privacy boundaries. `scan --dry-run` is a no-read/no-inference/
+no-persistence/no-delivery plan. Delivery is disabled unless `--enable-live` is
+explicitly passed; the opportunity webhook is distinct from health webhooks.
 
 ### `equity backtest`
 
@@ -410,15 +433,14 @@ Backtest trading strategies (shares the strategy registry with
 | `--start-date` | str | **required** | `YYYY-MM-DD` |
 | `--end-date` | str | **required** | `YYYY-MM-DD` |
 | `--initial-cash` | float | `100000` | Initial capital |
-| `--adjust` | str | `none` | Corporate-action price adjustment (ADR-0011): `none` (raw stored prices), `splits` (fix split discontinuities), or `total_return` (also reinvests dividends). When enabled, the chosen method is disclosed above the summary. Requires `equity corporate-actions` data for the market; without it the run warns and falls back to raw prices. |
+| `--adjust` | str | `splits` | Point-in-time split-only adjustment. Legacy `none` is an alias for split-only, never a raw-price bypass. Verified action proof is required; missing proof makes adjusted evaluation unavailable, with no raw fallback. Dividend-inclusive total-return adjustment is unsupported. |
 | `--output`, `-o` | str | stdout only | Output JSON |
 
 ```bash
 uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
   --start-date 2025-01-01 --end-date 2025-12-31
-uv run equity corporate-actions                      # refresh splits/dividends first
-uv run equity backtest --adjust splits --tickers AAPL,MSFT \
-  --start-date 2025-01-01 --end-date 2025-12-31
+# A normal source fetch is a separate, explicitly authorized operation.
+# Adjusted backtests need verified source proof; the native yfinance path does not currently provide it.
 ```
 
 ### `equity arena run`
@@ -570,19 +592,22 @@ Inspect and validate the unified application settings.
 
 | Command | Purpose |
 |---|---|
-| `config show` | Show full configuration (JSON) |
-| `config get <path>` | Get a specific value by dotted path (e.g. `storage.data_dir`) |
+| `config show` | Show configuration JSON with sensitive values redacted |
+| `config get <path>` | Get a dotted value; sensitive keys/nested values stay redacted |
 | `config validate` | Validate YAML configuration files |
-| `config export [file]` | Export configuration to a file (stdout if omitted) |
+| `config export [file]` | Export redacted configuration to a file (stdout if omitted) |
 
-`config validate` flags:
+`config validate` always validates `tickers.yaml` by default; watchlist and
+signal files are not selected unless their path option is provided or `--all`
+is set. Missing selected files are errors. Ticker-group reference problems are
+reported as nonfatal warnings and do not change the exit status.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
-| `--tickers`, `-t` | str | `config/tickers.yaml` | Path to tickers.yaml |
-| `--watchlist`, `-w` | str | `config/watchlist.yaml` | Path to watchlist.yaml |
-| `--signals`, `-s` | str | `config/signals.yaml` | Path to signals.yaml |
-| `--all` | flag | off | Validate all config files |
+| `--tickers`, `-t` | str | `config/tickers.yaml` | Ticker config path; always validated |
+| `--watchlist`, `-w` | str | `config/watchlist.yaml` | Additional watchlist path; not selected by default |
+| `--signals`, `-s` | str | `config/signals.yaml` | Additional signals path; not selected by default |
+| `--all` | flag | off | Also validate watchlist and signals |
 
 ```bash
 uv run equity config show
@@ -658,7 +683,8 @@ Serve the read-only FastAPI API over the equity data lake. OpenAPI docs at
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
-| `--host` | str | `127.0.0.1` | Bind host |
+| `--host` | str | `127.0.0.1` | Bind host; non-loopback requires confirmation unless explicitly opted in |
+| `--allow-unauthenticated-exposure` | flag | off | Noninteractive opt-in to a warned, unauthenticated non-loopback bind |
 | `--port`, `-p` | int | `8000` | Bind port |
 | `--reload` | flag | off | Auto-reload on code changes (dev) |
 

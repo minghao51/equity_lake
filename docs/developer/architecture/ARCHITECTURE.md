@@ -1,6 +1,6 @@
 # Architecture
 
-**Last Updated**: 2026-08-29
+**Last Updated**: 2026-10-22
 **Project**: Equity EOD Data Pipeline
 
 > This is the canonical architecture document. The former root-level
@@ -97,7 +97,9 @@ data/lake/
 │   ├── processed_articles/         # LLM-enriched article-ticker pairs
 │   ├── sec_extractions/            # LLM-extracted SEC filing insights
 │   ├── analyst_ratings/            # Analyst consensus + price targets
-│   └── sec_financials/             # SEC XBRL financial data
+│   ├── sec_financials/             # SEC XBRL financial data
+│   ├── corporate_actions/          # Validated per-market corporate actions
+│   └── corporate_action_coverage/  # Source-scoped proof (schema version 2)
 ├── 03_gold/                        # Feature engineering output (Delta)
 │   └── features/
 └── 04_platinum/                    # ML predictions and signals (Delta)
@@ -109,6 +111,55 @@ Parquet (ADR-0001). Path constants live in `core/paths.py`; market-data
 constants (`US_EQUITY_DIR`, …) point directly at their medallion locations,
 while `US_NEWS_DIR`, `US_SOCIAL_SENTIMENT_DIR`, and `SEC_EXTRACTIONS_DIR` are
 deprecated aliases for their silver paths.
+
+## Canonical Identity, Availability, and Private Tracking
+
+`core/instruments.py` defines shared `(market, MIC, symbol)` keys and refuses to
+guess identity from ticker text. Shared feature, model, signal, and private
+tracking paths use this identity across the five configured price markets.
+Unknown/ambiguous legacy rows and models remain unavailable unless trusted
+historical provenance proves one unique identity; compatibility does not
+rewrite or collapse keys. New model filenames use a hashed identity token, with
+the full identity retained in a trusted sidecar.
+
+`core/availability.py` owns the versioned split-only read-time adjustment and
+source-availability contract. Gold feature rows use
+`FEATURE_SCHEMA_VERSION = 7` and `availability_schema_version = 4`; the
+source-scoped action-coverage table and persisted feature proof use schema
+version 2. Persisted proof fields
+include their own `(market, MIC, symbol)` identity, source, coverage bounds,
+source publication time, status, and source-issued `source_valid_until` expiry.
+The proof identity must match the feature row, the source clock maps to the
+first observable venue session, and expiry must cover that decision-session
+close. No guessed TTL is used. The shipped native yfinance corporate-action
+path does not currently provide verified publication-clock,
+complete-coverage, and expiry proof, so adjusted output is unavailable until
+proof is supplied. This is a source limitation, not a native provider
+availability claim. Raw Bronze prices are not rewritten and cash dividends are
+excluded. Strict rolling backtests rebuild each decision window as of its own
+cutoff; unavailable action proofs exclude affected decisions.
+
+`signals/tracking.py` owns private YAML watchlists and durable local SQLite
+state for scan reports, transitions, events, and an outbox, with Pydantic
+validation at write boundaries. The `equity tracking` commands and default
+`equity signal scan` path use canonical private watchlists; explicitly supplied
+ticker-only legacy lists require a market and an unambiguous MIC. Adding an
+instrument does not fetch/backfill history.
+Tracking reads stored data only; sentiment and unsupported enrichments are
+reported unavailable rather than neutral. The schedule command describes a
+17:30 `America/New_York` plan, but no scheduler is activated.
+
+Private tracking artifacts live outside `data/lake/` and the generated catalog.
+The private API/UI are loopback-only and are not authenticated; proxy/forwarded
+exposure is rejected. Public/static projections and default webhook payloads
+exclude private notes, held status, and credentials. Opportunity delivery is
+separate from health webhooks, disabled by default, and requires explicit
+`--enable-live`; this does not provide exactly-once delivery.
+
+The implementations for ADR-0013 and ADR-0015–0018 received independent
+implementation/offline-contract acceptance with C10 on 2026-10-18. This is not
+production operational readiness and does not authorize production migration,
+repair, backfill, retraining, live sends, or deployment.
 
 ## Canonical Module Boundaries
 
@@ -448,7 +499,7 @@ then renders as an interactive Astro + React Flow site.
 ```
 catalog/
 ├── models.py      # Pydantic: Catalog, DatasetEntry, NodeEntry, EdgeEntry, ColumnInfo
-├── datasets.py    # 15 static DatasetEntry definitions (Bronze/Silver/Gold/Platinum)
+├── datasets.py    # 18 static DatasetEntry definitions (Bronze/Silver/Gold/Platinum)
 ├── builder.py     # Builds Hamilton driver, extracts nodes/edges from DAG tags
 └── writer.py      # JSONL serialization (one object per line)
 ```
@@ -468,8 +519,9 @@ uv run equity catalog-generate               # regenerate data/catalog.jsonl
 uv run equity catalog-generate -o /tmp.jsonl # custom output path
 ```
 
-- **JSONL format** (`data/catalog.jsonl`): 15 datasets, 52 nodes, 100 edges. Git-tracked (source of truth for the frontend). Never edit it directly — regenerate via `equity catalog-generate`.
+- **JSONL format** (`data/catalog.jsonl`): 18 datasets, 52 nodes, 372 edges. Git-tracked (source of truth for the frontend). Never edit it directly — regenerate via `equity catalog-generate`.
 - **Astro frontend** (`docs/catalog/`): static site built at build time from `catalog.jsonl`, uses `@xyflow/react` v12 for DAG visualization.
+- `corporate_action_coverage` is a genuine cataloged Silver dataset at `data/lake/02_silver/corporate_action_coverage/`. Private watchlists, tracking SQLite state, event records, and the delivery outbox are auxiliary artifacts outside `data/lake/` and are not cataloged.
 - **GitHub Pages**: deployed via `.github/workflows/catalog-deploy.yml` (official `actions/deploy-pages`, base path `/equity_lake`).
 - **Freshness CI** (`.github/workflows/catalog-check.yml`): on PRs touching `features/dag/**`, `catalog/**`, `core/schemas.py`, `core/paths.py`, `ingestion/writers.py`, or `data/catalog.jsonl`, regenerates the catalog and fails if `data/catalog.jsonl` would change — preventing stale catalogs from merging.
 

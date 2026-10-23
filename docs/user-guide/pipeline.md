@@ -16,6 +16,11 @@ The main command is:
 dotenvx run -- uv run equity pipeline
 ```
 
+This is an operational command that may fetch live providers and write lake
+state. It is shown for reference only; this documentation/review work does not
+authorize source fetches, production writes, paid processing, repair, backfill,
+retraining, or deployment.
+
 ## Core Commands
 
 Run daily ingestion:
@@ -47,7 +52,7 @@ Monitor pipeline health:
 ```bash
 dotenvx run -- uv run equity monitor
 dotenvx run -- uv run equity monitor --verbose
-dotenvx run -- uv run equity monitor --output-json logs/health_report.json
+dotenvx run -- uv run equity monitor --output-json logs/health-report.json
 ```
 
 Query the lake with DuckDB:
@@ -58,6 +63,13 @@ dotenvx run -- uv run equity query --query latest_summary
 dotenvx run -- uv run equity query --query top_volume
 dotenvx run -- uv run equity query --db data/equity_data.duckdb --verbose
 ```
+
+The Compose `daily` service is a one-shot pipeline invocation. Run it from an
+external scheduler (for example `docker compose --profile daily run --rm daily`);
+Compose does not implement a cron schedule or automatically restart completed
+pipeline runs. The query service runs all named queries when `--query` is
+omitted. Sync expects a bucket root whose children follow the numbered
+medallion layout, not a single-market prefix.
 
 ## Supported Pipeline Flags
 
@@ -89,7 +101,9 @@ dotenvx run -- uv run equity query --db data/equity_data.duckdb --verbose
 `equity pipeline` resolves the requested ticker scope explicitly:
 
 - With no `--tickers`, every configured active ticker in the requested price
-  markets is processed — there is no hidden limit.
+  markets is processed — there is no hidden limit. `hk_sg_equity` resolves the
+  active union of the separate `hk` and `sg` configuration sections, preserving
+  order and removing duplicates; it is scheduled when either exchange is open.
 - `--tickers` is used exactly as given, deduplicated deterministically. An
   explicitly empty value (for example `--tickers ""`) is rejected with a
   non-zero exit; it never falls back to the configured universe.
@@ -101,6 +115,23 @@ The result JSON records `scope` (resolved tickers and markets), the ingestion
 status per market, and feature `coverage`: requested and produced tickers plus
 any missing ticker with a reason (`no_price_rows`, `insufficient_history`,
 `missing_output_bar`, `invalid_output`).
+
+## Feature availability and point-in-time adjustment
+
+Gold features use `FEATURE_SCHEMA_VERSION = 7`,
+`availability_schema_version = 4`, action-coverage proof schema version 2, and
+canonical `(market, MIC, symbol)` identity. Split-only adjustment is read-time,
+leaves raw Bronze prices unadjusted, excludes cash dividends, and requires
+source-scoped proof whose own identity matches the feature row. The proof must
+include a verified source publication time mapped to the first observable
+venue session and source-issued expiry through the decision-session close. The
+native yfinance corporate-action path currently supplies no such proof, so
+adjusted outputs remain unavailable until verified proof is supplied; there is
+no raw fallback or guessed TTL. Missing or unverified optional enrichment
+values remain null with explicit coverage/availability flags, not neutral
+values. Legacy features/models without current identity, availability, and
+action-proof contracts fail closed; they are not automatically rewritten or
+retrained. See [ML availability and provenance](20261016-ml-availability-and-provenance.md).
 
 Outcome semantics:
 
@@ -139,7 +170,8 @@ Primary config files:
 
 - `config/settings.yaml`: application defaults
 - `config/tickers.yaml`: ticker metadata by market
-- `config/watchlist.yaml`: watchlists for signal scanning
+- `data/watchlists/watchlist.yaml`: managed private canonical watchlist used by default signal/tracking commands
+- `config/watchlist.yaml`: legacy ticker-only watchlist; only read when explicitly supplied with a market (and MIC when ambiguous)
 - `config/signals.yaml`: signal thresholds and formatting
 - `.env.example`: local environment template
 
@@ -217,13 +249,20 @@ dotenvx run -- uv run equity dashboard build --output-dir site
 
 ## Related Workflows
 
-Signals:
+Signals and private tracking:
 
 ```bash
-dotenvx run -- uv run equity signal scan
-dotenvx run -- uv run equity signal scan --watchlist config/watchlist.yaml
-dotenvx run -- uv run equity signal scan --config config/signals.yaml
+uv run equity signal scan
+uv run equity signal scan --watchlist config/watchlist.yaml --market us_equity
+uv run equity tracking readiness
+uv run equity tracking scan --dry-run
 ```
+
+Default signal scans use the canonical private watchlist. A legacy
+ticker-only watchlist requires `--market`; pass `--mic` when its active source
+mapping is ambiguous. Tracking and scanning use stored data only and do not
+fetch or backfill on watchlist changes. `equity tracking scan --dry-run` does
+not read, infer, persist, or deliver.
 
 Backtesting:
 

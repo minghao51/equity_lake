@@ -14,11 +14,27 @@ Flat top-level command sharing the strategy registry with `equity report backtes
 
 ```bash
 dotenvx run -- uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
-  --start-date 2024-01-01 --end-date 2024-12-31 --output data/backtest.json
+  --start-date 2024-01-01 --end-date 2024-12-31 --adjust splits --output data/backtest.json
 ```
 
 Key flags: `--strategy/-s` (default `momentum`), `--tickers/-t`, `--initial-cash`
-(default 100,000), `--output/-o` for a JSON result.
+(default 100,000), `--output/-o` for a JSON result, and `--adjust` (default
+`splits`, the point-in-time split-only adjustment). `--adjust none` remains a
+legacy alias for split-only adjustment, not a raw-price bypass. The CLI rejects
+`--adjust total_return`; cash-dividend adjustment is not implemented. The
+flat `equity backtest` CLI takes no market-selection flag; its supported syntax
+is shown above. In Python, the market API accepts canonical keys only:
+`us_equity`, `cn_ashare`, `hk_sg_equity`, `jpx_equity`, and `krx_equity`.
+
+Every split-only point-in-time decision requires verified, source-scoped action
+coverage whose identity matches the instrument, source clock is mapped to its
+first observable venue session, and source-issued expiry reaches that session's
+close. Missing, stale, or unverified proof makes the affected decision
+unavailable; it is never silently priced from raw bars. The native yfinance
+corporate-action path currently supplies no verified source clock or complete
+coverage/expiry proof, so adjusted decisions affected by that limitation are
+excluded. See [ML availability and provenance](20261016-ml-availability-and-provenance.md)
+for the shared feature/model availability contract.
 
 ### `equity report backtest`
 
@@ -79,7 +95,7 @@ engine = VectorBacktestEngine(
     start_date=date(2020, 1, 1),
     end_date=date(2024, 12, 31),
     initial_cash=100_000,
-    markets=["us"]
+    markets=["us_equity"]
 )
 
 # Run backtest
@@ -199,18 +215,22 @@ data = loader.load(
     tickers=["AAPL", "MSFT", "GOOGL"],
     start_date=date(2020, 1, 1),
     end_date=date(2024, 12, 31),
-    markets=["us"],          # default: all markets
+    markets=["us_equity"],  # default: all canonical price markets
     columns=None,            # default: ticker/date/open/high/low/close/volume
-    fill_method="ffill",     # forward-fill missing trading days
 )
 
-# Data structure (one row per ticker/date):
-#   ticker | date       | open  | close | volume
-#   AAPL   | 2020-01-01 | 75.0  | 76.0  | 1000000
-#   MSFT   | 2020-01-01 | 150.0 | 151.0 | 900000
+# Data structure (one stored row per instrument/date):
+#   market    | mic  | symbol | ticker | date       | open  | close | volume
+#   us_equity | XNAS | AAPL   | AAPL   | 2020-01-01 | 75.0  | 76.0  | 1000000
+#   us_equity | XNAS | MSFT   | MSFT   | 2020-01-01 | 150.0 | 151.0 | 900000
 
 loader.close()  # or use `with BacktestDataLoader() as loader:` (context manager)
 ```
+
+The loader forward-fills null prices only across rows already present for the
+same canonical instrument. It does not create missing dates or exchange
+sessions. Pass only canonical `markets` keys from the list above; short source
+aliases are not accepted by this loader.
 
 Pivot to wide format for custom analysis with polars:
 
@@ -371,7 +391,7 @@ us_result = VectorBacktestEngine(
     start_date=date(2020, 1, 1),
     end_date=date(2024, 12, 31),
     initial_cash=100_000,
-    markets=["us"]
+    markets=["us_equity"]
 ).run()
 
 # Backtest on China market
@@ -381,7 +401,7 @@ cn_result = VectorBacktestEngine(
     start_date=date(2020, 1, 1),
     end_date=date(2024, 12, 31),
     initial_cash=100_000,
-    markets=["cn"]
+    markets=["cn_ashare"]
 ).run()
 
 # Compare results
@@ -453,7 +473,7 @@ probe = loader.load(
     tickers=["AAPL", "MSFT"],
     start_date=date(2019, 1, 1),
     end_date=date(2024, 12, 31),
-    markets=["us"],
+    markets=["us_equity"],
     columns=["ticker", "date"],
 )
 min_date, max_date = probe["date"].min(), probe["date"].max()

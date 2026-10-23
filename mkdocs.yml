@@ -45,6 +45,8 @@ nav:
       - Backtesting: user-guide/backtesting.md
       - Arena and Findings: user-guide/20260829-arena-and-findings.md
       - Signals: user-guide/signals.md
+      - Private Canonical Watchlists and Tracking: user-guide/20261016-private-tracking-preview.md
+      - ML Availability and Provenance: user-guide/20261016-ml-availability-and-provenance.md
       - ML Rigor: user-guide/20260810-ml-rigor.md
       - REST API: user-guide/20260811-read-api.md
       - RAG Corpus Seeding: user-guide/20260813-rag-corpus-seeding.md
@@ -62,6 +64,8 @@ nav:
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
       - Project Structure: developer-guide/project-structure.md
       - Developer Tools: developer-guide/devtools.md
+      - Repository Review and Alert Roadmap: finding/20261016-repository-review-and-equity-alerts.md
+      - Remaining Scope Implementation Handoff: plans/20261016-equity-alerts-remaining-scope-handoff.md
       - DAG Pipeline Remediation:
           - Audit Findings: finding/20261006-dag-pipeline-audit.md
           - Agent Handoff Index: plans/20261006-dag-pipeline-00-handoff-index.md
@@ -83,6 +87,12 @@ nav:
           - 'ADR-0007: pointblank at ingestion boundaries': decisions/0007-pointblank-at-ingestion-boundaries.md
           - 'ADR-0008: VectorBacktestEngine default': decisions/0008-vector-backtest-engine-default.md
           - 'ADR-0009: Decisions and archive directories': decisions/0009-decisions-and-archive-directories.md
+          - 'ADR-0013 (Accepted; implementation/offline-contract reviewed): ML/signals direction': decisions/0013-ml-signals-dependency-direction.md
+          - 'ADR-0015 (Accepted; implementation/offline-contract reviewed): Adjustment and predictor availability': decisions/0015-point-in-time-adjustment-and-predictor-availability.md
+          - 'ADR-0016 (Accepted; implementation/offline-contract reviewed): Instrument identity and migration': decisions/0016-canonical-instrument-identity-and-migration.md
+          - 'ADR-0017 (Accepted; implementation/offline-contract reviewed): Additive evolution and replay': decisions/0017-bounded-additive-evolution-and-replay.md
+          - 'ADR-0018 (Accepted; implementation/offline-contract reviewed): Private watchlists and delivery': decisions/0018-private-watchlist-events-and-delivery.md
+          - 'ADR-0019: CLI Delta-maintenance lake containment': decisions/0019-cli-delta-maintenance-lake-containment.md
 
 plugins:
   - search

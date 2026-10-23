@@ -1,5 +1,10 @@
 # Ingestion
 
+These examples describe operational commands that can contact live providers
+and write lake data. They are not run as part of documentation/review work;
+source fetches, paid processing, and production writes require separate owner
+authorization and explicit scope.
+
 ## Supported sources
 
 The accepted identifiers are `us`, `cn`, `hk_sg`, `jpx`, `krx`, `macro`,
@@ -79,14 +84,16 @@ dotenvx run -- uv run equity ratings --tickers AAPL,MSFT
 | `equity sentiment` | `02_silver/social_sentiment` | Finnhub social sentiment scores per ticker/date. `--max-workers` (default `1`). |
 | `equity transcripts` | `01_bronze/raw_articles` | Earnings-call transcripts (`source_type="transcript"`) for the bronze→silver LLM pipeline. |
 | `equity ratings` | `02_silver/analyst_ratings` | Structured analyst consensus and price targets — no LLM involved. |
-| `equity sec` | `01_bronze/raw_articles` | 10-K/10-Q full text from EDGAR with `--lookback` days (default `120`). Add `--process` to run the bronze→silver LLM extraction to `02_silver/sec_extractions` in the same command. |
+| `equity sec` | `01_bronze/raw_articles` | 10-K/10-Q full text from EDGAR with `--lookback` days (default `120`). `--process` currently exits nonzero before fetching; no bounded provider actual-cost adapter is available. Omit it to fetch filings without LLM processing. |
 | `equity financials` | `02_silver/sec_financials` | Structured XBRL financials (balance sheet, income statement, ratios) — no LLM. `--lookback` default `120`. |
-| `equity corporate-actions` | `01_bronze` + `02_silver/corporate_actions/<market>` | Dividends and splits (yfinance, ADR-0011). Event-driven and incremental with **per-ticker watermarks** (W03/F14): each ticker's run fetches only events with `ex_date` after that ticker's own max stored value, so a newly scoped ticker always gets its full history and one ticker's late event is never suppressed by another ticker's recent event. Writes bronze and silver in one pass, partitioned by `ex_date`, upserted on `(ticker, ex_date, action)` — reruns are idempotent. Vendor `Stock Splits` (and legacy `Splits`) layouts are both mapped; a same-day dividend and split becomes two rows — one per key; `ingested_at` is naive UTC. Boundary: corrections at or below a ticker's watermark are **not** re-detected (exclusive bound); the per-ticker window edges are logged and returned in the ingest result payload. |
+| `equity corporate-actions` | `01_bronze/corporate_actions/<market>`, `02_silver/corporate_actions/<market>`, and the separate `02_silver/corporate_action_coverage` proof table | Dividends and splits (yfinance, ADR-0011). Event-driven and incremental with **per-ticker watermarks** (W03/F14), upserted on `(ticker, ex_date, action)`. The distinct coverage table uses proof schema version 2 and binds each assertion to `(market, MIC, symbol)`, source, coverage interval/status, timezone-aware `source_available_at`, and source-issued `source_valid_until`. `ingested_at` is not a source clock and cannot establish expiry. The native yfinance path currently emits no verified publication/coverage/expiry proof, so adjusted consumers remain unavailable. Corrections at or below a ticker's watermark are **not** re-detected (exclusive bound); the per-ticker window edges are logged and returned in the ingest result payload. |
 | `equity macro` | `01_bronze/macro` | FRED and yfinance macro indicators (VIX, treasury yields, DXY, …); `--indicators` filters by name. Fails with a non-zero exit if nothing is fetched. |
 
-All of them share `--date`, `--tickers`/`-t`, `--dry-run`, and `--verbose`,
-and read the Finnhub key from the `FINNHUB_API_KEY` environment variable
-(there is no `--api-key` option — keys never belong on the command line).
+Flags vary by command: the daily and date-scoped fetchers accept applicable
+subsets of `--date`, `--tickers`/`-t`, `--dry-run`, and `--verbose`; the
+corporate-action fetch uses `--market` and has no `--date` option. Only
+Finnhub-backed commands read `FINNHUB_API_KEY` from the environment (there is no
+`--api-key` option — keys never belong on the command line).
 Key requirements:
 
 - `FINNHUB_API_KEY` — `news`, `sentiment`, `transcripts`, `ratings`
@@ -96,6 +103,49 @@ Key requirements:
 
 These tables feed the gold feature stage's optional enrichments — see
 [Feature Generation and Enrichment](20260829-features-and-enrichments.md).
+Optional enrichment absence is represented as unavailable/null, not as a
+measured neutral value. Non-US source-family enrichment remains unsupported
+where explicit identity and source-availability clocks are not available.
+
+### Corporate-action proof and adjusted reads
+
+The proof table's schema version 2 requires a source-issued publication clock
+(`source_available_at`), complete coverage assertion with status and event-date
+bounds, and source-issued expiry (`source_valid_until`) for the same
+`(market, MIC, symbol)`. The current native yfinance corporate-action fetch
+supplies action rows without a verified source publication timestamp and does
+not issue a complete source-scoped coverage/expiry proof. The feature and
+adjustment contracts require both; they do not synthesize proof from ingestion
+time or assume that an empty action table means no actions. Consequently,
+adjusted price consumers remain unavailable until verified source proof is
+supplied. The transformation is split-only, excludes cash dividends, and never
+rewrites raw Bronze prices. This is a current proof limitation, not a statement
+about native provider availability.
+
+### Bronze-to-Silver state and failure handling
+
+An absent table or a truly empty directory is no-work: empty Bronze is reported
+as `no_bronze_data`, and empty Silver means there are no processed article IDs.
+Recognized Parquet tables and initialized Delta tables are read normally; a
+nonempty directory with unrecognized contents, or an empty/malformed Delta log,
+fails closed instead of being treated as empty. An unreadable Silver table
+fails with `silver_read_failed` **before** the processor is invoked. This
+prevents a Silver read failure from resubmitting the Bronze corpus to the
+processor, including paid LLM processing. Bronze read failures are reported as
+`bronze_read_failed`; processor and write failures remain distinct as
+`processing_failed` and `write_failed`.
+
+Bronze-to-Silver replay now requires explicit source/date/market/instrument
+scope and is limited to 100 selected items per invocation in batches of at most
+25. Its checkpoint and spend ledger are auxiliary state, separate from
+cataloged lake tables; the processor rereads Silver as the authoritative
+idempotency/durability source before advancing a checkpoint. Historical replay
+does not notify. Paid work defaults to zero authorization and requires a
+separate finite cumulative estimate, actual-spend cap, per-batch estimate, and
+provider-reported actual cost. Unbounded LLM helpers intentionally fail closed;
+there is no current provider-cost adapter, so these paths are not
+paid-runtime-ready and `equity sec --process` fails before fetching. Pipeline
+dry-run skips ingestion and processing entirely and persists nothing.
 
 ## Source Operational Notes
 
@@ -107,7 +157,7 @@ Limits and degradation behavior verified in `src/equity_lake/sources/`:
 | Reddit | Public `.json` endpoint, ~10 req/min per IP. The fetcher sleeps ~7 s between requests and inspects `X-Ratelimit-Remaining`, pausing for the reset window when the budget runs low. One run covers 6 subreddits (6 requests), which fits the budget. |
 | Finnhub transcripts | The transcript endpoint may require a premium API tier. On HTTP 403 the fetcher logs the hint and degrades gracefully to an empty frame — the run succeeds, it just yields no transcripts. |
 | SEC EDGAR | Hard rate limit of 10 req/s; the fetcher throttles inter-document requests. `SEC_USER_AGENT` must be set to `CompanyName AdminEmail@example.com` or the fetcher refuses to run. |
-| `sec_filings_fulltext` vs `us_sec_financials` | Two distinct SEC sources: `equity sec` fetches filing **text** into bronze (`01_bronze/raw_articles`) and requires LLM processing (`--process`) to reach silver (`02_silver/sec_extractions`); `equity financials` fetches **structured XBRL** straight to `02_silver/sec_financials` with no LLM step. |
+| `sec_filings_fulltext` vs `us_sec_financials` | Two distinct SEC sources: `equity sec` fetches filing **text** into Bronze (`01_bronze/raw_articles`); its `--process` option currently fails closed before any fetch because no bounded actual-cost adapter exists. `equity financials` fetches **structured XBRL** straight to `02_silver/sec_financials` with no LLM step. |
 
 ## Client-side rate limiting
 

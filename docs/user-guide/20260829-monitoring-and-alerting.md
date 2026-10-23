@@ -27,9 +27,15 @@ dotenvx run -- uv run equity monitor --max-age-days 3 --null-threshold 2.0
 | `--output-json` | `logs/health-report.json` | Path for the JSON report |
 | `--verbose`, `-v` | off | Debug logging, plus per-market quality detail |
 
-The JSON report is **always** written — `--output-json` only overrides the
-default location. The report contains `alerts` (list of alert strings),
-`metrics` (per-check results with timestamps), and a top-level `timestamp`.
+After health checks complete, the JSON report is written for healthy **and
+unhealthy** results; `--output-json` overrides the default location and missing
+parent directories are created. Unhealthy results exit 1 only after report
+persistence and monitor cleanup. Unexpected execution/report errors also close
+the monitor and fail the command; a failed save is not a new successful report.
+
+The report preserves `alerts`, `metrics`, and `timestamp`, and adds `healthy`
+and `check_results` (named boolean outcomes). Zero recorded checks never claim
+`healthy: true`. Existing readers of the original fields remain compatible.
 
 ## Health checks
 
@@ -92,17 +98,30 @@ failed and `"warning"` when alerts exist but all checks passed:
   always includes `ConsoleAlerter` and adds a `WebhookAlerter` when a webhook
   URL is supplied.
 
-Webhook delivery is currently wired at the `build_alerter()` seam only: the
-monitor constructs its alerter without a URL and the `monitoring` settings
-group exposes only `max_age_days` and `null_threshold_pct`, so there is no
-`EQUITY_` environment variable for a webhook yet — alerts go to the console
-until that knob is added.
+The CLI passes `settings.alerting.webhook_url` to `build_alerter()`. Configure
+`alerting.webhook_url` privately or set `EQUITY_ALERTING__WEBHOOK_URL` through
+your secret manager/dotenvx. With no URL, delivery remains console-only.
+This sends **pipeline-health alerts**, not watchlist BUY/SELL notifications.
+The generic JSON payload is not automatically a channel-native message.
+
+Treat webhook URLs as credentials. Dashboard/settings show, get and export
+redact them; delivery still uses the real private value. Alert retry/failure
+logs retain safe error type/status diagnostics, not request URLs. CLI logging
+suppresses debug/info wire logs from httpx, httpcore, urllib3 and requests even
+under `--verbose`. Other provider exception strings are not covered by a
+universal value-level secret scrubber. If a webhook was previously published,
+inspect prior artifacts and rotate it; redaction does not retract old exports.
 
 ## Scheduling
 
 The `schedule` group in `config/settings.yaml` carries the intended cadence
 (`enabled`, `cron`, `timezone`; the shipped default cron is `0 1 * * 1-5`).
-Typical weekday cron entries pair monitoring with the pipeline:
+Typical weekday cron entries pair monitoring with the pipeline. These host-cron
+times use the host scheduler's timezone; changing application settings does not
+convert them. GitHub Actions cron uses UTC, and the schedule-sync utility copies
+only the cron expression (it does not convert `schedule.timezone`). Compose's
+`daily` service is one-shot with no restart loop and must be invoked by an
+external scheduler, not left running as a timer:
 
 ```bash
 0 19 * * 1-5 cd /path/to/equity-lake && dotenvx run -- uv run equity pipeline >> logs/cron-pipeline.log 2>&1

@@ -81,13 +81,25 @@ Execution is two-phase:
    enrichment nodes are enabled upstream.
 
 Every output frame is stamped with `feature_schema_version`. The current value
-is `FEATURE_SCHEMA_VERSION = 4` (raised in W03/ADR-0014 for the additive
-`label_available_date` availability column). A version bump means the column set
-or computation of published features changed: downstream consumers can detect
-and handle mixed-version history, and — per the change matrix in `AGENTS.md` —
-the change requires regenerating the catalog (`uv run equity catalog-generate`),
-since the gold-layer `technical_features` / `enriched_features` catalog
-entries describe exactly these columns.
+is `FEATURE_SCHEMA_VERSION = 7`. The shared point-in-time contract uses
+`availability_schema_version = 4`; source-scoped corporate-action coverage
+proofs use schema version 2. Gold rows persist that proof in
+`action_coverage_market`, `action_coverage_mic`, `action_coverage_symbol`,
+`action_coverage_source`, `action_coverage_start`, `action_coverage_end`,
+`action_source_available_at`, `action_source_valid_until`,
+`action_coverage_status`, and `action_coverage_schema_version`. Its identity
+must match the feature row's own `(market, MIC, symbol)`. The timezone-aware
+source clock maps to the first observable venue session, and the source-issued
+expiry must cover the decision-session close. This verified proof is mandatory
+for adjusted reads; ingestion time and guessed expiry are not substitutes, and
+there is no raw-price fallback.
+
+A version bump means the column set or computation of published features
+changed: downstream consumers can detect and handle mixed-version history, and
+— per the change matrix in `AGENTS.md` — the change requires regenerating the
+catalog (`uv run equity catalog-generate`), since the gold-layer
+`technical_features` / `enriched_features` catalog entries describe these
+columns.
 
 ### Data contracts (W01)
 
@@ -134,22 +146,28 @@ Enrichments are opt-in on `FeatureEngineer.generate_features` (and on
 
 | Toggle | Default | Joins from | Adds |
 |---|---|---|---|
-| `include_sentiment` | `False` | `02_silver/news_sentiment` | Finnhub news sentiment aggregates — daily mean/counts (`avg_daily_sentiment`, `news_count`, positive/negative/neutral counts) plus 3/7/30-day EWMA |
-| `include_social_sentiment` | `False` | `02_silver/social_sentiment` | Social mention counts and scores (Reddit/Twitter splits), 5-day momentum, and 3/7/30-day EWMA |
-| `include_enriched_sentiment` | `False` | `02_silver/processed_articles` | LLM-enriched article-ticker sentiment — `enriched_sentiment_mean`, confidence/relevance means, `bullish_ratio`, `breaking_news_flag`, EWMA |
-| `include_analyst_ratings` | `False` | `02_silver/analyst_ratings` | Analyst consensus score, coverage count, mean price target, implied upside vs close, 7-day consensus EWMA |
-| `include_sec_features` | `False` | `02_silver/sec_extractions` | Point-in-time (backward ASOF) SEC filing extractions — risk sentiment, management tone, guidance direction, new-vs-repeated risk flags |
+| `include_sentiment` | `False` | `02_silver/news_sentiment` | News context covers seven calendar days and is available only with at least three distinct scored article URLs and trusted source clocks; `news_coverage_7d` and `news_available` expose coverage. |
+| `include_social_sentiment` | `False` | `02_silver/social_sentiment` | Separate seven-calendar-day social context (not news articles), with source-specific availability and coverage flags. |
+| `include_enriched_sentiment` | `False` | `02_silver/processed_articles` | Legacy LLM article features remain unavailable until canonical identity and trusted publication clocks are present; null values carry `enriched_available = 0`. |
+| `include_analyst_ratings` | `False` | `02_silver/analyst_ratings` | Analyst fields remain unavailable until canonical identity and trusted publication vintages are present; null values carry `analyst_available = 0`. |
+| `include_sec_features` | `False` | `02_silver/sec_extractions` | Identity-scoped SEC state may carry for at most 95 calendar days when its trusted source-availability clock and filing date are known. |
 
-`include_macro` is the one **opt-out** enrichment (default `True`): it pivots
-`01_bronze/macro` (VIX, treasury yields, DXY, …) wide and forward-fills it
-onto every feature row. Cross-modal interaction features
-(`sentiment_x_log_volume`, `news_social_sentiment_gap`, …) are derived
-automatically whenever the underlying enrichment columns exist.
+`include_macro` is the one **opt-out** enrichment (default `True`). The current
+macro path does not forward-fill observations: without a verified historical
+release/vintage clock its values remain null with `macro_available = 0`, and
+are excluded from strict point-in-time predictors. An unverified value must not
+be presented as known merely because it is used as market context.
+Cross-modal interaction features are derived only when their underlying
+observations are available; missing inputs remain null.
 
-Each enrichment is a separately tagged DAG node, so the catalog records real
-per-enrichment lineage. If a required silver table does not exist, the merge
-degrades gracefully — the enrichment's columns are added with neutral/empty
-defaults rather than failing the stage.
+Every source timestamp must be timezone-aware and is mapped to the first
+observable session for the instrument's MIC (including off-session and
+post-close publications). Optional absence or unverified provenance is
+represented as null plus an availability/coverage flag, never a neutral zero.
+Thus an absent or unusable Silver table does not fail the feature stage, but it
+also does not manufacture measured values. The native yfinance action path
+currently supplies neither a verified publication clock nor a complete,
+source-issued coverage/expiry proof, so adjusted output remains unavailable.
 
 **Prerequisite:** enrichment data must already exist in the lake. The feature
 stage only joins silver/bronze tables; it never fetches. Run the ingestion

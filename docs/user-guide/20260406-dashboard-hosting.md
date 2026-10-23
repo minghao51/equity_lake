@@ -25,9 +25,14 @@ The Pages deployment is defined in:
 
 The workflow does three important things:
 
-1. Verifies the workflow cron matches `config/settings.yaml`.
+1. Verifies the workflow cron expression matches `config/settings.yaml`.
 2. Builds the dashboard artifact.
 3. Deploys the `site/` folder to GitHub Pages.
+
+GitHub Actions scheduled cron expressions use **UTC**. The sync utility copies
+the configured expression; it does not convert `schedule.timezone` or apply a
+local-time offset. The dashboard labels this hosted cron as UTC. For a local
+host cron, use the host scheduler's timezone instead.
 
 ## Schedule Sync
 
