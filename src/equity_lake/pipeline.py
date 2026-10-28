@@ -1,4 +1,4 @@
-"""Hamilton driver builder and EOD pipeline executor."""
+"""EOD pipeline orchestrator (ingestion → bronze/silver → features → ML inference)."""
 
 from __future__ import annotations
 

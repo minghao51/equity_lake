@@ -9,7 +9,7 @@ training or comparison.
 Configuration is raw/unprefixed (parent handoff §3 B3): ``WANDB_API_KEY``,
 ``WANDB_ENTITY`` and ``WANDB_PROJECT`` are read via :func:`os.getenv` at the
 client seam and are deliberately **not** declared in
-:class:`equity_lake.config.Settings` (which is ``extra="forbid"``). When
+:class:`equity_lake.core.settings.Settings` (which is ``extra="forbid"``). When
 ``WANDB_API_KEY`` is unset/falsy, every public function is a silent no-op that
 returns ``None``; any wandb-side failure is caught, logged at debug, and also
 returns ``None`` so W&B can never break a training or comparison run.

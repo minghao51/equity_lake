@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import polars as pl
@@ -65,7 +65,11 @@ def aggregate_oos(labels: np.ndarray, probs: np.ndarray, folds: int) -> dict[str
     preds = (probs >= 0.5).astype(int)
     return {
         "oos_accuracy": float(accuracy_score(labels, preds)),
-        "oos_precision": float(precision_score(labels, preds, zero_division=0)),
+        "oos_precision": float(
+            # Runtime accepts int 0/1 (verified: sklearn 1.8 raises on "0"); the
+            # sklearn stubs type the parameter str-only — triaged in the C10 gate.
+            precision_score(labels, preds, zero_division=cast(str, 0))
+        ),
         "oos_brier": float(np.mean((probs - labels) ** 2)),
         "oos_mean_prob": float(probs.mean()),
         "folds": float(folds),

@@ -235,12 +235,14 @@ class CNHybridFetcher(MarketDataFetcher):
         """Fetch China A-share data with automatic fallback.
 
         Strategy:
-        1. Try efinance first (if enabled) - faster and more stable
-        2. If efinance fails or returns <50% expected data, try akshare
-        3. Return the best result (most data rows)
+        1. Try efinance first when opted in (``enable_efinance=True``): if it
+           returns at least ``max(1, int(configured_tickers * fallback_threshold))``
+           rows (default threshold 0.3), return it and skip akshare
+        2. Try akshare (the default primary source)
+        3. If akshare returns empty, try the yfinance fallback
 
-        Returns:
-            DataFrame with standard columns (ticker, date, open, high, low, close, volume, adj_close)
+        Returns the best result (most rows) across the sources tried, or an
+        empty frame when all fail.
         """
         logger.info(
             "fetch_cn_hybrid_started",
