@@ -159,4 +159,107 @@ uv run pytest -n auto
 uv run ruff check . && uv run ruff format --check . && uv run mypy
 ```
 
-## Outcome (open)
+## Outcome (closed 2026-10-28)
+
+All four waves implemented and committed on local `main`; the tree was clean at
+handoff close. Full serial and parallel suites were run sequentially and agree.
+
+| Commit | Scope |
+| --- | --- |
+| `ee48e1d` | `core/paths.py` operator-artifact path constants (Wave D prerequisite, additive only) |
+| `913d004` | Wave A — typed `QueryError` query contract |
+| `a012e1c` | Wave B — loud writer fallthrough + market parity guard |
+| `74a25a9` | Wave C — config shim exports, stale docstrings, `_metrics` cast |
+| `41091fd` | Wave D — shared window helper, card printer, artifact paths, ARCHITECTURE note |
+
+The path constants were split into their own additive commit so every commit is
+self-consistent (Wave A's `analysis.py` and Wave D's consumers both need them).
+`tests/unit/test_cli_unified.py` carries both Wave A (`TestQueryErrorContract`)
+and Wave D (`TestDefaultWindows`) tests, so it landed with Wave D.
+
+### Definition of done
+
+- [x] Bad SQL / unknown query name fail loudly (`QueryError`, CLI exit 1)
+- [x] Unknown market key logs a warning (no silent OHLCV validation)
+- [x] Parity test green: `MARKET_REGISTRY == VALID_MARKETS == MARKET_DIR_MAP`
+      (minus features/predictions)
+- [x] Shim `__all__` complete; stale docstrings fixed; **akshare lazy — not applied, see deviations**
+- [x] `engineering.py` views derived from the registry; suppressions log
+      (both already true on HEAD — see stale recon)
+- [x] One `_default_window` helper; per-command defaults unchanged and now pinned
+- [x] One FindingCard printer; artifact paths from `core/paths.py` constants
+- [x] Full gates green; commits per wave; handoff closed with this Outcome
+
+### Gate evidence
+
+- Serial: **3 failed, 1571 passed, 22 skipped, 95 deselected** — `/tmp/tier0-serial4.{log,xml}`
+- Parallel (`-n auto`): **3 failed, 1571 passed, 22 skipped** — `/tmp/tier0-parallel4.{log,xml}`
+- The 3 failures are the pre-existing `tests/unit/test_arena.py` set (F28/W07,
+  already red at the W03 baseline). Verified identical on clean HEAD by stashing
+  this work's `src/` and `tests/` changes, so they are not caused by this batch.
+- Ruff clean, `ruff format --check` clean (308 files), `mypy src/equity_lake`
+  clean (171 files).
+- Focused: DuckDB integration **27 passed**; CLI + writers + market-vocabulary +
+  monitor + fetchers **239 passed**; pipeline/dashboard **19 passed**.
+
+### Deviations from the handoff as written
+
+1. **`sources/cn.py` lazy akshare — not applied.** akshare is a declared hard
+dependency (`akshare>=1.15.0`), so deferring the import buys nothing at install
+or runtime; `tests/unit/test_fetchers.py` patches the module global `cn.ak`, which
+an `AK = None` pattern breaks; and akshare ships typed stubs, so a `None`
+fallback becomes a use-site type error that only escapes `mypy` via an ignore.
+This item remains open only in the narrow sense that the import stays eager.
+2. **Wave C items 6–7 were already done on HEAD** (2026-09-10 recon was stale):
+`features/engineering.py::_setup_views` already derives from `PRICE_MARKETS`, and
+`signals/generators/{backtest,sentiment}.py` already log instead of swallowing.
+No change was made; nothing was re-implemented.
+3. **`ml/_metrics.py` cast (not in the handoff).** Needed to clear a Pyright
+sklearn-stub mismatch: sklearn 1.8 accepts int `0` and rejects `"0"`; the stubs
+type the parameter `str`-only. Runtime behaviour is unchanged.
+
+### Independent review findings (read-only reviewer, GLM)
+
+Verdict **READY WITH WARNINGS**, no must-fix. Dispositions:
+
+- **F1 (Medium) — fixed.** `_COMPARISON_LOOKBACK_DAYS` was consumed by `ml_train`
+  while compare/ablate took 730d. Verified against HEAD that the *handoff prose*
+  was inverted (HEAD: compare/ablate 730d, train 365d). Renamed to
+  `_COMPARE_LOOKBACK_DAYS` / `_TRAIN_LOOKBACK_DAYS`, renamed the ml-local helper
+  to `_compare_default_window`, corrected the test docstring, and added a wiring
+  test that binds each constant to its consuming command.
+- **F3 (Low) — fixed.** Two tests now pin `unknown_market_key_ohlcv_default` (and
+  its silence for canonical routes) via an isolated recording logger. An initial
+  `structlog.testing.capture_logs` version passed alone but failed in the full
+  suite: `test_settings_redaction.py` calls `setup_structured_logging()`, whose
+  process-wide config defeats `capture_logs`. Verified green in both orders.
+- **F5 (Info) — addressed by comment.** `HEALTH_REPORT_PATH` stays exported for
+  fixed-path callers while consumers compose `LOGS_DIR / HEALTH_REPORT_FILENAME`
+  at call time to preserve the `analysis.LOGS_DIR` test seam.
+- **F6 (Info) — fixed.** `QueryError` added to `storage/duckdb.py.__all__`.
+  `storage/__init__.py` re-exports were left unchanged (explicit imports work).
+- **F8 (Info) — fixed.** `ARCHITECTURE.md` now states the raising contract and
+  the empty-lake view behaviour.
+- **F4 (Info) — kept, documented.** The `# mypy: disable-error-code` header on
+  `tests/integration/test_duckdb_queries.py` is inert for configured mypy
+  (`exclude = ["tests/"]`) but still serves editor/LSP type checks; the comment
+  now says so rather than implying it gates anything.
+- **F2 (Low) — accepted, not fixed.** `run_all_queries()` swallows per-query
+exceptions, so `equity query` with no `--query` still exits 0/yellow even if every
+  query fails. This asymmetry predates the handoff; changing it would alter the
+  document run-all contract. Recorded below as a loose end.
+- **F7 (Info) — accepted.** Integration tests set `db.available_views` /
+  `db._views_initialized` directly to seed a fixed fixture; acceptable coupling.
+
+### Loose ends (recorded, not scheduled)
+
+- `run_all_queries` still converts per-query failures into empty frames (F2).
+  Making the document mode fail loudly is a separate contract decision.
+- `cli/bootstrap.py` `MARKET_DIRS` remains a private copy of market paths
+  (ADR-0010 acknowledged it) — derive when bootstrap is next touched.
+- `catalog/builder.py` builds its own Hamilton driver instead of reusing
+  `FeaturePipeline._build_driver` — structural reuse deferred.
+- `backtesting/factory.py:59-62` attribute-lookup indirection for test
+  monkeypatching — documented; leave.
+- The pre-existing `tests/unit/test_arena.py` failures belong to F28/W07; they
+  were not touched here and still need their own fix.
