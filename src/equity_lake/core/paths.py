@@ -37,6 +37,17 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 DATA_DIR = PROJECT_ROOT / "data"
 LAKE_DIR = PROJECT_ROOT / "data" / "lake"
 LOGS_DIR = PROJECT_ROOT / "logs"
+
+# Operator-artifact path contracts shared by writers and readers (the CLI
+# ``monitor`` report and the pipeline results the dashboard exporter reads).
+# Consumers compose ``LOGS_DIR / HEALTH_REPORT_FILENAME`` at call time so tests
+# can monkeypatch ``LOGS_DIR`` on the command module; the pre-joined
+# ``HEALTH_REPORT_PATH`` stays exported for callers that need the fixed path.
+HEALTH_REPORT_FILENAME = "health-report.json"
+HEALTH_REPORT_PATH: Path = LOGS_DIR / HEALTH_REPORT_FILENAME
+PIPELINE_RESULTS_NAME_PREFIX = "pipeline_results_"
+PIPELINE_RESULTS_GLOB = f"{PIPELINE_RESULTS_NAME_PREFIX}*.json"
+
 MODELS_DIR = PROJECT_ROOT / "data" / "models"
 
 # ---------------------------------------------------------------------------
@@ -217,6 +228,8 @@ __all__ = [
     "GOLD_DIR",
     "GOLD_FEATURES_DIR",
     "HK_SG_EQUITY_DIR",
+    "HEALTH_REPORT_FILENAME",
+    "HEALTH_REPORT_PATH",
     "JPX_EQUITY_DIR",
     "KRX_EQUITY_DIR",
     "LAKE_DIR",
@@ -224,6 +237,8 @@ __all__ = [
     "LOGS_DIR",
     "MODELS_DIR",
     "OPTIONAL_ENRICHMENT_MARKETS",
+    "PIPELINE_RESULTS_GLOB",
+    "PIPELINE_RESULTS_NAME_PREFIX",
     "PLATINUM_DIR",
     "PLATINUM_PREDICTIONS_DIR",
     "PRIVATE_WATCHLIST_PATH",
