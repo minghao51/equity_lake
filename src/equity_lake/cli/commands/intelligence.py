@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
 import polars as pl
 import typer
 
-from equity_lake.cli._app import _init_logging, _resolve_date, app, signal_app
+from equity_lake.cli._app import _default_window, _init_logging, _resolve_date, app, signal_app
+
+_FORECAST_LOOKBACK_DAYS = 365
 
 
 def _format_training_summary(summary: dict[str, object]) -> str:
@@ -79,7 +81,8 @@ def forecast(
     forecaster = PriceForecaster(model_dir=model_dir, model_mode=model_mode, candidate_strategies=candidate_strategies)
 
     if mode == "train":
-        start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
+        default_start, _default_end = _default_window(_FORECAST_LOOKBACK_DAYS)
+        start_date = date.fromisoformat(start) if start else default_start
         end_date = date.fromisoformat(end) if end else date.today()
         forecaster.train_model(ticker, start_date, end_date, tune_hyperparams=tune, validate=True)
         summary = forecaster.last_training_summary()
@@ -93,7 +96,8 @@ def forecast(
         typer.echo(json.dumps(result, indent=2, default=str))
 
     elif mode == "backtest":
-        start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
+        default_start, _default_end = _default_window(_FORECAST_LOOKBACK_DAYS)
+        start_date = date.fromisoformat(start) if start else default_start
         end_date = date.fromisoformat(end) if end else date.today()
         results_df = forecaster.backtest(ticker, start_date, end_date)
         if not results_df.is_empty():

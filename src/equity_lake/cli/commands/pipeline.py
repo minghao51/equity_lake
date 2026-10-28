@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, _resolve_run_date, app
-from equity_lake.core.paths import LOGS_DIR
+from equity_lake.core.paths import LOGS_DIR, PIPELINE_RESULTS_NAME_PREFIX
 
 
 def _pipeline_succeeded(results: dict[str, object]) -> bool:
@@ -85,9 +85,10 @@ def pipeline(
         if dry_run:
             typer.echo("--save-results skipped: dry-run persists nothing.")
         else:
-            # The dashboard exporter reads pipeline_results_*.json from LOGS_DIR —
-            # keep the writer and the reader on the same path.
-            output_path = LOGS_DIR / f"pipeline_results_{trading_date}.json"
+            # The dashboard exporter reads PIPELINE_RESULTS_GLOB from LOGS_DIR —
+            # writer and reader share the core/paths.py artifact-path contract;
+            # trading_date is a resolved date, so the name is always YYYY-MM-DD.
+            output_path = LOGS_DIR / f"{PIPELINE_RESULTS_NAME_PREFIX}{trading_date.isoformat()}.json"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(json.dumps(results, indent=2, default=str))
             typer.echo(f"Results saved to {output_path}")

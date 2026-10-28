@@ -19,6 +19,7 @@ from typing import Annotated
 import typer
 
 from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, arena_app, report_app
+from equity_lake.cli._display import print_finding_cards
 
 _DEFAULT_TICKERS = "AAPL,MSFT,GOOGL,AMZN,NVDA"
 
@@ -79,8 +80,7 @@ def arena_run(
         typer.secho("No FindingCards produced (insufficient completed runs).", fg=typer.colors.YELLOW)
     else:
         typer.echo("\nFindingCards:")
-        for card in cards:
-            typer.echo(f"  [{card.axis}] {card.id}: {card.verdict} — {card.conclusion}")
+        print_finding_cards(cards)
     typer.echo(f"\nArtifacts + cards written to: {base or 'data/findings'}")
 
 

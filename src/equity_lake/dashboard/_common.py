@@ -11,6 +11,7 @@ import polars as pl
 from equity_lake.core.paths import (
     DATA_DIR,
     GOLD_FEATURES_DIR,
+    HEALTH_REPORT_FILENAME,
     LOGS_DIR,
     PRICE_MARKETS,
     market_dir,
@@ -85,7 +86,7 @@ def load_health_report(output_dir: Path | None = None) -> dict[str, Any] | None:
     candidates = [
         output_dir / "health-report.json" if output_dir else None,
         Path("site") / "health-report.json",
-        LOGS_DIR / "health-report.json",
+        LOGS_DIR / HEALTH_REPORT_FILENAME,
     ]
     for path in candidates:
         if path is not None and path.exists():

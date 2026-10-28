@@ -24,15 +24,20 @@ rather than auto-backfilling.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal
 
 import typer
 
+from equity_lake.cli._app import _default_window as _shared_default_window
 from equity_lake.cli._app import _init_logging, ml_app
+from equity_lake.cli._display import format_finding_card
 
-_DEFAULT_LOOKBACK_DAYS = 730
+# Per-command rolling lookbacks. Verified against pre-change behaviour: compare/
+# ablate rolled ~2y, train rolled ~1y (the handoff prose had these inverted).
+_COMPARE_LOOKBACK_DAYS = 730
+_TRAIN_LOOKBACK_DAYS = 365
 
 # ``ml compare`` and ``ml ablate`` share one option surface — the aliases below
 # are the single definition of those flags (names + help text) for both commands.
@@ -74,10 +79,9 @@ def _missing_features_exit(ticker: str) -> None:
     raise typer.Exit(1)
 
 
-def _default_window() -> tuple[date, date]:
-    end = date.today()
-    start = end - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
-    return start, end
+def _compare_default_window() -> tuple[date, date]:
+    """``compare``/``ablate`` default window: ~2y rolling (``_COMPARE_LOOKBACK_DAYS``)."""
+    return _shared_default_window(_COMPARE_LOOKBACK_DAYS)
 
 
 def _prepare_run(
@@ -94,7 +98,7 @@ def _prepare_run(
     """
     _init_logging(verbose)
     selected, _ = _resolve_ticker(universe, ticker)
-    default_start, default_end = _default_window()
+    default_start, default_end = _compare_default_window()
     start_date = date.fromisoformat(start) if start else default_start
     end_date = date.fromisoformat(end) if end else default_end
     base = Path(output_dir) if output_dir else None
@@ -149,7 +153,7 @@ def ml_compare(
     for card in cards:
         # ``run_comparison`` already wrote each card; resolve the path without re-writing.
         path = card_path(card.id, base=base)
-        typer.echo(f"  [{card.axis}] {card.id}: {card.verdict} — {card.conclusion}")
+        typer.echo(format_finding_card(card))
         typer.echo(f"    -> {path}")
 
 
@@ -197,7 +201,7 @@ def ml_ablate(
 
     typer.secho(f"Ablation complete for {selected} ({universe} universe).", fg=typer.colors.GREEN)
     path = card_path(card.id, base=base)
-    typer.echo(f"  [{card.axis}] {card.id}: {card.verdict} — {card.conclusion}")
+    typer.echo(format_finding_card(card))
     typer.echo(f"    -> {path}")
 
 
@@ -227,8 +231,10 @@ def ml_train(
         if configured
         else [dict(DEFAULT_BACKTEST_STRATEGY)]
     )
-    start_date = date.fromisoformat(start) if start else date.today() - timedelta(days=365)
-    end_date = date.fromisoformat(end) if end else date.today()
+    # ``train`` rolls ~1y, matching its pre-change inline default (not the compare window).
+    default_start, default_end = _shared_default_window(_TRAIN_LOOKBACK_DAYS)
+    start_date = date.fromisoformat(start) if start else default_start
+    end_date = date.fromisoformat(end) if end else default_end
 
     forecaster = PriceForecaster(model_mode=model_mode, backend=backend, candidate_strategies=candidate_strategies)
     try:

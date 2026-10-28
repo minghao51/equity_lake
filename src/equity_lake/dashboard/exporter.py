@@ -11,7 +11,7 @@ import duckdb
 
 from equity_lake.core.config import get_settings
 from equity_lake.core.logging import redact_secrets as _redact_secrets
-from equity_lake.core.paths import LOGS_DIR
+from equity_lake.core.paths import LOGS_DIR, PIPELINE_RESULTS_GLOB
 from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, load_update_history, summarize_dataset
 
 # Update-history rows rendered on the static Updates page.
@@ -91,7 +91,7 @@ class DashboardExporter:
         update_rows = load_update_history(_EXPORT_HISTORY_LIMIT)
 
         pipeline_results = []
-        for result_path in sorted(LOGS_DIR.glob("pipeline_results_*.json"), reverse=True)[:10]:
+        for result_path in sorted(LOGS_DIR.glob(PIPELINE_RESULTS_GLOB), reverse=True)[:10]:
             try:
                 pipeline_results.append(
                     {

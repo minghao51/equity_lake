@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import structlog
 import typer
@@ -24,6 +24,12 @@ def _main_callback(ctx: typer.Context) -> None:
     """Defer signal paths until dry-run is known; keep doctor read-only."""
     if ctx.invoked_subcommand not in {"signal", "doctor", "tracking"}:
         ensure_dirs()
+
+
+def _default_window(days: int) -> tuple[date, date]:
+    """Rolling CLI default window ``(today - days, today)`` shared by ml/intelligence."""
+    today = date.today()
+    return today - timedelta(days=days), today
 
 
 signal_app = typer.Typer(help="Signal scanning for equity watchlists")

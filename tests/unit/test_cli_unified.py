@@ -826,6 +826,99 @@ class TestQueryDefaults:
         assert DUCKDB_DEFAULT_PATH.name in result.stdout
 
 
+class TestQueryErrorContract:
+    """Query failures fail loudly (Wave A, handoff 20260910-01): QueryError → exit 1."""
+
+    @staticmethod
+    def _patched_db() -> Any:
+        return patch("equity_lake.storage.duckdb.EquityDataDB")
+
+    def test_query_unknown_name_exits_1(self) -> None:
+        from equity_lake.storage.duckdb import QueryError  # type: ignore[import-untyped]
+
+        with self._patched_db() as db_cls:
+            db_cls.return_value.__enter__.return_value.run_named_query.side_effect = QueryError(
+                "Unknown query 'nope'; available: latest_summary, ..."
+            )
+            result = runner.invoke(app, ["query", "--query", "nope"])
+        assert result.exit_code == 1
+        assert "Unknown query 'nope'" in result.output
+
+    def test_query_bad_sql_exits_1(self) -> None:
+        from equity_lake.storage.duckdb import QueryError
+
+        with self._patched_db() as db_cls:
+            db_cls.return_value.__enter__.return_value.run_named_query.side_effect = QueryError("SQL syntax error")
+            result = runner.invoke(app, ["query", "--query", "latest_summary"])
+        assert result.exit_code == 1
+        assert "SQL syntax error" in result.output
+
+    def test_query_named_empty_is_warning_exit_0(self) -> None:
+        with self._patched_db() as db_cls:
+            db_cls.return_value.__enter__.return_value.run_named_query.return_value = pl.DataFrame()
+            result = runner.invoke(app, ["query", "--query", "latest_summary"])
+        assert result.exit_code == 0
+        assert "No results for query: latest_summary" in result.output
+
+    def test_query_run_all_empty_reports_no_results_exit_0(self) -> None:
+        with self._patched_db() as db_cls:
+            db_cls.return_value.__enter__.return_value.run_all_queries.return_value = {"latest_summary": pl.DataFrame()}
+            result = runner.invoke(app, ["query"])
+        assert result.exit_code == 0
+        assert "No results" in result.output
+
+
+class TestDefaultWindows:
+    """Per-command rolling defaults, pinned to their real consumers (values unchanged).
+
+    Pre-change behaviour, verified against HEAD: ``compare``/``ablate`` rolled
+    ~2y (730d) and ``ml train`` rolled ~1y (365d). The handoff prose inverted
+    these, so the wiring assertions below bind each constant to its command.
+    """
+
+    def test_ml_compare_ablate_lookback_is_730(self) -> None:
+        from equity_lake.cli.commands import ml as ml_cmd  # type: ignore[import-untyped]
+
+        assert ml_cmd._COMPARE_LOOKBACK_DAYS == 730
+        start, end = ml_cmd._compare_default_window()
+        assert (end - start).days == 730
+
+    def test_ml_train_lookback_is_365(self) -> None:
+        from equity_lake.cli.commands import ml as ml_cmd
+
+        assert ml_cmd._TRAIN_LOOKBACK_DAYS == 365
+
+    def test_intelligence_forecast_lookback_is_365(self) -> None:
+        from equity_lake.cli.commands import intelligence as intel_cmd
+
+        assert intel_cmd._FORECAST_LOOKBACK_DAYS == 365
+
+    def test_lookback_constants_are_wired_to_their_consumers(self) -> None:
+        """Constants must stay bound to the command that consumes them (F1)."""
+        import inspect
+
+        from equity_lake.cli.commands import intelligence as intel_cmd
+        from equity_lake.cli.commands import ml as ml_cmd
+
+        # compare + ablate reach the window through the shared _prepare_run preamble.
+        assert "_COMPARE_LOOKBACK_DAYS" in inspect.getsource(ml_cmd._compare_default_window)
+        assert "_compare_default_window" in inspect.getsource(ml_cmd._prepare_run)
+        # train and forecast wire their own constants directly.
+        assert "_TRAIN_LOOKBACK_DAYS" in inspect.getsource(ml_cmd.ml_train)
+        assert "_COMPARE_LOOKBACK_DAYS" not in inspect.getsource(ml_cmd.ml_train)
+        assert "_TRAIN_LOOKBACK_DAYS" not in inspect.getsource(ml_cmd._prepare_run)
+        assert "_FORECAST_LOOKBACK_DAYS" in inspect.getsource(intel_cmd.forecast)
+
+    def test_shared_default_window_shape(self) -> None:
+        from datetime import date, timedelta
+
+        from equity_lake.cli._app import _default_window  # type: ignore[import-untyped]
+
+        start, end = _default_window(365)
+        assert end == date.today()
+        assert start == date.today() - timedelta(days=365)
+
+
 def _iter_command_paths() -> Iterator[tuple[str, ...]]:
     """Enumerate every command path registered on the unified CLI.
 

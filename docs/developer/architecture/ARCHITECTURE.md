@@ -308,15 +308,22 @@ class EquityDataDB:
     def __init__(self, db_path: str | Path | None = ":memory:"):
         self.con = duckdb.connect(self.db_path)
 
-    def query(self, sql: str) -> pl.DataFrame:
-        """Execute SQL and return a Polars DataFrame"""
+    def query(self, sql: str, params: list[Any] | None = None) -> pl.DataFrame:
+        """Execute SQL and return a Polars DataFrame; raises QueryError on failure"""
 
     def run_named_query(self, name: str, **kwargs) -> pl.DataFrame:
-        """Execute a predefined named query (delegates to storage/examples.py)"""
+        """Execute a predefined named query (delegates to storage/examples.py); raises QueryError for an unknown name"""
 
     def run_all_queries(self) -> dict[str, pl.DataFrame]:
-        """Run all predefined queries and return results dict"""
+        """Run all predefined queries and return results dict (per-query failures yield empty frames)"""
 ```
+
+`QueryError` is the typed failure contract for this module: invalid SQL and
+unknown named queries raise instead of returning an empty frame, so a query bug
+is never indistinguishable from "no data" at `equity query` (which exits 1 and
+prints the error; a valid query with no rows stays a yellow warning, exit 0).
+The empty-lake `equity_all` fallback view mirrors the full price-market column
+contract, so named queries bind and return zero rows rather than binder errors.
 
 #### Query Examples (`examples.py`)
 `QueryExamples` holds the predefined analytical queries (latest summary, top
