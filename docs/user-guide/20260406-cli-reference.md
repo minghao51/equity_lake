@@ -385,6 +385,10 @@ Query the data lake via DuckDB.
 Named queries: `latest_summary`, `top_volume`, `gainers_losers`,
 `cross_market`, `moving_avg`, `volatility`, `market_stats`, `price_range`.
 
+Invalid SQL or an unknown named query fail loudly with a red `QueryError`
+message and exit code 1; a valid query that returns no rows prints a yellow
+"No results" warning and exits 0.
+
 ```bash
 uv run equity query --query top_volume
 ```

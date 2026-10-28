@@ -1,12 +1,19 @@
 """Integration tests for DuckDB query helpers."""
 
+# These legacy integration fixtures predate strict annotations; production code
+# and unit-level identity fixtures carry the strict types. Configured mypy
+# excludes ``tests/`` (pyproject.toml), so this pragma serves the editor/LSP type
+# checker that still analyses this file — it is not a substitute for the gate.
+# mypy: disable-error-code="no-untyped-def,import-untyped"
+
 from unittest.mock import patch
 
 import polars as pl
 import pytest
 
-from equity_lake.storage.duckdb import EquityDataDB
+from equity_lake.storage.duckdb import EquityDataDB, QueryError
 from equity_lake.storage.examples import QueryExamples
+from equity_lake.storage.lake_reader import create_market_views
 
 # =============================================================================
 # Test Database Connection
@@ -30,13 +37,15 @@ class TestEquityDataDB:
         assert db.con is not None
 
     def test_create_market_view(self, tmp_path, temp_partitioned_parquet):
-        """Test creating market view from Parquet files."""
+        """Market views come from the shared lake_reader registry helper (ADR-0010)."""
         db = EquityDataDB(db_path=":memory:")
 
         with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet)
+            created = create_market_views(db.con)
 
-        assert "us_equity" in db.available_views
+        assert "us_equity" in created
+        db.available_views = created
+        db._views_initialized = True
         result = db.query("SELECT COUNT(*) as cnt FROM us_equity")
         assert result.height == 1
         assert result["cnt"][0] > 0
@@ -45,13 +54,9 @@ class TestEquityDataDB:
         """Test executing SQL query."""
         db = EquityDataDB(db_path=":memory:")
 
-        # Create view
+        # Views are created lazily on first query from the patched registry
         with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet)
-
-        # Execute simple query
-        sql = "SELECT COUNT(*) as count FROM us_equity"
-        result = db.query(sql)
+            result = db.query("SELECT COUNT(*) as count FROM us_equity")
 
         assert isinstance(result, pl.DataFrame)
         assert "count" in result.columns
@@ -61,20 +66,24 @@ class TestEquityDataDB:
         db = EquityDataDB(db_path=":memory:")
 
         with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet)
-
-        result = db.query("SELECT COUNT(*) as count FROM us_equity")
+            result = db.query("SELECT COUNT(*) as count FROM us_equity")
 
         assert isinstance(result, pl.DataFrame)
         assert "count" in result.columns
 
     def test_query_error_handling(self):
-        """Test query error handling."""
+        """Invalid SQL raises QueryError instead of an empty DataFrame."""
         db = EquityDataDB(db_path=":memory:")
 
-        # Invalid SQL should return empty DataFrame
-        result = db.query("INVALID SQL QUERY")
-        assert result.is_empty()
+        with pytest.raises(QueryError):
+            db.query("INVALID SQL QUERY")
+
+    def test_run_named_query_unknown_name_raises(self):
+        """An unknown named query raises QueryError listing the available names."""
+        db = EquityDataDB(db_path=":memory:")
+
+        with pytest.raises(QueryError, match="Unknown query 'no_such_query'"):
+            db.run_named_query("no_such_query")
 
 
 # =============================================================================
@@ -88,7 +97,8 @@ def db_with_data(temp_partitioned_parquet):
     db = EquityDataDB(db_path=":memory:")
 
     with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
-        db._create_market_view("us_equity", temp_partitioned_parquet)
+        db.available_views = create_market_views(db.con)
+        db._views_initialized = True
         db._create_unified_view()
 
     return db
@@ -269,7 +279,8 @@ class TestQueryIntegration:
         """
         db = EquityDataDB(db_path=":memory:")
         with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet)
+            db.available_views = create_market_views(db.con)
+            db._views_initialized = True
             db._create_unified_view()
             results = db.run_all_queries()
 
@@ -301,7 +312,8 @@ class TestQueryIntegration:
         db = EquityDataDB(db_path=":memory:")
 
         with patch("equity_lake.core.paths.US_EQUITY_DIR", temp_partitioned_parquet):
-            db._create_market_view("us_equity", temp_partitioned_parquet)
+            db.available_views = create_market_views(db.con)
+            db._views_initialized = True
             db._create_unified_view()
 
         queries = QueryExamples(db)

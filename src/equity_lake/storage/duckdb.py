@@ -13,6 +13,7 @@ Usage:
 """
 
 from pathlib import Path
+from types import TracebackType
 from typing import Any, cast
 
 import duckdb
@@ -24,6 +25,23 @@ from equity_lake.storage.lake_reader import create_market_views
 
 logger = structlog.get_logger(__name__)
 
+
+class QueryError(RuntimeError):
+    """Raised when a DuckDB query fails or names an unknown named query."""
+
+
+# Column types for the empty-lake ``equity_all`` fallback view; unlisted
+# STANDARD_COLUMNS default to VARCHAR. Mirrors the real market-view contract.
+_EMPTY_VIEW_COLUMN_TYPES: dict[str, str] = {
+    "date": "DATE",
+    "open": "DOUBLE",
+    "high": "DOUBLE",
+    "low": "DOUBLE",
+    "close": "DOUBLE",
+    "volume": "DOUBLE",
+    "adj_close": "DOUBLE",
+    "identity_schema_version": "BIGINT",
+}
 
 # =============================================================================
 # Database Connection and View Creation
@@ -63,49 +81,49 @@ class EquityDataDB:
         self._ensure_views()
         return self
 
-    def __exit__(self, *args: object) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         self.close()
-
-    def _create_market_view(self, view_name: str, data_dir: Path) -> None:
-        if not data_dir.exists():
-            logger.warning("Data directory not found", path=str(data_dir))
-            return
-
-        from equity_lake.storage.lake_reader import duckdb_scan_for
-
-        scan_expr = duckdb_scan_for(data_dir)
-        # The unified ``market`` column carries the canonical long key (ADR-0010).
-        sql = f"CREATE OR REPLACE VIEW {view_name} AS SELECT *, '{view_name}' as market FROM {scan_expr}"
-
-        try:
-            self.con.execute(sql)
-            logger.debug("Created view", view=view_name)
-            self.available_views.append(view_name)
-        except Exception as e:
-            logger.error("Failed to create view", view=view_name, error=str(e))
 
     def _create_unified_view(self) -> None:
         """Create unified view across all markets."""
         if not self.available_views:
-            self.con.execute("CREATE OR REPLACE VIEW equity_all AS SELECT NULL::VARCHAR AS ticker WHERE FALSE")
+            # Empty-lake fallback: keep the real market-view column contract so named
+            # queries bind and genuinely return zero rows instead of binder errors
+            # (column names/types come from the fixed STANDARD_COLUMNS constant, not input).
+            from equity_lake.core.schemas import STANDARD_COLUMNS
+
+            columns = ", ".join(f"CAST(NULL AS {_EMPTY_VIEW_COLUMN_TYPES.get(column, 'VARCHAR')}) AS {column}" for column in STANDARD_COLUMNS)
+            self.con.sql(f"CREATE OR REPLACE VIEW equity_all AS SELECT {columns} WHERE FALSE")
             return
 
         sql = "CREATE OR REPLACE VIEW equity_all AS " + " UNION ALL ".join(f"SELECT * FROM {view_name}" for view_name in self.available_views)
 
         try:
-            self.con.execute(sql)
+            self.con.sql(sql)
             logger.debug("Created unified view", view="equity_all")
         except Exception as e:
             logger.error("Failed to create unified view", error=str(e))
 
     def query(self, sql: str, params: list[Any] | None = None) -> pl.DataFrame:
-        """Execute SQL query (optionally parameter-bound) and return a Polars DataFrame."""
+        """Execute SQL query (optionally parameter-bound) and return a Polars DataFrame.
+
+        Raises:
+            QueryError: When the SQL is invalid or execution fails — SQL bugs are
+                never masked as an empty result.
+        """
         self._ensure_views()
         try:
-            return self.con.execute(sql, params).pl() if params is not None else self.con.execute(sql).pl()
+            # Relation API: same engine/results as execute(), keeps dynamic operator SQL
+            # (``equity query``) out of the statement-execution sink; bind params stay bound.
+            return self.con.sql(sql, params=params).pl() if params is not None else self.con.sql(sql).pl()
         except Exception as e:
             logger.error("Query failed", error=str(e))
-            return pl.DataFrame()
+            raise QueryError(str(e)) from e
 
     QUERY_MAP: dict[str, str] = {
         "latest_summary": "query_1_latest_data_summary",
@@ -125,7 +143,7 @@ class EquityDataDB:
         if method_name is None:
             available = ", ".join(self.QUERY_MAP.keys())
             logger.error("Unknown query", name=name, available=available)
-            return pl.DataFrame()
+            raise QueryError(f"Unknown query {name!r}; available: {available}")
         return cast(pl.DataFrame, getattr(examples, method_name)(**kwargs))
 
     def run_all_queries(self) -> dict[str, pl.DataFrame]:
@@ -141,4 +159,4 @@ class EquityDataDB:
         return results
 
 
-__all__ = ["EquityDataDB"]
+__all__ = ["EquityDataDB", "QueryError"]

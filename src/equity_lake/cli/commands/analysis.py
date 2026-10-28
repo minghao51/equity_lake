@@ -8,7 +8,7 @@ from typing import Annotated, Literal, cast
 import typer
 
 from equity_lake.cli._app import _init_logging, app
-from equity_lake.core.paths import DUCKDB_DEFAULT_PATH, LOGS_DIR
+from equity_lake.core.paths import DUCKDB_DEFAULT_PATH, HEALTH_REPORT_FILENAME, LOGS_DIR
 
 
 @app.command("backtest")
@@ -66,26 +66,30 @@ def query(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Query the data lake via DuckDB."""
-    from equity_lake.storage.duckdb import EquityDataDB
+    from equity_lake.storage.duckdb import EquityDataDB, QueryError
 
     _init_logging(verbose)
-    with EquityDataDB(db_path=db_path) as db:
-        if query_name:
-            df = db.run_named_query(query_name)
-            if not df.is_empty():
-                typer.echo(df)
-            else:
-                typer.secho(f"No results for query: {query_name}", fg=typer.colors.YELLOW)
-        else:
-            results = db.run_all_queries()
-            for name, df in results.items():
-                typer.echo(f"\n{'=' * 60}")
-                typer.echo(f"Query: {name}")
-                typer.echo(f"{'=' * 60}")
+    try:
+        with EquityDataDB(db_path=db_path) as db:
+            if query_name:
+                df = db.run_named_query(query_name)
                 if not df.is_empty():
                     typer.echo(df)
                 else:
-                    typer.secho("No results", fg=typer.colors.YELLOW)
+                    typer.secho(f"No results for query: {query_name}", fg=typer.colors.YELLOW)
+            else:
+                results = db.run_all_queries()
+                for name, df in results.items():
+                    typer.echo(f"\n{'=' * 60}")
+                    typer.echo(f"Query: {name}")
+                    typer.echo(f"{'=' * 60}")
+                    if not df.is_empty():
+                        typer.echo(df)
+                    else:
+                        typer.secho("No results", fg=typer.colors.YELLOW)
+    except QueryError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
 
 
 @app.command("monitor")
@@ -132,7 +136,7 @@ def monitor(
 
         # Always persist the canonical report, including when unhealthy. Schedulers
         # use the exit code, while dashboards need the latest result either way.
-        output_path = Path(output_json) if output_json is not None else LOGS_DIR / "health-report.json"
+        output_path = Path(output_json) if output_json is not None else LOGS_DIR / HEALTH_REPORT_FILENAME
         monitor_inst.save_report(output_path)
     finally:
         monitor_inst.close()
