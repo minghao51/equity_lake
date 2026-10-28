@@ -2,6 +2,7 @@
 
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pandas as pd
@@ -210,6 +211,69 @@ def _valid_corporate_actions() -> pl.DataFrame:
 def test_quality_data_type_corporate_actions() -> None:
     for market in ("corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions"):
         assert writers._quality_data_type(market) == "corporate_action", market
+
+
+class _RecordingLogger:
+    """Isolated structlog stand-in.
+
+    structlog's configuration is process-wide: once another test calls
+    ``setup_structured_logging()`` the default print factory is replaced and
+    ``structlog.testing.capture_logs`` no longer intercepts. Replacing the
+    module logger keeps these assertions independent of suite ordering.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    def _record(self, event: str, **kwargs: Any) -> None:
+        self.calls.append((event, kwargs))
+
+    def debug(self, event: str, **kwargs: Any) -> None:
+        self._record(event, **kwargs)
+
+    def info(self, event: str, **kwargs: Any) -> None:
+        self._record(event, **kwargs)
+
+    def warning(self, event: str, **kwargs: Any) -> None:
+        self._record(event, **kwargs)
+
+    def error(self, event: str, **kwargs: Any) -> None:
+        self._record(event, **kwargs)
+
+
+def _warned_markets(recorder: _RecordingLogger) -> list[Any]:
+    """Markets named by ``unknown_market_key_ohlcv_default`` warning calls."""
+    return [kwargs["market"] for event, kwargs in recorder.calls if event == "unknown_market_key_ohlcv_default"]
+
+
+def test_unknown_market_key_logs_and_keeps_ohlcv_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unknown key warns instead of silently vanishing; known keys stay silent (Wave B)."""
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(writers, "logger", recorder)
+
+    assert writers._dedupe_key_columns("01_bronze/not_a_market") == ["ticker", "date"]
+    assert _warned_markets(recorder) == ["01_bronze/not_a_market"]
+
+    # Canonical price routes (long key and bronze path form) must not warn.
+    recorder.calls.clear()
+    assert writers._dedupe_key_columns("us_equity") == ["ticker", "date"]
+    assert writers._dedupe_key_columns("01_bronze/market_data/jpx_equity") == ["ticker", "date"]
+    assert writers._dedupe_key_columns("03_gold/features")
+    assert _warned_markets(recorder) == []
+
+
+def test_validate_schema_unknown_market_key_logs_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``validate_schema`` warns for the same unknown-key fallthrough."""
+    recorder = _RecordingLogger()
+    monkeypatch.setattr(writers, "logger", recorder)
+    frame = _valid_ohlcv()
+
+    assert writers.validate_schema(frame, "01_bronze/not_a_market") is True
+    assert _warned_markets(recorder) == ["01_bronze/not_a_market"]
+
+    recorder.calls.clear()
+    assert writers.validate_schema(frame, "us_equity") is True
+    assert _warned_markets(recorder) == []
 
 
 def test_upsert_dataset_corporate_actions_partitions_on_ex_date(tmp_path: Path) -> None:

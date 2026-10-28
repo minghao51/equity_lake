@@ -23,7 +23,7 @@ from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImpor
     normalize_identity_frame,
     prepare_source_identity_frame,
 )
-from equity_lake.core.paths import canonical_market
+from equity_lake.core.paths import PRICE_MARKETS, canonical_market
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
 from equity_lake.core.schemas import (
     CORPORATE_ACTION_COVERAGE_COLUMNS,
@@ -67,6 +67,9 @@ def _dedupe_key_columns(market: str) -> list[str]:
         return ["ticker", "ex_date", "action"]
     if market in ("03_gold/features", "04_platinum/predictions", "predictions"):
         return list(IDENTITY_DATE_COLUMNS)
+    if _is_price_market_route(market):
+        return ["ticker", "date"]
+    logger.warning("unknown_market_key_ohlcv_default", market=market)
     return ["ticker", "date"]
 
 
@@ -82,6 +85,11 @@ def _price_source_market(dataset: str) -> str | None:
         return canonical_market(route)
     except ValueError:
         return None
+
+
+def _is_price_market_route(market: str) -> bool:
+    """True for the five canonical price markets and their bronze path forms."""
+    return market in PRICE_MARKETS or _price_source_market(market) is not None
 
 
 def _is_corporate_actions(market: str) -> bool:
@@ -266,6 +274,8 @@ def validate_schema(df: FrameLike, market: str) -> bool:
     elif market in ("predictions", "04_platinum/predictions"):
         required_cols = [*INSTRUMENT_IDENTITY_COLUMNS, "identity_schema_version", "ticker", "date", "direction", "probability"]
     else:
+        if not _is_price_market_route(market):
+            logger.warning("unknown_market_key_ohlcv_default", market=market)
         required_cols = ["ticker", "date", "open", "high", "low", "close", "volume"]
 
     if market in ("03_gold/features", "predictions", "04_platinum/predictions"):
