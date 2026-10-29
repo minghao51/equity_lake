@@ -62,3 +62,14 @@ def test_showcase_target_backtests_the_seeded_sample_lake() -> None:
     assert "dotenvx" not in output
     assert "equity ingest" not in output
     assert "make setup" not in output
+
+
+def test_preload_target_is_bounded_and_offline() -> None:
+    """`make preload` drives the bounded helper, oldest-first, with no ingestion."""
+    output = _make_dry_run("preload")
+
+    assert "uv run python -m equity_lake.devtools.preload" in output
+    assert "--days 60" in output  # bounded default, overridable with DAYS=
+    assert "dotenvx" not in output
+    assert "equity ingest" not in output
+    assert "make setup" not in output

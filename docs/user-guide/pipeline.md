@@ -164,6 +164,46 @@ feature stage and exits non-zero while still reporting everything that was
 produced. Per-ticker ML results carry `persisted` so inference success is not
 mistaken for durability.
 
+### Preloading Gold features
+
+One `equity pipeline` run computes one output session, and a label only becomes
+computable on the next **observed** session (ADR-0014). A dense run of Gold
+sessions therefore has to be written oldest → newest, one session per run, and
+it must be bounded — roughly 8 seconds per session for five tickers.
+
+```bash
+make preload              # 60 sessions, five default US tickers
+make preload DAYS=120     # explicit bound; the helper refuses DAYS > 500
+```
+
+The target calls `uv run python -m equity_lake.devtools.preload`, which drives
+the same `run_feature_job` stage the pipeline uses (no hand-written rows). The
+session list is the last N sessions actually stored in Bronze — the same
+"observed session" the label lifecycle uses, so a synthetic lake that holds a
+bar on a calendar holiday still has an unbroken finalization chain. Sessions
+with nothing computable are skipped and reported, each session finalizes its
+predecessor's `next_day_return` / `label_available_date`, and the newest session
+stays pending because no next observed bar exists yet. Re-running is idempotent
+(the Gold upsert keys on `(market, mic, symbol, date)`).
+
+Preloading features does **not** write predictions. Training and inference stay
+on the real path, which fails closed when identity, availability, or
+action-coverage proofs are insufficient instead of fabricating rows:
+
+```bash
+uv run equity ml train --ticker AAPL --start 2026-08-06 --end 2026-10-27
+uv run equity pipeline --skip-ingestion --date 2026-10-28 \
+  --markets us --tickers AAPL,AMZN,GOOGL,MSFT,NVDA   # ML stage persists predictions
+```
+
+`forecast --mode predict` prints a prediction but does not persist one; the
+Platinum write happens in the pipeline's ML stage (`run_prediction_job`). With a
+short history the honest outcome is a trained model with no validation folds
+(`folds=0`), and the read API reports `api_usability_status:
+not_current_usable` because row-bound forecast provenance/semantics are not
+persisted — identity and schema status are `valid`/`current` all the same. Do not
+hand-write prediction rows to make those fields look better.
+
 ## Configuration
 
 Primary config files:

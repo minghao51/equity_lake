@@ -1,7 +1,10 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase
+.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload
+
+# Sessions written by `make preload` (bounded Gold feature backfill).
+DAYS ?= 60
 
 # Default target
 help:
@@ -14,6 +17,7 @@ help:
 	@echo "  lint-md    - Run Markdown linting"
 	@echo "  format     - Format code (ruff)"
 	@echo "  check      - Run type checking (mypy)"
+	@echo "  preload    - Preload N consecutive Gold sessions of features + labels (DAYS=60)"
 	@echo "  clean      - Clean cache and temporary files"
 	@echo ""
 	@echo "Data Pipeline Commands:"
@@ -200,6 +204,15 @@ quick-test:
 test-backtest:
 	@echo "🧪 Running full backtesting test suite..."
 	uv run pytest tests/unit/test_backtest_adjustment.py tests/unit/test_backtest_generator.py tests/unit/test_backtest_metrics.py tests/unit/test_backtesting_regressions.py -q
+
+# Bounded Gold feature preload for the feature/ML surfaces. Labels finalize
+# one session behind (ADR-0014), so sessions are written oldest -> newest and
+# the run is deliberately bounded: ~8s per session for the five default tickers.
+# `python -m equity_lake.devtools.preload` refuses DAYS > 500.
+preload:
+	@echo "⏳ Preloading $(DAYS) consecutive Gold sessions (features + label finalization)..."
+	uv run python -m equity_lake.devtools.preload --days $(DAYS)
+	@echo "✅ Gold features written. Predictions: uv run equity ml train --help"
 
 # Portfolio showcase: seed the demo lake (offline-safe, synthetic by default)
 demo:
