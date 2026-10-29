@@ -167,6 +167,8 @@ def signal_scan(
             managed = load_private_watchlist(ticker_config_path=ticker_config_path)
             instruments = [item.instrument for item in managed.instruments]
             wl = Watchlist(name=managed.name, tickers=list(dict.fromkeys(item.instrument.symbol for item in managed.instruments)))
+        if not instruments:
+            raise ValueError("no canonical instruments to scan; add one with 'equity tracking add' or pass --watchlist with --market")
         sc = load_signal_config(config_path)
         if fmt not in {"json", "md", "table"}:
             raise ValueError(f"Unknown format: {fmt}. Use: json, md, table")

@@ -142,6 +142,24 @@ def test_explicit_legacy_signal_watchlist_requires_market(tmp_path: Path, monkey
     scanner.assert_not_called()
 
 
+def test_empty_watchlist_live_scan_exits_cleanly_without_traceback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty managed watchlist is a configuration problem, not a crash (F4)."""
+    from equity_lake.signals.tracking import PrivateWatchlist
+
+    _legacy_watchlist, config = _configs(tmp_path)
+    monkeypatch.setattr("equity_lake.signals.tracking.load_private_watchlist", lambda **_kwargs: PrivateWatchlist())
+    scanner = MagicMock()
+    monkeypatch.setattr("equity_lake.signals.scanner.SignalScanner", scanner)
+
+    result = CliRunner().invoke(app, ["signal", "scan", "--no-dry-run", "--config", str(config)])
+
+    assert result.exit_code == 1, result.output
+    assert "Invalid scan configuration" in result.stdout
+    assert "equity tracking add" in result.stdout
+    assert "Traceback" not in result.output
+    scanner.assert_not_called()
+
+
 def test_signal_scan_help_explains_safe_dry_run() -> None:
     result = CliRunner().invoke(app, ["signal", "scan", "--help"])
     assert result.exit_code == 0
