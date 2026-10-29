@@ -19,6 +19,7 @@ from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
     equal_weight_buyhold,
     run_arena,
 )
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE  # type: ignore[import-untyped]
 from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
     build_finding_cards,
     drawdown_series,
@@ -30,6 +31,11 @@ from equity_lake.core.availability import (  # type: ignore[import-untyped]  # p
 from equity_lake.findings import load_finding_cards  # type: ignore[import-untyped]
 
 pytestmark = pytest.mark.slow
+
+# The engine is an optional group (`uv sync --group backtesting`); a bare
+# `uv sync` must still produce a green suite, so only the engine-backed tests
+# skip. The pure helpers below keep running without the group.
+requires_engine = pytest.mark.skipif(not POLARS_BACKTEST_AVAILABLE, reason="polars-backtest not installed")
 
 
 def _synthetic_data(n_tickers: int = 12, n_days: int = 320, seed: int = 42) -> pl.DataFrame:
@@ -106,6 +112,7 @@ def test_drawdown_series_empty() -> None:
 # ---------------------------------------------------------------------------
 
 
+@requires_engine
 def test_run_arena_matrix_and_benchmark() -> None:
     data = _synthetic_data(n_days=80)
     start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
@@ -191,6 +198,7 @@ def test_build_finding_cards_axes_and_verdicts() -> None:
     assert all("benchmark_asymmetry" in c.scope for c in cards)
 
 
+@requires_engine
 def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
     data = _synthetic_data(n_days=80)
     start_date, end_date = cast(date, data["date"].min()), cast(date, data["date"].max())
@@ -210,6 +218,7 @@ def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
     assert {c.id for c in loaded} == {c.id for c in written}
 
 
+@requires_engine
 def test_card_evidence_refs_point_at_artifacts_write_arena_actually_writes(tmp_path: Path) -> None:
     """B5: evidence_refs must reference real per-run artifact dirs, not phantom dirs."""
     data = _synthetic_data(n_days=80)
