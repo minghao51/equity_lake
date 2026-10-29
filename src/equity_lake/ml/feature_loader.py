@@ -56,12 +56,18 @@ class FeatureLoader:
             table = DeltaTable(str(GOLD_FEATURES_DIR))
             columns = {field.name for field in table.schema().fields}
             symbol_column = "ticker" if "ticker" in columns else "symbol"
+            # Push down only the date range. Label finalization rewrites matched
+            # files through delta-rs, which stores string columns as Arrow
+            # string_view; pyarrow has no string_view comparison kernels, so a
+            # pushed-down symbol filter raises ArrowNotImplementedError on such
+            # a table (pyarrow 21/22). The exact symbol scope is applied below.
             filters: list[tuple[str, str, object]] = [
-                (symbol_column, "=", symbol),
                 ("date", ">=", start_date),
                 ("date", "<=", end_date),
             ]
             raw = pl.DataFrame(table.to_pyarrow_table(filters=filters))
+            if symbol_column in raw.columns:
+                raw = raw.filter(pl.col(symbol_column) == symbol)
         else:
             parquet = pl.scan_parquet(str(GOLD_FEATURES_DIR / "**" / "*.parquet"), hive_partitioning=True)
             columns = set(parquet.collect_schema().names())
