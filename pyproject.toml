@@ -187,6 +187,9 @@ line-ending = "auto"
 known-first-party = ["equity_lake", "tests", "data"]
 
 [tool.mypy]
+# Bare `uv run mypy` must check the same tree as `uv run mypy src` (Makefile:check
+# and pre-commit pass the target explicitly; AGENTS.md documents the bare form).
+files = ["src"]
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
