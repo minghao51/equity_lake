@@ -216,9 +216,10 @@ def preceding_label_frame(features_df: pl.DataFrame, output_start_date: date) ->
 def _stored_keys(update_df: pl.DataFrame, lake_dir: Path | None) -> pl.DataFrame | None:
     """Bounded read of the stored ``(ticker, date)`` keys for the update's dates.
 
-    Returns ``None`` when the Gold table does not exist yet (nothing persisted
-    to finalize). Only identity columns are materialized; the date filter keeps
-    the read partition-pruned even as Gold history grows.
+    Returns ``None`` when the Gold table does not exist yet, or when it holds
+    no rows for the update's dates (the preceding session is simply not
+    persisted): both are pending states, not contract violations. Only a
+    non-empty read is identity-validated.
     """
     dates = update_df.select("date").drop_nulls().unique().to_series().to_list()
     if not dates:
@@ -227,6 +228,11 @@ def _stored_keys(update_df: pl.DataFrame, lake_dir: Path | None) -> pl.DataFrame
     try:
         stored = read_delta(GOLD_FEATURES_TABLE, lake_dir=lake_dir, filters=filters, columns=[*KEY_COLUMNS, "identity_schema_version"])
     except DeltaError:
+        return None
+    if stored.is_empty():
+        # "No rows to finalize" is legitimate (the preceding session was never
+        # written); conflating it with unknown identity raised on a bare empty
+        # read and logged label_finalization_failed on sparse Gold history.
         return None
     stored = normalize_identity_frame(stored)
     _require_identity_schema(stored)

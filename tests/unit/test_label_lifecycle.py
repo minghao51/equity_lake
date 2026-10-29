@@ -24,6 +24,7 @@ from equity_lake.core.availability import (  # type: ignore[import-untyped]
 )
 from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentKey,
+    LegacyIdentityUnavailableError,
 )
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
 from equity_lake.features.labels import (  # type: ignore[import-untyped]
@@ -478,6 +479,45 @@ def test_dry_run_finalization_writes_nothing(tmp_path: Path, monkeypatch: pytest
     # The real (non-dry-run) path does finalize the s0 label.
     _run_job(s1, ["AAPL"])
     assert _row(_gold(tmp_path), "AAPL", s0)[TARGET_COLUMN] is not None
+
+
+def test_finalize_with_missing_preceding_session_is_pending_not_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A preceding session absent from Gold is pending, not an identity violation (F8)."""
+    days = _weekdays_ending(date(2024, 3, 6), 80)
+    s0, s1, s2 = days[-3:]
+    _prepare_lake(tmp_path, monkeypatch, [_price_frame("AAPL", days)])
+    _run_job(s0, ["AAPL"])
+    seeded = _gold(tmp_path).filter(pl.col("date") == s0)
+
+    # Deliberately skip s1: the preceding session of s2 is not in Gold.
+    _, diagnostics = _run_job(s2, ["AAPL"])
+
+    labels = diagnostics["label_finalization"]
+    assert isinstance(labels, dict)
+    assert "error" not in labels, labels
+    assert labels["finalized"] == 0
+    assert labels["unmatched"] >= 1
+    gold = _gold(tmp_path)
+    assert gold.filter(pl.col("date") == s0).equals(seeded)  # untouched, not corrupted
+    assert sorted(set(gold["date"].to_list())) == [s0, s2]
+
+
+def test_finalize_still_rejects_unknown_identity_schema(tmp_path: Path) -> None:
+    """ADR-0014 strictness is unchanged: a non-empty unknown-identity frame fails closed."""
+    from equity_lake.features.labels import add_label_availability
+
+    days = _weekdays_ending(date(2024, 3, 6), 80)
+    s0, s1 = days[-2], days[-1]
+    features = add_label_availability(_price_frame("AAPL", days)).with_columns(
+        (pl.col("close").shift(-1).over("ticker") / pl.col("close") - 1).alias(TARGET_COLUMN)
+    )
+    gold_dir = tmp_path / "03_gold" / "features"
+    gold_dir.mkdir(parents=True)
+    stored = features.filter(pl.col("date") == s0).with_columns(pl.lit(2).cast(pl.Int64).alias("identity_schema_version"))
+    write_deltalake(str(gold_dir), stored.to_arrow(), mode="append", partition_by=["date"])
+
+    with pytest.raises(LegacyIdentityUnavailableError, match="Unsupported or unknown identity schema versions"):
+        finalize_preceding_labels(features, s1, lake_dir=tmp_path)
 
 
 def test_scan_and_repair_report_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
