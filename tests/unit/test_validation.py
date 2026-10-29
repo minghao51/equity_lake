@@ -251,7 +251,7 @@ def test_news_schema_valid() -> None:
 
 def test_social_schema_valid() -> None:
     """W01/F20: real social-sentiment rows pass the dedicated schema."""
-    from equity_lake.validation.schemas import SocialSentimentSchema
+    from equity_lake.validation.schemas import SocialSentimentSchema  # type: ignore[import-untyped]
 
     df = pl.DataFrame(
         {
@@ -462,3 +462,46 @@ def test_profile_persist_flag_controls_disk_writes(tmp_path: Path, sample_ohlcv_
 
     profiler.profile(sample_ohlcv_data, "persisted", persist=True)
     assert (tmp_path / "persisted.json").exists()
+
+
+def _partitioned_price_table(root: Path) -> Path:
+    """Write a canonical date-partitioned bronze price table and return its path."""
+    from equity_lake.storage.delta import write_delta  # type: ignore[import-untyped]
+
+    frame = pl.DataFrame(
+        {
+            "ticker": ["AAPL", "AAPL", "MSFT", "MSFT"],
+            "date": [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 2), date(2024, 1, 3)],
+            "open": [100.0, 101.0, 200.0, 201.0],
+            "high": [102.0, 103.0, 202.0, 203.0],
+            "low": [99.0, 100.0, 199.0, 200.0],
+            "close": [101.0, 102.0, 201.0, 202.0],
+            "volume": [1000.0, 1100.0, 2000.0, 2100.0],
+        },
+        schema=_OHLCV_SCHEMA,
+    )
+    write_delta(frame, "01_bronze/market_data/us_equity", mode="overwrite", lake_dir=root, partition_by=["date"])
+    return root / "01_bronze" / "market_data" / "us_equity"
+
+
+def test_load_parquet_preserves_hive_date_partition_column(tmp_path: Path) -> None:
+    """Directory reads must keep ``date=`` partitions; per-file reads silently dropped them."""
+    from equity_lake.cli.commands.admin import _load_parquet  # type: ignore[import-untyped]
+
+    table = _partitioned_price_table(tmp_path)
+    loaded = _load_parquet(str(table))
+
+    assert "date" in loaded.columns, "hive partition column must survive the load"
+    assert len(loaded) == 4
+
+
+def test_validate_check_passes_on_partitioned_lake_table(tmp_path: Path) -> None:
+    """The canonical layout must not produce a false schema failure in ``validate check``."""
+    from typer.testing import CliRunner
+
+    from equity_lake.cli._app import validate_app  # type: ignore[import-untyped]
+
+    table = _partitioned_price_table(tmp_path)
+    result = CliRunner().invoke(validate_app, ["check", str(table)])
+
+    assert result.exit_code == 0, result.output

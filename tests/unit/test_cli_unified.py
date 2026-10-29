@@ -133,6 +133,13 @@ class TestArenaReportSubcommands:
         assert result.exit_code == 0
         assert "FindingCards" in result.stdout
 
+    def test_arena_run_help_documents_lake_option(self) -> None:
+        """--lake lets the arena read an auxiliary lake (e.g. the demo sample lake)."""
+        result = runner.invoke(app, ["arena", "run", "--help"])
+        assert result.exit_code == 0
+        assert "--lake" in result.stdout
+        assert "canonical lake" in result.stdout
+
     def test_report_backtest_help(self) -> None:
         result = runner.invoke(app, ["report", "backtest", "--help"])
         assert result.exit_code == 0

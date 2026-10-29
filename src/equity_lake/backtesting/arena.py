@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 import polars as pl
 import structlog
@@ -144,6 +145,7 @@ def run_arena(
     cost_regimes: list[str] | None = None,
     preloaded_data: pl.DataFrame | None = None,
     market_costs: dict[str, dict[str, float]] | None = None,
+    lake_dir: Path | None = None,
 ) -> ArenaOutcome:
     """Run strategies x cost regimes on one shared data load.
 
@@ -160,6 +162,9 @@ def run_arena(
         market_costs: Optional per-market overrides for the ``realistic`` regime
             (``{"us_equity": {"fee_ratio": ..., "tax_ratio": ...}, ...}``); defaults to
             :data:`MARKET_COST_DEFAULTS`.
+        lake_dir: Lake root to read prices and action coverage from; defaults to
+            the canonical lake. Set this to backtest an auxiliary lake (e.g. the
+            sample lake written by ``equity demo seed``).
 
     Returns:
         :class:`ArenaOutcome` with one :class:`ArenaRun` per (strategy, regime)
@@ -169,10 +174,15 @@ def run_arena(
     data = (
         preloaded_data
         if preloaded_data is not None
-        else BacktestDataLoader().load(tickers=tickers, start_date=start_date, end_date=end_date, markets=list(markets))
+        else BacktestDataLoader(lake_dir=lake_dir).load(tickers=tickers, start_date=start_date, end_date=end_date, markets=list(markets))
     )
     if data.is_empty():
-        raise ValueError("Arena has no data to backtest (empty load).")
+        raise ValueError(
+            "Arena has no data to backtest (empty load). "
+            f"No Bronze price rows matched {', '.join(markets)} in the requested window. "
+            "Ingest the window first (``equity ingest``) or point at an auxiliary lake with ``--lake`` "
+            "(e.g. ``equity demo seed`` then ``--lake data/sample``)."
+        )
 
     strat_names = strategies or list(STRATEGY_REGISTRY)
     regime_names = cost_regimes or list(COST_REGIMES)

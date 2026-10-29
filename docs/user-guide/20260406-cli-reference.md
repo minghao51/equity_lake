@@ -462,11 +462,20 @@ per-run artifacts.
 | `--strategies` | str | all | Comma-separated strategy names |
 | `--cost-regimes` | str | all | Comma-separated regimes (`zero`, `realistic`, `high`) |
 | `--output-dir`, `-o` | str | `data/findings` | Findings dir |
+| `--lake` | str | canonical lake | Lake root to read prices and action coverage from |
 
 ```bash
 uv run equity arena run --start-date 2025-01-01 --end-date 2025-12-31 \
   --strategies momentum,mean_reversion
+
+# Backtest the offline demo lake instead of the canonical lake
+uv run equity arena run --lake data/sample \
+  --start-date 2025-01-02 --end-date 2026-06-30
 ```
+
+The lake must contain point-in-time action coverage (ADR-0015) in addition to
+ticker identity; `equity demo seed` writes both, so a seeded sample lake is
+backtestable without any network access.
 
 ### `equity report backtest`
 
@@ -663,10 +672,18 @@ sample lake (`data/sample/`) for the Strategy Lab showcase. The canonical lake
 pointing at `data/lake` plus an interactive confirmation (or the explicit
 `--overwrite-production-lake` flag — the overwrite is still logged).
 
+Seeded rows carry the canonical composite identity (ADR-0016: `market`/`mic`/
+`symbol` resolved from `config/tickers.yaml`), plus one complete synthetic
+corporate-action coverage proof per instrument in
+`02_silver/corporate_action_coverage/`. That makes the sample lake directly
+usable by `equity arena run --lake data/sample` (ADR-0020). A symbol with no
+configured exchange identity fails closed — the venue is never guessed from
+ticker text.
+
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--years` | float | `5.0` | Years of history to seed |
-| `--tickers`, `-t` | str | demo group | Comma-separated tickers |
+| `--tickers`, `-t` | str | demo group | Comma-separated tickers (must be configured in `config/tickers.yaml`) |
 | `--real` | flag | off | Attempt live yfinance fetch (falls back to synthetic) |
 | `--seed` | int | `42` | Synthetic RNG seed |
 | `--lake` | str | `data/sample` | Target lake root (`data/lake` requires confirmation) |
@@ -678,6 +695,7 @@ uv run equity demo seed
 uv run equity demo seed --real
 uv run equity demo seed --dry-run
 uv run equity demo seed --lake data/lake --overwrite-production-lake   # destructive, logged
+uv run equity demo seed --years 5                                     # then: arena run --lake data/sample
 ```
 
 ### `equity api serve`

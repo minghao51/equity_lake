@@ -49,3 +49,16 @@ def test_demo_target_seeds_only_without_setup_or_provider_steps() -> None:
     assert "make validate" not in output
     assert "equity ingest" not in output
     assert "dotenvx" not in output
+
+
+def test_showcase_target_backtests_the_seeded_sample_lake() -> None:
+    """`make showcase` must stay offline: seed the sample lake, then arena on --lake."""
+    output = _make_dry_run("showcase")
+
+    assert "uv run equity demo seed" in output
+    assert "uv run equity arena run" in output
+    assert "--lake data/sample" in output
+    # Offline-safe: no provider keys, no ingestion, no network setup steps.
+    assert "dotenvx" not in output
+    assert "equity ingest" not in output
+    assert "make setup" not in output

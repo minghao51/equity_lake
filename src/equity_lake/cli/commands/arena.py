@@ -37,6 +37,7 @@ def arena_run(
     strategies: Annotated[str | None, typer.Option("--strategies", help="Comma-separated strategy names (default: all)")] = None,
     cost_regimes: Annotated[str | None, typer.Option("--cost-regimes", help="Comma-separated regimes (default: all)")] = None,
     output_dir: Annotated[str | None, typer.Option("--output-dir", "-o", help="Findings dir (default: data/findings)")] = None,
+    lake: Annotated[str | None, typer.Option("--lake", help="Lake root to read prices/action coverage from (default: canonical lake)")] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Run the strategy arena and emit FindingCards + per-run artifacts."""
@@ -55,6 +56,7 @@ def arena_run(
             initial_cash=initial_cash,
             strategies=_parse_comma_list(strategies),
             cost_regimes=_parse_comma_list(cost_regimes),
+            lake_dir=Path(lake) if lake else None,
         )
     except ValueError as exc:
         typer.secho(f"arena failed: {exc}", fg=typer.colors.RED)

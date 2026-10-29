@@ -16,12 +16,15 @@ passing that authorization through. Idempotent via ``mode="overwrite"``.
 from __future__ import annotations
 
 import os
+from datetime import UTC, date, datetime, time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 import structlog
 
+from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey
+from equity_lake.core.paths import LONG_TO_SHORT
 from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, synthetic_ohlcv, trailing_business_days
 
 logger = structlog.get_logger(__name__)
@@ -30,6 +33,10 @@ logger = structlog.get_logger(__name__)
 # ``equity bootstrap sample``) and is re-exported here for callers/tests.
 
 US_EQUITY_MARKET = "01_bronze/market_data/us_equity"
+US_EQUITY_SOURCE_MARKET = "us_equity"
+# Provenance label for demo coverage proofs. Free-form in ``ActionCoverageProof``
+# (unlike price ``identity_provenance``, which has a closed vocabulary).
+COVERAGE_SOURCE = "synthetic_demo_seed"
 
 # Demo-lake synthetic tuning; the random walk itself is shared.
 DEMO_PROFILE = OhlcvProfile(
@@ -120,6 +127,78 @@ def resolve_universe(tickers: list[str] | None) -> list[str]:
     return list(DEMO_UNIVERSE)
 
 
+def _configured_identities(symbols: list[str]) -> dict[str, InstrumentKey]:
+    """Resolve each demo symbol to its canonical identity via the source config.
+
+    A bare ticker is not identity (ADR-0016), so the venue comes from the
+    configured ``exchange`` label. Symbols absent from the config fail closed:
+    ticker spelling is never used to guess a MIC.
+    """
+    from equity_lake.core.config import TickerConfig
+
+    config = TickerConfig()
+    config_market = LONG_TO_SHORT[US_EQUITY_SOURCE_MARKET]
+    identities: dict[str, InstrumentKey] = {}
+    unresolved: list[str] = []
+    for symbol in symbols:
+        metadata = config.get_ticker_metadata(symbol, market=config_market)
+        if metadata is None:
+            unresolved.append(symbol)
+            continue
+        identities[symbol] = metadata.instrument_key(US_EQUITY_SOURCE_MARKET)
+    if unresolved:
+        raise ValueError(
+            f"Demo seed symbols have no configured exchange identity: {', '.join(sorted(unresolved))}. "
+            f"Add them to config/tickers.yaml (markets.{config_market}) or seed configured symbols only."
+        )
+    return identities
+
+
+def stamp_identity(df: pl.DataFrame, identities: dict[str, InstrumentKey]) -> pl.DataFrame:
+    """Stamp the canonical composite identity (ADR-0016) on seeded price rows.
+
+    Seeded rows land in the same Bronze table real ingestion writes, so they must
+    carry the same identity contract; the MIC is config-derived, and the honest
+    provenance label for that is ``current_ticker_config``.
+    """
+    by_symbol = {symbol: key.mic for symbol, key in identities.items()}
+    return df.with_columns(
+        pl.col("ticker").replace_strict({symbol: key.market for symbol, key in identities.items()}, return_dtype=pl.String).alias("market"),
+        pl.col("ticker").replace_strict(by_symbol, return_dtype=pl.String).alias("mic"),
+        pl.col("ticker").alias("symbol"),
+        pl.lit(IDENTITY_SCHEMA_VERSION, dtype=pl.Int64).alias("identity_schema_version"),
+        pl.lit("current_ticker_config", dtype=pl.String).alias("identity_provenance"),
+    )
+
+
+def coverage_proofs(df: pl.DataFrame, identities: dict[str, InstrumentKey]) -> pl.DataFrame:
+    """Build the source-scoped coverage proof the point-in-time gate requires.
+
+    ADR-0015 refuses to treat empty action data as proof of "no actions".
+    Synthetic prices are split-free by construction, so the generator itself is
+    the source: one complete, empty-interval proof per instrument, observable
+    from the first seeded session and fresh through the last one.
+    """
+    from equity_lake.core.availability import ActionCoverageProof
+
+    coverage_start = cast(date, df["date"].min())
+    coverage_end = cast(date, df["date"].max())
+    proofs = [
+        ActionCoverageProof(
+            market=identities[symbol].market,
+            mic=identities[symbol].mic,
+            symbol=identities[symbol].symbol,
+            source=COVERAGE_SOURCE,
+            coverage_start=coverage_start,
+            coverage_end=coverage_end,
+            source_available_at=datetime.combine(coverage_start, time.min, tzinfo=UTC),
+            source_valid_until=datetime.combine(coverage_end, time.max, tzinfo=UTC),
+        )
+        for symbol in sorted(df["ticker"].unique().to_list())
+    ]
+    return pl.DataFrame([proof.as_row() for proof in proofs])
+
+
 def seed_demo(
     *,
     years: float = 5.0,
@@ -149,7 +228,7 @@ def seed_demo(
         dry_run: Preview the seed summary without writing anything.
 
     Returns:
-        Summary dict: ``{tickers, rows, days, source, path, dry_run}``.
+        Summary dict: ``{tickers, rows, days, source, path, coverage_proofs, dry_run}``.
     """
     from equity_lake.core.logging import setup_structured_logging
     from equity_lake.core.paths import DATA_DIR
@@ -186,6 +265,12 @@ def seed_demo(
     if df.is_empty():
         raise ValueError("Seed produced no rows.")
 
+    # Bare tickers are not identity (ADR-0016): stamp the same composite identity
+    # the real ingestion path writes, resolved from the source config.
+    identities = _configured_identities(sorted(df["ticker"].unique().to_list()))
+    df = stamp_identity(df, identities)
+    proofs = coverage_proofs(df, identities)
+
     if dry_run:
         summary: dict[str, Any] = {
             "tickers": df["ticker"].n_unique(),
@@ -193,6 +278,7 @@ def seed_demo(
             "days": df["date"].n_unique(),
             "source": source,
             "path": str(target_root),
+            "coverage_proofs": proofs.height,
             "dry_run": True,
         }
         logger.info("seed_demo_dry_run", **summary)
@@ -207,6 +293,12 @@ def seed_demo(
         )
 
     write_delta(df, US_EQUITY_MARKET, mode="overwrite", lake_dir=target_root)
+    # Point-in-time consumers (arena, features, labels) require a source-scoped
+    # coverage proof; without it they fail closed on every decision date.
+    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table
+
+    coverage_table = corporate_action_coverage_table(US_EQUITY_SOURCE_MARKET)
+    write_delta(proofs, coverage_table, mode="overwrite", lake_dir=target_root, partition_by=["coverage_end"])
 
     summary = {
         "tickers": df["ticker"].n_unique(),
@@ -214,10 +306,11 @@ def seed_demo(
         "days": df["date"].n_unique(),
         "source": source,
         "path": str(target_root),
+        "coverage_proofs": proofs.height,
         "dry_run": False,
     }
     logger.info("seed_demo_complete", **summary)
     return summary
 
 
-__all__ = ["DEMO_UNIVERSE", "resolve_universe", "seed_demo"]
+__all__ = ["COVERAGE_SOURCE", "DEMO_UNIVERSE", "coverage_proofs", "resolve_universe", "seed_demo", "stamp_identity"]

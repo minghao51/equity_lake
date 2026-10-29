@@ -121,11 +121,13 @@ def _load_parquet(path: str) -> Any:
 
     target = Path(path)
     if target.is_dir():
-        files = list(target.rglob("*.parquet"))
-        if not files:
+        if not any(target.rglob("*.parquet")):
             typer.secho(f"No parquet files found in {path}", fg=typer.colors.RED)
             raise typer.Exit(1)
-        return pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+        # Read the directory as one partitioned dataset so Hive ``date=``
+        # partition columns survive (per-file reads drop them, which made the
+        # canonical date-partitioned lake fail validation on valid rows).
+        return pd.read_parquet(target)
     return pd.read_parquet(target)
 
 

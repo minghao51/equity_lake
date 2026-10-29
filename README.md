@@ -7,17 +7,30 @@
 
 🔗 **Live demo (coming)** — for now, walk the [Strategy Lab notebook](notebooks/11-strategy-lab.ipynb).
 
-### The showcase path (60 seconds)
+### The showcase path (~2 minutes, fully offline)
 
 ```bash
-make demo            # seed the lake — synthetic & offline-safe (`equity demo seed --real` for market data)
-dotenvx run -- uv run equity arena run --start-date 2022-01-03 --end-date 2026-08-04   # 3 strategies × 3 cost regimes vs benchmark
+make showcase        # seed the sample lake, then run the arena against it
 ls data/findings/    # → 3 evidence-backed FindingCards (strategy / cost / benchmark)
 ```
 
+Under the hood that is two commands, if you prefer them separately:
+
+```bash
+uv run equity demo seed --years 5                     # synthetic, offline-safe, writes data/sample/
+uv run equity arena run --lake data/sample \
+  --start-date 2025-01-02 --end-date 2026-06-30       # 3 strategies × 3 cost regimes vs benchmark
+```
+
+The seeded lake carries canonical instrument identity and a synthetic
+corporate-action coverage proof, so the arena's point-in-time gate passes without
+any network access (see [ADR-0020](docs/decisions/0020-synthetic-demo-lake-as-backtestable-surface.md)).
+Runtime is dominated by the point-in-time rebuild — every decision date is
+re-evaluated — so widen the window deliberately, not by default.
+
 ```mermaid
 flowchart LR
-    Seed["make demo<br/>seed lake"] --> Arena["equity arena run<br/>strategies × costs"]
+    Seed["make demo<br/>seed sample lake"] --> Arena["equity arena run<br/>--lake data/sample"]
     Arena --> FC["FindingCards<br/>verdict + evidence"]
     Arena --> NB["Strategy Lab<br/>notebook"]
     FC --> P2["Phase 2: ML comparison<br/>XGBoost vs LightGBM"]

@@ -6,7 +6,21 @@ emits FindingCards, while `equity report backtest` produces the artifacts for a
 single run. Everything lands under `data/findings/` — auxiliary storage that is
 not cataloged or pointblank-validated; the Pydantic `FindingCard` model is the
 write-boundary contract. Both commands read OHLCV from the lake, so the window
-must already be ingested (see [Ingestion](ingestion.md)).
+must already be ingested (see [Ingestion](ingestion.md)), and the lake must carry
+point-in-time action coverage (ADR-0015) — an unseeded or coverage-less lake
+produces no decisions at all, not neutral ones.
+
+For an offline walkthrough, `equity demo seed` writes a synthetic lake under
+`data/sample/` with canonical identity and synthetic coverage proofs, so it is
+backtestable directly via `--lake` (ADR-0020):
+
+```bash
+uv run equity demo seed --years 5
+uv run equity arena run --lake data/sample --start-date 2025-01-02 --end-date 2026-06-30
+```
+
+Runtime scales with decision dates × instruments: the engine rebuilds each
+window point-in-time, so keep demo windows short.
 
 ## `equity arena run`
 

@@ -1,7 +1,7 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo
+.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase
 
 # Default target
 help:
@@ -207,3 +207,13 @@ demo:
 	uv run equity demo seed
 	@echo "✅ Demo lake populated under data/sample/. No setup, validation, or provider fetches were run."
 	@echo "Explore commands with: uv run equity --help"
+
+# Full offline showcase: seed the sample lake, then backtest it end to end.
+# Expect ~2 minutes — the arena rebuilds every decision window point-in-time.
+showcase:
+	@echo "🎬 Seeding sample lake (synthetic, offline-safe)..."
+	uv run equity demo seed --years 5
+	@echo "🏟️  Running arena against data/sample (3 strategies x 3 cost regimes)..."
+	uv run equity arena run --lake data/sample --start-date 2025-01-02 --end-date 2026-06-30
+	@echo "✅ FindingCards + artifacts written to data/findings/"
+	@echo "   ls data/findings/   ·   uv run equity api serve"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Literal, Self
 
 import polars as pl
@@ -16,6 +17,8 @@ from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImpor
     normalize_identity_frame,
 )
 from equity_lake.core.paths import PRICE_MARKETS, market_dir
+from equity_lake.ingestion.types import MARKET_DIR_MAP
+from equity_lake.storage.delta import delta_table_path
 from equity_lake.storage.lake_reader import with_price_adjustment
 
 logger = structlog.get_logger(__name__)
@@ -48,14 +51,16 @@ class BacktestDataLoader:
         db_path: str = ":memory:",
         cache_enabled: bool = True,
         action_inputs: Mapping[tuple[str, str, str], tuple[pl.DataFrame, pl.DataFrame]] | None = None,
+        lake_dir: Path | None = None,
     ):
         # Kept as compatibility settings for callers; local scans need no SQL
         # connection and never interpolate lake paths or ticker values into SQL.
         self.db_path = db_path
         self.cache_enabled = cache_enabled
         self.action_inputs = action_inputs
+        self.lake_dir = Path(lake_dir) if lake_dir is not None else None
         self._action_input_cache: dict[tuple[str, str, str], tuple[pl.DataFrame, pl.DataFrame]] = {}
-        logger.info("BacktestDataLoader initialized", cache_enabled=cache_enabled)
+        logger.info("BacktestDataLoader initialized", cache_enabled=cache_enabled, lake_dir=str(self.lake_dir) if self.lake_dir else None)
 
     def load(
         self,
@@ -85,7 +90,9 @@ class BacktestDataLoader:
         )
 
         frames = [
-            self._read_market(market, symbols, start_date, end_date, requested_columns) for market in selected_markets if market in PRICE_MARKETS
+            self._read_market(market, symbols, start_date, end_date, requested_columns, self.lake_dir)
+            for market in selected_markets
+            if market in PRICE_MARKETS
         ]
         frames = [frame for frame in frames if not frame.is_empty()]
         if not frames:
@@ -121,9 +128,23 @@ class BacktestDataLoader:
         return data
 
     @staticmethod
-    def _read_market(market: str, symbols: list[str], start_date: date, end_date: date, columns: list[str]) -> pl.DataFrame:
+    def _market_data_dir(market: str, lake_dir: Path | None) -> Path:
+        """Resolve a market's Bronze directory, honoring an explicit lake root.
+
+        Without an override the registry lookup is used so runtime patches of the
+        ``*_DIR`` constants stay effective; with one, the medallion-relative table
+        path is resolved against that root.
+        """
+        if lake_dir is None:
+            return market_dir(market)
+        return delta_table_path(MARKET_DIR_MAP[market], lake_dir)
+
+    @staticmethod
+    def _read_market(
+        market: str, symbols: list[str], start_date: date, end_date: date, columns: list[str], lake_dir: Path | None = None
+    ) -> pl.DataFrame:
         """Read a bounded market/date scope, retaining explicit stored identity."""
-        data_dir = market_dir(market)
+        data_dir = BacktestDataLoader._market_data_dir(market, lake_dir)
         if not data_dir.exists():
             logger.warning("Market data directory not found", market=market, path=str(data_dir), hint="Run equity ingest command first")
             return pl.DataFrame()
@@ -170,7 +191,7 @@ class BacktestDataLoader:
         if self.action_inputs is None:
             from equity_lake.ingestion.corporate_actions import load_corporate_action_inputs
 
-            result = load_corporate_action_inputs(instrument.market)
+            result = load_corporate_action_inputs(instrument.market, lake_dir=self.lake_dir)
         else:
             try:
                 result = self.action_inputs[instrument.tuple]
