@@ -1,8 +1,11 @@
 """Tests for the static dashboard exporter."""
 
+import json
 from pathlib import Path
 
-from equity_lake.dashboard.exporter import DashboardExporter
+import pytest
+
+from equity_lake.dashboard.exporter import DashboardExporter  # type: ignore[import-untyped]
 
 
 def test_dashboard_exporter_writes_static_files(tmp_path: Path) -> None:
@@ -58,3 +61,34 @@ def test_dashboard_exporter_round_trips_w02_result_fields(tmp_path: Path) -> Non
     updates_html = (site / "updates.html").read_text(encoding="utf-8")
     assert "missing_output_bar" in updates_html
     assert "us_news" in updates_html
+
+
+def test_dashboard_exporter_escapes_health_alerts(tmp_path: Path) -> None:
+    """F5: alert text from the health report is published escaped, not as markup."""
+    site = tmp_path / "site"
+    site.mkdir()
+    (site / "health-report.json").write_text(
+        json.dumps({"alerts": ["<script>alert('xss')</script>"], "metrics": {"note": "<img src=x onerror=alert(1)>"}}),
+        encoding="utf-8",
+    )
+
+    DashboardExporter(output_dir=site).write()
+
+    for page in ("index.html", "health.html"):
+        rendered = (site / page).read_text(encoding="utf-8")
+        assert "&lt;script&gt;" in rendered
+        assert "<script>alert" not in rendered
+    assert "&lt;img src=x onerror=alert(1)&gt;" in (site / "health.html").read_text(encoding="utf-8")
+
+
+def test_dashboard_exporter_escapes_dataset_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """F5: an injected dataset path is escaped in the published inventory page."""
+    injected = tmp_path / "lake" / 'broken"><script>alert("path")</script>'
+    monkeypatch.setattr("equity_lake.dashboard.exporter.MARKET_DATASETS", {"injected": injected})
+
+    site = tmp_path / "site"
+    DashboardExporter(output_dir=site).write()
+
+    rendered = (site / "datasets.html").read_text(encoding="utf-8")
+    assert "&lt;script&gt;" in rendered
+    assert "<script>alert" not in rendered

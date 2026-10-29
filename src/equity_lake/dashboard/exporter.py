@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,17 @@ NAV_LINKS = [
     ("Updates", "updates.html"),
     ("Config", "config.html"),
 ]
+
+
+def _escape(value: Any) -> str:
+    """Escape one interpolated value for HTML text/attribute context.
+
+    Every value this module interpolates into the exported pages (alerts,
+    dataset names/paths/dates, titles, update rows, JSON blocks) comes from
+    local artifacts, but the pages are published as static hosting: text is
+    escaped at the sink instead of trusting the artifact.
+    """
+    return html.escape(str(value), quote=True)
 
 
 class DashboardExporter:
@@ -114,14 +126,18 @@ class DashboardExporter:
         body: str,
         intro: str | None = None,
     ) -> str:
-        nav = "".join((f'<a class="nav-link{" active" if href == active_href else ""}" href="{href}">{label}</a>') for label, href in NAV_LINKS)
-        intro_html = f'<p class="subtitle">{intro}</p>' if intro else ""
+        nav = "".join(
+            (f'<a class="nav-link{" active" if href == active_href else ""}" href="{_escape(href)}">{_escape(label)}</a>')
+            for label, href in NAV_LINKS
+        )
+        intro_html = f'<p class="subtitle">{_escape(intro)}</p>' if intro else ""
+        page_title = _escape(title)
         return f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{title}</title>
+    <title>{page_title}</title>
     <style>
       :root {{
         --bg: #f4f1ea;
@@ -217,7 +233,7 @@ class DashboardExporter:
     <main>
       <section class="hero">
         <div class="pill">Beta static dashboard</div>
-        <h1>{title}</h1>
+        <h1>{page_title}</h1>
         {intro_html}
       </section>
       <nav class="nav">{nav}</nav>
@@ -235,20 +251,21 @@ class DashboardExporter:
             ("Generated", payload["generated_at"]),
         ]
         cards_html = "".join(
-            (f'<article class="card"><div class="eyebrow">{label}</div><div class="metric">{value}</div></article>') for label, value in summary_cards
+            (f'<article class="card"><div class="eyebrow">{_escape(label)}</div><div class="metric">{_escape(value)}</div></article>')
+            for label, value in summary_cards
         )
         rows_html = "".join(
             "<tr>"
-            f"<td>{dataset['name']}</td>"
-            f"<td>{dataset['rows']:,}</td>"
-            f"<td>{dataset['symbols']:,}</td>"
-            f"<td>{dataset['latest_date'] or 'n/a'}</td>"
+            f"<td>{_escape(dataset['name'])}</td>"
+            f"<td>{_escape(format(dataset['rows'], ','))}</td>"
+            f"<td>{_escape(format(dataset['symbols'], ','))}</td>"
+            f"<td>{_escape(dataset['latest_date'] or 'n/a')}</td>"
             f"<td>{'ready' if dataset['available'] else 'missing'}</td>"
             "</tr>"
             for dataset in payload["datasets"]
         )
         alerts = payload.get("health", {}).get("alerts", []) if payload.get("health") else []
-        alerts_html = "".join(f"<li>{alert}</li>" for alert in alerts) or "<li>No health alerts were exported.</li>"
+        alerts_html = "".join(f"<li>{_escape(alert)}</li>" for alert in alerts) or "<li>No health alerts were exported.</li>"
         body = f"""
       <section class="grid">{cards_html}</section>
       <section class="card">
@@ -270,7 +287,7 @@ class DashboardExporter:
         <article class="card">
           <div class="eyebrow">Automation</div>
           <p class="muted">
-            GitHub Actions cron (UTC): {payload["schedule"]["cron"]}
+            GitHub Actions cron (UTC): {_escape(payload["schedule"]["cron"])}
           </p>
         </article>
         <article class="card">
@@ -289,11 +306,11 @@ class DashboardExporter:
     def _render_datasets(self, payload: dict[str, Any]) -> str:
         rows_html = "".join(
             "<tr>"
-            f"<td>{dataset['name']}</td>"
-            f"<td>{dataset['rows']:,}</td>"
-            f"<td>{dataset['symbols']:,}</td>"
-            f"<td>{dataset['latest_date'] or 'n/a'}</td>"
-            f"<td>{dataset['path']}</td>"
+            f"<td>{_escape(dataset['name'])}</td>"
+            f"<td>{_escape(format(dataset['rows'], ','))}</td>"
+            f"<td>{_escape(format(dataset['symbols'], ','))}</td>"
+            f"<td>{_escape(dataset['latest_date'] or 'n/a')}</td>"
+            f"<td>{_escape(dataset['path'])}</td>"
             "</tr>"
             for dataset in payload["datasets"]
         )
@@ -323,8 +340,8 @@ class DashboardExporter:
 
     def _render_health(self, payload: dict[str, Any]) -> str:
         health = payload.get("health") or {"alerts": [], "metrics": {}}
-        alerts_html = "".join(f"<li>{alert}</li>" for alert in health.get("alerts", [])) or "<li>No health alerts were exported.</li>"
-        metrics_html = json.dumps(health.get("metrics", {}), indent=2, default=str)
+        alerts_html = "".join(f"<li>{_escape(alert)}</li>" for alert in health.get("alerts", [])) or "<li>No health alerts were exported.</li>"
+        metrics_html = _escape(json.dumps(health.get("metrics", {}), indent=2, default=str))
         body = f"""
       <section class="grid">
         <article class="card">
@@ -349,10 +366,10 @@ class DashboardExporter:
         history_html = (
             "".join(
                 "<tr>"
-                f"<td>{row.get('source', '')}</td>"
-                f"<td>{row.get('symbol', '')}</td>"
-                f"<td>{row.get('updated_at', '')}</td>"
-                f"<td>{row.get('records', 0)}</td>"
+                f"<td>{_escape(row.get('source', ''))}</td>"
+                f"<td>{_escape(row.get('symbol', ''))}</td>"
+                f"<td>{_escape(row.get('updated_at', ''))}</td>"
+                f"<td>{_escape(row.get('records', 0))}</td>"
                 "</tr>"
                 for row in history_rows
             )
@@ -361,8 +378,8 @@ class DashboardExporter:
         pipeline_html = "".join(
             (
                 "<article class='card'>"
-                f"<div class='eyebrow'>{item['name']}</div>"
-                f"<pre>{json.dumps(item['content'], indent=2, default=str)}</pre>"
+                f"<div class='eyebrow'>{_escape(item['name'])}</div>"
+                f"<pre>{_escape(json.dumps(item['content'], indent=2, default=str))}</pre>"
                 "</article>"
             )
             for item in payload["updates"]["pipeline_results"]
@@ -392,7 +409,7 @@ class DashboardExporter:
         )
 
     def _render_config(self, payload: dict[str, Any]) -> str:
-        config_json = json.dumps(payload["config"], indent=2)
+        config_json = _escape(json.dumps(payload["config"], indent=2))
         body = f"""
       <section class="card">
         <div class="eyebrow">Settings</div>
