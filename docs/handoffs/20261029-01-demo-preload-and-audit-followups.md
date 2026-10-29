@@ -75,6 +75,8 @@ Read-API surfaces after `make showcase` (verified live): `/findings` → 3 cards
 
 ### 2.5 Local lake state
 
+State *before* the 2026-10-30 pickup; see §8.4 for the current state.
+
 | Path | Contents | Notes |
 |---|---|---|
 | `data/sample/` | 5y synthetic US prices (identity-stamped) + coverage proofs | The showcase lake; gitignored |
@@ -369,9 +371,14 @@ curl -s localhost:8000/findings | head -c 200
 uv run equity query -q latest_summary
 uv run equity dashboard build --output-dir /tmp/dash && python -c "import json;print(json.load(open('/tmp/dash/dashboard-data.json'))['summary'])"
 
-# The still-broken surface (T1/T2)
+# T1 fix: a non-adjacent date is now a pending no-op, not an error event
 uv run equity pipeline --skip-ingestion --skip-ml --date 2026-10-23 --markets us --tickers AAPL,MSFT
-grep -o 'label_finalization_failed' logs/*.log 2>/dev/null || echo "check the run output for the error event"
+# no 'label_finalization_failed' event; adjacent dates still finalize the prior label
+
+# T2 preload + real ML path
+make preload DAYS=60
+uv run equity ml train --ticker AAPL --start 2026-08-06 --end 2026-10-27
+uv run equity pipeline --skip-ingestion --date 2026-10-28 --markets us --tickers AAPL,AMZN,GOOGL,MSFT,NVDA
 ```
 
 ## 7. Definition of done for this handoff series
