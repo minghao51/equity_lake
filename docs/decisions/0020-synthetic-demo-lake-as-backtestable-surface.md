@@ -68,10 +68,19 @@ run, and a demo→arena seam with no end-to-end test (unit tests all injected
   source, it does not weaken the requirement that coverage be source-scoped and
   fresh. Real-vendor coverage continues to be established only by real ingests.
 - Feature/prediction preloading is *not* covered here. Labels require the
-  immediately preceding session to already exist in Gold (ADR-0014); seeding
-  sparse dates therefore surfaces a finalization error rather than "pending".
-  A dense backfill is required before the ML/prediction surfaces can be
-  preloaded, and that remains a separate decision.
+  immediately preceding session to already exist in Gold (ADR-0014). Finalizing
+  on dates whose preceding session is absent is now a pending no-op rather than
+  a `label_finalization_failed` error: an empty stored read is reported as
+  unmatched keys and writes nothing, while a non-empty frame with an unknown
+  `identity_schema_version` still fails closed. A dense backfill is still
+  required before the ML/prediction surfaces can be preloaded, and that remains
+  a separate decision.
+- `equity bootstrap sample` intentionally keeps its loose sandbox layout
+  (`<output-dir>/<market>`, no identity columns, no coverage proofs). It is a
+  mock-data generator, not a read surface, and strict readers reject its output
+  by design. The documented equivalent for a strict-consumable lake is
+  `equity demo seed`; aligning the layout would be a storage change that needs
+  its own ADR, so the divergence is recorded in the CLI reference instead.
 - `equity validate check` reads partitioned directories as one dataset. The
   earlier per-file concatenation silently dropped `date=` Hive partition
   columns, which made valid lake tables fail schema validation.

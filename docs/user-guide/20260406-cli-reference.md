@@ -651,13 +651,20 @@ uv run equity validate drift current.parquet baseline.parquet --threshold 0.1
 
 ### `equity bootstrap sample`
 
-Generate mock Parquet data for testing.
+Generate mock Parquet data for quick testing. **This is a loose sandbox layout,
+not a medallion lake:** each market's table is written to
+`<output-dir>/<market>` (no `01_bronze/market_data/<market>` prefix), rows carry
+no canonical identity columns (ADR-0016) and no corporate-action coverage proofs
+(ADR-0015). Strict consumers — `03_gold/features`, the arena loader, the ML
+feature loader, and `equity validate check` — reject that output by design, so
+do not point them at it. Use `equity demo seed` when you need a sample lake that
+strict readers accept (ADR-0020).
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
 | `--days`, `-d` | int | `30` | Number of trading days |
 | `--tickers`, `-t` | str | default set | Comma-separated tickers |
-| `--output-dir`, `-o` | str | default location | Output directory |
+| `--output-dir`, `-o` | str | `data/sample` | Output directory |
 | `--seed`, `-s` | int | `42` | Random seed |
 
 ```bash

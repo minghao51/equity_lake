@@ -125,6 +125,9 @@ class TestBootstrapSubcommands:
     def test_bootstrap_sample_help(self) -> None:
         result = runner.invoke(app, ["bootstrap", "sample", "--help"])
         assert result.exit_code == 0
+        # F9/T7: the help states the sandbox layout and points at the strict option.
+        assert "sandbox" in result.stdout
+        assert "demo seed" in result.stdout
 
 
 class TestArenaReportSubcommands:

@@ -245,7 +245,13 @@ def bootstrap_sample(
     seed: Annotated[int, typer.Option("--seed", "-s", help="Random seed")] = 42,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Verbose logging")] = False,
 ) -> None:
-    """Generate mock Parquet data for testing."""
+    """Generate mock Parquet data in a loose, non-medallion sandbox layout.
+
+    Tables are written to ``<output-dir>/<market>`` with no canonical identity
+    columns and no corporate-action coverage proofs, so strict readers reject
+    them by design. Use ``equity demo seed`` for a sample lake that strict
+    readers accept (ADR-0020).
+    """
     from equity_lake.cli.bootstrap import cmd_sample
 
     cmd_sample(
