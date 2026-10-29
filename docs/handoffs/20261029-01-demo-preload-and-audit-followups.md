@@ -1,9 +1,9 @@
 # 20261029-01 — Demo Preload, Showcase Fixes, and Audit Follow-Ups
 
 **Title:** Finish the offline showcase: label finalization, dataset preload, and remaining audit findings
-**Status:** Landed work documented; **T1–T2 are open and block the ML/prediction preload**. T3–T7 are open, independent, and small.
-**Recorded:** 2026-10-29
-**Baseline commit:** `f441d57` (branch `main`) + the uncommitted change set described in §2
+**Status:** **T1–T7 landed 2026-10-30** — see [§8](#8-pickup-outcome-2026-10-30) for the outcome, evidence, decisions taken, and one new finding (F10) found while running the ML path.
+**Recorded:** 2026-10-29 (updated 2026-10-30)
+**Baseline commit:** `f441d57` (branch `main`) + the uncommitted change set described in §2 (committed as `5fe97a3`)
 **Related:** [ADR-0020](../decisions/0020-synthetic-demo-lake-as-backtestable-surface.md), ADR-0014 (label lifecycle), ADR-0015 (point-in-time adjustment), ADR-0016 (canonical identity)
 
 ---
@@ -19,10 +19,10 @@ The medium findings were all the same class of defect: the documented demo/showc
 | F1 | `equity validate check` failed on the canonical date-partitioned lake — `_load_parquet` concatenated per-file reads, dropping Hive `date=` columns, so pointblank reported `rows_distinct` failures on valid rows | **Fixed** |
 | F2 | README "showcase path" ran `make demo` (writes `data/sample`) then `arena run` (reads `data/lake`) → `empty load`, exit 1 | **Fixed** |
 | F3 | `demo seed` wrote `ticker/date/OHLCV` only — no `market/mic/symbol`, and no action coverage, so every consumer failed closed | **Fixed** |
-| F4 | Default `equity signal scan` dumps a raw traceback on an empty watchlist | Open → **T4** |
-| F5 | Static dashboard exporter interpolates alerts/paths/config into HTML unescaped (injection verified) | Open → **T3** |
-| F6 | `tests/unit/test_arena.py` hard-fails 3 tests without the `backtesting` group (others skip) | Open → **T5** |
-| F7 | AGENTS.md says `uv run mypy`; bare invocation errors (no `files` in `[tool.mypy]`) | Open → **T6** |
+| F4 | Default `equity signal scan` dumps a raw traceback on an empty watchlist | **Fixed (T4)** |
+| F5 | Static dashboard exporter interpolates alerts/paths/config into HTML unescaped (injection verified) | **Fixed (T3)** |
+| F6 | `tests/unit/test_arena.py` hard-fails 3 tests without the `backtesting` group (others skip) | **Fixed (T5)** |
+| F7 | AGENTS.md says `uv run mypy`; bare invocation errors (no `files` in `[tool.mypy]`) | **Fixed (T6)** |
 
 Two more findings were discovered *while implementing* the fixes and are specified as T1/T2/T7.
 
@@ -381,3 +381,89 @@ grep -o 'label_finalization_failed' logs/*.log 2>/dev/null || echo "check the ru
   (or decision 2 is recorded as "leave empty, documented").
 - `uv run pytest -n auto` green **from a bare `uv sync`** (no optional groups installed) — this is the T5 gate.
 - README, CLI reference, arena guide, and the notebook describe behavior that is actually true when run.
+
+## 8. Pickup outcome (2026-10-30)
+
+All seven tasks landed. Phase 1 (T6 → T5 → T4 → T3 → T1) was committed per task
+on top of `5fe97a3`; T7 and T2 follow.
+
+### 8.1 Decisions taken (owner-approved, §4)
+
+1. **Canonical-lake synthetic data: keep, and preload deliberately** through the
+   sanctioned paths (`demo seed … --overwrite-production-lake`, the pipeline,
+   `make preload`). `/predictions` and the dashboard `features` row count read the
+   canonical lake, so the T2 acceptance criteria require it there.
+2. **Predictions preload: real path only.** `ml train` for the five tickers, then
+   the pipeline ML stage (`run_prediction_job`) persists 5 rows for `2026-10-28`.
+   Nothing was hand-written.
+3. **T7 = option (b), document the divergence.** `bootstrap sample` keeps its
+   sandbox layout (now stated in the command help, the CLI reference, and
+   ADR-0020). Aligning it stays a separate storage change needing its own ADR.
+4. **T2 entry point = option (b).** `devtools/preload.py` validates the bound and
+   drives the real feature stage; `make preload DAYS=…` is the thin wrapper.
+
+### 8.2 What changed per task
+
+| Task | Change | Evidence |
+|---|---|---|
+| T1 | `labels.py::_stored_keys` returns `None` on an empty date-filtered read (matching the three sibling guards) instead of raising `LegacyIdentityUnavailableError` | `test_finalize_with_missing_preceding_session_is_pending_not_error`, `test_finalize_still_rejects_unknown_identity_schema`; live run on `2026-10-23` logs no failure event, adjacent `2026-10-28` finalizes `2026-10-27` |
+| T2 | `devtools/preload.py` (`observed_sessions`, `preload_features`, `main`), `make preload` (DAYS ?= 60, refuses > 500), pipeline user-guide section | `tests/unit/test_preload.py` (13), `test_make_targets.py::test_preload_target_is_bounded_and_offline` |
+| T3 | `dashboard/exporter.py` escapes every interpolated value (incl. the four JSON `<pre>` blocks) via a module-local `_escape` | two new cases in `tests/integration/test_dashboard_exporter.py` (alerts + dataset path) |
+| T4 | empty resolved instrument list raises inside the existing `Invalid scan configuration: …` guard | `test_empty_watchlist_live_scan_exits_cleanly_without_traceback`; live `equity signal scan` exits 1 with no traceback |
+| T5 | `requires_engine` skipif on exactly the three engine-backed arena tests | `uv run --isolated --no-group backtesting pytest …` → 42 passed, 10 skipped, 0 failed |
+| T6 | `files = ["src"]` in `[tool.mypy]` | bare `uv run mypy` → 171 files, no issues |
+| T7 | help text + CLI reference + ADR-0020 note; help-scan test asserts the wording | `test_bootstrap_sample_help` |
+
+### 8.3 New finding (F10): string_view Gold files break Arrow filter pushdown
+
+**Symptom.** `FeatureLoader.load_features` raised
+`ArrowNotImplementedError: Function 'equal' has no kernel matching input types
+(string_view, string_view)` on the canonical Gold table, so `equity ml train`
+could not read its own data.
+
+**Root cause.** The label-only update merges matched files through delta-rs,
+which writes string columns as Arrow `string_view` even when the source arrow
+table is `large_string` (reproduced: one `merge_delta` → `large_string`, then one
+`update_delta_columns` → `string_view`). PyArrow 21 and 22 have no comparison
+kernels for `string_view`, so any pushed-down filter on those columns raises —
+`ticker = …`, `isin`, and even a cast-then-compare were all verified to fail.
+
+**Fix (reader-side, minimal).** `ml/feature_loader.py` pushes down only the date
+range and applies the symbol scope in Polars, so the date pruning and the exact
+identity scope are unchanged. Regression test:
+`tests/unit/test_feature_loader_string_view.py` builds the drift deliberately
+(merge → label update → assert `string_view` files exist) and asserts the loader
+still returns the requested instrument only.
+
+**Open, not fixed:** the storage-level drift itself (delta-rs merge upgrading the
+table's string columns to `string_view`) is untouched. Any future reader that
+pushes down a string filter on Gold will hit the same pyarrow gap; fixing it at
+the writer or via a deltalake upgrade needs its own decision.
+
+### 8.4 Local state after the pickup
+
+| Path | Contents |
+|---|---|
+| `data/lake/03_gold/features` | 305 rows, 61 sessions (2026-08-05 … 2026-10-28), 5 instruments; every label non-null except the final session per instrument (pending by design) |
+| `data/lake/04_platinum/predictions` | 5 rows for 2026-10-28, written by the pipeline ML stage; `/predictions` reports `api_identity_status: valid`, `api_schema_status: current`, `api_usability_status: not_current_usable` (row-bound provenance is not persisted — honest) |
+| `data/models` | 5 `xgboost/v1_direction` models trained 2026-08-06 → 2026-10-27 (`folds=0`: too little history for validation folds) |
+| `data/lake/01_bronze`, `02_silver` | Unchanged 3y synthetic US prices + coverage proofs |
+| `/tmp` only | Dashboard export used for the `features` payload check |
+
+Reset the canonical synthetic preload (keeps models/predictions unless removed):
+
+```bash
+rm -rf data/lake/01_bronze data/lake/02_silver data/lake/03_gold
+rm -rf data/lake/04_platinum/predictions data/models
+```
+
+### 8.5 Verified state
+
+```text
+uv run pytest -n auto        → 1608 passed, 17 skipped, 0 failed
+uv run ruff check .          → All checks passed
+uv run ruff format --check . → 312 files already formatted
+uv run mypy                  → Success: no issues found in 172 source files
+make preload DAYS=60         → 300 rows, 290→300 labels finalized, 0 errors, ~9.5 min
+make preload (re-run, 2 d)   → Gold row count unchanged (idempotent)
+```
