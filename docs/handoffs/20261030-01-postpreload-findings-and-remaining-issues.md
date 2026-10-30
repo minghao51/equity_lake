@@ -43,7 +43,7 @@ make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
 | **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented at the read seam (D4 = A)**; writer drift still open | M |
 | **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | Open | S–M |
 | **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | Open | S |
-| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)**; standard drafted in [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md) (Proposed) | M–L |
+| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)**; standard **accepted** in [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md); execution in [20261030-02](../handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) | M–L |
 | **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | **Decided: bounded refit preload (D2)** | M |
 | **R6** | `devtools/preload.py` imports the private `seed_demo._configured_identities` | hygiene | P3 | Open | XS |
 | **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Decided: document + reset (D3)** | S |
@@ -347,10 +347,11 @@ symbol, ticker` — no provenance or semantics fields.
 part of the task, not an objection to it.
 
 **Precondition satisfied:** [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md)
-defines the supported row-bound forecast proof (E1 artifact identity, E2 temporal
-validity, E3 contract compatibility, E4 decision semantics), the explicit
-non-provenance list, the per-`model_mode` semantics, and the derivation rules.
-Implementation is gated on that ADR's acceptance. The original constraint, for
+(accepted 2026-10-30) defines the supported row-bound forecast proof (E1 artifact
+identity, E2 temporal validity, E3 contract compatibility, E4 decision semantics),
+the explicit non-provenance list, the per-`model_mode` semantics, and the derivation
+rules. Execution is tracked in the
+[implementation plan](20261030-02-row-bound-forecast-provenance-implementation.md). The original constraint, for
 context — the read-API guide (`docs/user-guide/20260811-read-api.md:70`) states the
 standard explicitly: *"A model-version string, current schema number, filename, or
 current configuration is not provenance."* So persisting only the payload fields

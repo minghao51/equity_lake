@@ -1,8 +1,10 @@
 # ADR-0021: Row-Bound Forecast Provenance and Prediction Usability
 
-**Status:** Proposed — owner direction is settled (“persist”, handoff
-[20261030-01](../handoffs/20261030-01-postpreload-findings-and-remaining-issues.md)
-decision D1); this record defines *what counts as a proof* and awaits acceptance.
+**Status:** Accepted (2026-10-30). Owner confirmed the E1–E4 evidence set as
+proposed and the Decision 7 binding (key + versioned contract, not copied input
+proofs). Implementation is tracked in the
+[implementation handoff](../handoffs/20261030-02-row-bound-forecast-provenance-implementation.md)
+and is not implied by acceptance.
 
 **Recorded:** 2026-10-30
 
@@ -49,6 +51,12 @@ Both answers are known at write time and lost immediately afterwards.
 
 ## Decision
 
+Owner acceptance (2026-10-30) confirmed two points raised in review: the E1–E4
+evidence set above is sufficient for `v1_direction` (no training window or
+hyperparameters are added to the row), and the Decision 7 binding stands (the row
+is bound to its input evidence by key and versioned contract, not by copying
+source-publication proofs per row).
+
 1. **Definition.** A *supported row-bound forecast proof* is the following tuple of
    evidence, captured at inference time, persisted with the row, and re-derivable
    from the row alone:
@@ -86,18 +94,27 @@ Both answers are known at write time and lost immediately afterwards.
      - `valid` — E1–E4 all present with valid types, `forecast_provenance_version == 1`,
        `model_trained_at <= date`, `0 <= model_age_days <= model_max_age_days`,
        `training_feature_schema_version == inference_feature_schema_version ==
-       feature_schema_version`, and the E3 versions equal the current constants.
+       feature_schema_version`, `threshold_used` in [0, 1], and the E3 contract
+       versions (`price_adjustment_version`, `availability_schema_version`,
+       `prediction_semantics_version`) equal the current constants.
+     - `historical` — complete and internally consistent, but bound to a superseded
+       contract version. Such a row is honest evidence of a forecast produced under
+       an older contract; it is not current, and it is not invalid.
      - `invalid` — present but contradictory (for example age beyond the applied
        bound, digest not 64 hex characters, `model_trained_at` after the prediction
-       date, mismatched feature-schema versions, `threshold_used` outside [0, 1]).
+       date, mismatched feature-schema versions, `threshold_used` outside [0, 1],
+       `prediction_target` inconsistent with `model_mode`).
      - `unknown` — the proof columns are absent or null (legacy/foreign rows).
    - `api_prediction_semantics_status` — `established` only for `v1_direction` with E4
-     present and consistent; `unknown` otherwise.
+     present, consistent, and on the current `prediction_semantics_version`;
+     `superseded` when E4 is complete but the semantics version is older; `unknown`
+     otherwise (including every `v2_meta_label` row).
    - `api_usability_status` — `current_usable` only when identity is `valid`, schema is
      `current`, stored values are `valid`, provenance is `valid`, and semantics is
      `established`; otherwise `not_current_usable`, with the reason vocabulary
-     extended by `forecast_provenance_unknown`, `forecast_provenance_invalid`, and
-     `prediction_semantics_unknown` alongside the existing reasons.
+     extended by `forecast_provenance_unknown`, `forecast_provenance_historical`,
+     `forecast_provenance_invalid`, `prediction_semantics_unknown`, and
+     `prediction_semantics_superseded` alongside the existing reasons.
 
    Rows are never filtered by status: unknown and invalid rows stay visible with
    their stored fields, exactly as today.
