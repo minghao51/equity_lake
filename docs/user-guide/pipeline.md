@@ -197,12 +197,17 @@ uv run equity pipeline --skip-ingestion --date 2026-10-28 \
 ```
 
 `forecast --mode predict` prints a prediction but does not persist one; the
-Platinum write happens in the pipeline's ML stage (`run_prediction_job`). With a
-short history the honest outcome is a trained model with no validation folds
-(`folds=0`), and the read API reports `api_usability_status:
-not_current_usable` because row-bound forecast provenance/semantics are not
-persisted — identity and schema status are `valid`/`current` all the same. Do not
-hand-write prediction rows to make those fields look better.
+Platinum write happens in the pipeline's ML stage (`run_prediction_job`), which
+persists the row-bound forecast proof defined by
+[ADR-0021](../decisions/0021-row-bound-forecast-provenance.md) (E1 artifact
+identity, E2 temporal validity, E3 contract compatibility, E4 decision
+semantics). Because that proof travels with the row, `/predictions` can report
+`api_usability_status: current_usable` for a fresh `v1_direction` row instead of
+hardcoding it unusable. `v2_meta_label` rows carry the same E1–E3 evidence but
+stay `api_prediction_semantics_status: unknown` by design until a separate record
+defines meta-label semantics, so they remain `not_current_usable`. With a short
+history the honest outcome is still a trained model with no validation folds
+(`folds=0`). Do not hand-write prediction rows to make those fields look better.
 
 ## Configuration
 

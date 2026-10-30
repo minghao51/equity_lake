@@ -43,7 +43,7 @@ make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
 | **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented at the read seam (D4 = A)**; writer drift still open | M |
 | **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | Open | S–M |
 | **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | Open | S |
-| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)**; standard **accepted** in [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md); execution in [20261030-02](../handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) | M–L |
+| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Implemented**; standard in [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md); execution in [20261030-02](../handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) | M–L |
 | **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | **Decided: bounded refit preload (D2)** | M |
 | **R6** | `devtools/preload.py` imports the private `seed_demo._configured_identities` | hygiene | P3 | Open | XS |
 | **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Decided: document + reset (D3)** | S |
@@ -331,8 +331,13 @@ non-test consumer reads `mean_accuracy` directly.
 
 ### R4 — `/predictions` is not usable by contract (decided: persist, D1; standard in ADR-0021)
 
-**Symptom.** Even with 5 real persisted predictions, `GET /predictions` reports
-`api_usability_status: "not_current_usable"` with
+**Status: Implemented.** The row-bound proof is persisted, validated at the write
+boundary, and derived by the API, with tests covering the usable, historical,
+invalid, unknown, and `v2_meta_label` paths (see the
+[implementation plan](20261030-02-row-bound-forecast-provenance-implementation.md)).
+
+**Symptom (before).** Even with 5 real persisted predictions, `GET /predictions`
+reports `api_usability_status: "not_current_usable"` with
 `row_bound_forecast_provenance_is_not_persisted` and
 `prediction_semantics_are_unverified`. Those strings are hardcoded, not derived
 from the row.

@@ -1,8 +1,9 @@
 # 20261030-02 — Row-Bound Forecast Provenance: Implementation Plan
 
-**Status:** [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md) is **accepted**;
-this plan is the execution contract. Work is delegated to worker subagents in the
-order P1 → P2 → P3 → P4 → P5, with an adversarial reviewer gate before handoff.
+**Status:** **Implemented (2026-10-30).** [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md)
+is accepted; this plan was the execution contract. P1–P5 landed via worker
+subagents, an adversarial reviewer audit found one vacuous contract test and
+several unpinned rules, and the follow-up pass pinned them (see §7).
 **Baseline commit:** `6adf24d` (branch `main`)
 **Recorded:** 2026-10-30
 **Related:** ADR-0021 (the decision), ADR-0017 (additive evolution), ADR-0015
@@ -113,6 +114,13 @@ Replace the three hardcoded constants in `_annotate_prediction`.
 
 Rows are never filtered by status.
 
+**ADR gap found in review.** ADR-0021 does not define a `forecast_provenance_version`
+*newer* than the reader knows. Calling it `historical` would misreport a newer
+contract as old, so the reader reports `unknown` with
+`forecast_provenance_version_is_unsupported_by_this_reader:<version>`. Codifying that
+state needs a new ADR (accepted ADRs are immutable); until then the behaviour is
+never-usable, which is the safe direction.
+
 ## 3. Tasks
 
 ### P1 — inference payload exposes the verified evidence
@@ -210,3 +218,25 @@ uv run equity pipeline --skip-ingestion --date 2026-10-28 --markets us \
 curl -s 'http://127.0.0.1:8000/predictions?ticker=AAPL&limit=1' | python -c \
   "import json,sys; r=json.load(sys.stdin)[0]; print(r['api_provenance_status'], r['api_prediction_semantics_status'], r['api_usability_status'])"
 ```
+
+## 7. Review follow-ups closed
+
+- **Vacuous contract test fixed.** The schema-split test violated two rules at once,
+  so removing either rule still passed. It is now two isolating tests
+  (`…_training_inference_version_split`, `…_inference_stored_version_split`), and
+  mutation drills fail them individually. The fail-closed pipeline path is pinned
+  separately with a threshold override.
+- **Rules pinned on both layers:** digest format (4 malformed values), `trained_at`
+  ordering, negative age, horizon `< 1`, target/model-mode contradiction,
+  fingerprint-on-v1 (write and read), inference-vs-stored schema split, and
+  `availability_schema_version` drift.
+- **Coercive casting removed from the proof path.** Proof inputs are type-checked
+  before the storage cast (`Integral` non-bool, finite `Real`, `date`, `str`); a
+  mistyped field now yields the documented no-proof row plus a
+  `forecast_provenance_not_typed` warning instead of `True` becoming `1.0`.
+- **Reason strings no longer misattribute type errors** as value contradictions
+  (`model_trained_at_is_not_a_date` vs `…_is_after_the_prediction_date`; contract
+  types are checked before version drift).
+- **Future envelope version** reported as `unknown` (see the ADR gap above).
+- **Docs:** the stale `not_current_usable` claim in 20261029-01 §8.4 is corrected,
+  and the read-API guide documents the unsupported-future-version behaviour.

@@ -454,7 +454,7 @@ Eliminating the drift at the writer or via a deltalake upgrade needs its own dec
 | Path | Contents |
 |---|---|
 | `data/lake/03_gold/features` | 305 rows, 61 sessions (2026-08-05 … 2026-10-28), 5 instruments; every label non-null except the final session per instrument (pending by design) |
-| `data/lake/04_platinum/predictions` | 5 rows for 2026-10-28, written by the pipeline ML stage; `/predictions` reports `api_identity_status: valid`, `api_schema_status: current`, `api_usability_status: not_current_usable` (row-bound provenance is not persisted — honest) |
+| `data/lake/04_platinum/predictions` | 5 rows for 2026-10-28, written by the pipeline ML stage; at that time `/predictions` reported `api_identity_status: valid`, `api_schema_status: current`, `api_usability_status: not_current_usable` (row-bound provenance was not persisted). Superseded by [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md): the proof is now persisted and a re-run reports `current_usable` |
 | `data/models` | 5 `xgboost/v1_direction` models trained 2026-08-06 → 2026-10-27 (`folds=0`: too little history for validation folds) |
 | `data/lake/01_bronze`, `02_silver` | Unchanged 3y synthetic US prices + coverage proofs |
 | `/tmp` only | Dashboard export used for the `features` payload check |
