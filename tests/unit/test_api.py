@@ -14,7 +14,12 @@ from equity_lake.api import deps  # type: ignore[import-untyped]
 from equity_lake.api.main import create_app  # type: ignore[import-untyped]
 from equity_lake.core.dates import resolve_trading_date  # type: ignore[import-untyped]
 from equity_lake.findings.models import FindingCard  # type: ignore[import-untyped]
-from equity_lake.storage.delta import DeltaReadError, write_delta  # type: ignore[import-untyped]
+from equity_lake.storage.delta import (  # type: ignore[import-untyped]
+    DeltaReadError,
+    string_view_columns,
+    update_delta_columns,
+    write_delta,
+)
 
 
 def _fake_card() -> FindingCard:
@@ -452,7 +457,7 @@ def test_predictions_reject_inconsistent_identity_filters_before_read(query: str
     assert response.status_code == 422
 
 
-def test_arrow_reader_applies_partition_and_row_filters_before_python_conversion(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_arrow_reader_pushes_date_partition_and_filters_identity_after_decode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _write_predictions_table(
         tmp_path,
         monkeypatch,
@@ -471,7 +476,10 @@ def test_arrow_reader_applies_partition_and_row_filters_before_python_conversion
             self.schema = dataset.schema
 
         def scanner(self, **kwargs: Any) -> Any:
-            observed["arrow_filter"] = str(kwargs["filter"])
+            # Identity predicates are NOT pushed into Arrow: PyArrow has no
+            # comparison kernels for Arrow string_view columns, which merge
+            # rewrites introduce (see deps.list_predictions).
+            observed["arrow_filter"] = kwargs.get("filter")
             return self.dataset.scanner(**kwargs)
 
     class SnapshotProbe:
@@ -492,9 +500,35 @@ def test_arrow_reader_applies_partition_and_row_filters_before_python_conversion
 
     assert len(observed["partition_filter"][0][2]) == 1
     assert "date=2024-01-02" in observed["selected_fragments"][0]
-    assert "market" in observed["arrow_filter"]
-    assert "mic" in observed["arrow_filter"]
-    assert "ticker" in observed["arrow_filter"]
+    assert observed["arrow_filter"] is None
+    # Identity/date scoping still holds after the decode-time filter.
+    assert [(row["ticker"], row["date"]) for row in result.rows] == [("AAPL", date(2024, 1, 2))]
+
+
+def test_filtered_predictions_read_survives_a_merge_rewrite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """F10: identity filters must work on a table whose strings became string_view."""
+    _write_predictions_table(
+        tmp_path,
+        monkeypatch,
+        [
+            _prediction_row("AAPL", target_date=date(2024, 1, 2)),
+            _prediction_row("MSFT", target_date=date(2024, 1, 2)),
+        ],
+    )
+    update_delta_columns(
+        pl.DataFrame(
+            [{"market": "us_equity", "mic": "XNAS", "symbol": "AAPL", "date": date(2024, 1, 2), "probability": 0.61}],
+            schema_overrides={"probability": pl.Float64},
+        ),
+        "04_platinum/predictions",
+        update_columns=["probability"],
+        key_columns=["market", "mic", "symbol", "date"],
+        lake_dir=tmp_path,
+    )
+    assert string_view_columns("04_platinum/predictions", lake_dir=tmp_path).drifted
+
+    result = deps.list_predictions(target_date=date(2024, 1, 2), ticker="AAPL")
+
     assert [row["ticker"] for row in result.rows] == ["AAPL"]
 
 

@@ -358,9 +358,11 @@ def list_predictions(
     """Read bounded historical predictions from one pinned Delta snapshot.
 
     The default range is 31 inclusive UTC calendar dates. An explicit
-    ``target_date`` selects exactly that date, including older history. Delta
-    partition selection and Arrow row filters run before Python row conversion;
-    selected file bytes and decoded batches have explicit fail-closed budgets.
+    ``target_date`` selects exactly that date, including older history. Delta date
+    partition selection runs before Python row conversion; identity/ticker equality
+    filters are applied to the decoded rows because PyArrow has no comparison
+    kernels for Arrow ``string_view`` columns (which merge rewrites introduce), and
+    the selected-file/row/byte budgets bound what is decoded.
     """
     normalized_market, normalized_mic, normalized_symbol, normalized_ticker = _validate_prediction_filters(
         market=market, mic=mic, symbol=symbol, ticker=ticker
@@ -407,39 +409,34 @@ def list_predictions(
 
         dataset = snapshot.to_pyarrow_dataset(partitions=partition_filters)
         available_columns = set(dataset.schema.names)
-        predicates: list[Any] = []
-        for column, value in (("market", normalized_market), ("mic", normalized_mic), ("symbol", normalized_symbol)):
-            if value is not None:
-                if column not in available_columns:
-                    return _empty_prediction_result(
-                        window_start=window_start,
-                        window_end=window_end,
-                        snapshot_version=snapshot_version,
-                        selected_files=selected_files,
-                        selected_file_bytes=selected_file_bytes,
-                    )
-                predicates.append(arrow_dataset.field(column) == value)
-        if normalized_ticker is not None:
-            ticker_predicates = [arrow_dataset.field(column) == normalized_ticker for column in ("ticker", "symbol") if column in available_columns]
-            if not ticker_predicates:
-                return _empty_prediction_result(
-                    window_start=window_start,
-                    window_end=window_end,
-                    snapshot_version=snapshot_version,
-                    selected_files=selected_files,
-                    selected_file_bytes=selected_file_bytes,
-                )
-            alias_predicate = ticker_predicates[0]
-            for predicate in ticker_predicates[1:]:
-                alias_predicate = alias_predicate | predicate
-            predicates.append(alias_predicate)
 
-        filter_expression = None
-        for predicate in predicates:
-            filter_expression = predicate if filter_expression is None else filter_expression & predicate
+        def empty_result() -> PredictionReadResult:
+            return _empty_prediction_result(
+                window_start=window_start,
+                window_end=window_end,
+                snapshot_version=snapshot_version,
+                selected_files=selected_files,
+                selected_file_bytes=selected_file_bytes,
+            )
+
+        identity_filters = {"market": normalized_market, "mic": normalized_mic, "symbol": normalized_symbol}
+        for column, value in identity_filters.items():
+            if value is not None and column not in available_columns:
+                return empty_result()
+        if normalized_ticker is not None and not ({"ticker", "symbol"} & available_columns):
+            return empty_result()
+
+        def row_matches(row: dict[str, Any]) -> bool:
+            """Identity/ticker equality after decoding (Arrow cannot compare string_view)."""
+            for column, value in identity_filters.items():
+                if value is not None and row.get(column) != value:
+                    return False
+            if normalized_ticker is not None:
+                return row.get("ticker") == normalized_ticker or row.get("symbol") == normalized_ticker
+            return True
+
         scanner = dataset.scanner(
             columns=dataset.schema.names,
-            filter=filter_expression,
             batch_size=PREDICTIONS_SCAN_BATCH_ROWS,
             batch_readahead=0,
             fragment_readahead=1,
@@ -477,6 +474,8 @@ def list_predictions(
                 )
             rows.extend(batch.to_pylist())
 
+        if normalized_market is not None or normalized_mic is not None or normalized_symbol is not None or normalized_ticker is not None:
+            rows = [row for row in rows if row_matches(row)]
         rows.sort(key=_stable_row_key)
         selected_rows = [_annotate_prediction(row) for row in rows[:limit]]
         return PredictionReadResult(
