@@ -21,7 +21,7 @@ import pytest
 from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
 from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta, update_delta_columns  # type: ignore[import-untyped]
+from equity_lake.storage.delta import merge_delta, read_delta, update_delta_columns  # type: ignore[import-untyped]
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]
@@ -93,6 +93,16 @@ def test_loader_reads_gold_string_view_files(tmp_path: Path, monkeypatch: pytest
     assert set(loaded["symbol"].to_list()) == {"AAPL"}
     finalized = loaded.filter(pl.col("date") == _DATES[0]).row(0, named=True)
     assert finalized["next_day_return"] == pytest.approx(0.0123)
+
+
+def test_read_delta_filters_the_same_drifted_gold_table(tmp_path: Path) -> None:
+    """The shared read seam applies string filters in Polars, not in Arrow."""
+    _gold_lake(tmp_path)
+
+    frame = read_delta("03_gold/features", lake_dir=tmp_path, filters=[("ticker", "=", "AAPL")], columns=["ticker", "date"])
+
+    assert frame.height == 3
+    assert set(frame["ticker"].to_list()) == {"AAPL"}
 
 
 def test_loader_still_scopes_to_the_requested_instrument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

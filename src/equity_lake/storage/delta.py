@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import errno
 import stat
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import polars as pl
+import pyarrow as pa
+import pyarrow.parquet as pa_parquet
 import structlog
 from deltalake import DeltaTable, write_deltalake
 from deltalake.exceptions import CommitFailedError
@@ -344,23 +347,159 @@ def read_delta(
     """Read a Delta table as a Polars DataFrame.
 
     Args:
-        filters: Optional delta-rs predicate list (``[(col, op, value), ...]``
-            ANDed together) for bounded/partition-pruned reads.
+        filters: Optional predicate list (``[(col, op, value), ...]`` ANDed
+            together) for bounded reads. Date/numeric predicates are pushed down
+            to delta-rs; **string** predicates are applied in Polars after the
+            read (see :func:`_split_filters`).
         columns: Optional projection; only these columns are materialized.
 
     Raises:
-        DeltaReadError: If the table is missing or cannot be read.  Callers
-            that genuinely want an empty frame on failure must catch this.
+        DeltaReadError: If the table is missing or cannot be read, if a filter
+            names an absent column, or if a string filter uses an unsupported
+            operator. Callers that genuinely want an empty frame on failure must
+            catch this.
     """
     table_path = delta_table_path(table, lake_dir)
     try:
         dt = DeltaTable(str(table_path), version=version) if version is not None else DeltaTable(str(table_path))
-        projected = filters is not None or columns is not None
-        arrow = dt.to_pyarrow_table(columns=columns, filters=filters) if projected else dt.to_pyarrow_table()
-        return cast(pl.DataFrame, pl.from_arrow(arrow))
     except Exception as exc:
         logger.exception("delta_read_failed", table=table, path=str(table_path))
         raise DeltaReadError(table, exc) from exc
+
+    pushdown, residual = _split_filters(dt, table, filters)
+    read_columns, hidden_columns = _with_residual_columns(columns, residual)
+    projected = read_columns is not None or bool(pushdown)
+    try:
+        # pyarrow rejects an empty filter list ("Malformed filters"), so an
+        # all-residual predicate set reads with filters=None.
+        arrow_filters = pushdown or None
+        arrow = dt.to_pyarrow_table(columns=read_columns, filters=arrow_filters) if projected else dt.to_pyarrow_table()
+        frame = cast(pl.DataFrame, pl.from_arrow(arrow))
+    except Exception as exc:
+        logger.exception("delta_read_failed", table=table, path=str(table_path))
+        raise DeltaReadError(table, exc) from exc
+
+    if residual:
+        logger.debug("delta_read_residual_filter", table=table, columns=[column for column, _op, _value in residual])
+        frame = _apply_residual_filters(frame, residual)
+    if hidden_columns:
+        frame = frame.drop(hidden_columns)
+    return frame
+
+
+#: Operators accepted for a string filter that cannot be pushed down.
+RESIDUAL_STRING_OPERATORS: tuple[str, ...] = ("=", "==", "!=", "in", "not in", "<", "<=", ">", ">=")
+
+
+def _split_filters(
+    dt: DeltaTable,
+    table: str,
+    filters: list[tuple[str, str, Any]] | None,
+) -> tuple[list[tuple[str, str, Any]], list[tuple[str, str, Any]]]:
+    """Split predicates into arrow pushdown and Polars residual filters.
+
+    Merge rewrites (e.g. label-only updates) make delta-rs store string columns
+    as Arrow ``string_view``, and PyArrow has no comparison kernels for that type
+    (verified 21.x and 22.x): ``=``, ``in``, ``>=`` and even a cast-then-compare
+    raise ``ArrowNotImplementedError``. The Delta log still declares ``string``,
+    so the only safe policy is to keep string predicates out of the pushdown.
+    """
+    if not filters:
+        return [], []
+    schema = pa.schema(dt.schema().to_arrow())
+    string_columns = {field.name for field in schema if pa.types.is_string(field.type) or pa.types.is_large_string(field.type)}
+    pushdown: list[tuple[str, str, Any]] = []
+    residual: list[tuple[str, str, Any]] = []
+    for column, op, value in filters:
+        if column not in schema.names:
+            raise DeltaReadError(table, ValueError(f"filter column not in table schema: {column}"))
+        normalized = " ".join(op.lower().split())
+        if column in string_columns:
+            if normalized not in RESIDUAL_STRING_OPERATORS:
+                raise DeltaReadError(
+                    table,
+                    ValueError(f"unsupported string filter operator {op!r} on {column!r}; supported: {', '.join(RESIDUAL_STRING_OPERATORS)}"),
+                )
+            residual.append((column, normalized, value))
+        else:
+            pushdown.append((column, op, value))
+    return pushdown, residual
+
+
+def _with_residual_columns(
+    columns: list[str] | None,
+    residual: list[tuple[str, str, Any]],
+) -> tuple[list[str] | None, list[str]]:
+    """Keep residual filter columns readable without leaking them into a projection."""
+    if columns is None or not residual:
+        return columns, []
+    hidden = [column for column, _op, _value in residual if column not in columns]
+    return [*columns, *hidden], hidden
+
+
+def _residual_expression(column: str, op: str, value: Any) -> pl.Expr:
+    """Translate one residual predicate to Polars (nulls drop, matching Arrow)."""
+    target = pl.col(column)
+    expression: Any
+    if op in {"=", "=="}:
+        expression = target == value
+    elif op == "!=":
+        expression = target != value
+    elif op == "in":
+        expression = target.is_in(list(value))
+    elif op == "not in":
+        expression = ~target.is_in(list(value))
+    elif op == "<":
+        expression = target < value
+    elif op == "<=":
+        expression = target <= value
+    elif op == ">":
+        expression = target > value
+    else:
+        expression = target >= value
+    return cast(pl.Expr, expression)
+
+
+def _apply_residual_filters(frame: pl.DataFrame, residual: list[tuple[str, str, Any]]) -> pl.DataFrame:
+    for column, op, value in residual:
+        frame = frame.filter(_residual_expression(column, op, value))
+    return frame
+
+
+@dataclass(frozen=True)
+class StringViewDrift:
+    """Arrow ``string_view`` string columns found by reading Parquet footers."""
+
+    columns: list[str]
+    scanned_files: int
+
+    @property
+    def drifted(self) -> bool:
+        return bool(self.columns)
+
+
+def string_view_columns(
+    table: str,
+    *,
+    lake_dir: Path | None = None,
+    max_files: int = 50,
+) -> StringViewDrift:
+    """Report string columns stored as Arrow ``string_view`` in the newest files.
+
+    A merge rewrite (label finalization, upserts) makes delta-rs emit
+    ``string_view`` string columns while the Delta log keeps declaring ``string``,
+    so only the Parquet footers can answer this. Read-only: metadata only, no data
+    pages, capped at *max_files* newest files.
+    """
+    table_path = delta_table_path(table, lake_dir)
+    if not DeltaTable.is_deltatable(str(table_path)):
+        raise DeltaReadError(table, FileNotFoundError(f"Delta table '{table}' does not exist"))
+    files = sorted(table_path.rglob("*.parquet"), key=lambda path: path.stat().st_mtime, reverse=True)[:max_files]
+    drifted: set[str] = set()
+    for path in files:
+        schema = pa_parquet.read_schema(path)
+        drifted.update(field.name for field in schema if pa.types.is_string_view(field.type))
+    return StringViewDrift(columns=sorted(drifted), scanned_files=len(files))
 
 
 def compact_delta(table: str, lake_dir: Path | None = None) -> dict[str, Any]:
