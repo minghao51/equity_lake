@@ -27,7 +27,11 @@ logging, and mutating commands accept `--dry-run` to simulate without writes.
 
 `doctor --watchlist … --ticker-config … --as-of YYYY-MM-DD` reports read-only
 observations for canonical instruments across the configured markets; it does
-not write, infer, or backfill. Observed dates are not a configured freshness
+not write, infer, or backfill. The report also carries a `storage_schema`
+observation per watched price table plus `03_gold/features` and
+`04_platinum/predictions`: it reads Parquet footers only (no data pages) and
+reports string columns stored as Arrow `string_view` (`drifted`), which merge
+rewrites introduce and which readers filter in Polars instead of pushing down. Observed dates are not a configured freshness
 policy. `signal history --date YYYY-MM-DD --limit N` reads existing Delta or
 legacy Parquet history without migration. Both history options are required.
 See the [private tracking guide](20261016-private-tracking-preview.md) for the

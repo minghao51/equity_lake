@@ -443,9 +443,11 @@ identity scope are unchanged. Regression test:
 still returns the requested instrument only.
 
 **Open, not fixed:** the storage-level drift itself (delta-rs merge upgrading the
-table's string columns to `string_view`) is untouched. Any future reader that
-pushes down a string filter on Gold will hit the same pyarrow gap; fixing it at
-the writer or via a deltalake upgrade needs its own decision.
+table's string columns to `string_view`) is untouched. The read seam now handles it
+centrally — `read_delta` post-filters string predicates and `equity doctor` reports
+the drift — so the next reader cannot rediscover the failure; see
+[20261030-01 R1](20261030-01-postpreload-findings-and-remaining-issues.md).
+Eliminating the drift at the writer or via a deltalake upgrade needs its own decision.
 
 ### 8.4 Local state after the pickup
 

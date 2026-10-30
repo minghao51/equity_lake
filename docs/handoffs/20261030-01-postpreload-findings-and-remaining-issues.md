@@ -40,7 +40,7 @@ make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
 
 | ID | Finding | Class | Severity | Status | Effort |
 |---|---|---|---|---|---|
-| **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | Mitigated in one reader only | M |
+| **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented at the read seam (D4 = A)**; writer drift still open | M |
 | **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | Open | S–M |
 | **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | Open | S |
 | **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)** | M–L |
@@ -50,9 +50,9 @@ make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
 | **R8** | `make lint-md` exits 2 on three pre-existing findings | tooling | P4 | Open | XS |
 | **R9** | `make showcase` / README claims not re-verified after R2 changes the seeded data | verification | P4 | Blocked by R2 | XS |
 
-Recommended order: **R6 → R8 → R3 → R1 → R2 → R9**, then R4/R5/R7 once §4 is
-decided. R1 before R2 because R1 changes a shared read seam that R2's
-regeneration will exercise.
+Order taken: **R1 → R6 → R8 → R3 → R2 → R9**; R4/R5/R7 follow their §4 decisions.
+R1 landed first because it changes a shared read seam that R2's regeneration will
+exercise.
 
 ---
 
@@ -106,50 +106,67 @@ comparison kernels for `string_view` (`=`, `>=`, `isin`, and
 `cast(pa.string())`-then-compare all verified to fail). The Delta log still
 declares `string`, so a Delta-schema check cannot detect it.
 
-**Specification.**
+**Decision (owner, 2026-10-30): D4 = A — classify and post-filter, with ordering
+operators included.** Implemented as specified below.
 
-1. **Centralize the filter policy in `read_delta`.** Split the caller's predicate
-   list into *pushdown-safe* (date/timestamp/numeric columns) and *residual*
-   (`=`/`!=`/`in`/`not in` on string columns). Push down the safe part as today;
-   apply the residual part as a Polars filter immediately after the arrow read,
-   before returning. Emit one `delta_read_residual_filter` debug event naming the
-   columns. Unknown operator/column behaviour must stay loud: a missing column or
-   an unsupported operator still raises `DeltaReadError` exactly as today.
-2. **Keep `ml/feature_loader.py`'s post-filter** (it is explicit and cheap); do not
-   rewrite it to depend on the new seam in the same change. R1's job is to stop
-   the next reader from discovering this.
-3. **Make the drift visible.** Add a read-only check that opens the newest Parquet
-   footer per cataloged table and reports string columns whose Arrow type is
-   `string_view`. Surface it in `equity doctor` (one line per affected table) —
-   `doctor` already reports read-only observations and never writes.
-4. Do **not** attempt a writer-side fix or a deltalake/pyarrow version pin in this
-   task. Record the upstream limitation in the R1 code comment and, optionally,
-   file an upstream report; a writer fix is a storage change needing its own ADR.
+**As built.**
 
-**Acceptance criteria.**
+1. `read_delta` splits every predicate list with `_split_filters`: predicates on
+   columns the Delta log declares as `string`/`large_string` become *residual*,
+   everything else stays a delta-rs pushdown. Residual operations are `=`, `==`,
+   `!=`, `in`, `not in`, `<`, `<=`, `>`, `>=`, translated to Polars in
+   `_residual_expression` (nulls drop, matching Arrow). A missing filter column or
+   an unsupported string operator raises `DeltaReadError` with the reason as cause.
+2. Projections stay honest: residual columns are added to the read and dropped
+   again (`_with_residual_columns`), so `columns=["value"]` with a `ticker` filter
+   returns exactly `["value"]`. An all-residual predicate set passes
+   `filters=None` to delta-rs, because pyarrow rejects an empty filter list
+   ("Malformed filters") — found while implementing.
+3. Each read with residual predicates emits one `delta_read_residual_filter`
+   debug event naming the columns.
+4. **A second reader was broken live and is fixed too:**
+   `GET /predictions?ticker=AAPL` returned **HTTP 503** on the canonical table
+   because `api/deps.py` pushed identity/ticker equality into the Arrow scanner.
+   `deps.list_predictions` now applies those equalities to the decoded rows (the
+   date partition filter is still pushed down, and the file/row/byte budgets still
+   bound the scan). The contract test that pinned "Arrow row filters before Python
+   conversion" was updated to pin the new, documented behaviour.
+5. **Drift is visible.** `storage.delta.string_view_columns()` reads up to 50
+   newest Parquet footers per table (metadata only) and reports Arrow `string_view`
+   string columns; `equity doctor` now includes a `storage_schema` observation per
+   watched price table plus `03_gold/features` and `04_platinum/predictions`, with
+   states `missing` / `clean` / `drifted` / `unreadable`.
 
-- `read_delta("03_gold/features", filters=[("ticker", "=", "AAPL")])` returns only
-  AAPL rows on the current lake (no exception).
-- `read_delta(..., filters=[("symbol", "in", ["AAPL", "MSFT"])])` returns both.
-- A filter on a column that does not exist still raises `DeltaReadError`.
-- `read_delta(..., filters=[("date", ">=", d)])` still prunes (no full-table read);
-  assert the residual path is not taken for date-only filters.
-- `equity doctor` prints one observation line when a table has `string_view`
-  string columns, and stays clean otherwise.
+**Measured pruning trade (the question from §4).** Residual filtering costs no
+measurable pruning on the real Bronze table (783 day-partitioned files, 50 symbols):
+`symbol in […]` + a date range measured best-of-4 as `0.88×` of the pushdown time
+for a 60-session window (320.8 ms vs 364.5 ms, 63 rows) and `0.98×` for full history
+(613.6 ms vs 624.3 ms, 783 rows). Date pushdown still does the pruning here; the
+symbol predicate was only ever row-group pruning inside each day file.
 
-**Tests to add.**
+**Acceptance (verified).**
 
-- `tests/unit/test_delta_read_filters.py`: residual string equality/in on a
-  temporary table, date pushdown still pushdown, missing column still raises.
-- Extend `tests/unit/test_feature_loader_string_view.py` (already builds the drift
-  deliberately) with a `read_delta` assertion on the same fixture.
-- `tests/unit/test_cli_unified.py`: `doctor --help` still renders; the new
-  observation is covered by a doctor unit test with a patched table dir (do not
-  assert on the real lake).
+- `read_delta("03_gold/features", filters=[("ticker", "=", "AAPL")])` → 61 rows.
+- `read_delta(..., filters=[("symbol", "in", ["AAPL", "MSFT"])])` → 122 rows.
+- `read_delta("01_bronze/market_data/us_equity", filters=[("symbol","in",["AAPL"]),
+  ("date",">=",…)], …)` → works (previously only by luck of `large_string` files).
+- A filter on an absent column raises `DeltaReadError` ("filter column not in table
+  schema"); `("ticker", "like", …)` raises `DeltaReadError` with the supported list.
+- `GET /predictions?ticker=AAPL` → 200 with only AAPL rows (was 503).
+- `equity doctor` reports `03_gold/features` as `drifted` (10 columns) and
+  `04_platinum/predictions` as `drifted` (7 columns) on the current local lake.
 
-**Risk.** Medium-low. The residual path can silently reduce pruning on very large
-tables — keep date/numeric pushdown, log the fallback, and never apply a residual
-filter to a column that was projected away.
+**Tests added.** `tests/unit/test_delta_read_filters.py` (9 cases: drift
+precondition, pushdown/residual split, `=`, sets, ordering, nulls, projection
+hiding, absent column, unsupported operator, date-only pushdown);
+`test_feature_loader_string_view.py::test_read_delta_filters_the_same_drifted_gold_table`;
+`test_api.py::test_filtered_predictions_read_survives_a_merge_rewrite`;
+`test_tracking_readiness.py` drift and clean doctor cases.
+
+**Still open (unchanged by R1).** The storage-level drift: delta-rs merge rewrites
+keep writing `string_view` string columns. R1 makes every reader correct and the
+drift observable; eliminating it at the writer (or via a deltalake upgrade) remains
+its own decision.
 
 ---
 
