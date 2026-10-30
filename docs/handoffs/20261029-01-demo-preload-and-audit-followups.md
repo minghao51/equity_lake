@@ -1,7 +1,7 @@
 # 20261029-01 — Demo Preload, Showcase Fixes, and Audit Follow-Ups
 
 **Title:** Finish the offline showcase: label finalization, dataset preload, and remaining audit findings
-**Status:** **T1–T7 landed 2026-10-30** — see [§8](#8-pickup-outcome-2026-10-30) for the outcome, evidence, decisions taken, and one new finding (F10) found while running the ML path.
+**Status:** **T1–T7 landed 2026-10-30** — see [§8](#8-pickup-outcome-2026-10-30) for the outcome, evidence, decisions taken, and one new finding (F10) found while running the ML path. **Open follow-ups are specified in the [20261030-01 handoff](20261030-01-postpreload-findings-and-remaining-issues.md).**
 **Recorded:** 2026-10-29 (updated 2026-10-30)
 **Baseline commit:** `f441d57` (branch `main`) + the uncommitted change set described in §2 (committed as `5fe97a3`)
 **Related:** [ADR-0020](../decisions/0020-synthetic-demo-lake-as-backtestable-surface.md), ADR-0014 (label lifecycle), ADR-0015 (point-in-time adjustment), ADR-0016 (canonical identity)
