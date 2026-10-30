@@ -43,10 +43,10 @@ make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
 | **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | Mitigated in one reader only | M |
 | **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | Open | S–M |
 | **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | Open | S |
-| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | Decision | M |
-| **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | Decision | M |
+| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)** | M–L |
+| **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | **Decided: bounded refit preload (D2)** | M |
 | **R6** | `devtools/preload.py` imports the private `seed_demo._configured_identities` | hygiene | P3 | Open | XS |
-| **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | Decision | S / M |
+| **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Decided: document + reset (D3)** | S |
 | **R8** | `make lint-md` exits 2 on three pre-existing findings | tooling | P4 | Open | XS |
 | **R9** | `make showcase` / README claims not re-verified after R2 changes the seeded data | verification | P4 | Blocked by R2 | XS |
 
@@ -312,7 +312,7 @@ non-test consumer reads `mean_accuracy` directly.
 
 ---
 
-### R4 — `/predictions` is not usable by contract (decision §4 D1)
+### R4 — `/predictions` is not usable by contract (decided: persist, D1)
 
 **Symptom.** Even with 5 real persisted predictions, `GET /predictions` reports
 `api_usability_status: "not_current_usable"` with
@@ -326,19 +326,59 @@ from the row.
 identity_schema_version, market, mic, model_mode, model_version, probability,
 symbol, ticker` — no provenance or semantics fields.
 
-**Specification (choose one).**
+**Decision (owner, 2026-10-30): persist (option a).** The contract caveat below is
+part of the task, not an objection to it.
 
-- **(a) Persist the proof.** Extend the prediction row with row-bound forecast
-  provenance (source publication/availability, model refit boundary already implied
-  by `model_version`, action-coverage refs) and directional semantics, bump a
-  prediction schema version, map them in `_annotate_prediction`, and derive
-  `api_usability_status` instead of hardcoding it. This is a schema/contract change:
-  ADR first, writer + validator + API + user-guide updates, migration note for
-  existing rows.
-- **(b) Keep the limitation explicit.** No schema change; add the showcase caveat to
-  README/arena guide and the pipeline preload section ("`/predictions` serves
-  identity-valid, schema-current rows whose usability is `not_current_usable` until
-  provenance is persisted"), and link R4(a) as future work.
+**Precondition — the contract must be defined before the schema changes.** The
+read-API guide (`docs/user-guide/20260811-read-api.md:70`) states the current
+standard explicitly: *"A model-version string, current schema number, filename, or
+current configuration is not provenance."* So persisting only the payload fields
+the writer already has (`model_version`, `threshold_used`, `horizon_days`,
+`price_adjustment_version`, …) would be dropping useful metadata, **not** a
+supported row-bound forecast proof, and flipping `api_usability_status` on that
+basis would silently weaken a documented guarantee. R4 therefore starts with an
+ADR that defines what qualifies as a row-bound forecast proof (the analogue of the
+ADR-0015 action-coverage proof: source publication time, observable-at, validity
+window, and the instrument/date it is bound to) and what "established directional
+semantics" means per `model_mode` (note `v2_meta_label` deliberately does **not**
+establish direction today).
+
+**Specification.**
+
+1. **ADR first.** Define: the proof fields, their allowed sources, the freshness
+   rule, the semantics rule per `model_mode`, and the compatibility story for
+   existing rows (they stay `unknown` and visible, never backfilled by inference).
+2. **Persist what the ADR admits.** The inference payload already carries most
+   candidates (`model_trained_at`, `model_age_source`, `threshold_used`,
+   `threshold_source`, `horizon_days`, `price_adjustment_version`,
+   `availability_schema_version`, `feature_schema_compatibility`,
+   `adjustment_compatibility`, `candidate_strategy_fingerprint`) — the writer drops
+   them at `ml/__init__.py:124` (it persists 11 of the ~20 fields). Extend the row,
+   bump a prediction schema version constant, and add the ADR-defined proof fields.
+3. **Validate at the write boundary.** Extend `validate_predictions`
+   (`ml/__init__.py:29-47`) with the proof's presence/consistency rules so a row
+   cannot be written claiming a proof it does not carry.
+4. **Derive, do not hardcode.** In `api/deps.py:295-324`, compute
+   `api_provenance_status`, `api_prediction_semantics_status` and
+   `api_usability_status` from the stored fields; keep the existing reason codes for
+   the unknown/invalid cases.
+5. **Docs.** Update the read-API guide (the hardcoded sentence must change), the
+   pipeline preload section, and the predictions table description; regenerate the
+   catalog if the dataset schema is cataloged.
+
+**Acceptance.**
+
+- A freshly written prediction row reports `api_usability_status: current_usable`
+  with provenance/semantics reasons empty.
+- Removing the proof fields (or writing a row without them) yields `unknown` +
+  the existing reason codes — no silent upgrade.
+- `v2_meta_label` rows stay `api_prediction_semantics_status: unknown` until the ADR
+  defines its semantics.
+- Existing rows keep `unknown` and remain visible.
+
+**Tests.** Writer round-trip (payload → table → API annotation), a validator
+rejection case for a claimed-but-absent proof, and an API test that both the usable
+and the unknown paths are reachable.
 
 **Acceptance.** (a) `/predictions` rows report `api_usability_status` derived from
 the row; at least one row is `current_usable`; removing a provenance field flips it
@@ -351,26 +391,42 @@ known at write time, (a) is not available — do not invent it.
 
 ---
 
-### R5 — Historical predictions need per-date as-of refits (decision §4 D2)
+### R5 — Historical predictions need per-date as-of refits (decided: bounded refit preload, D2)
 
 **Symptom.** `04_platinum/predictions` covers exactly one date (2026-10-28) with
 models trained on 2026-10-27. Any backfilled prediction date would have to be
 produced by a model trained **before** that date; `PriceForecaster` already refuses
 future-trained models (`has_future_model` selection, `ml/forecasting.py:1385-1390`).
 
-**Specification (choose one).**
+**Decision (owner, 2026-10-30): bounded refit preload (option b), default ≤ 12
+refits.**
 
-- **(a) Single date, documented.** Keep today's surface; state in the preload
-  section that predictions are one forward date, and that backfilling requires refits.
-- **(b) Bounded refit preload.** Add a bounded loop (same bound/validation style as
-  `devtools/preload.py`) that walks refit boundaries (e.g. weekly) oldest → newest:
-  train as of the boundary, then run the pipeline ML stage for the following
-  sessions. Reuse the existing refit/availability machinery; do not write prediction
-  rows by hand. Document the runtime (one training per boundary, ~15 s each).
+**Specification.**
 
-**Acceptance.** (b) `/predictions` covers the requested window; every row satisfies
-`model_trained_at <= date`; the loop is idempotent; an insufficient-window case
-fails with the R3-style message rather than silently producing unvalidated models.
+1. New bounded entry point alongside `devtools/preload.py` (same validation style:
+   explicit bound, refuse above the maximum, report skipped sessions). It walks
+   refit boundaries oldest → newest: train as of the boundary, then run the pipeline
+   ML stage for the sessions after it.
+2. Reuse the existing refit/availability machinery — `PriceForecaster` already
+   selects models with `refit_boundary <= as_of_date` and refuses future-trained
+   ones (`ml/forecasting.py:1385-1390`); do not add a second selection rule.
+3. Write predictions only through `run_prediction_job` (the pipeline stage). No
+   hand-written rows.
+4. Report the runtime honestly: one training per boundary (~15 s measured) plus
+   inference per session; state the default bound and the cost in the help text and
+   the user guide.
+5. Order: this lands after R3 (so an unvalidated model says so) and after R4 if the
+   persistence schema changes (so backfilled rows are written with the new fields).
+
+**Acceptance.**
+
+- `/predictions` covers the requested window (one row per instrument per session).
+- Every row satisfies `model_trained_at <= date`; the API's provenance/usability
+  annotations match the model actually used.
+- The loop is idempotent (re-running overwrites, no duplicate keys).
+- An insufficient window fails with the R3 message (`validation: unavailable …`)
+  instead of silently producing unvalidated models, and the run reports which
+  boundaries were skipped and why.
 
 **Risk.** (b) multiplies training cost by the number of boundaries; keep the bound
 explicit and small (≤ 12 refits by default).
@@ -397,7 +453,7 @@ update both call sites and their tests. No behaviour change.
 
 ---
 
-### R7 — Synthetic rows in the canonical lake are (mostly) indistinguishable (decision §4 D3)
+### R7 — Synthetic rows in the canonical lake are (mostly) indistinguishable (decided: document + reset, D3)
 
 **Evidence.**
 
@@ -412,22 +468,42 @@ The pickup's decision was to keep the synthetic canonical lake (T2's acceptance
 reads it). Nothing today lets an operator answer "is this lake synthetic?" in one
 step, and `README`/dashboard present it as data.
 
-**Specification (choose one).**
+**Decision (owner, 2026-10-30): document + reset (option b). No schema change.**
 
-- **(a) Mark at write time.** Add a synthetic marker to the price and prediction
-  write paths (schema change → ADR, migration note, reader/validator updates).
-- **(b) Document + provide a reset.** No schema change: add a documented
-  `equity doctor` observation derived from the coverage source (Gold-level), a
-  `make reset-lake` target that removes the synthetic artifacts deterministically
-  (paths listed in the previous handoff §8.4), and a README note that the local lake
-  may hold synthetic rows and must be reset before real ingestion.
+**Specification.**
 
-**Acceptance.** One command tells you whether the canonical lake is synthetic; the
-reset path is tested (dry-run listing) and documented; no doc claims the synthetic
-lake is real data.
+1. `equity doctor` gains one read-only observation that answers "is the canonical
+   lake synthetic?" from the markers that already exist (`02_silver` coverage
+   `source = synthetic_demo_seed`, Gold `action_coverage_source`), reporting counts
+   per table and the earliest/latest affected date. It must say "unknown" rather
+   than "real" when no marker is present.
+2. A `make reset-lake` target (and a documented equivalent command) removes the
+   synthetic artifacts deterministically: `data/lake/01_bronze`,
+   `data/lake/02_silver`, `data/lake/03_gold`, `04_platinum/predictions`, and
+   `data/models`, with a `DRY=1` listing mode and a confirmation guard that refuses
+   when the lake looks real (i.e. the doctor observation reports real/unknown
+   provenance).
+3. README/demo docs state that the local lake may hold synthetic rows, that Bronze
+   rows are **not** distinguishable (only `current_ticker_config`, the same label a
+   real config-resolved ingestion writes), and that the reset target is the
+   supported way back to an empty lake before real ingestion.
+4. Do not invent a third provenance label; R7(b) is visibility, not provenance.
 
-**Risk.** (a) touches storage contracts; (b) is documentation plus a small target.
-(b) is the smaller honest step.
+**Acceptance.**
+
+- `equity doctor` reports the synthetic marker counts and refuses to call an
+  unmarked lake real.
+- `make reset-lake DRY=1` lists exactly the paths above and writes nothing;
+  `make reset-lake` removes them and the following `equity doctor` reports an empty
+  lake.
+- The reset target refuses (exit non-zero) when the lake reports real provenance.
+
+**Tests.** Doctor observation unit test on a temporary lake with and without the
+markers; a `test_make_targets.py` contract test that `DRY=1` is non-destructive and
+that the path list matches the documented set.
+
+**Risk.** S. The target is destructive, so the confirmation guard and the dry-run
+mode are part of the acceptance, not optional.
 
 ---
 
@@ -481,21 +557,27 @@ statement still true; recorded in the follow-up handoff.
 - Removing synthetic data from the canonical lake — decision 1 of the previous
   handoff keeps it; R7 covers visibility, not removal.
 
-## 4. Decisions needed from the owner
+## 4. Decisions
 
-1. **D1 (R4):** persist row-bound forecast provenance/semantics so `/predictions`
-   can become usable (ADR + schema change), or keep the documented
-   `not_current_usable` contract? *Recommendation:* (b) for now — (a) is honest only
-   if the provenance is genuinely known at inference time; the pipeline currently
-   has the model metadata but not a source-publication proof for the forecast row.
-2. **D2 (R5):** single forward prediction date, or a bounded per-date refit preload?
-   *Recommendation:* (a) unless the showcase needs a prediction history; if (b),
-   default to ≤ 12 refits.
-3. **D3 (R7):** mark synthetic rows at write time (schema change), or document the
-   limitation plus a deterministic reset path? *Recommendation:* (b).
-4. **D4 (R1):** confirm the centralized residual-filter policy in `read_delta` (with
-   a loud log line and an `equity doctor` observation) rather than patching readers
-   one by one. *Recommendation:* yes — one seam, one test, visible drift.
+**Taken 2026-10-30:**
+
+1. **D1 (R4) — persist.** Row-bound forecast provenance and semantics are persisted
+   and `api_usability_status` is derived from the row. Precondition: an ADR first,
+   because the read-API guide's current standard excludes model metadata alone from
+   counting as provenance (see R4).
+2. **D2 (R5) — bounded refit preload.** Per-date as-of refits, default ≤ 12
+   boundaries, oldest → newest, through the pipeline ML stage only.
+3. **D3 (R7) — document + reset.** No new provenance label; `equity doctor` reports
+   the synthetic markers and `make reset-lake` (with `DRY=1`) is the supported way
+   back to an empty lake.
+
+**Still open:**
+
+- **D4 (R1) — filter seam.** Confirm the mechanism for centralizing string-filter
+   handling in `read_delta` (see R1): classify-and-post-filter, retry-on-error, or
+   probe-the-files-once. *Recommendation:* classify-and-post-filter, because it is
+   the only option whose behaviour does not depend on parsing a pyarrow error string
+   or on a per-table probe cache.
 
 ## 5. Guardrails
 
