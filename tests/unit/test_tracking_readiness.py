@@ -17,6 +17,7 @@ import equity_lake.signals.readiness as readiness  # type: ignore[import-untyped
 from equity_lake.cli.commands import tracking  # type: ignore[import-untyped]
 from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
 from equity_lake.signals.models import Signal, SignalScanOutcome, SignalScanReport  # type: ignore[import-untyped]
+from equity_lake.storage.delta import update_delta_columns, write_delta  # type: ignore[import-untyped]
 
 
 def _write_configs(tmp_path: Path) -> tuple[Path, Path]:
@@ -123,6 +124,7 @@ def test_readiness_reports_observed_age_coverage_and_unknown_policy_without_writ
         ticker_config_path=ticker_config,
         as_of=date(2024, 12, 4),
         data_dir=data_dir,
+        lake_dir=tmp_path / "lake",
     )
 
     assert [row.ticker for row in report.tickers] == ["AAPL", "MSFT"]
@@ -162,6 +164,7 @@ def test_missing_and_corrupt_tables_are_not_reported_as_healthy(tmp_path: Path, 
         ticker_config_path=ticker_config,
         as_of=date(2024, 12, 4),
         data_dir=tmp_path / "empty-data",
+        lake_dir=tmp_path / "lake",
     )
 
     assert report.tickers[0].price_status == "missing"
@@ -480,6 +483,74 @@ def test_explicit_canonical_identity_remains_unambiguous_across_markets(tmp_path
         ticker_config_path=ticker_config,
         as_of=date(2024, 12, 4),
         data_dir=tmp_path / "data",
+        lake_dir=tmp_path / "lake",
     )
 
     assert [(row.market, row.mic, row.ticker) for row in report.tickers] == [("us_equity", "XNAS", "AAPL")]
+
+
+def _feature_rows() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "market": ["us_equity", "us_equity"],
+            "mic": ["XNAS", "XNAS"],
+            "symbol": ["AAPL", "MSFT"],
+            "ticker": ["AAPL", "MSFT"],
+            "date": [date(2024, 12, 2), date(2024, 12, 2)],
+            "rsi_14": [51.0, 52.0],
+        }
+    )
+
+
+def test_doctor_reports_arrow_string_view_drift_without_reading_data_pages(tmp_path: Path) -> None:
+    """F10/R1: the read-schema drift is visible instead of surfacing as an exception."""
+    watchlist, ticker_config = _write_configs(tmp_path)
+    lake = tmp_path / "lake"
+    assert write_delta(_feature_rows(), "03_gold/features", lake_dir=lake)
+    update_delta_columns(
+        pl.DataFrame(
+            [{"market": "us_equity", "mic": "XNAS", "symbol": "AAPL", "date": date(2024, 12, 2), "rsi_14": 55.0}],
+            schema_overrides={"rsi_14": pl.Float64},
+        ),
+        "03_gold/features",
+        update_columns=["rsi_14"],
+        key_columns=["market", "mic", "symbol", "date"],
+        lake_dir=lake,
+    )
+
+    report = readiness.build_tracking_readiness(
+        watchlist_path=watchlist,
+        ticker_config_path=ticker_config,
+        as_of=date(2024, 12, 4),
+        data_dir=tmp_path / "data",
+        lake_dir=lake,
+    )
+
+    by_table = {row.table: row for row in report.storage_schema}
+    features = by_table["03_gold/features"]
+    assert features.state == "drifted"
+    assert {"ticker", "symbol", "market", "mic"}.issubset(set(features.string_view_columns))
+    assert features.scanned_files >= 1
+    # Absent tables are reported as missing, never as clean.
+    assert by_table["01_bronze/market_data/us_equity"].state == "missing"
+    assert by_table["04_platinum/predictions"].state == "missing"
+    assert "storage_schema" in report.to_dict()
+
+
+def test_doctor_reports_a_clean_table_as_clean(tmp_path: Path) -> None:
+    """A table that has never been merge-rewritten keeps large_string columns."""
+    watchlist, ticker_config = _write_configs(tmp_path)
+    lake = tmp_path / "lake"
+    assert write_delta(_feature_rows(), "03_gold/features", lake_dir=lake)
+
+    report = readiness.build_tracking_readiness(
+        watchlist_path=watchlist,
+        ticker_config_path=ticker_config,
+        as_of=date(2024, 12, 4),
+        data_dir=tmp_path / "data",
+        lake_dir=lake,
+    )
+
+    by_table = {row.table: row for row in report.storage_schema}
+    assert by_table["03_gold/features"].state == "clean"
+    assert by_table["03_gold/features"].string_view_columns == []

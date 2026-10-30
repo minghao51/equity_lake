@@ -22,11 +22,12 @@ from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey,
 from equity_lake.core.paths import DATA_DIR, LAKE_DIR
 from equity_lake.signals.models import Signal, SignalRecord, SignalScanReport
 from equity_lake.signals.tracking import load_private_watchlist
-from equity_lake.storage.delta import read_delta
+from equity_lake.storage.delta import DeltaError, read_delta, string_view_columns
 
 TableState = Literal["available", "missing", "corrupt"]
 HistoryState = Literal["available", "missing", "corrupt", "unknown_identity"]
 StorageDirectoryState = Literal["missing", "empty", "present", "corrupt"]
+StorageSchemaState = Literal["missing", "clean", "drifted", "unreadable"]
 _HISTORY_VALIDATION_SCOPE = (
     "date/ticker/signal_type keys and identity availability are checked before identity filters; "
     "payload fields are validated only for displayed rows; unknown legacy identities remain visible as unavailable "
@@ -123,6 +124,22 @@ class TickerReadiness:
 
 
 @dataclass(frozen=True)
+class StorageSchemaObservation:
+    """Arrow ``string_view`` drift for one table (metadata only, read-only).
+
+    Merge rewrites (label finalization, upserts) store string columns as Arrow
+    ``string_view`` while the Delta log still declares ``string``; PyArrow has no
+    comparison kernels for that type, so readers post-filter those columns. This
+    observation makes the drift visible instead of leaving it to an exception.
+    """
+
+    table: str
+    state: StorageSchemaState
+    scanned_files: int
+    string_view_columns: list[str]
+
+
+@dataclass(frozen=True)
 class TrackingReadinessReport:
     """A policy-neutral snapshot; it is not a health or trading decision."""
 
@@ -143,6 +160,7 @@ class TrackingReadinessReport:
     freshness_limit: str
     inference_status: str
     delivery_status: str
+    storage_schema: list[StorageSchemaObservation]
     signal_history_validation_scope: str = _HISTORY_VALIDATION_SCOPE
 
     def to_dict(self) -> dict[str, Any]:
@@ -530,6 +548,23 @@ def _history_identity(row: dict[str, Any]) -> InstrumentKey | None:
         return None
 
 
+def _observe_storage_schema(table: str, path: Path, *, lake_dir: Path | None = None) -> StorageSchemaObservation:
+    """Report Arrow string_view drift for one table without reading data pages."""
+    directory_state, _entries = _inspect_storage_directory(path)
+    if directory_state == "missing":
+        return StorageSchemaObservation(table=table, state="missing", scanned_files=0, string_view_columns=[])
+    try:
+        drift = string_view_columns(table, lake_dir=lake_dir or LAKE_DIR)
+    except DeltaError:
+        return StorageSchemaObservation(table=table, state="unreadable", scanned_files=0, string_view_columns=[])
+    return StorageSchemaObservation(
+        table=table,
+        state="drifted" if drift.drifted else "clean",
+        scanned_files=drift.scanned_files,
+        string_view_columns=drift.columns,
+    )
+
+
 def build_tracking_readiness(
     *,
     watchlist_path: Path | None = None,
@@ -554,6 +589,16 @@ def build_tracking_readiness(
         for market in sorted({item.instrument.market for item in watchlist.instruments})
     }
     feature_table = _read_table_dates(selected_lake_dir / "03_gold/features", "03_gold/features", cutoff, lake_dir=selected_lake_dir)
+    storage_schema = [
+        _observe_storage_schema(f"01_bronze/market_data/{market}", selected_lake_dir / f"01_bronze/market_data/{market}", lake_dir=selected_lake_dir)
+        for market in sorted({item.instrument.market for item in watchlist.instruments})
+    ]
+    storage_schema.extend(
+        [
+            _observe_storage_schema("03_gold/features", selected_lake_dir / "03_gold/features", lake_dir=selected_lake_dir),
+            _observe_storage_schema("04_platinum/predictions", selected_lake_dir / "04_platinum/predictions", lake_dir=selected_lake_dir),
+        ]
+    )
     scan_history = _read_scan_reports(cutoff, selected_data_dir)
     scan_history = ScanHistoryObservation(
         scan_history.state,
@@ -621,6 +666,7 @@ def build_tracking_readiness(
         freshness_limit="unset/unknown; ages are descriptive calendar days only",
         inference_status="not evaluated; readiness observation only",
         delivery_status="unavailable/not configured; no delivery state exists",
+        storage_schema=storage_schema,
         signal_history_validation_scope=_HISTORY_VALIDATION_SCOPE,
     )
 
