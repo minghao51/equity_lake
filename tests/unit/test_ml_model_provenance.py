@@ -30,6 +30,7 @@ from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
     DEFAULT_V2_SETTINGS,
     MISSING_VALUE_POLICY,
     MODEL_AGE_POLICY,
+    MODEL_PROVENANCE_VERSION,
     ModelExpiredError,
     ModelFutureError,
     ModelIncompatibleError,
@@ -310,6 +311,11 @@ def test_prediction_reports_known_matching_schema(monkeypatch: pytest.MonkeyPatc
     assert prediction["model_age_days"] == DEFAULT_MAX_MODEL_AGE_DAYS == 7
     assert prediction["model_age_source"] == "training_metadata"
     assert prediction["model_max_age_days"] == DEFAULT_MAX_MODEL_AGE_DAYS
+    # ADR-0021: the verified artifact identity is exposed, never filename-derived.
+    sidecar = json.loads(next(tmp_path.glob("*.training_metadata.json")).read_text())
+    assert prediction["model_artifact_sha256"] == sidecar["artifact_sha256"]
+    assert len(prediction["model_artifact_sha256"]) == 64
+    assert prediction["model_provenance_version"] == MODEL_PROVENANCE_VERSION == sidecar["provenance_version"]
     valid_features = _v1_features(as_of, FEATURE_SCHEMA_VERSION)
     assert valid_features["action_source_age_days"][-1] > 7
     assert valid_features["action_source_valid_until"][-1] == datetime(2030, 1, 1, tzinfo=UTC)

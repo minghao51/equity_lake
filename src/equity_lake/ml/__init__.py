@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
+from math import isfinite
+from numbers import Integral, Real
 from typing import TYPE_CHECKING, Any
 
 import polars as pl
@@ -22,8 +24,176 @@ if TYPE_CHECKING:
     )
 
 from equity_lake.core.instruments import InstrumentKey  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.schemas import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    FORECAST_PROVENANCE_COLUMNS,
+    FORECAST_PROVENANCE_VERSION,
+    PREDICTION_SEMANTICS_VERSION,
+    PREDICTION_TARGET_CANDIDATE_EXECUTE,
+    PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
+)
 
 logger = structlog.get_logger()
+
+# ADR-0021: nullable additive proof columns, so a row without a proof stays
+# readable instead of forcing a rewrite or a backfill.
+_FORECAST_PROVENANCE_DTYPES: dict[str, pl.DataType] = {
+    "forecast_provenance_version": pl.Int16(),
+    "model_provenance_version": pl.Int16(),
+    "model_artifact_sha256": pl.String(),
+    "model_trained_at": pl.Date(),
+    "model_age_days": pl.Int16(),
+    "model_max_age_days": pl.Int16(),
+    "training_feature_schema_version": pl.Int16(),
+    "inference_feature_schema_version": pl.Int16(),
+    "price_adjustment_version": pl.String(),
+    "availability_schema_version": pl.Int16(),
+    "missing_value_policy": pl.String(),
+    "candidate_strategy_fingerprint": pl.String(),
+    "horizon_days": pl.Int16(),
+    "threshold_used": pl.Float64(),
+    "threshold_source": pl.String(),
+    "prediction_target": pl.String(),
+    "prediction_semantics_version": pl.Int16(),
+}
+_FORECAST_PROVENANCE_REQUIRED_COLUMNS = tuple(column for column in FORECAST_PROVENANCE_COLUMNS if column != "candidate_strategy_fingerprint")
+_PREDICTION_TARGET_BY_MODEL_MODE = {
+    "v1_direction": PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
+    "v2_meta_label": PREDICTION_TARGET_CANDIDATE_EXECUTE,
+}
+_PROOF_INTEGER_COLUMNS = frozenset(
+    {
+        "forecast_provenance_version",
+        "model_provenance_version",
+        "model_age_days",
+        "model_max_age_days",
+        "training_feature_schema_version",
+        "inference_feature_schema_version",
+        "availability_schema_version",
+        "horizon_days",
+        "prediction_semantics_version",
+    }
+)
+_PROOF_TEXT_COLUMNS = frozenset(
+    {
+        "model_artifact_sha256",
+        "price_adjustment_version",
+        "missing_value_policy",
+        "candidate_strategy_fingerprint",
+        "threshold_source",
+        "prediction_target",
+    }
+)
+
+
+def _proof_value_is_typed(column: str, value: Any) -> bool:
+    """True when a proof input already has the contract type.
+
+    The storage casts use ``strict=False`` so historical frames keep evolving in
+    place, but a proof field must never be *laundered* by that cast: ``True`` is
+    not ``1.0``, ``"4"`` is not ``4``, and a truncated float is not an age.
+    """
+    if column in _PROOF_INTEGER_COLUMNS:
+        return isinstance(value, Integral) and not isinstance(value, bool)
+    if column == "model_trained_at":
+        return isinstance(value, date) and not isinstance(value, datetime)
+    if column == "threshold_used":
+        if isinstance(value, bool):
+            return False
+        return isinstance(value, Real) and isfinite(float(value))
+    if column in _PROOF_TEXT_COLUMNS:
+        return isinstance(value, str)
+    return False
+
+
+def _forecast_provenance_columns(prediction: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the ADR-0021 proof columns for one inference payload.
+
+    A payload that cannot supply every proof input writes a null
+    ``forecast_provenance_version`` (a documented "no proof"); no field is
+    defaulted, inferred, or fabricated.
+    """
+    no_proof: dict[str, Any] = dict.fromkeys(FORECAST_PROVENANCE_COLUMNS)
+    model_mode = prediction.get("model_mode")
+    prediction_target = _PREDICTION_TARGET_BY_MODEL_MODE.get(model_mode) if isinstance(model_mode, str) else None
+    if prediction_target is None:
+        return no_proof
+
+    proof = {
+        "forecast_provenance_version": FORECAST_PROVENANCE_VERSION,
+        "model_provenance_version": prediction.get("model_provenance_version"),
+        "model_artifact_sha256": prediction.get("model_artifact_sha256"),
+        "model_trained_at": prediction.get("model_trained_at"),
+        "model_age_days": prediction.get("model_age_days"),
+        "model_max_age_days": prediction.get("model_max_age_days"),
+        "training_feature_schema_version": prediction.get("training_feature_schema_version"),
+        "inference_feature_schema_version": prediction.get("inference_feature_schema_version"),
+        "price_adjustment_version": prediction.get("price_adjustment_version"),
+        "availability_schema_version": prediction.get("availability_schema_version"),
+        "missing_value_policy": prediction.get("missing_value_policy"),
+        # E3 binds the strategy fingerprint only for the meta-label contract.
+        "candidate_strategy_fingerprint": prediction.get("candidate_strategy_fingerprint") if model_mode == "v2_meta_label" else None,
+        "horizon_days": prediction.get("horizon_days"),
+        "threshold_used": prediction.get("threshold_used"),
+        "threshold_source": prediction.get("threshold_source"),
+        "prediction_target": prediction_target,
+        "prediction_semantics_version": PREDICTION_SEMANTICS_VERSION,
+    }
+    required = list(_FORECAST_PROVENANCE_REQUIRED_COLUMNS)
+    if model_mode == "v2_meta_label":
+        required.append("candidate_strategy_fingerprint")
+    if any(proof[column] is None for column in required):
+        return no_proof
+    mistyped = [column for column in required if not _proof_value_is_typed(column, proof[column])]
+    if mistyped:
+        # A proof field that arrives with the wrong type is not persisted and not
+        # coerced: the row becomes the documented no-proof row instead of claiming
+        # evidence the writer had to infer.
+        logger.warning("forecast_provenance_not_typed", columns=mistyped, ticker=prediction.get("ticker"))
+        return no_proof
+    return proof
+
+
+def _forecast_provenance_violated(df: pl.DataFrame) -> bool:
+    """Return True when a row claims a proof that is missing or contradictory.
+
+    ADR-0021 §2.3: per row, ``forecast_provenance_version`` is null (a documented
+    no-proof) or equals ``FORECAST_PROVENANCE_VERSION`` with every rule below
+    satisfied. A claiming row failing any rule rejects the batch (fail closed).
+    """
+    assessed = df
+    for column, dtype in (
+        *_FORECAST_PROVENANCE_DTYPES.items(),
+        ("model_mode", pl.String()),
+        ("feature_schema_version", pl.Int16()),
+        ("date", pl.Date()),
+    ):
+        expression = pl.col(column).cast(dtype, strict=False) if column in assessed.columns else pl.lit(None, dtype=dtype).alias(column)
+        assessed = assessed.with_columns(expression)
+
+    version = pl.col("forecast_provenance_version")
+    target = pl.col("prediction_target")
+    rules = (
+        (version == FORECAST_PROVENANCE_VERSION)
+        & pl.all_horizontal([pl.col(column).is_not_null() for column in _FORECAST_PROVENANCE_REQUIRED_COLUMNS])
+        & ((pl.col("model_mode") == "v2_meta_label") == pl.col("candidate_strategy_fingerprint").is_not_null())
+        & pl.col("model_artifact_sha256").str.contains(r"^[0-9a-f]{64}$")
+        & (pl.col("model_trained_at") <= pl.col("date"))
+        & (pl.col("model_age_days") >= 0)
+        & (pl.col("model_age_days") <= pl.col("model_max_age_days"))
+        & (pl.col("training_feature_schema_version") == pl.col("inference_feature_schema_version"))
+        & (pl.col("inference_feature_schema_version") == pl.col("feature_schema_version"))
+        & (pl.col("threshold_used") >= 0.0)
+        & (pl.col("threshold_used") <= 1.0)
+        & (pl.col("horizon_days") >= 1)
+        & (
+            ((pl.col("model_mode") == "v1_direction") & (target == PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE))
+            | ((pl.col("model_mode") == "v2_meta_label") & (target == PREDICTION_TARGET_CANDIDATE_EXECUTE))
+        )
+        & (pl.col("prediction_semantics_version") == PREDICTION_SEMANTICS_VERSION)
+    )
+    claimed = version.is_not_null()
+    violation = assessed.select((claimed & ~rules.fill_null(value=False)).fill_null(value=False).any()).item()
+    return bool(violation)
 
 
 def validate_predictions(df: pl.DataFrame) -> bool:
@@ -34,6 +204,10 @@ def validate_predictions(df: pl.DataFrame) -> bool:
       return exactly 0.0/1.0, and one boundary row must not reject the batch)
     - direction in {"up", "down"}
     - canonical market/MIC/symbol identity and date are not null
+
+    Then enforces the ADR-0021 row-bound forecast proof rules: a null
+    ``forecast_provenance_version`` is a documented "no proof", and a row
+    claiming version 1 must carry a complete, self-consistent E1-E4 set.
     """
     import pointblank as pb
 
@@ -44,7 +218,9 @@ def validate_predictions(df: pl.DataFrame) -> bool:
     for column in ("market", "mic", "symbol", "ticker", "date", "identity_schema_version"):
         validation.col_vals_not_null(columns=column)
     validation.interrogate()
-    return bool(validation.all_passed())
+    if not bool(validation.all_passed()):
+        return False
+    return not _forecast_provenance_violated(df)
 
 
 def run_prediction_job(
@@ -101,6 +277,10 @@ def run_prediction_job(
                         # None is an honest unknown for legacy/provided models;
                         # never stamp the current schema as if it were trained.
                         "feature_schema_version": prediction.get("feature_schema_version"),
+                        # ADR-0021: persist the evidence ``predict()`` already
+                        # verified, or a null envelope version when the payload
+                        # cannot supply a proof.
+                        **_forecast_provenance_columns(prediction),
                     }
                 )
             except Exception as exc:  # pragma: no cover - reported by caller
@@ -119,7 +299,10 @@ def run_prediction_job(
         try:
             from equity_lake.storage.delta import merge_delta
 
-            predictions_df = pl.DataFrame(prediction_rows).with_columns(pl.col("feature_schema_version").cast(pl.Int8, strict=False))
+            predictions_df = pl.DataFrame(prediction_rows).with_columns(
+                pl.col("feature_schema_version").cast(pl.Int8, strict=False),
+                *[pl.col(column).cast(dtype, strict=False) for column, dtype in _FORECAST_PROVENANCE_DTYPES.items()],
+            )
             # float32 ``predict_proba`` can land on (or infinitesimally outside)
             # the [0, 1] boundary; clamp before validation so a boundary row
             # cannot reject — and silently drop — the whole batch (handoff 08 A4).

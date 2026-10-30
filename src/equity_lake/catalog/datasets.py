@@ -457,6 +457,37 @@ PLATINUM_DATASETS: list[DatasetEntry] = [
             ColumnInfo(name="probability", dtype="float64", description="Prediction confidence 0.0–1.0"),
             ColumnInfo(name="model_version", dtype="string"),
             ColumnInfo(name="feature_schema_version", dtype="int8"),
+            # Row-bound forecast provenance (ADR-0021): all nullable/additive, so a
+            # row written without a proof stays readable and is reported unknown.
+            ColumnInfo(
+                name="forecast_provenance_version",
+                dtype="int16",
+                description="Envelope version of the row-bound forecast proof; null is the documented no-proof (ADR-0021)",
+            ),
+            ColumnInfo(name="model_provenance_version", dtype="int16", description="E1: model provenance metadata version"),
+            ColumnInfo(name="model_artifact_sha256", dtype="string", description="E1: verified digest of the exact model artifact"),
+            ColumnInfo(name="model_trained_at", dtype="date", description="E1: refit boundary of the scored artifact"),
+            ColumnInfo(name="model_age_days", dtype="int16", description="E2: observed model age in days at inference time"),
+            ColumnInfo(name="model_max_age_days", dtype="int16", description="E2: age bound actually applied to the score"),
+            ColumnInfo(name="training_feature_schema_version", dtype="int16", description="E3: feature schema version the model was trained on"),
+            ColumnInfo(name="inference_feature_schema_version", dtype="int16", description="E3: feature schema version used for inference"),
+            ColumnInfo(name="price_adjustment_version", dtype="string", description="E3: price adjustment contract used for the inputs"),
+            ColumnInfo(name="availability_schema_version", dtype="int16", description="E3: point-in-time availability contract used for the inputs"),
+            ColumnInfo(name="missing_value_policy", dtype="string", description="E3: missing-value policy applied to the inputs"),
+            ColumnInfo(
+                name="candidate_strategy_fingerprint",
+                dtype="string",
+                description="E3: candidate strategy fingerprint; null for v1_direction, required for v2_meta_label",
+            ),
+            ColumnInfo(name="horizon_days", dtype="int16", description="E4: forecast horizon in trading days"),
+            ColumnInfo(name="threshold_used", dtype="float64", description="E4: decision threshold applied, 0.0-1.0"),
+            ColumnInfo(name="threshold_source", dtype="string", description="E4: where the applied threshold came from"),
+            ColumnInfo(
+                name="prediction_target",
+                dtype="string",
+                description="E4: next_session_return_positive (v1_direction) or candidate_execute (v2_meta_label)",
+            ),
+            ColumnInfo(name="prediction_semantics_version", dtype="int16", description="E4: decision-semantics contract version of the row"),
         ],
     ),
 ]

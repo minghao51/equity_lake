@@ -7,6 +7,39 @@ import polars as pl
 # Shared Gold feature contract versions (ADR-0015).
 FEATURE_SCHEMA_VERSION = 7
 
+# Row-bound forecast provenance (ADR-0021). The envelope version gates the
+# proof rules: a version-1 row carries the E1-E4 evidence below and is checked
+# at the predictions write boundary. Direction/probability derivation and the
+# folder schema constants are unchanged.
+FORECAST_PROVENANCE_VERSION = 1
+PREDICTION_SEMANTICS_VERSION = 1
+PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE = "next_session_return_positive"
+PREDICTION_TARGET_CANDIDATE_EXECUTE = "candidate_execute"
+
+# All nullable, additive prediction columns (ADR-0017). ``model_version`` stays
+# filename-derived and is never proof; ``feature_schema_compatibility`` is not
+# persisted because it is derivable from the two schema-version columns plus the
+# stored ``feature_schema_version``.
+FORECAST_PROVENANCE_COLUMNS = [
+    "forecast_provenance_version",
+    "model_provenance_version",
+    "model_artifact_sha256",
+    "model_trained_at",
+    "model_age_days",
+    "model_max_age_days",
+    "training_feature_schema_version",
+    "inference_feature_schema_version",
+    "price_adjustment_version",
+    "availability_schema_version",
+    "missing_value_policy",
+    "candidate_strategy_fingerprint",
+    "horizon_days",
+    "threshold_used",
+    "threshold_source",
+    "prediction_target",
+    "prediction_semantics_version",
+]
+
 # Canonical shared-table identity (ADR-0016). Bronze OHLCV remains unchanged;
 # identity is added only when explicit source provenance is available.
 INSTRUMENT_IDENTITY_COLUMNS = ["market", "mic", "symbol"]
@@ -235,11 +268,16 @@ __all__ = [
     "CORPORATE_ACTION_SCHEMA",
     "CORPORATE_ACTION_TYPES",
     "FEATURE_SCHEMA_VERSION",
+    "FORECAST_PROVENANCE_COLUMNS",
+    "FORECAST_PROVENANCE_VERSION",
     "INSTRUMENT_DATE_KEY_COLUMNS",
     "INSTRUMENT_IDENTITY_COLUMNS",
     "MACRO_COLUMNS",
     "MACRO_INDICATOR_CONFIG",
     "NEWS_COLUMNS",
+    "PREDICTION_SEMANTICS_VERSION",
+    "PREDICTION_TARGET_CANDIDATE_EXECUTE",
+    "PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE",
     "SEC_EXTRACTION_COLUMNS",
     "SEC_FINANCIAL_COLUMNS",
     "SILVER_ARTICLE_COLUMNS",

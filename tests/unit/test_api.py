@@ -12,7 +12,19 @@ from fastapi.testclient import TestClient
 
 from equity_lake.api import deps  # type: ignore[import-untyped]
 from equity_lake.api.main import create_app  # type: ignore[import-untyped]
+from equity_lake.core.availability import (  # type: ignore[import-untyped]
+    AVAILABILITY_SCHEMA_VERSION,
+    PRICE_ADJUSTMENT_VERSION,
+)
 from equity_lake.core.dates import resolve_trading_date  # type: ignore[import-untyped]
+from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+    FEATURE_SCHEMA_VERSION,
+    FORECAST_PROVENANCE_COLUMNS,
+    FORECAST_PROVENANCE_VERSION,
+    PREDICTION_SEMANTICS_VERSION,
+    PREDICTION_TARGET_CANDIDATE_EXECUTE,
+    PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
+)
 from equity_lake.findings.models import FindingCard  # type: ignore[import-untyped]
 from equity_lake.storage.delta import (  # type: ignore[import-untyped]
     DeltaReadError,
@@ -204,7 +216,13 @@ def _prediction_row(
     }
 
 
-def _write_predictions_table(lake_dir: Path, monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]] | None = None) -> None:
+def _write_predictions_table(
+    lake_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    rows: list[dict[str, Any]] | None = None,
+    *,
+    schema_overrides: dict[str, pl.DataType] | None = None,
+) -> None:
     """Write a synthetic date-partitioned Delta table and point the lake at it."""
     if rows is None:
         rows = [
@@ -212,8 +230,64 @@ def _write_predictions_table(lake_dir: Path, monkeypatch: pytest.MonkeyPatch, ro
             {"ticker": "AAPL", "date": date(2024, 1, 1), "direction": "down", "probability": 0.55},
             {"ticker": "MSFT", "date": date(2024, 1, 2), "direction": "up", "probability": 0.7},
         ]
-    assert write_delta(pl.DataFrame(rows, infer_schema_length=None), "04_platinum/predictions", lake_dir=lake_dir)
+    frame = pl.DataFrame(rows, infer_schema_length=None, schema_overrides=schema_overrides)
+    assert write_delta(frame, "04_platinum/predictions", lake_dir=lake_dir)
     monkeypatch.setattr("equity_lake.storage.delta.LAKE_DIR", lake_dir)
+
+
+# ADR-0021 §2.2 dtypes; an all-null proof column needs an explicit type because
+# Delta rejects a parquet ``Null`` column.
+_FORECAST_PROOF_DTYPES: dict[str, pl.DataType] = {
+    "forecast_provenance_version": pl.Int16(),
+    "model_provenance_version": pl.Int16(),
+    "model_artifact_sha256": pl.String(),
+    "model_trained_at": pl.Date(),
+    "model_age_days": pl.Int16(),
+    "model_max_age_days": pl.Int16(),
+    "training_feature_schema_version": pl.Int16(),
+    "inference_feature_schema_version": pl.Int16(),
+    "price_adjustment_version": pl.String(),
+    "availability_schema_version": pl.Int16(),
+    "missing_value_policy": pl.String(),
+    "candidate_strategy_fingerprint": pl.String(),
+    "horizon_days": pl.Int16(),
+    "threshold_used": pl.Float64(),
+    "threshold_source": pl.String(),
+    "prediction_target": pl.String(),
+    "prediction_semantics_version": pl.Int16(),
+}
+
+
+def _write_proof_table(lake_dir: Path, monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]]) -> None:
+    """Write proof rows with the §2.2 dtypes (Delta rejects an untyped all-null column)."""
+    _write_predictions_table(lake_dir, monkeypatch, rows, schema_overrides=_FORECAST_PROOF_DTYPES)
+
+
+def _forecast_proof(**overrides: Any) -> dict[str, Any]:
+    """Return a complete, current, self-consistent v1 proof (ADR-0021 §2.2)."""
+    proof: dict[str, Any] = {
+        "forecast_provenance_version": FORECAST_PROVENANCE_VERSION,
+        # E1 evidence; the stored-row reader requires presence and an integer
+        # type. The writer copies the sidecar's provenance_version verbatim.
+        "model_provenance_version": 1,
+        "model_artifact_sha256": "0" * 64,
+        "model_trained_at": date(2023, 12, 29),
+        "model_age_days": 4,
+        "model_max_age_days": 30,
+        "training_feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "inference_feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "price_adjustment_version": PRICE_ADJUSTMENT_VERSION,
+        "availability_schema_version": AVAILABILITY_SCHEMA_VERSION,
+        "missing_value_policy": "median_impute",
+        "candidate_strategy_fingerprint": None,
+        "horizon_days": 1,
+        "threshold_used": 0.5,
+        "threshold_source": "config_default",
+        "prediction_target": PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
+        "prediction_semantics_version": PREDICTION_SEMANTICS_VERSION,
+    }
+    proof.update(overrides)
+    return proof
 
 
 def _forbid_prediction_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -377,6 +451,175 @@ def test_list_predictions_classifies_identity_schema_validity_and_unproven_trust
     assert by_symbol["MISSING_PROBABILITY"]["api_validity_status"] == "unknown"
     assert by_symbol["META"]["api_prediction_semantics_status"] == "unknown"
     assert "meta_label" in by_symbol["META"]["api_prediction_semantics_reason"]
+
+
+def test_predictions_report_usable_row_bound_forecast_for_a_current_v1_row(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A complete v1 proof on every current contract is the only ``current_usable`` shape."""
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("USABLE", **_forecast_proof())])
+
+    row = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+
+    assert row["api_provenance_status"] == "valid"
+    assert row["api_provenance_reason"] == "row_bound_forecast_proof_is_complete_and_bound_to_the_current_contracts"
+    assert row["api_prediction_semantics_status"] == "established"
+    assert row["api_prediction_semantics_reason"] == (
+        f"row_bound_directional_prediction_semantics_are_established_on_prediction_semantics_version:{PREDICTION_SEMANTICS_VERSION}"
+    )
+    assert row["api_usability_status"] == "current_usable"
+    assert row["api_usability_reasons"] == []
+
+
+def test_predictions_report_historical_provenance_on_a_superseded_contract(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rules hold, but the row is bound to an older price-adjustment contract."""
+    proof = _forecast_proof(price_adjustment_version="split-only-v0")
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("HISTORICAL", **proof)])
+
+    result = deps.list_predictions(target_date=date(2024, 1, 2))
+    # Rows are never filtered by status (ADR-0021 §2.4).
+    assert [row["symbol"] for row in result.rows] == ["HISTORICAL"]
+    row = result.rows[0]
+    assert row["api_provenance_status"] == "historical"
+    assert row["api_provenance_reason"] == (
+        f"row_bound_forecast_proof_is_bound_to_a_superseded_contract:price_adjustment_version:split-only-v0;current:{PRICE_ADJUSTMENT_VERSION}"
+    )
+    assert row["api_prediction_semantics_status"] == "established"
+    assert row["api_usability_status"] == "not_current_usable"
+    assert row["api_usability_reasons"] == ["forecast_provenance_historical"]
+
+
+def test_predictions_report_invalid_provenance_when_the_row_contradicts_its_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An observed age beyond the applied bound is a contradiction, not history."""
+    proof = _forecast_proof(model_age_days=31, model_max_age_days=30)
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("INVALID", **proof)])
+
+    result = deps.list_predictions(target_date=date(2024, 1, 2))
+    assert [row["symbol"] for row in result.rows] == ["INVALID"]
+    row = result.rows[0]
+    assert row["api_provenance_status"] == "invalid"
+    assert row["api_provenance_reason"] == "row_bound_forecast_proof_contradicts_the_row:model_age_days_exceeds_the_applied_model_max_age_days"
+    assert row["api_prediction_semantics_status"] == "established"
+    assert row["api_usability_status"] == "not_current_usable"
+    assert row["api_usability_reasons"] == ["forecast_provenance_invalid"]
+
+
+def test_predictions_report_unknown_provenance_without_a_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An absent proof column set and an all-null one are both ``unknown``."""
+    _write_predictions_table(tmp_path / "absent", monkeypatch, [_prediction_row("ABSENT")])
+    absent = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+    assert "forecast_provenance_version" not in absent
+    assert absent["api_provenance_status"] == "unknown"
+    assert absent["api_provenance_reason"] == "no_supported_row_bound_forecast_proof_is_persisted"
+    assert absent["api_prediction_semantics_status"] == "unknown"
+    assert absent["api_usability_status"] == "not_current_usable"
+    assert absent["api_usability_reasons"] == ["forecast_provenance_unknown", "prediction_semantics_unknown"]
+
+    no_proof: dict[str, Any] = {column: None for column in FORECAST_PROVENANCE_COLUMNS}
+    _write_proof_table(tmp_path / "null", monkeypatch, [_prediction_row("NULL", **no_proof)])
+    null_row = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+    assert null_row["forecast_provenance_version"] is None
+    assert null_row["api_provenance_status"] == "unknown"
+    assert null_row["api_provenance_reason"] == "no_supported_row_bound_forecast_proof_is_persisted"
+    assert null_row["api_usability_reasons"] == ["forecast_provenance_unknown", "prediction_semantics_unknown"]
+
+
+def test_v2_meta_label_keeps_valid_provenance_but_unknown_semantics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-0021 Decision 3: E1-E3 + candidate target, never a directional forecast."""
+    proof = _forecast_proof(
+        model_mode="v2_meta_label",
+        prediction_target=PREDICTION_TARGET_CANDIDATE_EXECUTE,
+        candidate_strategy_fingerprint="momentum__zero__v3",
+    )
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("META", **proof)])
+
+    row = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+
+    assert row["api_provenance_status"] == "valid"
+    assert row["api_provenance_reason"] == "row_bound_forecast_proof_is_complete_and_bound_to_the_current_contracts"
+    assert row["api_prediction_semantics_status"] == "unknown"
+    assert row["api_prediction_semantics_reason"] == ("stored_v2_meta_label_mode_maps_a_binary_meta_label_to_up_down;direction_is_not_established")
+    assert row["api_usability_status"] == "not_current_usable"
+    assert row["api_usability_reasons"] == ["prediction_semantics_unknown"]
+
+
+def test_superseded_prediction_semantics_are_reported_as_superseded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A v1 row on an older semantics version is honest history, not current."""
+    older = PREDICTION_SEMANTICS_VERSION - 1
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("OLDER", **_forecast_proof(prediction_semantics_version=older))])
+
+    row = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+
+    assert row["api_provenance_status"] == "historical"
+    assert row["api_prediction_semantics_status"] == "superseded"
+    assert row["api_prediction_semantics_reason"] == f"prediction_semantics_version:{older};current:{PREDICTION_SEMANTICS_VERSION}"
+    assert row["api_usability_status"] == "not_current_usable"
+    assert row["api_usability_reasons"] == ["forecast_provenance_historical", "prediction_semantics_superseded"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected_violation"),
+    [
+        ({"model_artifact_sha256": "0" * 63}, "model_artifact_sha256_is_not_64_lowercase_hex_characters"),
+        ({"model_artifact_sha256": "A" * 64}, "model_artifact_sha256_is_not_64_lowercase_hex_characters"),
+        ({"model_trained_at": date(2024, 1, 3)}, "model_trained_at_is_after_the_prediction_date"),
+        ({"model_age_days": -1}, "model_age_days_is_negative"),
+        ({"threshold_used": 1.5}, "threshold_used_is_outside_the_unit_interval"),
+        ({"horizon_days": 0}, "horizon_days_is_below_one"),
+        ({"candidate_strategy_fingerprint": "leak"}, "candidate_strategy_fingerprint_is_present_outside_the_meta_label_contract"),
+        ({"prediction_target": PREDICTION_TARGET_CANDIDATE_EXECUTE}, "prediction_target_is_inconsistent_with_model_mode"),
+        (
+            {"training_feature_schema_version": FEATURE_SCHEMA_VERSION - 1, "inference_feature_schema_version": FEATURE_SCHEMA_VERSION - 1},
+            "inference_feature_schema_version_differs_from_the_stored_feature_schema_version",
+        ),
+        ({"availability_schema_version": AVAILABILITY_SCHEMA_VERSION - 1}, "row_bound_forecast_proof_is_bound_to_a_superseded_contract"),
+    ],
+)
+def test_forecast_proof_rules_are_reported_individually(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    overrides: dict[str, Any],
+    expected_violation: str,
+) -> None:
+    """Each §2.3/§2.4 rule is pinned on its own so one rule cannot hide another."""
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("RULE", **_forecast_proof(**overrides))])
+
+    row = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+
+    expected_status = "historical" if expected_violation.startswith("row_bound_forecast_proof_is_bound") else "invalid"
+    assert row["api_provenance_status"] == expected_status
+    assert expected_violation in row["api_provenance_reason"]
+    assert row["api_usability_status"] == "not_current_usable"
+    assert f"forecast_provenance_{expected_status}" in row["api_usability_reasons"]
+
+
+def test_unsupported_future_envelope_version_is_unknown_not_historical(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A proof version this reader does not know is unknown, never "old" and never usable."""
+    future = FORECAST_PROVENANCE_VERSION + 1
+    _write_proof_table(tmp_path, monkeypatch, [_prediction_row("FUTURE", **_forecast_proof(forecast_provenance_version=future))])
+
+    row = deps.list_predictions(target_date=date(2024, 1, 2)).rows[0]
+
+    assert row["api_provenance_status"] == "unknown"
+    assert row["api_provenance_reason"] == f"forecast_provenance_version_is_unsupported_by_this_reader:{future}"
+    assert row["api_usability_status"] == "not_current_usable"
+    assert row["api_usability_reasons"] == ["forecast_provenance_unknown"]
+
+
+def test_forecast_proof_statuses_never_filter_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Usable, historical, invalid, and unknown rows are all returned together."""
+    rows = [
+        _prediction_row("USABLE", **_forecast_proof()),
+        _prediction_row("HISTORICAL", **_forecast_proof(price_adjustment_version="split-only-v0")),
+        _prediction_row("INVALID", **_forecast_proof(model_age_days=31, model_max_age_days=30)),
+        _prediction_row("UNKNOWN"),
+    ]
+    _write_proof_table(tmp_path, monkeypatch, rows)
+
+    result = deps.list_predictions(target_date=date(2024, 1, 2), limit=100)
+
+    assert {row["symbol"] for row in result.rows} == {"USABLE", "HISTORICAL", "INVALID", "UNKNOWN"}
+    usability = {row["symbol"]: row["api_usability_status"] for row in result.rows}
+    assert usability["USABLE"] == "current_usable"
+    assert {status for symbol, status in usability.items() if symbol != "USABLE"} == {"not_current_usable"}
 
 
 @pytest.mark.parametrize("stored_mic", ["xnas", " XNAS "])

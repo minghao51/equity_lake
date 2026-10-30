@@ -9,6 +9,7 @@ directly (patchable via ``monkeypatch.setattr(deps, ...)``).
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -17,9 +18,17 @@ from numbers import Real
 from pathlib import Path
 from typing import Any
 
+from equity_lake.core.availability import AVAILABILITY_SCHEMA_VERSION, PRICE_ADJUSTMENT_VERSION
 from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, MARKET_MICS, InstrumentKey
 from equity_lake.core.paths import FINDINGS_DIR, MODELS_DIR, canonical_market
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.core.schemas import (
+    FEATURE_SCHEMA_VERSION,
+    FORECAST_PROVENANCE_COLUMNS,
+    FORECAST_PROVENANCE_VERSION,
+    PREDICTION_SEMANTICS_VERSION,
+    PREDICTION_TARGET_CANDIDATE_EXECUTE,
+    PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
+)
 from equity_lake.findings.models import FindingCard
 from equity_lake.findings.writer import load_finding_cards
 from equity_lake.signals.history import load_signals
@@ -278,6 +287,217 @@ def _prediction_value_status(row: dict[str, Any]) -> tuple[str, list[str]]:
     return "valid", []
 
 
+# --- row-bound forecast provenance (ADR-0021 §2.4) ---------------------------
+
+# The reader re-derives the proof from the row alone, so it mirrors the
+# write-boundary rule set (``ml/__init__.py::_forecast_provenance_violated``)
+# instead of trusting the writer.
+_PREDICTION_TARGET_BY_MODEL_MODE: dict[str, str] = {
+    "v1_direction": PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
+    "v2_meta_label": PREDICTION_TARGET_CANDIDATE_EXECUTE,
+}
+_E4_COLUMNS = ("horizon_days", "threshold_used", "threshold_source", "prediction_target", "prediction_semantics_version")
+_FORECAST_PROOF_REQUIRED_COLUMNS = tuple(column for column in FORECAST_PROVENANCE_COLUMNS if column != "candidate_strategy_fingerprint")
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_FORECAST_PROOF_UNKNOWN_REASON = "no_supported_row_bound_forecast_proof_is_persisted"
+_V2_META_LABEL_SEMANTICS_REASON = "stored_v2_meta_label_mode_maps_a_binary_meta_label_to_up_down;direction_is_not_established"
+
+
+def _row_int(row: dict[str, Any], column: str) -> int | None:
+    """Return a stored integer column value, or None when absent or mistyped."""
+    value = row.get(column)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
+
+
+def _row_float(row: dict[str, Any], column: str) -> float | None:
+    """Return a stored finite numeric column value, or None when absent or mistyped."""
+    value = row.get(column)
+    if isinstance(value, bool) or not isinstance(value, (Real, Decimal)):
+        return None
+    try:
+        number = float(value)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
+def _row_date(row: dict[str, Any], column: str) -> date | None:
+    """Return a stored calendar date, or None when absent or mistyped."""
+    value = row.get(column)
+    if isinstance(value, datetime):
+        return value.date()
+    return value if isinstance(value, date) else None
+
+
+def _row_text(row: dict[str, Any], column: str) -> str | None:
+    """Return a stored string column value, or None when absent or mistyped."""
+    value = row.get(column)
+    return value if isinstance(value, str) else None
+
+
+def _forecast_provenance_rule_violations(row: dict[str, Any]) -> list[str]:
+    """Return the ADR-0021 §2.3 rule violations for one stored row.
+
+    The contract-version currency checks are deliberately excluded: they
+    separate ``valid`` from ``historical`` instead of deciding ``invalid``.
+    """
+    violations: list[str] = []
+    model_mode = row.get("model_mode")
+    fingerprint = _row_text(row, "candidate_strategy_fingerprint")
+    missing = [column for column in _FORECAST_PROOF_REQUIRED_COLUMNS if row.get(column) is None]
+    if model_mode == "v2_meta_label":
+        if fingerprint is None:
+            missing.append("candidate_strategy_fingerprint")
+    elif fingerprint is not None:
+        violations.append("candidate_strategy_fingerprint_is_present_outside_the_meta_label_contract")
+    if missing:
+        return [f"missing_forecast_proof_columns:{','.join(missing)}", *violations]
+
+    digest = _row_text(row, "model_artifact_sha256")
+    if digest is None or _SHA256_HEX.fullmatch(digest) is None:
+        violations.append("model_artifact_sha256_is_not_64_lowercase_hex_characters")
+    if _row_int(row, "model_provenance_version") is None:
+        violations.append("model_provenance_version_is_not_an_integer")
+    if _row_text(row, "price_adjustment_version") is None:
+        violations.append("price_adjustment_version_is_not_a_string")
+    if _row_int(row, "availability_schema_version") is None:
+        violations.append("availability_schema_version_is_not_an_integer")
+    if _row_text(row, "missing_value_policy") is None:
+        violations.append("missing_value_policy_is_not_a_string")
+    if _row_text(row, "threshold_source") is None:
+        violations.append("threshold_source_is_not_a_string")
+    # Type errors are reported as type errors: a mistyped date is not "after the
+    # prediction date", and a mistyped contract version is not contract drift.
+    trained_at = _row_date(row, "model_trained_at")
+    prediction_date = _row_date(row, "date")
+    if trained_at is None:
+        violations.append("model_trained_at_is_not_a_date")
+    if prediction_date is None:
+        violations.append("date_is_not_a_date")
+    elif trained_at is not None and trained_at > prediction_date:
+        violations.append("model_trained_at_is_after_the_prediction_date")
+    age = _row_int(row, "model_age_days")
+    max_age = _row_int(row, "model_max_age_days")
+    if age is None:
+        violations.append("model_age_days_is_not_an_integer")
+    elif age < 0:
+        violations.append("model_age_days_is_negative")
+    if max_age is None:
+        violations.append("model_max_age_days_is_not_an_integer")
+    elif age is not None and age > max_age:
+        violations.append("model_age_days_exceeds_the_applied_model_max_age_days")
+    training_version = _row_int(row, "training_feature_schema_version")
+    inference_version = _row_int(row, "inference_feature_schema_version")
+    stored_version = _row_int(row, "feature_schema_version")
+    if training_version is None or inference_version is None:
+        violations.append("feature_schema_versions_are_not_integers")
+    elif training_version != inference_version:
+        violations.append("training_and_inference_feature_schema_versions_differ")
+    if inference_version is not None and stored_version is not None and inference_version != stored_version:
+        violations.append("inference_feature_schema_version_differs_from_the_stored_feature_schema_version")
+    threshold = _row_float(row, "threshold_used")
+    if threshold is None or not 0.0 <= threshold <= 1.0:
+        violations.append("threshold_used_is_outside_the_unit_interval")
+    horizon = _row_int(row, "horizon_days")
+    if horizon is None:
+        violations.append("horizon_days_is_not_an_integer")
+    elif horizon < 1:
+        violations.append("horizon_days_is_below_one")
+    expected_target = _PREDICTION_TARGET_BY_MODEL_MODE.get(model_mode) if isinstance(model_mode, str) else None
+    if expected_target is None or _row_text(row, "prediction_target") != expected_target:
+        violations.append("prediction_target_is_inconsistent_with_model_mode")
+    return violations
+
+
+def _forecast_contract_version_drift(row: dict[str, Any]) -> list[str]:
+    """Return the envelope/E3 contract versions that are not the current ones."""
+    checks: tuple[tuple[str, object, object], ...] = (
+        ("forecast_provenance_version", _row_int(row, "forecast_provenance_version"), FORECAST_PROVENANCE_VERSION),
+        ("price_adjustment_version", _row_text(row, "price_adjustment_version"), PRICE_ADJUSTMENT_VERSION),
+        ("availability_schema_version", _row_int(row, "availability_schema_version"), AVAILABILITY_SCHEMA_VERSION),
+        ("prediction_semantics_version", _row_int(row, "prediction_semantics_version"), PREDICTION_SEMANTICS_VERSION),
+    )
+    return [f"{column}:{observed};current:{expected}" for column, observed, expected in checks if observed != expected]
+
+
+def _forecast_provenance_status(row: dict[str, Any]) -> tuple[str, str]:
+    """Derive ``api_provenance_status`` from the stored row (ADR-0021 §2.4).
+
+    ``unknown`` is decided by the envelope version being absent or null — the
+    documented "no proof" written by inference paths that cannot supply the
+    evidence. A claiming row is ``invalid`` when it contradicts itself, and
+    ``historical`` when every rule holds but a contract version is not current:
+    a version this reader does not know is not current either, so it is never
+    ``valid`` and is never reported as a contradiction.
+    """
+    if row.get("forecast_provenance_version") is None:
+        return "unknown", _FORECAST_PROOF_UNKNOWN_REASON
+    violations = _forecast_provenance_rule_violations(row)
+    envelope = _row_int(row, "forecast_provenance_version")
+    if envelope is None:
+        violations.append("forecast_provenance_version_is_not_an_integer")
+    if violations:
+        return "invalid", "row_bound_forecast_proof_contradicts_the_row:" + ",".join(violations)
+    if envelope is not None and envelope > FORECAST_PROVENANCE_VERSION:
+        # A version this reader does not know is not superseded history: it is an
+        # unknown contract this reader cannot judge (ADR-0021 does not define it;
+        # treating it as "historical" would misreport a newer contract as old).
+        return "unknown", f"forecast_provenance_version_is_unsupported_by_this_reader:{envelope}"
+    drift = _forecast_contract_version_drift(row)
+    if drift:
+        return "historical", "row_bound_forecast_proof_is_bound_to_a_superseded_contract:" + ",".join(drift)
+    return "valid", "row_bound_forecast_proof_is_complete_and_bound_to_the_current_contracts"
+
+
+def _prediction_semantics_rule_violations(row: dict[str, Any]) -> list[str]:
+    """Return the E4 completeness/consistency violations for a ``v1_direction`` row."""
+    missing = [column for column in _E4_COLUMNS if row.get(column) is None]
+    if missing:
+        return [f"missing_decision_semantics_columns:{','.join(missing)}"]
+    violations: list[str] = []
+    horizon = _row_int(row, "horizon_days")
+    if horizon is None or horizon < 1:
+        violations.append("horizon_days_is_below_one")
+    threshold = _row_float(row, "threshold_used")
+    if threshold is None or not 0.0 <= threshold <= 1.0:
+        violations.append("threshold_used_is_outside_the_unit_interval")
+    if _row_text(row, "threshold_source") is None:
+        violations.append("threshold_source_is_not_a_string")
+    if _row_text(row, "prediction_target") != PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE:
+        violations.append("prediction_target_is_not_next_session_return_positive")
+    if _row_int(row, "prediction_semantics_version") is None:
+        violations.append("prediction_semantics_version_is_not_an_integer")
+    return violations
+
+
+def _prediction_semantics_status(row: dict[str, Any]) -> tuple[str, str]:
+    """Derive ``api_prediction_semantics_status`` (ADR-0021 §2.4).
+
+    Only ``v1_direction`` can establish a directional forecast. Every
+    ``v2_meta_label`` row stays ``unknown`` until a separate record defines
+    meta-label usability, and a later semantics version this reader does not
+    know is never ``established``.
+    """
+    model_mode = row.get("model_mode")
+    if model_mode == "v2_meta_label":
+        return "unknown", _V2_META_LABEL_SEMANTICS_REASON
+    if model_mode != "v1_direction":
+        return "unknown", f"stored_model_mode_does_not_establish_directional_semantics:{model_mode}"
+    version = _row_int(row, "prediction_semantics_version")
+    violations = _prediction_semantics_rule_violations(row)
+    if version is not None and version > PREDICTION_SEMANTICS_VERSION:
+        violations.append(f"unsupported_future_prediction_semantics_version:{version}")
+    if violations:
+        return "unknown", "row_bound_directional_prediction_semantics_are_not_established:" + ",".join(violations)
+    if version is None:  # unreachable: the rule above already reports a non-integer version
+        return "unknown", "row_bound_directional_prediction_semantics_are_not_persisted"
+    if version < PREDICTION_SEMANTICS_VERSION:
+        return "superseded", f"prediction_semantics_version:{version};current:{PREDICTION_SEMANTICS_VERSION}"
+    return "established", f"row_bound_directional_prediction_semantics_are_established_on_prediction_semantics_version:{version}"
+
+
 def _json_safe_value(value: Any) -> Any:
     """Convert non-finite numbers to explicit strings for standards-compliant JSON."""
     if isinstance(value, float) and not isfinite(value):
@@ -297,30 +517,35 @@ def _annotate_prediction(row: dict[str, Any]) -> dict[str, Any]:
     identity_status, identity_reason = _identity_status(row)
     schema_status, schema_reason = _feature_schema_status(row)
     validity_status, validity_reasons = _prediction_value_status(row)
-    semantics_reason = "row_bound_directional_prediction_semantics_are_not_persisted"
-    if row.get("model_mode") == "v2_meta_label":
-        semantics_reason = "stored_v2_meta_label_mode_maps_a_binary_meta_label_to_up_down;direction_is_not_established"
-    usability_reasons = ["row_bound_forecast_provenance_is_not_persisted", "prediction_semantics_are_unverified"]
+    provenance_status, provenance_reason = _forecast_provenance_status(row)
+    semantics_status, semantics_reason = _prediction_semantics_status(row)
+    # Rows are never filtered by status (ADR-0021 §2.4): a row that is not
+    # current stays visible with its stored fields and its reasons.
+    usability_reasons: list[str] = []
     if identity_status != "valid":
         usability_reasons.append(f"identity_{identity_status}")
     if schema_status != "current":
         usability_reasons.append(f"feature_schema_{schema_status}")
     if validity_status != "valid":
         usability_reasons.append(f"prediction_values_{validity_status}")
+    if provenance_status != "valid":
+        usability_reasons.append(f"forecast_provenance_{provenance_status}")
+    if semantics_status != "established":
+        usability_reasons.append(f"prediction_semantics_{semantics_status}")
     safe_row = {key: _json_safe_value(value) for key, value in row.items()}
     return {
         **safe_row,
         "api_identity_status": identity_status,
         "api_identity_reason": identity_reason,
-        "api_provenance_status": "unknown",
-        "api_provenance_reason": "no_supported_row_bound_forecast_proof_is_persisted",
+        "api_provenance_status": provenance_status,
+        "api_provenance_reason": provenance_reason,
         "api_schema_status": schema_status,
         "api_schema_reason": schema_reason,
         "api_validity_status": validity_status,
         "api_validity_reasons": validity_reasons,
-        "api_prediction_semantics_status": "unknown",
+        "api_prediction_semantics_status": semantics_status,
         "api_prediction_semantics_reason": semantics_reason,
-        "api_usability_status": "not_current_usable",
+        "api_usability_status": "not_current_usable" if usability_reasons else "current_usable",
         "api_usability_reasons": usability_reasons,
     }
 

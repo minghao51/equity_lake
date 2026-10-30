@@ -22,7 +22,12 @@ from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # py
 )
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
 from equity_lake.ml.candidates import build_candidate_frame  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import ModelIncompatibleError, PriceForecaster  # type: ignore[import-untyped]
+from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
+    MODEL_PROVENANCE_VERSION,
+    ModelIncompatibleError,
+    ModelProvenanceError,
+    PriceForecaster,
+)
 from equity_lake.ml.labeling import apply_triple_barrier_labels  # type: ignore[import-untyped]
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
@@ -618,6 +623,42 @@ def test_predict_uses_trained_feature_set_when_scoring_columns_evolve(monkeypatc
         with pytest.raises(ModelIncompatibleError, match="feature names/dtypes"):
             forecaster.predict("AAPL", prediction_date)
         assert model_loads == []
+    finally:
+        forecaster.close()
+
+
+def test_predict_payload_carries_verified_artifact_provenance(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """P1 (ADR-0021): ``predict()`` exposes the artifact digest and provenance
+    version it already verified, and a tampered artifact still fails closed."""
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+
+    def _fake_load(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
+        return _make_training_frame(str(ticker))
+
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load)
+
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.train_model("AAPL", date(2024, 1, 1), date(2024, 4, 19), max_model_age_days=0)
+        prediction_date = date(2024, 4, 19)
+        metadata = forecaster.load_training_metadata("AAPL", prediction_date)
+        assert metadata is not None
+
+        prediction = forecaster.predict("AAPL", prediction_date, max_model_age_days=0)
+
+        digest = prediction["model_artifact_sha256"]
+        assert isinstance(digest, str)
+        assert len(digest) == 64 and all(character in "0123456789abcdef" for character in digest)
+        assert digest == metadata["artifact_sha256"]
+        assert prediction["model_provenance_version"] == MODEL_PROVENANCE_VERSION
+        assert prediction["model_provenance_version"] == metadata["provenance_version"]
+
+        model_path = next(tmp_path.glob("*.pkl"))
+        model_path.write_bytes(b"tampered model bytes")
+        with pytest.raises(ModelProvenanceError):
+            forecaster.predict("AAPL", prediction_date, max_model_age_days=0)
     finally:
         forecaster.close()
 

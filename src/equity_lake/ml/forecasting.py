@@ -671,6 +671,11 @@ class PriceForecaster:
         inference_schema_version = self._single_feature_schema_version(scoring_df)
         model_age_days = (date - model_trained_on).days
         provenance = {
+            # E1: the verified artifact identity. Both values were checked by
+            # ``_validate_inference_contract`` / ``_verify_model_artifact`` above;
+            # nothing is defaulted, inferred, or derived from the filename.
+            "model_artifact_sha256": metadata["artifact_sha256"],
+            "model_provenance_version": metadata["provenance_version"],
             "model_trained_at": model_trained_on,
             "model_age_days": model_age_days,
             "model_age_source": "training_metadata",
