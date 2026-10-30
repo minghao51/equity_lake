@@ -40,3 +40,4 @@ enforced contracts when guidance conflicts.
 | [0018](0018-private-watchlist-events-and-delivery.md) | Private watchlists, opportunity events, and delivery | Accepted |
 | [0019](0019-cli-delta-maintenance-lake-containment.md) | Lake-relative containment for Delta maintenance CLI targets | Accepted |
 | [0020](0020-synthetic-demo-lake-as-backtestable-surface.md) | Synthetic demo lake as a backtestable surface (identity + coverage + `--lake`) | Accepted |
+| [0021](0021-row-bound-forecast-provenance.md) | Row-bound forecast provenance and prediction usability | Proposed |

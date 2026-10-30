@@ -43,7 +43,7 @@ make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
 | **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented at the read seam (D4 = A)**; writer drift still open | M |
 | **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | Open | S–M |
 | **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | Open | S |
-| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)** | M–L |
+| **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Decided: persist (D1)**; standard drafted in [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md) (Proposed) | M–L |
 | **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | **Decided: bounded refit preload (D2)** | M |
 | **R6** | `devtools/preload.py` imports the private `seed_demo._configured_identities` | hygiene | P3 | Open | XS |
 | **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Decided: document + reset (D3)** | S |
@@ -329,7 +329,7 @@ non-test consumer reads `mean_accuracy` directly.
 
 ---
 
-### R4 — `/predictions` is not usable by contract (decided: persist, D1)
+### R4 — `/predictions` is not usable by contract (decided: persist, D1; standard in ADR-0021)
 
 **Symptom.** Even with 5 real persisted predictions, `GET /predictions` reports
 `api_usability_status: "not_current_usable"` with
@@ -346,8 +346,12 @@ symbol, ticker` — no provenance or semantics fields.
 **Decision (owner, 2026-10-30): persist (option a).** The contract caveat below is
 part of the task, not an objection to it.
 
-**Precondition — the contract must be defined before the schema changes.** The
-read-API guide (`docs/user-guide/20260811-read-api.md:70`) states the current
+**Precondition satisfied:** [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md)
+defines the supported row-bound forecast proof (E1 artifact identity, E2 temporal
+validity, E3 contract compatibility, E4 decision semantics), the explicit
+non-provenance list, the per-`model_mode` semantics, and the derivation rules.
+Implementation is gated on that ADR's acceptance. The original constraint, for
+context — the read-API guide (`docs/user-guide/20260811-read-api.md:70`) states the
 standard explicitly: *"A model-version string, current schema number, filename, or
 current configuration is not provenance."* So persisting only the payload fields
 the writer already has (`model_version`, `threshold_used`, `horizon_days`,
@@ -362,9 +366,10 @@ establish direction today).
 
 **Specification.**
 
-1. **ADR first.** Define: the proof fields, their allowed sources, the freshness
-   rule, the semantics rule per `model_mode`, and the compatibility story for
-   existing rows (they stay `unknown` and visible, never backfilled by inference).
+1. **ADR first — done.** [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md)
+   defines the proof fields and their evidence classes, the explicit
+   non-provenance list, the freshness rule, the semantics rule per `model_mode`,
+   and the legacy story (rows stay `unknown` and visible, never backfilled).
 2. **Persist what the ADR admits.** The inference payload already carries most
    candidates (`model_trained_at`, `model_age_source`, `threshold_used`,
    `threshold_source`, `horizon_days`, `price_adjustment_version`,
