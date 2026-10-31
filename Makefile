@@ -1,10 +1,12 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload reset-lake
+.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload refit-preload reset-lake
 
 # Sessions written by `make preload` (bounded Gold feature backfill).
 DAYS ?= 60
+# As-of refit boundaries used by `make refit-preload` (bounded by MAX_REFITS=12).
+REFITS ?= 12
 # `DRY=1` makes `make reset-lake` list the artifact paths and write nothing.
 # Only 0 (destructive), 1 (dry run), and empty are accepted; anything else errors out.
 DRY ?= 0
@@ -21,6 +23,7 @@ help:
 	@echo "  format     - Format code (ruff)"
 	@echo "  check      - Run type checking (mypy)"
 	@echo "  preload    - Preload N consecutive Gold sessions of features + labels (DAYS=60)"
+	@echo "  refit-preload - Train as-of models at N boundaries and write historical predictions (REFITS=12, DAYS=60)"
 	@echo "  reset-lake - Remove synthetic lake artifacts before real ingestion (DRY=1 lists only)"
 	@echo "  clean      - Clean cache and temporary files"
 	@echo ""
@@ -217,6 +220,20 @@ preload:
 	@echo "⏳ Preloading $(DAYS) consecutive Gold sessions (features + label finalization)..."
 	uv run python -m equity_lake.devtools.preload --days $(DAYS)
 	@echo "✅ Gold features written. Predictions: uv run equity ml train --help"
+
+# Bounded per-date as-of refit preload for historical Platinum predictions
+# (handoff R5 / decision D2). Every boundary needs its own model trained before
+# its prediction dates, so the cost is one training per boundary (~15s measured
+# for the five default tickers) plus one inference call per session. Unvalidated
+# boundaries are skipped with the R3 message instead of predicting, and a planned
+# window that outlives the forecaster's model-age bound is refused before any
+# training. The helper refuses REFITS > 12 and DAYS > 500, and exits non-zero on
+# partial coverage (1) or refusal (2); make aborts on that exit code, so the echo
+# below never claims completeness.
+refit-preload:
+	@echo "⏳ Refit-preloading up to $(REFITS) as-of boundaries over $(DAYS) Gold sessions..."
+	uv run python -m equity_lake.devtools.refit_preload --days $(DAYS) --refits $(REFITS)
+	@echo "✅ Refit preload finished. Verify the report above: coverage covered/total, skipped boundaries, missing sessions."
 
 # Back to an empty lake before real ingestion (handoff R7 / decision D3). Destructive:
 # removes data/lake/{01_bronze,02_silver,03_gold,04_platinum/predictions} and data/models.

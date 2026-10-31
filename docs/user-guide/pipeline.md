@@ -209,6 +209,134 @@ defines meta-label semantics, so they remain `not_current_usable`. With a short
 history the honest outcome is still a trained model with no validation folds
 (`folds=0`). Do not hand-write prediction rows to make those fields look better.
 
+### Historical predictions: bounded as-of refits
+
+One pipeline run writes predictions for one date, from the models available as
+of that date. `PriceForecaster` refuses a model whose `refit_boundary` is after
+the inference date, so a window of *historical* prediction dates needs its own
+as-of model per refit boundary. `make refit-preload` drives that bounded loop
+oldest → newest: train as of the boundary, then run the pipeline ML stage for
+the sessions the boundary owns.
+
+```bash
+make refit-preload                     # 60 sessions, at most 12 boundaries
+make refit-preload DAYS=40 REFITS=6    # 40 sessions, ~one boundary per week
+uv run python -m equity_lake.devtools.refit_preload --days 60 --refits 12
+```
+
+`DAYS` and `REFITS` are not independent knobs: each boundary's model can only
+serve a bounded calendar span, so a long window needs proportionally more
+boundaries (see the plan-time refusal below).
+
+The cost is one training per boundary (≈15 s measured for the five default US
+tickers) plus one inference call per session, so the run is bounded: `--refits`
+accepts 1–12 (default 12) and `--days` keeps the shared 500-session bound from
+`make preload`. Sessions come from the stored Bronze bars through the same
+`observed_sessions` helper, not from a calendar.
+
+Boundaries are spread evenly over the window: with `m = min(refits, sessions)`
+boundaries, boundary `i` is session index `floor(i * (n - 1) / (m - 1))`, so the
+window's first and last session are always included. **With `--refits 1` the
+single boundary is the window's first session**, so that one model owns every
+session of the window (a last-session boundary would leave the rest
+unpredicted). Boundary `i` owns every session from its date up to the next
+boundary, which partitions the window without overlap. Flags:
+`--days` (60), `--refits` (12), `--tickers`, `--end`, `--lookback-days` (365
+calendar days before each boundary), `--train-window` (252), `--test-window`
+(21), `--embargo-window` (1), `--max-model-age-days` (7), and `--model-dir`. The
+validation windows are passed straight to `train_model` — they are never
+auto-shrunk — and the applied values appear in the report.
+
+#### The model-age ceiling, and why a plan can be refused
+
+`predict()` enforces an inclusive calendar-day age bound against the artifact's
+`refit_boundary` (`ml.forecasting.DEFAULT_MAX_MODEL_AGE_DAYS`, 7 days by
+default). That bound is what every persisted prediction row records as
+`model_max_age_days` next to `model_age_days`, and the read API's freshness
+verdict (`api_usability_status`) refuses a row whose age exceeds it — so it is
+persisted provenance, not a tuning knob. `--max-model-age-days` accepts
+`0..DEFAULT_MAX_MODEL_AGE_DAYS` and is passed to `train_model`; it can only
+**narrow** coverage, because a wider value would not be the bound the inference
+path verifies and records. Values outside the range are refused up front.
+
+Consequence: one boundary can only serve sessions whose calendar distance from
+it is within the bound — about a week of sessions at the default. The helper
+checks every planned window's span **before training or writing anything** and
+refuses a plan that cannot be covered, naming the boundary, its span, and what
+it would need:
+
+```text
+error: boundary 2026-03-22..2026-04-29 spans 38 days, above --max-model-age-days 7; use at least 6 refits
+for this window or raise --max-model-age-days (capped at 7 by the forecaster's trusted age policy);
+boundary 2026-03-22 owns 39 of 40 planned sessions
+error: boundary 2026-01-01..2026-01-23 spans 22 days, above --max-model-age-days 7; no evenly spread plan of at most
+12 refits covers this window (at this spread one boundary can own at most 7 calendar days, and the
+even-spread placement is the only one this run makes), so cover the window with several smaller --days
+preloads or raise --max-model-age-days (capped at 7 by the forecaster's trusted age policy)
+```
+
+The refit count in that message is the smallest one whose *evenly spread*
+placement fits the bound, so it is directly usable. `--days 40 --refits 2` is
+refused because its 2 boundaries sit on the window's first and last session,
+leaving a 39-session window; 6 refits cover a weekday-dense window of that shape
+(holiday-heavy calendars need slightly more, and the refusal message always
+names the count that fits this window). `--days 120 --refits 6` cannot be
+covered by any evenly spread plan inside the 12-boundary run bound, so it has to
+be split into several smaller `--days` runs (or the window shortened). Note this
+is a limit of the even-spread placement, not of the age bound: a gap-aware plan
+with more boundaries could cover a window whose calendar span is larger. Either way nothing is
+trained or written before the refusal.
+
+Persistence goes only through `run_prediction_job` (the pipeline ML stage), so
+backfilled rows carry the same [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md)
+forecast proof as live ones and every row satisfies `model_trained_at <= date`.
+The helper refuses a lake that differs from the write root: session reads and
+prediction writes must both observe `storage.delta.LAKE_DIR`, never a read-only
+redirect. Re-running the same command is idempotent: a fresh artifact for the
+boundary is reused (its validation verdict is read back from the artifact's
+`*.training_summary.json` sidecar), and the prediction upsert keys on
+`(market, mic, symbol, date)`, so row counts do not change.
+
+Validation honesty follows R3: after training a boundary the helper reads the
+training summary, and a boundary whose `validation_status` is not `verified` is
+**skipped** — its sessions get no predictions — with the reason recorded as
+`validation: unavailable (<reason>)`. If every boundary is skipped the run exits
+`2` and prints those reasons; it never produces predictions from an unvalidated
+model.
+
+Accounting is per session, not per boundary: a session counts as predicted only
+when `run_prediction_job` actually persisted its rows. Sessions that did not
+(for example `model_expired`, when an older artifact is reused for a date beyond
+the bound) appear in `missing` with their product-readable reason. Exit codes:
+`0` only on full coverage, `1` when any requested session is missing, `2` for a
+refused plan or an all-skipped run. `make refit-preload` aborts on either
+non-zero code, and its final echo points at the report instead of claiming
+completeness.
+
+A run prints a short human summary — with coverage as `covered/total` — followed
+by one JSON object. The shape below is a partial run: every boundary validated
+and predicted, but some sessions still persisted nothing (a runtime refusal such
+as `model_expired` from a reused artifact, which the plan-time check cannot see):
+
+```text
+{
+  "market": "us_equity", "days_requested": 40,
+  "sessions_requested": 40, "sessions_covered": 6, "sessions_missing": 34,
+  "coverage": {"covered": 6, "total": 40, "complete": false},
+  "window": {"start": "…", "end": "…"},
+  "tickers": ["…"], "model_mode": "v1_direction",
+  "max_model_age_days": 7, "lookback_days": 365,
+  "validation": {"mode": "purged_walk_forward", "train_window": 21, "test_window": 5, "embargo_window": 1},
+  "refits_requested": 2, "refits_applied": 2, "refits_skipped": 0,
+  "sessions_predicted": 6, "predictions_persisted": 6,
+  "boundaries": [
+    {"date": "…", "tickers_trained": ["…"], "validation_status": "verified", "reason": null,
+     "sessions": ["…"], "sessions_covered": 6, "predictions_persisted": 6,
+     "missing": [{"session": "…", "reason": "model_expired"}]}
+  ]
+}
+```
+
 ### Synthetic rows and returning to an empty lake
 
 A lake that was seeded or preloaded may hold synthetic rows alongside ingested
