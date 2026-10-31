@@ -13,6 +13,7 @@ import numpy as np
 import polars as pl
 import structlog
 
+from equity_lake.core.calendar import trading_days_between
 from equity_lake.core.paths import market_dir
 from equity_lake.devtools.seeding import (
     SAMPLE_TICKERS,
@@ -62,20 +63,28 @@ def _try_load_real_data(
 
     try:
         import duckdb
-
-        from equity_lake.storage.lake_reader import duckdb_scan_for
+        from deltalake import DeltaTable
 
         conn = duckdb.connect(":memory:")
-        # duckdb_scan_for auto-detects Delta vs hive-parquet, matching the real lake layout.
-        query = f"""
+        # No SQL text interpolation: the scan target is a bound parameter (or a
+        # relation built through the DuckDB API), and every row value below is a
+        # ``?`` parameter. This mirrors `lake_reader.create_market_views`.
+        if DeltaTable.is_deltatable(str(lake_dir)):
+            relation = conn.from_query("SELECT * FROM delta_scan(?)", params=[str(lake_dir)])
+        else:
+            relation = conn.read_parquet(str(lake_dir / "**" / "*.parquet"), hive_partitioning=True)
+        relation.create_view("sample_market_scan", replace=True)
+        result = conn.execute(
+            """
             SELECT *
-            FROM {duckdb_scan_for(lake_dir)}
+            FROM sample_market_scan
             WHERE ticker = ?
               AND date >= ?
               AND date <= ?
             ORDER BY date
-        """
-        result = conn.execute(query, [ticker, str(start_date), str(end_date)]).pl()
+            """,
+            [ticker, str(start_date), str(end_date)],
+        ).pl()
         conn.close()
         if result.is_empty():
             return None
@@ -186,13 +195,20 @@ def cmd_sample(
     else:
         logger.info("No real data found in lake — generating synthetic data")
 
-        # Limit to exactly `days` trading days
-        trading = trailing_business_days(days * 2)[-days:]
+        # Limit to exactly `days` trading days per market, using that market's own
+        # exchange calendar (ADR-0020): the weekday window is requested wider so
+        # filtering closures still yields `days` sessions — fewer if the window
+        # is short, in which case all of them are used. Intersection sessions:
+        # sample rows carry no MIC, so a mixed-venue market (hk_sg_equity) must
+        # only seed dates when EVERY venue trades, or a bar would claim a closed
+        # session for one of the two venues.
 
         # One RNG for the whole run so each market continues the same stream.
         rng = np.random.default_rng(seed)
         frames = []
         for market, ticker_list in (ticker_override or tickers_used).items():
+            window = trailing_business_days(days * 2)
+            trading = trading_days_between(market, window[0], window[-1])[-days:]
             profile = SAMPLE_PROFILES.get(market, _DEFAULT_SAMPLE_PROFILE)
             for t in ticker_list:
                 df = synthetic_ohlcv([t], trading, profile=profile, rng=rng)

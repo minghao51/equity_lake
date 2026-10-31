@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
+
 import pytest
 
 from equity_lake.devtools.seed_demo import DEMO_UNIVERSE, resolve_universe, seed_demo  # type: ignore[import-untyped]
 
 pytestmark = pytest.mark.slow
+
+_TABLE = "01_bronze/market_data/us_equity"
+# Venue-closed weekdays inside a rolling 2y seed window (observed Independence Day
+# 2026-07-03 and Labor Day 2026-09-07) — the dates R2/F11 found bars on.
+_KNOWN_CLOSURES = (date(2026, 7, 3), date(2026, 9, 7))
+
+
+def _seeded_dates(tmp_path: Path) -> list[date]:
+    """Seed a 2y single-ticker sample lake and return its distinct Bronze dates."""
+    from equity_lake.storage.delta import read_delta  # type: ignore[import-untyped]
+
+    seed_demo(years=2, tickers=["AAPL"], seed=17, lake_dir=tmp_path)
+    return sorted(set(read_delta(_TABLE, lake_dir=tmp_path)["date"].to_list()))
 
 
 def test_resolve_explicit_tickers_uppercased_and_filtered() -> None:
@@ -87,3 +103,65 @@ def test_seed_demo_is_idempotent(tmp_path) -> None:  # type: ignore[no-untyped-d
 def test_demo_universe_matches_config_size() -> None:
     # The built-in default and the config `demo` group are intentionally the same 50.
     assert len(DEMO_UNIVERSE) == 50
+
+
+# ---------------------------------------------------------------------------
+# Exchange calendar (R2/F11): a seeded lake never asserts a closed session
+# ---------------------------------------------------------------------------
+
+
+def test_seeded_dates_follow_exchange_calendar(tmp_path: Path) -> None:
+    from equity_lake.core.calendar import is_trading_day
+
+    dates = _seeded_dates(tmp_path)
+    # Calendar sanity for the known closures the defect used to seed.
+    assert [day for day in _KNOWN_CLOSURES if is_trading_day("us_equity", day)] == []
+    in_window = [day for day in _KNOWN_CLOSURES if dates[0] <= day <= dates[-1]]
+    assert in_window, f"the rolling 2y seed window {dates[0]}..{dates[-1]} must cover a known closure"
+    assert [day for day in dates if not is_trading_day("us_equity", day)] == []
+    assert set(in_window).isdisjoint(dates)
+
+
+def test_seeded_window_has_no_missing_sessions(tmp_path: Path) -> None:
+    from equity_lake.core.calendar import trading_days_between
+
+    dates = _seeded_dates(tmp_path)
+    # Nothing extra (closed sessions) and nothing missing: the seeded date set is
+    # exactly the exchange sessions of its own [min, max] window.
+    assert dates == trading_days_between("us_equity", dates[0], dates[-1])
+
+
+def test_label_chain_finalizes_on_next_open_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two consecutive seeded sessions straddling a closure finalize on the next OPEN session.
+
+    ADR-0014 defines the label horizon as the next **observed** session. A seeded
+    bar on a closed session made ``2026-07-02`` finalize against ``2026-07-03``
+    (observed Independence Day) and re-derived session lists disagreed with the
+    stored rows afterwards.
+    """
+    import polars as pl
+
+    from equity_lake.core.calendar import is_trading_day
+    from equity_lake.core.instruments import InstrumentKey
+    from equity_lake.features import run_feature_job  # type: ignore[import-untyped]
+    from equity_lake.features.labels import AVAILABILITY_COLUMN  # type: ignore[import-untyped]
+    from equity_lake.storage.delta import read_delta  # type: ignore[import-untyped]
+
+    closure = date(2026, 7, 3)
+    assert is_trading_day("us_equity", closure) is False
+    before, after = date(2026, 7, 2), date(2026, 7, 6)
+
+    seed_demo(years=2, tickers=["AAPL"], seed=13, lake_dir=tmp_path)
+    # Same scoped fixture as tests/unit/test_label_lifecycle.py: point the feature
+    # read/write seams at the seeded temporary lake.
+    for module in ("equity_lake.features.engineering", "equity_lake.features.labels", "equity_lake.storage.delta"):
+        monkeypatch.setattr(f"{module}.LAKE_DIR", tmp_path)
+
+    instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
+    for day in (before, after):
+        run_feature_job(tickers=["AAPL"], output_start_date=day, output_end_date=day, instruments=[instrument])
+
+    gold = read_delta("03_gold/features", lake_dir=tmp_path)
+    row = gold.filter(pl.col("date") == before)
+    assert row.height == 1
+    assert row[AVAILABILITY_COLUMN][0] == after

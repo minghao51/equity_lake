@@ -84,14 +84,24 @@ def create_market_views(
 
 
 def duckdb_scan_for(market_path: Path) -> str:
+    """Return a DuckDB scan expression for a Delta table or a hive Parquet tree.
+
+    The path is emitted as a SQL string literal, so it is escaped (single quotes
+    doubled) here — the one place every caller builds that literal. Callers must
+    still bind row values as ``?`` parameters; only the scan target is inlined,
+    because DuckDB table functions cannot take a bound identifier.
+    """
+    # SQL string-literal escaping (DuckDB/SQL standard): a quote in a path must not
+    # be able to close the literal and inject SQL into the caller's statement.
+    literal = str(market_path).replace("'", "''")
     try:
         from deltalake import DeltaTable
 
         if DeltaTable.is_deltatable(str(market_path)):
-            return f"delta_scan('{market_path}')"
+            return f"delta_scan('{literal}')"
     except (ImportError, OSError, ValueError):
         pass
-    return f"read_parquet('{market_path}/**/*.parquet', hive_partitioning=1)"
+    return f"read_parquet('{literal}/**/*.parquet', hive_partitioning=1)"
 
 
 def _dividend_factor_steps(prices: pl.DataFrame, dividends: pl.DataFrame) -> pl.DataFrame:

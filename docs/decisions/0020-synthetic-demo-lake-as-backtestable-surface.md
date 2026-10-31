@@ -67,6 +67,13 @@ run, and a demo→arena seam with no end-to-end test (unit tests all injected
 - Point-in-time gates keep their strength: this ADR adds a legitimate synthetic
   source, it does not weaken the requirement that coverage be source-scoped and
   fresh. Real-vendor coverage continues to be established only by real ingests.
+- Seeded sessions follow the exchange calendar: synthetic bars never claim a
+  closed session, so the ADR-0014 next-session horizon and every calendar-aware
+  consumer agree with the stored rows. `demo seed` filters through
+  `core.calendar.is_trading_day` for its single-venue market; `bootstrap sample`
+  seeds a mixed-venue market (`hk_sg_equity`) only on intersection sessions
+  (`core.calendar.trading_days_between`), because its rows carry no MIC and a
+  union-session date would place a bar on a closure for one of the venues.
 - Feature/prediction preloading is *not* covered here. Labels require the
   immediately preceding session to already exist in Gold (ADR-0014). Finalizing
   on dates whose preceding session is absent is now a pending no-op rather than

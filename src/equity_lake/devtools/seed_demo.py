@@ -23,6 +23,7 @@ from typing import Any, cast
 import polars as pl
 import structlog
 
+from equity_lake.core.calendar import is_trading_day
 from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey
 from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, configured_identities, synthetic_ohlcv, trailing_business_days
 
@@ -230,7 +231,12 @@ def seed_demo(
             source = "real"
 
     if df is None:
-        days = trailing_business_days(int(years * 365))
+        # Sessions, not weekdays (ADR-0020): trailing_business_days stays a pure
+        # Mon–Fri window helper, so no other consumer changes here. The seed's own
+        # window is a calendar span ending yesterday, so it is filtered in place:
+        # the span is unchanged and only the date set shrinks — a seed never
+        # asserts a bar on a session the venue was closed.
+        days = [day for day in trailing_business_days(int(years * 365)) if is_trading_day(US_EQUITY_SOURCE_MARKET, day)]
         df = synthetic_ohlcv(universe, days, profile=DEMO_PROFILE, seed=seed)
         logger.info("seed_demo_synthetic", tickers=len(universe), days=len(days))
 
