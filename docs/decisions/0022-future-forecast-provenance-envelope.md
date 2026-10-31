@@ -1,10 +1,11 @@
 # ADR-0022: Future Forecast-Provenance Envelope Versions
 
-**Status:** Proposed (2026-10-31) — owner acceptance pending. Codifies the
-behaviour that already ships for `forecast_provenance_version >
-FORECAST_PROVENANCE_VERSION` and fixes the write/read obligations and the version-2
-evolution procedure. No code change is implied by acceptance; ADR-0021 remains
-immutable and in force for version-1 rows.
+**Status:** Accepted (2026-10-31). Codifies the behaviour that already ships for
+`forecast_provenance_version > FORECAST_PROVENANCE_VERSION`: a recognised-but-unsupported
+envelope stays visible and non-usable with its version printed verbatim, the write
+boundary refuses to emit a version it cannot validate, and version 2 follows the
+amend-not-edit procedure below. No code change is implied by acceptance; ADR-0021
+remains immutable and in force for version-1 rows.
 
 **Recorded:** 2026-10-31
 

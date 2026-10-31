@@ -10,6 +10,7 @@ from typing import Any
 
 import polars as pl
 import pytest
+import structlog
 from structlog.testing import capture_logs
 
 from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
@@ -105,6 +106,14 @@ def test_run_prediction_job_clips_and_logs_out_of_bounds_probability(monkeypatch
         return True
 
     monkeypatch.setattr("equity_lake.storage.delta.merge_delta", _capture_merge)
+
+    # ``equity_lake.ml``'s module logger may already be bound to a structured
+    # (stdlib-routed) configuration by an earlier test in a serial run, and
+    # ``structlog.configure`` (which ``capture_logs`` performs) cannot rebind a
+    # logger that ``cache_logger_on_first_use`` already froze. Bind a fresh
+    # proxy for the duration so this test asserts the emitted event, not the
+    # global logging state left by whatever ran before it.
+    monkeypatch.setattr("equity_lake.ml.logger", structlog.get_logger("equity_lake.ml.test"))
 
     with capture_logs() as logs:
         success, _results = run_prediction_job(
