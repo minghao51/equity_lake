@@ -28,11 +28,19 @@ def _format_training_summary(summary: dict[str, object]) -> str:
                 f"Train rows: {summary['train_rows']}",
                 f"Validation rows: {summary['validation_rows']}",
                 f"Validation folds: {summary['validation_fold_count']}",
-                f"Mean accuracy: {float(summary['mean_accuracy']):.3f}",  # type: ignore[arg-type]
-                f"Mean precision: {float(summary['mean_precision']):.3f}",  # type: ignore[arg-type]
-                f"Mean recall: {float(summary['mean_recall']):.3f}",  # type: ignore[arg-type]
             ]
         )
+        if summary.get("validation_status") == "verified":
+            lines.extend(
+                [
+                    f"Mean accuracy: {float(summary['mean_accuracy']):.3f}",  # type: ignore[arg-type]
+                    f"Mean precision: {float(summary['mean_precision']):.3f}",  # type: ignore[arg-type]
+                    f"Mean recall: {float(summary['mean_recall']):.3f}",  # type: ignore[arg-type]
+                ]
+            )
+        else:
+            reason = summary.get("validation_unavailable_reason") or f"{summary.get('validation_fold_count')} validation folds"
+            lines.append(f"validation: unavailable ({reason})")
         barrier_settings = summary.get("barrier_settings")
         if isinstance(barrier_settings, dict):
             lines.extend(
@@ -93,7 +101,11 @@ def forecast(
     elif mode == "predict":
         prediction_date = date.fromisoformat(date_str) if date_str else date.today()
         result = forecaster.predict(ticker, prediction_date)
-        typer.echo(json.dumps(result, indent=2, default=str))
+        typer.secho(
+            "not persisted: this command only prints; the 'equity pipeline' ML stage writes 04_platinum/predictions",
+            err=True,
+        )
+        typer.echo(json.dumps({**result, "persisted": False}, indent=2, default=str))
 
     elif mode == "backtest":
         default_start, _default_end = _default_window(_FORECAST_LOOKBACK_DAYS)

@@ -509,6 +509,7 @@ class PriceForecaster:
             training_start=training_start,
             train_rows=X_train.height,
             val_rows=X_val.height,
+            labelled_rows=df_clean.height,
             validation_metrics=metrics,
         )
         self._save_training_summary(model_path, summary)
@@ -1539,8 +1540,11 @@ class PriceForecaster:
         training_start: date,
         train_rows: int,
         val_rows: int,
+        labelled_rows: int,
         validation_metrics: dict[str, Any] | None,
     ) -> dict[str, Any]:
+        metrics = validation_metrics or {}
+        fold_count = int(metrics.get("folds", 0))
         summary: dict[str, Any] = {
             **instrument.as_columns(),
             "identity_schema_version": IDENTITY_SCHEMA_VERSION,
@@ -1551,12 +1555,26 @@ class PriceForecaster:
             "model_file": model_path.name,
             "train_rows": train_rows,
             "validation_rows": val_rows,
-            "validation_fold_count": int((validation_metrics or {}).get("folds", 0)),
-            "mean_accuracy": float((validation_metrics or {}).get("mean_accuracy", 0.0)),
-            "mean_precision": float((validation_metrics or {}).get("mean_precision", 0.0)),
-            "mean_recall": float((validation_metrics or {}).get("mean_recall", 0.0)),
+            "validation_fold_count": fold_count,
+            # "Trained" (a real artifact exists) and "validated" (purged
+            # walk-forward metrics exist) are separate claims. Without a fold
+            # there is no measurement, so the metric keys stay absent rather
+            # than defaulting to a fake 0.0.
             "status": "trained",
         }
+        if fold_count > 0:
+            summary["validation_status"] = "verified"
+            summary["validation_unavailable_reason"] = None
+            summary["mean_accuracy"] = float(metrics["mean_accuracy"])
+            summary["mean_precision"] = float(metrics["mean_precision"])
+            summary["mean_recall"] = float(metrics["mean_recall"])
+        else:
+            summary["validation_status"] = "unavailable"
+            if validation_metrics is None:
+                # Validation was never attempted; do not claim a fold failed to fit.
+                summary["validation_unavailable_reason"] = "validation was not requested for this training run"
+            else:
+                summary["validation_unavailable_reason"] = f"no purged walk-forward fold fits in {labelled_rows} labelled rows"
         if self.model_mode == "v2_meta_label":
             summary["barrier_settings"] = {
                 "vertical_barrier_days": int(self.v2_settings["vertical_barrier_days"]),

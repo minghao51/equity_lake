@@ -139,7 +139,9 @@ def run_purged_walk_forward_validation(
         fold_recalls.append(float(recall_score(y_te, preds, zero_division=cast(Any, 0))))
 
     if not fold_accuracies:
-        return {"folds": 0, "mean_accuracy": 0.0, "mean_precision": 0.0, "mean_recall": 0.0}
+        # No purged fold fits: the absence of a measurement must not be rendered
+        # as a measured zero. Callers withhold the metric keys instead.
+        return {"folds": 0}
 
     return {
         "folds": len(fold_accuracies),

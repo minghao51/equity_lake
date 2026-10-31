@@ -92,6 +92,18 @@ def _make_training_frame(ticker: str, periods: int = 80) -> pd.DataFrame:
     )
 
 
+def _install_training_frame(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point training at the synthetic fixture instead of the lake."""
+
+    def _fake_load_features(
+        self: object, ticker: str | InstrumentKey, start_date: date, end_date: date, *, require_available_by: date | None = None
+    ) -> pd.DataFrame:
+        return _make_training_frame(str(ticker))
+
+    monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
+    monkeypatch.setattr(PriceForecaster, "load_features", _fake_load_features)
+
+
 def test_backtest_handles_null_target_on_final_row(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A1 (handoff 08): the DAG target (``next_day_return > 0`` via shift(-1)) is
     null on the final features row; ``backtest()`` must drop null-target rows
@@ -350,10 +362,72 @@ def test_train_model_writes_validation_metadata(monkeypatch: pytest.MonkeyPatch,
         summary = forecaster.load_training_summary("AAPL", date(2024, 4, 30))
         assert summary is not None
         assert summary["validation_fold_count"] >= 0
+        # R3: a fold count without a measurement must not become a zero metric.
+        if summary["validation_fold_count"] == 0:
+            assert summary["validation_status"] == "unavailable"
+            assert summary["validation_unavailable_reason"]
+            assert "mean_accuracy" not in summary
+        else:
+            assert summary["validation_status"] == "verified"
+            assert 0.0 <= float(summary["mean_accuracy"]) <= 1.0
         instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
         summary_name = f"instrument-v{IDENTITY_SCHEMA_VERSION}-{instrument.artifact_token}_xgboost_v1_direction_2024-04-30.training_summary.json"
         summary_path = tmp_path / summary_name
         assert summary_path.exists()
+    finally:
+        forecaster.close()
+
+
+def test_train_model_without_validation_does_not_blame_the_folds(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R3: ``validate=False`` must say validation was not requested, not that no fold fits."""
+    _install_training_frame(monkeypatch)
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.train_model(
+            "AAPL",
+            date(2024, 1, 1),
+            date(2024, 4, 30),
+            validate=False,
+            max_model_age_days=0,
+            train_window=30,
+            test_window=10,
+            embargo_window=2,
+        )
+
+        summary = forecaster.last_training_summary()
+        assert summary is not None
+        assert summary["status"] == "trained"
+        assert summary["validation_status"] == "unavailable"
+        assert "not requested" in summary["validation_unavailable_reason"]
+        assert "fold fits" not in summary["validation_unavailable_reason"]
+        assert "mean_accuracy" not in summary
+    finally:
+        forecaster.close()
+
+
+def test_train_model_zero_fold_validation_blames_the_window(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """R3: a real validation run that fits no purged fold reports the fold, not a 0.000 metric."""
+    _install_training_frame(monkeypatch)
+    forecaster = PriceForecaster(model_dir=str(tmp_path))
+    try:
+        forecaster.train_model(
+            "AAPL",
+            date(2024, 1, 1),
+            date(2024, 4, 30),
+            validate=True,
+            max_model_age_days=0,
+            # 79 labelled rows (one null target dropped) cannot hold a 252-row training window.
+            train_window=252,
+            test_window=10,
+            embargo_window=2,
+        )
+
+        summary = forecaster.last_training_summary()
+        assert summary is not None
+        assert summary["validation_fold_count"] == 0
+        assert summary["validation_status"] == "unavailable"
+        assert summary["validation_unavailable_reason"] == "no purged walk-forward fold fits in 79 labelled rows"
+        assert "mean_accuracy" not in summary
     finally:
         forecaster.close()
 

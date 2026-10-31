@@ -1,5 +1,6 @@
 """Unit tests for the unified CLI (__main__.py)."""
 
+import json
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -522,6 +523,8 @@ class TestNativeCommands:
                     "train_rows": 50,
                     "validation_rows": 10,
                     "validation_fold_count": 2,
+                    "validation_status": "verified",
+                    "validation_unavailable_reason": None,
                     "mean_accuracy": 0.61,
                     "mean_precision": 0.58,
                     "mean_recall": 0.63,
@@ -558,6 +561,105 @@ class TestNativeCommands:
         assert "Forecast training complete for AAPL" in result.stdout
         assert "Mean accuracy: 0.610" in result.stdout
         assert "Meta-label threshold: 0.55" in result.stdout
+
+    def test_ml_train_unavailable_validation_omits_metrics(self) -> None:
+        """R3: a trained-but-unvalidated summary prints no fake ``acc=0.000``."""
+
+        class FakeForecaster:
+            def __init__(
+                self,
+                model_dir: str | None = None,
+                model_mode: str = "v1_direction",
+                backend: str = "xgboost",
+                candidate_strategies: list[dict[str, Any]] | None = None,
+            ) -> None:
+                self.model_dir = model_dir
+                self.model_mode = model_mode
+                assert backend == "xgboost"
+                assert candidate_strategies
+
+            def train_model(self, ticker: str, start_date: date, end_date: date, tune_hyperparams: bool = False, validate: bool = True) -> None:
+                assert ticker == "AAPL"
+                assert validate is True
+
+            def last_training_summary(self) -> dict[str, Any]:
+                return {
+                    "ticker": "AAPL",
+                    "trained_on": "2024-02-01",
+                    "model_mode": "v1_direction",
+                    "model_file": "AAPL_xgboost_2024-02-01.pkl",
+                    "status": "trained",
+                    "train_rows": 40,
+                    "validation_rows": 10,
+                    "validation_fold_count": 0,
+                    "validation_status": "unavailable",
+                    "validation_unavailable_reason": "no purged walk-forward fold fits in 60 labelled rows",
+                }
+
+            def close(self) -> None:
+                return None
+
+        with patch("equity_lake.ml.forecasting.PriceForecaster", FakeForecaster):
+            result = runner.invoke(
+                app,
+                ["ml", "train", "--ticker", "AAPL", "--start", "2024-01-01", "--end", "2024-02-01"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "status: trained" in result.stdout
+        assert "acc=" not in result.stdout
+        assert "folds=" not in result.stdout
+        assert "validation: unavailable (no purged walk-forward fold fits in 60 labelled rows)" in result.stdout
+
+    def test_forecast_predict_reports_not_persisted_and_writes_nothing(self) -> None:
+        """R3: ``forecast --mode predict`` prints, but never persists predictions."""
+        import pyarrow.parquet as pq
+
+        from equity_lake.core.paths import PLATINUM_DIR
+
+        predictions_dir = PLATINUM_DIR / "predictions"
+
+        def _prediction_row_count() -> int:
+            if not predictions_dir.exists():
+                return 0
+            return sum(pq.ParquetFile(path).metadata.num_rows for path in predictions_dir.rglob("*.parquet"))
+
+        class FakeForecaster:
+            def __init__(
+                self,
+                model_dir: str | None = None,
+                model_mode: str = "v1_direction",
+                candidate_strategies: list[dict[str, Any]] | None = None,
+            ) -> None:
+                assert candidate_strategies
+
+            def predict(self, ticker: str, prediction_date: date) -> dict[str, Any]:
+                assert ticker == "AAPL"
+                assert prediction_date == date(2024, 2, 1)
+                return {
+                    "market": "us_equity",
+                    "mic": "XNAS",
+                    "symbol": "AAPL",
+                    "ticker": "AAPL",
+                    "date": str(prediction_date),
+                    "prediction": 1,
+                    "probability": 0.7,
+                    "model_mode": "v1_direction",
+                    "model_version": "AAPL_xgboost_2024-01-31",
+                }
+
+            def close(self) -> None:
+                return None
+
+        before = _prediction_row_count()
+        with patch("equity_lake.ml.forecasting.PriceForecaster", FakeForecaster):
+            result = runner.invoke(app, ["forecast", "--mode", "predict", "--ticker", "AAPL", "--date", "2024-02-01"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["persisted"] is False
+        assert "equity pipeline" in result.stderr
+        assert _prediction_row_count() == before
 
 
 class TestIngestFailureContract:

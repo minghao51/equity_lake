@@ -249,9 +249,12 @@ def ml_train(
     summary = forecaster.last_training_summary()
     if summary:
         typer.echo(f"  status: {summary.get('status')} | model: {summary.get('model_file')}")
-        if summary.get("status") == "trained":
+        if summary.get("validation_status") == "verified":
             typer.echo(
                 f"  folds={summary.get('validation_fold_count')} "
-                f"acc={float(summary.get('mean_accuracy', 0.0)):.3f} "
-                f"prec={float(summary.get('mean_precision', 0.0)):.3f}",
+                f"acc={float(summary['mean_accuracy']):.3f} "
+                f"prec={float(summary['mean_precision']):.3f}",
             )
+        elif summary.get("status") == "trained":
+            reason = summary.get("validation_unavailable_reason") or f"{summary.get('validation_fold_count')} validation folds"
+            typer.echo(f"  validation: unavailable ({reason})")

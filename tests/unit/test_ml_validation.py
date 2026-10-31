@@ -103,6 +103,23 @@ def test_splitter_excludes_pending_and_labels_after_decision_cutoff() -> None:
         assert maturity <= dates[7]
 
 
+def test_run_purged_walk_forward_validation_withholds_metrics_when_no_fold_fits() -> None:
+    """No purged fold fits: absence of a measurement is not a measured zero."""
+    X = pd.DataFrame({"x": range(6)})
+    y = pl.Series("target", [0, 1, 0, 1, 0, 1])
+
+    metrics = run_purged_walk_forward_validation(
+        X=X,
+        y=y,
+        train_window=30,
+        test_window=10,
+        embargo_window=2,
+        label_horizon_days=3,
+    )
+
+    assert metrics == {"folds": 0}
+
+
 def test_run_purged_walk_forward_validation_returns_fold_metrics() -> None:
     X = pd.DataFrame({"x": range(100), "y": [value % 3 for value in range(100)]})
     y = pl.Series("target", [value % 2 for value in range(100)])
