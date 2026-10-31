@@ -211,7 +211,7 @@ def _prediction_row(
         "probability": 0.6,
         "model_mode": "v1_direction",
         "model_version": "artifact-token-is-not-proof",
-        "feature_schema_version": 7,
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
         **overrides,
     }
 

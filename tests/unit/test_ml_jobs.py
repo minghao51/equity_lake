@@ -15,6 +15,7 @@ from structlog.testing import capture_logs
 from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentKey,
 )
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
 from equity_lake.ml import run_prediction_job, validate_predictions  # type: ignore[import-untyped]
 
 
@@ -208,7 +209,7 @@ def test_run_prediction_job_persists_known_training_schema(monkeypatch: pytest.M
     class _KnownSchemaForecaster(_FakeForecaster):
         def predict(self, *, ticker: str | InstrumentKey, date: date) -> dict[str, Any]:
             result = super().predict(ticker=ticker, date=date)
-            result["feature_schema_version"] = 7
+            result["feature_schema_version"] = FEATURE_SCHEMA_VERSION
             return result
 
     fake_module = ModuleType("equity_lake.ml.forecasting")
@@ -225,7 +226,7 @@ def test_run_prediction_job_persists_known_training_schema(monkeypatch: pytest.M
     success, _results = run_prediction_job(trading_date=date(2024, 1, 2), tickers=["AAPL"])
 
     assert success is True
-    assert captured["predictions"]["feature_schema_version"].to_list() == [7]
+    assert captured["predictions"]["feature_schema_version"].to_list() == [FEATURE_SCHEMA_VERSION]
     assert captured["predictions"].schema["feature_schema_version"] == pl.Int8
 
 
