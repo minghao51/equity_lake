@@ -63,7 +63,7 @@ rerun for this update and are not production-data-integrity proof.
 - [developer/architecture/](developer/architecture/) for system design and subsystem docs
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
-- [handoffs/](handoffs/) for task handoffs and next-agent specifications (start with [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) for the open findings and remaining issues; [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) records the closed demo-preload and audit work)
+- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md)** for the open findings and remaining issues (its §8 is the next-thread brief); [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records the completed ADR-0021 work and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload and audit work
 - [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
 - [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts

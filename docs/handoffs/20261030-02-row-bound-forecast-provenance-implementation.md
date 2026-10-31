@@ -240,3 +240,31 @@ curl -s 'http://127.0.0.1:8000/predictions?ticker=AAPL&limit=1' | python -c \
 - **Future envelope version** reported as `unknown` (see the ADR gap above).
 - **Docs:** the stale `not_current_usable` claim in 20261029-01 §8.4 is corrected,
   and the read-API guide documents the unsupported-future-version behaviour.
+
+## 8. Carried forward
+
+R4 is closed. The remaining work in this series is tracked in the
+[20261030-01 register](20261030-01-postpreload-findings-and-remaining-issues.md) §3
+and sequenced in its §8 (start there): **R3 → R6 → R8 → R11 → R2 → R9 → R5 → R7 → R10**.
+
+Two carry-overs belong specifically to this change and are worth folding into R5:
+
+1. **R11 — end-to-end proof test.** The writer round-trip stops at
+   `validate_predictions` and the API tests build their own rows, so a column-name
+   drift between writer and reader would pass both suites. Add one test that writes
+   through `run_prediction_job`, reads the table back, and annotates through
+   `deps.list_predictions`, asserting `current_usable`.
+2. **`feature_schema_version: 7` hardcoded** in one `tests/unit/test_api.py` fixture
+   while the neighbouring helper uses `FEATURE_SCHEMA_VERSION` — align it before the
+   next schema bump turns it into a failing surprise.
+
+Verified state at handoff:
+
+```text
+uv run pytest -n auto        → 1666 passed, 17 skipped, 0 failed
+uv run ruff check .          → All checks passed
+uv run ruff format --check . → 314 files already formatted
+uv run mypy                  → Success: no issues found in 172 source files
+uv run equity catalog-generate → no diff
+GET /predictions?ticker=AAPL → valid | established | current_usable | []
+```
