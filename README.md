@@ -7,7 +7,7 @@
 
 🔗 **Live demo (coming)** — for now, walk the [Strategy Lab notebook](notebooks/11-strategy-lab.ipynb).
 
-### The showcase path (~2 minutes, fully offline)
+## The showcase path (~2 minutes, fully offline)
 
 ```bash
 make showcase        # seed the sample lake, then run the arena against it

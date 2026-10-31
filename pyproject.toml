@@ -186,6 +186,15 @@ line-ending = "auto"
 [tool.ruff.lint.isort]
 known-first-party = ["equity_lake", "tests", "data"]
 
+[tool.pymarkdown]
+# MD033 (no-inline-html) stays enabled repo-wide; pymarkdown has no per-path
+# configuration, so this permit is deliberately narrow. It covers only the
+# elements the README's collapsible "How to read this repo" block needs (plus
+# the rule's own default comment/CDATA/DOCTYPE exemptions), and any other inline
+# HTML still fails `make lint-md`.
+[tool.pymarkdown.plugins.md033]
+allowed_elements = "!--,![CDATA[,!DOCTYPE,details,summary,b"
+
 [tool.mypy]
 # Bare `uv run mypy` must check the same tree as `uv run mypy src` (Makefile:check
 # and pre-commit pass the target explicitly; AGENTS.md documents the bare form).

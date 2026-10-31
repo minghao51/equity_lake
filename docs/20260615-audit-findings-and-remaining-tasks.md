@@ -38,6 +38,7 @@ in commit `c9e1c34`. Below is what was fixed and what remains.
 
 Both processors are ~85% structurally identical (`__init__`, `process_batch`,
 `process_all`, `_to_silver_df`, `run_*` wrapper). They differ only in:
+
 - System prompt text
 - Pydantic models (`ArticleExtraction` vs `SECSectionExtraction`)
 - Fallback logic
