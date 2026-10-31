@@ -37,6 +37,32 @@ flowchart LR
     P2 --> P3["Phase 3: hosted<br/>Findings surface"]
 ```
 
+### Synthetic rows in the local lake
+
+The canonical lake (`data/lake/`) may hold synthetic rows produced by the demo
+and preload workflows, not only vendor ingestion. Two markers that already exist
+make that visible, and `uv run equity doctor` reports them under
+`synthetic_provenance`:
+
+- `02_silver/corporate_action_coverage` rows carry `source = synthetic_demo_seed`;
+- `03_gold/features` rows carry `action_coverage_source = synthetic_demo_seed`.
+
+Bronze price rows are **not** distinguishable: they carry
+`identity_provenance = current_ticker_config`, the same label a real
+config-resolved ingestion writes. For that reason `doctor` reports `synthetic`,
+`empty`, or `unknown` — never `real` — when it cannot prove real ingestion.
+
+Before real ingestion, return to an empty lake with the supported reset target:
+
+```bash
+make reset-lake DRY=1   # lists data/lake/{01_bronze,02_silver,03_gold,04_platinum/predictions} and data/models
+make reset-lake         # destructive: asks for confirmation, refuses unless the lake is synthetic or empty
+```
+
+`make reset-lake` calls `uv run python -m equity_lake.devtools.reset_lake`
+(`--dry-run`, `--yes` for non-interactive use); nothing else removes the
+synthetic artifacts deterministically.
+
 <details><summary><b>How to read this repo</b></summary>
 
 The data platform below is the **supporting credential**; the **findings are the

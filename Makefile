@@ -1,10 +1,13 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload
+.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload reset-lake
 
 # Sessions written by `make preload` (bounded Gold feature backfill).
 DAYS ?= 60
+# `DRY=1` makes `make reset-lake` list the artifact paths and write nothing.
+# Only 0 (destructive), 1 (dry run), and empty are accepted; anything else errors out.
+DRY ?= 0
 
 # Default target
 help:
@@ -18,6 +21,7 @@ help:
 	@echo "  format     - Format code (ruff)"
 	@echo "  check      - Run type checking (mypy)"
 	@echo "  preload    - Preload N consecutive Gold sessions of features + labels (DAYS=60)"
+	@echo "  reset-lake - Remove synthetic lake artifacts before real ingestion (DRY=1 lists only)"
 	@echo "  clean      - Clean cache and temporary files"
 	@echo ""
 	@echo "Data Pipeline Commands:"
@@ -213,6 +217,20 @@ preload:
 	@echo "⏳ Preloading $(DAYS) consecutive Gold sessions (features + label finalization)..."
 	uv run python -m equity_lake.devtools.preload --days $(DAYS)
 	@echo "✅ Gold features written. Predictions: uv run equity ml train --help"
+
+# Back to an empty lake before real ingestion (handoff R7 / decision D3). Destructive:
+# removes data/lake/{01_bronze,02_silver,03_gold,04_platinum/predictions} and data/models.
+# `DRY=1` maps to `--dry-run`; any value outside {0,1,empty} is rejected by the recipe
+# before the helper can run, so a typo (`DRY=2`, `DRY=yes`) can never silently take the
+# destructive form. The guard rides on the echo line so shellcheck still parses the
+# recipe as shell (a line starting with `@if` is not an `if` to a shell parser).
+RESET_ARGS := $(subst 1,--dry-run,$(filter 1,$(DRY)))
+reset-lake:
+	@echo "🧹 Resetting local lake artifacts (DRY=$(DRY))..."; \
+	if [ -n "$(DRY)" ] && [ "$(DRY)" != "0" ] && [ "$(DRY)" != "1" ]; then \
+		echo "error: DRY must be 0, 1, or empty (got '$(DRY)'); DRY=1 lists only" >&2; exit 2; \
+	fi
+	uv run python -m equity_lake.devtools.reset_lake $(RESET_ARGS)
 
 # Portfolio showcase: seed the demo lake (offline-safe, synthetic by default)
 demo:

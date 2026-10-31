@@ -51,6 +51,13 @@ orders:
 uv run equity demo seed
 ```
 
+Seeding or preloading the canonical lake (`data/lake/`) leaves synthetic rows in
+the tables real ingestion writes, and Bronze rows are not distinguishable from
+real ingestion (`identity_provenance = current_ticker_config` is the same label).
+`uv run equity doctor` reports the existing Silver/Gold coverage markers under
+`synthetic_provenance`, and `make reset-lake` (with `make reset-lake DRY=1` to
+list only) is the supported way back to an empty lake before real ingestion.
+
 This quickstart intentionally contains no live-ingestion or deployment command.
 Use provider-fetching and production workflows only after separate owner
 authorization and review of their explicit scope.

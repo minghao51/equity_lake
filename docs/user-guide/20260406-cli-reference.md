@@ -31,7 +31,23 @@ not write, infer, or backfill. The report also carries a `storage_schema`
 observation per watched price table plus `03_gold/features` and
 `04_platinum/predictions`: it reads Parquet footers only (no data pages) and
 reports string columns stored as Arrow `string_view` (`drifted`), which merge
-rewrites introduce and which readers filter in Polars instead of pushing down. Observed dates are not a configured freshness
+rewrites introduce and which readers filter in Polars instead of pushing down. A
+`synthetic_provenance` observation answers "is this lake synthetic?" from markers
+that already exist: `02_silver/corporate_action_coverage.source` and
+`03_gold/features.action_coverage_source` equal to `synthetic_demo_seed`, with
+per-table row/mark counts and the earliest/latest affected date. It also counts rows in
+every other Delta dataset under the reset targets (`01_bronze`, `02_silver`,
+`03_gold`, `04_platinum/predictions` — any directory containing a `_delta_log`),
+each reported as its own `tables` entry (capped at 50, with `tables_truncated`),
+so `empty` means no rows in any Delta dataset the reset would delete; `data/models`
+holds derived artifacts, not rows, and is not part of that judgement. Its `state` is
+`synthetic` (markers present, which wins even when unmarked datasets coexist), `empty`,
+or `unknown` (data without a marker — including a Bronze-only lake left mid-pipeline,
+or rows only in an unenumerated table — or a table that cannot be read). It never
+reports `real`, because
+Bronze rows carry `identity_provenance = current_ticker_config`, the same label a
+real config-resolved ingestion writes. `make reset-lake` uses that state as its
+guard. Observed dates are not a configured freshness
 policy. `signal history --date YYYY-MM-DD --limit N` reads existing Delta or
 legacy Parquet history without migration. Both history options are required.
 See the [private tracking guide](20261016-private-tracking-preview.md) for the
@@ -708,6 +724,14 @@ uv run equity demo seed --dry-run
 uv run equity demo seed --lake data/lake --overwrite-production-lake   # destructive, logged
 uv run equity demo seed --years 5                                     # then: arena run --lake data/sample
 ```
+
+Seeding or preloading the canonical lake (`data/lake/`) leaves synthetic rows in
+the same tables real ingestion uses. Bronze rows are not distinguishable
+(`identity_provenance = current_ticker_config`); only the Silver coverage
+`source` and Gold `action_coverage_source` markers are. `uv run equity doctor`
+reports them under `synthetic_provenance`, and `make reset-lake` (`DRY=1` lists,
+the default removes with confirmation) is the supported way back to an empty lake
+before real ingestion.
 
 ### `equity api serve`
 

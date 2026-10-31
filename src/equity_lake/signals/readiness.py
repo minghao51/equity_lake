@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import stat
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
@@ -19,7 +20,18 @@ import polars as pl
 from deltalake import DeltaTable
 
 from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey, normalize_identity_frame
-from equity_lake.core.paths import DATA_DIR, LAKE_DIR
+from equity_lake.core.paths import (
+    BRONZE_DIR,
+    BRONZE_MARKET_DATA_DIR,
+    DATA_DIR,
+    GOLD_DIR,
+    GOLD_FEATURES_DIR,
+    LAKE_DIR,
+    PLATINUM_PREDICTIONS_DIR,
+    PRICE_MARKETS,
+    SILVER_CORPORATE_ACTIONS_DIR,
+    SILVER_DIR,
+)
 from equity_lake.signals.models import Signal, SignalRecord, SignalScanReport
 from equity_lake.signals.tracking import load_private_watchlist
 from equity_lake.storage.delta import DeltaError, read_delta, string_view_columns
@@ -28,6 +40,42 @@ TableState = Literal["available", "missing", "corrupt"]
 HistoryState = Literal["available", "missing", "corrupt", "unknown_identity"]
 StorageDirectoryState = Literal["missing", "empty", "present", "corrupt"]
 StorageSchemaState = Literal["missing", "clean", "drifted", "unreadable"]
+SyntheticProvenanceState = Literal["synthetic", "real", "empty", "unknown"]
+SyntheticMarkState = Literal["marked", "unmarked", "empty", "missing", "unreadable"]
+
+#: The only sanctioned synthetic label for corporate-action coverage proofs
+#: (ADR-0020); config-resolved price identity uses ``current_ticker_config``, which
+#: is not unique to seeded rows. Do not add a third label without an ADR (R7/D3).
+SYNTHETIC_MARKER = "synthetic_demo_seed"
+#: Canonical Silver dataset written by ``corporate_action_coverage_table`` in
+#: ``ingestion/corporate_actions.py``; a contract test pins the two together.
+COVERAGE_TABLE_TEMPLATE = f"{SILVER_CORPORATE_ACTIONS_DIR.parent.name}/corporate_action_coverage/{{market}}"
+GOLD_FEATURES_TABLE = f"{GOLD_FEATURES_DIR.parent.name}/{GOLD_FEATURES_DIR.name}"
+#: Row-only surfaces observed so that ``empty`` cannot hide rows a reset would
+#: delete. Bronze price rows carry ``identity_provenance=current_ticker_config``
+#: (never a synthetic label); predictions carry no provenance column at all.
+BRONZE_PRICE_TABLE_TEMPLATE = f"{BRONZE_MARKET_DATA_DIR.parent.name}/market_data/{{market}}"
+PREDICTIONS_TABLE = f"{PLATINUM_PREDICTIONS_DIR.parent.name}/{PLATINUM_PREDICTIONS_DIR.name}"
+#: Lake-relative trees whose Delta datasets decide ``empty``: exactly the artifact
+#: trees ``devtools/reset_lake.py`` removes (``data/models`` is deliberately absent —
+#: it holds derived artifacts, not rows, so provenance cannot judge it).
+RESET_DATASET_TREES: tuple[str, ...] = (
+    BRONZE_DIR.name,
+    SILVER_DIR.name,
+    GOLD_DIR.name,
+    PLATINUM_PREDICTIONS_DIR.relative_to(LAKE_DIR).as_posix(),
+)
+#: Cap on reported ``tables`` entries: a deep lake must not flood the report. The
+#: row *totals* are always computed over every dataset, never over this slice.
+MAX_REPORTED_TABLES = 50
+#: Existing Bronze identity label, observed (not added) as the Bronze marker column.
+BRONZE_MARKER_COLUMN = "identity_provenance"
+#: The value that label already carries for both seeded and real ingestion.
+BRONZE_MARKER_VALUE = "current_ticker_config"
+_BRONZE_PROVENANCE = (
+    "01_bronze price rows carry identity_provenance=current_ticker_config, the same label a real "
+    "config-resolved ingestion writes; Bronze rows are not distinguishable from real ingestion."
+)
 _HISTORY_VALIDATION_SCOPE = (
     "date/ticker/signal_type keys and identity availability are checked before identity filters; "
     "payload fields are validated only for displayed rows; unknown legacy identities remain visible as unavailable "
@@ -140,6 +188,62 @@ class StorageSchemaObservation:
 
 
 @dataclass(frozen=True)
+class SyntheticTableMark:
+    """Rows and marker counts for one observed lake table.
+
+    ``column`` names the marker column consulted; it is ``""`` on a row-only surface
+    (``04_platinum/predictions``, and every generically discovered Delta dataset under
+    the reset targets), which has no marker and can only be ``empty`` or
+    ``unmarked``. ``earliest_marked_date``/``latest_marked_date`` are the affected
+    window of the marked rows (the coverage window for proofs, the session for
+    features), never an ingestion timestamp.
+    """
+
+    table: str
+    column: str
+    state: SyntheticMarkState
+    rows: int
+    marked_rows: int
+    earliest_marked_date: date | None
+    latest_marked_date: date | None
+
+
+@dataclass(frozen=True)
+class SyntheticProvenanceObservation:
+    """Read-only answer to "is the canonical lake synthetic?" (R7/D3, visibility only).
+
+    Derived only from markers that already exist: ``02_silver``
+    ``corporate_action_coverage.source`` and Gold ``features.action_coverage_source``
+    equal to :data:`SYNTHETIC_MARKER`. Nothing is written and no new provenance label
+    exists.
+
+    ``empty`` means no rows in *any* Delta dataset under the reset targets
+    (:data:`RESET_DATASET_TREES`): the marker tables and every dataset found by
+    walking those trees, not a hand-enumerated subset of them. A lake holding rows
+    only in ``02_silver/news_sentiment`` or ``01_bronze/macro`` is therefore never
+    ``empty``, and a reset can never delete rows this observation did not count.
+
+    ``real`` belongs to the state vocabulary so callers can refuse it, but this
+    observation never reports it: the markers cannot prove real ingestion. A lake
+    that holds rows and no marker is ``unknown``, because Bronze price rows are
+    indistinguishable from real config-resolved ingestion.
+
+    ``tables`` is capped at :data:`MAX_REPORTED_TABLES` entries (``tables_truncated``
+    says so); ``rows``/``marked_rows`` always total every observed dataset.
+    """
+
+    state: SyntheticProvenanceState
+    tables: list[SyntheticTableMark]
+    tables_truncated: bool
+    rows: int
+    marked_rows: int
+    earliest_marked_date: date | None
+    latest_marked_date: date | None
+    bronze_provenance: str
+    reason: str
+
+
+@dataclass(frozen=True)
 class TrackingReadinessReport:
     """A policy-neutral snapshot; it is not a health or trading decision."""
 
@@ -161,6 +265,7 @@ class TrackingReadinessReport:
     inference_status: str
     delivery_status: str
     storage_schema: list[StorageSchemaObservation]
+    synthetic_provenance: SyntheticProvenanceObservation
     signal_history_validation_scope: str = _HISTORY_VALIDATION_SCOPE
 
     def to_dict(self) -> dict[str, Any]:
@@ -565,6 +670,293 @@ def _observe_storage_schema(table: str, path: Path, *, lake_dir: Path | None = N
     )
 
 
+def _observe_synthetic_mark(
+    table: str,
+    path: Path,
+    *,
+    marker_column: str | None,
+    first_date_column: str,
+    last_date_column: str,
+    lake_dir: Path,
+) -> SyntheticTableMark:
+    """Count rows and marker rows in one table without writing, migrating, or inferring.
+
+    ``marker_column=None`` observes a row-only surface: rows are counted, no marker
+    is invented, and the surface can only be ``empty`` or ``unmarked``.
+    """
+
+    def mark(
+        state: SyntheticMarkState,
+        rows: int = 0,
+        marked_rows: int = 0,
+        earliest: date | None = None,
+        latest: date | None = None,
+    ) -> SyntheticTableMark:
+        return SyntheticTableMark(
+            table=table,
+            column=marker_column or "",
+            state=state,
+            rows=rows,
+            marked_rows=marked_rows,
+            earliest_marked_date=earliest,
+            latest_marked_date=latest,
+        )
+
+    directory_state, _entries = _inspect_storage_directory(path)
+    if directory_state == "missing":
+        return mark("missing")
+    if directory_state == "empty":
+        # An existing directory with no entries holds no rows; nothing to read.
+        return mark("empty")
+    if directory_state == "corrupt":
+        return mark("unreadable")
+    if marker_column is None:
+        # Row-only surface: only the row count is needed, so no row payload is
+        # materialized and no marker column is invented. The reader contract is the
+        # same: an unreadable table is `unreadable` (unknown state), never `empty`.
+        try:
+            counted = DeltaTable(str(path)).to_pyarrow_dataset().count_rows()
+        except Exception:
+            return mark("unreadable")
+        return mark("empty") if counted == 0 else mark("unmarked", rows=counted)
+    projection = [marker_column, first_date_column, last_date_column]
+    try:
+        frame = read_delta(table, lake_dir=lake_dir, columns=list(dict.fromkeys(projection)))
+    except Exception:
+        return mark("unreadable")
+    if frame.height == 0:
+        return mark("empty")
+    missing_columns = [column for column in (marker_column, first_date_column, last_date_column) if column not in frame.columns]
+    if missing_columns:
+        # A table without the marker column cannot be classified: unknown, not real.
+        return mark("unreadable", rows=frame.height)
+    try:
+        marked = frame.filter(pl.col(marker_column) == SYNTHETIC_MARKER)
+        earliest = marked[first_date_column].min() if marked.height else None
+        latest = marked[last_date_column].max() if marked.height else None
+    except Exception:
+        return mark("unreadable", rows=frame.height)
+    return mark(
+        "marked" if marked.height else "unmarked",
+        rows=frame.height,
+        marked_rows=marked.height,
+        earliest=earliest if isinstance(earliest, date) else None,
+        latest=latest if isinstance(latest, date) else None,
+    )
+
+
+def _discover_delta_datasets(lake_dir: Path) -> list[tuple[str, Path]]:
+    """Find every Delta dataset under the reset targets as ``(lake-relative name, path)``.
+
+    Any directory holding a ``_delta_log`` is a dataset, so a table only one writer
+    knows about still contributes its rows to the ``empty`` judgement — a reset deletes
+    whole trees, so enumeration by hand is what let real rows be reported ``empty``.
+    The walk never follows symlinks (nothing outside the lake is inspected) and stops
+    at a dataset, so nested directories are counted once, by the outer dataset.
+    """
+    found: list[tuple[str, Path]] = []
+    for tree in RESET_DATASET_TREES:
+        pending = [lake_dir / tree]
+        while pending:
+            directory = pending.pop()
+            try:
+                if not stat.S_ISDIR(directory.lstat().st_mode):
+                    continue
+            except OSError:
+                continue
+            if (directory / "_delta_log").is_dir():
+                found.append((directory.relative_to(lake_dir).as_posix(), directory))
+                continue
+            try:
+                children = list(directory.iterdir())
+            except OSError:
+                continue
+            for child in children:
+                try:
+                    if stat.S_ISDIR(child.lstat().st_mode):
+                        pending.append(child)
+                except OSError:
+                    continue
+    return sorted(found)
+
+
+def _listed(names: Sequence[str], *, limit: int = 8) -> str:
+    """Render names for a reason string without letting a large lake flood it."""
+    shown = ", ".join(names[:limit])
+    return shown if len(names) <= limit else f"{shown}, and {len(names) - limit} more"
+
+
+def _residual_data_files(lake_dir: Path) -> list[str]:
+    """Files under the reset targets that belong to no Delta dataset.
+
+    A reset deletes whole trees, so a stray bare-Parquet (or JSONL) table under
+    ``02_silver`` that carries no ``_delta_log`` is still rows the reset would
+    destroy. It cannot be counted, so it must never be reported ``empty``.
+    ``_delta_log`` internals and dotfiles (``.DS_Store``, ``.gitkeep``) are not data.
+    """
+    residuals: list[str] = []
+    for tree in RESET_DATASET_TREES:
+        root = lake_dir / tree
+        try:
+            if not stat.S_ISDIR(root.lstat().st_mode):
+                continue
+        except OSError:
+            continue
+        for path in root.rglob("*"):
+            if path.name.startswith(".") or "_delta_log" in path.parts:
+                continue
+            try:
+                if stat.S_ISREG(path.lstat().st_mode):
+                    residuals.append(path.relative_to(lake_dir).as_posix())
+            except OSError:
+                continue
+    return sorted(residuals)
+
+
+def observe_synthetic_provenance(*, lake_dir: Path | None = None) -> SyntheticProvenanceObservation:
+    """Observe whether the lake holds synthetic rows, using only existing markers.
+
+    States, over every Delta dataset a reset would delete (marked and row-only):
+
+    - ``synthetic`` — at least one row carries :data:`SYNTHETIC_MARKER` (this wins even
+      when unmarked datasets coexist, so a seeded-then-partially-ingested lake stays
+      resettable).
+    - ``empty`` — no Delta dataset under the reset targets holds any row, and no
+      non-Delta data file sits under those trees.
+    - ``unknown`` — rows exist without a marker (including Bronze-only lakes, or rows
+      only in a dataset no marker table covers), a dataset cannot be read, or
+      non-Delta data files exist whose rows cannot be counted.
+    - ``real`` — reserved for a positive proof of real ingestion; today's markers
+      cannot produce it, so an unmarked lake is never reported ``real``.
+    """
+    selected_lake_dir = lake_dir or LAKE_DIR
+    tables = [
+        _observe_synthetic_mark(
+            COVERAGE_TABLE_TEMPLATE.format(market=market),
+            selected_lake_dir / COVERAGE_TABLE_TEMPLATE.format(market=market),
+            marker_column="source",
+            first_date_column="coverage_start",
+            last_date_column="coverage_end",
+            lake_dir=selected_lake_dir,
+        )
+        for market in sorted(PRICE_MARKETS)
+    ]
+    tables.append(
+        _observe_synthetic_mark(
+            GOLD_FEATURES_TABLE,
+            selected_lake_dir / GOLD_FEATURES_TABLE,
+            marker_column="action_coverage_source",
+            first_date_column="date",
+            last_date_column="date",
+            lake_dir=selected_lake_dir,
+        )
+    )
+    # Row-only surfaces a reset deletes: rows here must never be reported ``empty``.
+    # Bronze observes the existing identity label (never the synthetic marker), which
+    # documents the indistinguishable case instead of inferring provenance.
+    tables.extend(
+        _observe_synthetic_mark(
+            BRONZE_PRICE_TABLE_TEMPLATE.format(market=market),
+            selected_lake_dir / BRONZE_PRICE_TABLE_TEMPLATE.format(market=market),
+            marker_column=BRONZE_MARKER_COLUMN,
+            first_date_column="date",
+            last_date_column="date",
+            lake_dir=selected_lake_dir,
+        )
+        for market in sorted(PRICE_MARKETS)
+    )
+    tables.append(
+        _observe_synthetic_mark(
+            PREDICTIONS_TABLE,
+            selected_lake_dir / PREDICTIONS_TABLE,
+            marker_column=None,
+            first_date_column="date",
+            last_date_column="date",
+            lake_dir=selected_lake_dir,
+        )
+    )
+
+    # Every remaining Delta dataset under the reset targets: unenumerated tables
+    # (news sentiment, macro, SEC extractions, raw articles, …) are still rows a
+    # reset would delete, so ``empty`` is decided over them too. Row-only: no marker
+    # column exists on them, and none is invented.
+    observed_names = {table.table for table in tables}
+    tables.extend(
+        _observe_synthetic_mark(
+            table,
+            path,
+            marker_column=None,
+            first_date_column="date",
+            last_date_column="date",
+            lake_dir=selected_lake_dir,
+        )
+        for table, path in _discover_delta_datasets(selected_lake_dir)
+        if table not in observed_names
+    )
+
+    rows = sum(table.rows for table in tables)
+    marked_rows = sum(table.marked_rows for table in tables)
+    residuals = [] if rows else _residual_data_files(selected_lake_dir)
+    earliest = min((table.earliest_marked_date for table in tables if table.earliest_marked_date is not None), default=None)
+    latest = max((table.latest_marked_date for table in tables if table.latest_marked_date is not None), default=None)
+    unreadable = [table.table for table in tables if table.state == "unreadable"]
+    held = [table.table for table in tables if table.rows]
+    # Only the Bronze *price* tables carry that identity label; macro/news/raw
+    # datasets must not be described as carrying it.
+    bronze_price_names = {BRONZE_PRICE_TABLE_TEMPLATE.format(market=market) for market in PRICE_MARKETS}
+    bronze_held = [name for name in held if name in bronze_price_names]
+    # Totals above are exact; only the reported per-table slice is capped.
+    reported = tables[:MAX_REPORTED_TABLES]
+    truncated = len(tables) > len(reported)
+    truncation_note = f" {len(tables) - len(reported)} further dataset(s) are not listed." if truncated else ""
+
+    if marked_rows:
+        state: SyntheticProvenanceState = "synthetic"
+        reason = (
+            f"{marked_rows} of {rows} row(s) in the datasets under the reset targets carry {SYNTHETIC_MARKER!r}; "
+            f"the lake holds synthetic rows.{truncation_note}"
+        )
+    elif unreadable:
+        state = "unknown"
+        reason = f"cannot read {len(unreadable)} observed table(s) ({_listed(unreadable)}); the absence of a marker is not proven."
+    elif residuals:
+        state = "unknown"
+        reason = (
+            f"no Delta dataset under the reset targets holds a row, but {len(residuals)} non-Delta data file(s) remain "
+            f"({_listed(residuals)}); their rows cannot be counted, so the lake is not proven empty."
+        )
+    elif rows == 0:
+        state = "empty"
+        reason = (
+            "no rows in any Delta dataset under the reset targets "
+            f"({', '.join(RESET_DATASET_TREES)}); data/models holds derived artifacts and no rows."
+        )
+    else:
+        # Deliberately not "real": no-marker-plus-data is the indistinguishable case (R7/D3).
+        state = "unknown"
+        bronze_note = (
+            f" The Bronze row-only table(s) holding rows ({_listed(bronze_held)}) carry "
+            f"{BRONZE_MARKER_COLUMN}={BRONZE_MARKER_VALUE}, the same label a real config-resolved ingestion writes."
+            if bronze_held
+            else ""
+        )
+        reason = (
+            f"{rows} row(s) in the datasets under the reset targets ({_listed(held)}) carry no {SYNTHETIC_MARKER!r} marker; "
+            f"this is unknown rather than real because the existing markers cannot prove real ingestion.{bronze_note}{truncation_note}"
+        )
+    return SyntheticProvenanceObservation(
+        state=state,
+        tables=reported,
+        tables_truncated=truncated,
+        rows=rows,
+        marked_rows=marked_rows,
+        earliest_marked_date=earliest,
+        latest_marked_date=latest,
+        bronze_provenance=_BRONZE_PROVENANCE,
+        reason=reason,
+    )
+
+
 def build_tracking_readiness(
     *,
     watchlist_path: Path | None = None,
@@ -667,6 +1059,7 @@ def build_tracking_readiness(
         inference_status="not evaluated; readiness observation only",
         delivery_status="unavailable/not configured; no delivery state exists",
         storage_schema=storage_schema,
+        synthetic_provenance=observe_synthetic_provenance(lake_dir=selected_lake_dir),
         signal_history_validation_scope=_HISTORY_VALIDATION_SCOPE,
     )
 

@@ -45,7 +45,7 @@ def doctor(
     as_of: Annotated[str | None, typer.Option("--as-of", help="Observation cutoff date (YYYY-MM-DD); defaults to today")] = None,
     lake_dir: Annotated[Path | None, typer.Option("--lake-dir", help="Medallion lake root for read-only source observations")] = None,
 ) -> None:
-    """Report canonical all-market source, feature, scan, and signal-history observations, plus a read-only storage-schema drift observation."""
+    """Report read-only all-market source, feature, scan, and signal-history observations, plus storage-schema drift and synthetic markers."""
     readiness = import_module("equity_lake.signals.readiness")
     try:
         cutoff = _parse_iso_date(as_of, "--as-of") if as_of is not None else None

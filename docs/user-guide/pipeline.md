@@ -209,6 +209,54 @@ defines meta-label semantics, so they remain `not_current_usable`. With a short
 history the honest outcome is still a trained model with no validation folds
 (`folds=0`). Do not hand-write prediction rows to make those fields look better.
 
+### Synthetic rows and returning to an empty lake
+
+A lake that was seeded or preloaded may hold synthetic rows alongside ingested
+data. Only two markers make that visible, and `uv run equity doctor` reports them
+under `synthetic_provenance` (`synthetic` / `empty` / `unknown`):
+
+| Table | Marker |
+|---|---|
+| `02_silver/corporate_action_coverage` | `source = synthetic_demo_seed` |
+| `03_gold/features` | `action_coverage_source = synthetic_demo_seed` |
+
+Bronze price rows are **not** distinguishable: `identity_provenance =
+current_ticker_config` is exactly the label a real config-resolved ingestion
+writes, so `doctor` never reports `real` — an unmarked but populated lake is
+`unknown`. Nothing writes a new provenance label for this.
+
+The observation also walks **every** Delta dataset under the reset targets
+(`01_bronze`, `02_silver`, `03_gold`, `04_platinum/predictions`) — any directory
+containing a `_delta_log` is observed, not a hand-enumerated list — including the
+tables that carry no marker (`01_bronze/market_data/<market>`,
+`02_silver/news_sentiment`, `01_bronze/macro`, `04_platinum/predictions`, …), each
+reported as its own `tables` entry. `empty` therefore means *no rows in any Delta
+dataset under those four reset targets*; `data/models` is a derived-artifact
+directory with no rows and takes no part in that judgement. A lake that only has
+ingested Bronze rows — the state a real `equity ingest` run leaves before coverage
+or features exist — is therefore `unknown`, not `empty`, and so is a lake whose
+only rows live in an unenumerated table such as `02_silver/news_sentiment`.
+
+Before real ingestion, reset the synthetic artifacts with the supported target:
+
+```bash
+make reset-lake DRY=1   # lists exactly the five paths below; writes nothing
+make reset-lake         # destructive: confirmation prompt, refuses unless synthetic/empty
+
+# Equivalent non-interactive command
+uv run python -m equity_lake.devtools.reset_lake --yes
+```
+
+It removes exactly `data/lake/01_bronze`, `data/lake/02_silver`,
+`data/lake/03_gold`, `data/lake/04_platinum/predictions` (the subpath only — the
+rest of `04_platinum` survives), and `data/models`. The guard refuses (exit
+non-zero, nothing deleted) unless the doctor observation reports `synthetic` or
+`empty`, and it never follows a symlinked target. `empty` is the absence of rows in
+any Delta dataset under those reset targets (models hold no rows, so they are not
+part of the judgement); an empty lake is a no-op success. `DRY` accepts only `0`,
+`1`, or empty — anything else (`DRY=2`, `DRY=yes`) is an error rather than a silent
+destructive run.
+
 ## Configuration
 
 Primary config files:

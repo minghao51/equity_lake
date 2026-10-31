@@ -16,8 +16,12 @@ By default it writes to the auxiliary sample lake (`data/sample/`), mirroring
 implicitly.
 
 - Offline-safe by default: deterministic synthetic OHLCV (geometric random
-  walk per ticker, `numpy.random.default_rng`), Mon–Fri dates ending
-  yesterday. No network or API keys are needed.
+  walk per ticker, `numpy.random.default_rng`), exchange-session dates ending
+  yesterday (weekday window filtered through `core.calendar.is_trading_day`,
+  so no bar ever lands on a venue holiday). `equity bootstrap sample` seeds a
+  mixed-venue market only on intersection sessions
+  (`core.calendar.trading_days_between`), since its rows carry no MIC. No
+  network or API keys are needed.
 - `--real` attempts a live `yfinance` pull and falls back to synthetic on
   any failure.
 - Ticker resolution order: explicit `--tickers` → the `demo` group in
@@ -129,6 +133,43 @@ Exit code is 0 only when every
 requested step reports success; a failed bronze or silver step exits 1.
 The downloaded parquet is cached under `data/.cache/`. The operator runbook
 is the [RAG Corpus Seeding guide](../user-guide/20260813-rag-corpus-seeding.md).
+
+## Lake reset — `make reset-lake` / `devtools/reset_lake.py`
+
+The canonical lake can hold synthetic rows from `demo seed --lake` and
+`make preload`. Only two existing markers make that visible —
+`02_silver/corporate_action_coverage.source` and
+`03_gold/features.action_coverage_source` set to `synthetic_demo_seed`; Bronze
+price rows carry `identity_provenance = current_ticker_config`, the same label a
+real config-resolved ingestion writes. `uv run equity doctor` reports the counts
+under `synthetic_provenance` (`synthetic` / `empty` / `unknown`, never `real`).
+
+`devtools/reset_lake.py` is the supported way back to an empty lake before real
+ingestion. It removes exactly `data/lake/01_bronze`, `data/lake/02_silver`,
+`data/lake/03_gold`, `data/lake/04_platinum/predictions` (the subpath only, not
+the rest of `04_platinum`) and `data/models`, all derived from `core.paths`
+constants.
+
+```bash
+make reset-lake DRY=1   # DRY=1 -> --dry-run: lists the five paths, writes nothing
+make reset-lake         # destructive: confirmation prompt
+uv run python -m equity_lake.devtools.reset_lake --yes   # non-interactive equivalent
+```
+
+Flags: `--dry-run`, `--yes`, `--lake-dir`, `--models-dir`. The guard reuses the
+doctor observation: it refuses (exit non-zero, nothing deleted) unless the lake
+is `synthetic` or `empty`, and it refuses a symlinked target instead of following
+it. `empty` means **no rows in any Delta dataset under the reset targets** —
+`01_bronze`, `02_silver`, `03_gold`, and `04_platinum/predictions`, discovering any
+directory that contains a `_delta_log` rather than trusting a list of known tables
+— so a lake holding rows only in `02_silver/news_sentiment` or `01_bronze/macro` is
+`unknown`, not `empty`. `data/models` is a derived-artifact directory with no rows:
+it stays a reset target but is excluded from the emptiness judgement. An empty lake
+is a no-op success; `DRY` accepts only `0`, `1`, or empty (`DRY=2`/`DRY=yes`
+error out instead of defaulting to the destructive form). Unit coverage lives
+in `tests/unit/test_reset_lake.py` (guard, exact artifact set, symlink refusal) and
+`tests/unit/test_make_targets.py` (the `DRY=1` target contract, the `DRY` value
+guard, and the provenance state on a test-owned lake).
 
 ## Placement
 
