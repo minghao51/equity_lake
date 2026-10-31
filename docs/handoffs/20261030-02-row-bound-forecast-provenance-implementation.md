@@ -243,28 +243,27 @@ curl -s 'http://127.0.0.1:8000/predictions?ticker=AAPL&limit=1' | python -c \
 
 ## 8. Carried forward
 
-R4 is closed. The remaining work in this series is tracked in the
-[20261030-01 register](20261030-01-postpreload-findings-and-remaining-issues.md) §3
-and sequenced in its §8 (start there): **R3 → R6 → R8 → R11 → R2 → R9 → R5 → R7 → R10**.
+R4 is closed and so are its two carry-overs:
 
-Two carry-overs belong specifically to this change and are worth folding into R5:
+1. **R11 — end-to-end proof test: done** (`8e5cf3b`). `tests/unit/test_prediction_provenance_e2e.py`
+   runs `run_prediction_job` through the real `merge_delta` into a tmp lake and reads
+   the row back through the app, asserting `valid | established | current_usable`.
+   A writer/reader column rename now fails that named test.
+2. **`feature_schema_version: 7` hardcoded: done** (`8e5cf3b`) — `FEATURE_SCHEMA_VERSION`
+   in `test_api.py` and `test_ml_jobs.py`.
 
-1. **R11 — end-to-end proof test.** The writer round-trip stops at
-   `validate_predictions` and the API tests build their own rows, so a column-name
-   drift between writer and reader would pass both suites. Add one test that writes
-   through `run_prediction_job`, reads the table back, and annotates through
-   `deps.list_predictions`, asserting `current_usable`.
-2. **`feature_schema_version: 7` hardcoded** in one `tests/unit/test_api.py` fixture
-   while the neighbouring helper uses `FEATURE_SCHEMA_VERSION` — align it before the
-   next schema bump turns it into a failing surprise.
+Everything else in the [20261030-01 register](20261030-01-postpreload-findings-and-remaining-issues.md)
+also landed on 2026-10-31 (its §9 has the commit table and the new lake state). Two
+new observations, not regressions, are recorded there: R12 (intermittent
+`to_pyarrow_table()` interpreter abort) and R13 (a serial-only test flake).
 
-Verified state at handoff:
+Verified state at the end of that pickup (`e2c6f42`):
 
 ```text
-uv run pytest -n auto        → 1666 passed, 17 skipped, 0 failed
+uv run pytest -n auto        → 1738 passed, 17 skipped, 0 failed
 uv run ruff check .          → All checks passed
-uv run ruff format --check . → 314 files already formatted
-uv run mypy                  → Success: no issues found in 172 source files
+uv run ruff format --check . → 320 files already formatted
+uv run mypy                  → Success: no issues found in 174 source files
 uv run equity catalog-generate → no diff
-GET /predictions?ticker=AAPL → valid | established | current_usable | []
+GET /predictions             → 100 rows, 20 sessions, all current_usable
 ```

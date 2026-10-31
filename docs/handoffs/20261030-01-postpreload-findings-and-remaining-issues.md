@@ -1,9 +1,9 @@
 # 20261030-01 — Post-Preload Findings and Remaining Issues
 
 **Title:** Spec the fallout of the T1–T7 pickup: Arrow `string_view` drift, holiday-dated synthetic bars, ML result truthfulness, and the governance edges left open
-**Status:** **Specification only — no code changed by this document.** R1/R2/R3/R6/R8/R9 need no decision; they are ready to implement in the order below. R4, R5, R7 are decisions (§4).
-**Recorded:** 2026-10-30
-**Baseline commit:** `8c59751` (branch `main`)
+**Status:** **Implemented (2026-10-31).** Every register item landed: R1/R2/R3/R4/R5/R6/R7/R8/R9/R11 are built and gated, R10 is a proposed ADR awaiting owner acceptance. §9 records the pickup outcome and the traps; §7 states what is left.
+**Recorded:** 2026-10-30 (implemented 2026-10-31)
+**Baseline commit:** `8c59751` (spec) → `e2c6f42` (all items landed, tree clean)
 **Related:** [20261029-01 handoff](20261029-01-demo-preload-and-audit-followups.md) (§8 records the T1–T7 pickup outcome), ADR-0020 (synthetic demo lake), ADR-0014 (label lifecycle), ADR-0015 (point-in-time adjustment), ADR-0016 (canonical identity)
 
 ---
@@ -29,13 +29,15 @@ repair, or a decision the pickup deferred.
 ### Current verified state (do not regress)
 
 ```text
-uv run pytest -n auto        → 1666 passed, 17 skipped, 0 failed
+uv run pytest -n auto        → 1738 passed, 17 skipped, 0 failed
 uv run ruff check .          → All checks passed
-uv run ruff format --check . → 314 files already formatted
-uv run mypy                  → Success: no issues found in 172 source files
+uv run ruff format --check . → 320 files already formatted
+uv run mypy                  → Success: no issues found in 174 source files
 uv run equity catalog-generate → no diff
-make preload DAYS=60         → 300 rows, 300 labels finalized, 0 errors
-GET /predictions?ticker=AAPL → valid | established | current_usable | []
+make lint-md                 → exit 0 (R8)
+make showcase                → exit 0 in 74s, 9 runs, 3 FindingCards (R9)
+GET /predictions             → 100 rows over 20 sessions; all
+                               valid | established | current_usable | [] (R5)
 ```
 
 ### Findings register
@@ -43,24 +45,21 @@ GET /predictions?ticker=AAPL → valid | established | current_usable | []
 | ID | Finding | Class | Severity | Status | Effort |
 |---|---|---|---|---|---|
 | **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented** (read seam + `/predictions` filters + doctor observation); writer-side drift still open | M |
-| **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | Open | S–M |
-| **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | Open | S |
+| **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | **Implemented** (`59a31d1`) | S–M |
+| **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | **Implemented** (`dc200e9`) | S |
 | **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Implemented** (`6df4130`, docs `3d9d779`; [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md) + [20261030-02](../handoffs/20261030-02-row-bound-forecast-provenance-implementation.md)) | M–L |
-| **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | **Decided: bounded refit preload (D2)** | M |
-| **R6** | `devtools/preload.py` imports the private `seed_demo._configured_identities` | hygiene | P3 | Open | XS |
-| **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Decided: document + reset (D3)** | S |
-| **R8** | `make lint-md` exits 2 on three pre-existing findings | tooling | P4 | Open | XS |
-| **R9** | `make showcase` / README claims not re-verified after R2 changes the seeded data | verification | P4 | Blocked by R2 | XS |
-| **R10** | ADR-0021 does not define a `forecast_provenance_version` newer than the reader knows; the reader reports `unknown` (never usable) as a safe interim | decision gap | P4 | Open — needs a new ADR (accepted ADRs are immutable) | XS |
-| **R11** | Reviewer nits left on R4: no single writer→table→API end-to-end proof test (a column-name drift would pass both suites), and one API fixture hardcodes `feature_schema_version: 7` | test hygiene | P4 | Open | XS |
+| **R5** | Only one prediction date exists; historical predictions need per-date as-of refits | ML/surface | P3 | **Implemented** (`97055fc`, D2) — 20 sessions × 5 tickers live | M |
+| **R6** | `devtools/preload.py` imports the private `seed_demo._configured_identities` | hygiene | P3 | **Implemented** (`40dcc3d`; acceptance read as scoped to the resolver — `sources.base._empty_frame` etc. predate it) | XS |
+| **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Implemented** (`a820737`, D3) | S |
+| **R8** | `make lint-md` exits 2 on three pre-existing findings | tooling | P4 | **Implemented** (`899c834`) | XS |
+| **R9** | `make showcase` / README claims not re-verified after R2 changes the seeded data | verification | P4 | **Implemented** (`a426ff2`) | XS |
+| **R10** | ADR-0021 does not define a `forecast_provenance_version` newer than the reader knows; the reader reports `unknown` (never usable) as a safe interim | decision gap | P4 | **Proposed** [ADR-0022](../decisions/0022-future-forecast-provenance-envelope.md) (`e2c6f42`); owner acceptance pending | XS |
+| **R11** | Reviewer nits left on R4: no single writer→table→API end-to-end proof test (a column-name drift would pass both suites), and one API fixture hardcodes `feature_schema_version: 7` | test hygiene | P4 | **Implemented** (`8e5cf3b`) | XS |
+| **R12** | `DeltaTable.to_pyarrow_table()` intermittently aborts the interpreter (`terminate called without an active exception`, exit 134) on deltalake 1.6.0 / pyarrow 21.0.0 — `equity doctor` aborted on roughly a third of runs before R7; the new observation avoids the path via `to_pyarrow_dataset().count_rows()` | storage/reader | P3 | Open — needs its own investigation | S–M |
+| **R13** | Serial-order flake: `tests/unit/test_ml_jobs.py::test_run_prediction_job_clips_and_logs_out_of_bounds_probability` fails in a serial run, passes alone and under `-n auto` | test hygiene | P4 | Open | XS |
 
-Order taken so far: **R1 → R4** (both implemented). **Next thread order:**
-**R3 → R6 → R8 → R11 → R2 → R9 → R5 → R7 → R10**. Rationale: the three small
-no-decision fixes first (R3/R6/R8) plus the review nits (R11), then the seed-data
-correction (R2) and the showcase re-verification it forces (R9), then the two
-decided-but-unimplemented items (R5 depends on R4's proof columns; R7 is a doctor
-addition plus a destructive target), and finally the ADR gap (R10) if the owner
-wants it codified.
+Order taken: **R1 → R4 → R3 → R6 → R8 → R11 → R2 → R9 → R5 → R7 → R10** — all
+landed in that order on 2026-10-31 (see §9).
 
 ---
 
@@ -664,48 +663,108 @@ uv run pytest -n auto && uv run ruff check . && uv run ruff format --check . && 
 
 ## 7. Definition of done for this handoff series
 
-- **Done:** R1 (read seam + `/predictions` filters + doctor) and R4 (ADR-0021 proof,
-  derivation, write-boundary validation, catalog, docs).
-- **Remaining:** R3, R6, R8, R11, R2, R9, R5, R7, R10 — implemented with the tests
-  named in §3, in the order given in §8.
-- `make lint-md` exits 0 (currently blocked by R8).
-- No doc, README claim, notebook, or CLI output states a behaviour that is not true
-  when run (this is what R3 and the previous handoff's DoD both exist to protect).
+- **Done:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R11 — implemented, tested, and
+  recorded with commit pointers in the register above.
+- **Done to the letter:** `make lint-md` exits 0; every doc, README claim, notebook
+  output, and CLI line that this series touched states behaviour that is true when
+  run (R3 and R9 were the two that did not).
+- **Remaining:** R10 needs only the owner's acceptance of
+  [ADR-0022](../decisions/0022-future-forecast-provenance-envelope.md) (proposed, not
+  code). R12 (intermittent `to_pyarrow_table()` abort) and R13 (serial-only test
+  flake) are new observations recorded in the register, not regressions from this
+  work.
+- **Known residuals, deliberate:** 6 pre-R3 `data/models/*.training_summary.json`
+  still carry the old zero placeholders and `GET /models` serves them raw until the
+  next training run or `make reset-lake`; `notebooks/06-ml-prediction.ipynb` still
+  shows its old saved `folds: 0 / mean_accuracy: 0.0` output although its code now
+  prints whatever keys exist (its loop is correct).
 - Each closing change updates this register, records the new lake state, and records
   the verified baseline numbers.
 
 ## 8. Next thread: start here
 
-**Baseline:** `3d9d779` (R1 and R4 implemented; tree clean). Refresh the baseline
-numbers before trusting them — the gates above were captured at that commit.
+**Baseline:** `e2c6f42` (every register item landed; tree clean). The verified
+numbers in §1 were captured at that commit — refresh them before trusting them.
 
-**Do not re-litigate.** ADR-0021 is accepted and immutable; R1's read seam and R4's
-proof columns are contract, not suggestions. A change to either needs a new ADR.
+**Do not re-litigate.** ADR-0021 is accepted and immutable; R1's read seam, R4's
+proof columns, R3's "no unmeasured metric is printed", R5's write-through-the-pipeline
+rule and R7's "never report an unmarked lake as real or empty" are contract. A change
+to any of them needs a new ADR.
 
-**Task order:** R3 → R6 → R8 → R11 → R2 → R9 → R5 → R7 → R10 (§3 has the rationale;
-each task's specification, acceptance criteria, tests, and risk are in §3 above).
+**What is left, in order:**
 
-**What worked last time (reuse it):**
+1. **R10 acceptance** — read ADR-0022 and accept or amend it (docs only, ~10 min).
+2. **R12** — reproduce the intermittent `DeltaTable.to_pyarrow_table()` abort
+   (exit 134) and decide whether the read seam should stop using it. `equity doctor`
+   now avoids the path, so this is no longer user-visible on that surface.
+3. **R13** — the serial-only flake in `test_ml_jobs.py`; it passes alone and under
+   `-n auto`, so it is ordering, not logic.
+4. The residuals in §7, whenever the next training run happens anyway.
+
+**What worked (reuse it):**
 
 1. Dispatch an implementation worker per dependency stage with the frozen contract
    pasted into the brief, and tell it **not to commit** — the orchestrator reviews
    the tree and commits.
-2. Run an adversarial `reviewer` pass on the dirty tree **before** committing. It
-   found the vacuous contract test that a green suite hid.
+2. Run an adversarial `reviewer` pass on the dirty tree **before** committing, one
+   per stage. This pickup it caught four real defects that green suites hid: a
+   vacuous "no write" assertion, a fabricated "validation not requested" reason, a
+   union-semantics calendar filter that seeded venue holidays, and a destructive
+   reset that called a populated lake `empty`.
 3. Mutation-drill every new rule: remove the rule, run the targeted tests, confirm a
-   *named* test fails, restore the file from a `/tmp` copy (not `git checkout`, which
-   would discard the other uncommitted work), and `diff -q` to prove the restore.
+   *named* test fails, restore from a `/tmp` copy (not `git checkout`, which would
+   discard the other uncommitted work), and `diff -q` to prove the restore.
 4. Keep the full-gate run (`pytest -n auto`, ruff, format, mypy,
-   `equity catalog-generate`, `pymarkdown -d md013`) as the last step, not the first.
+   `equity catalog-generate`, `make lint-md`) as the last step, not the first. Run
+   the suite alone: two concurrent `uv run pytest` processes slowed one full run from
+   5 minutes to 21 and made a sub-second test look like it took 44 s.
 
-**Known traps recorded while landing R1/R4:**
+## 9. Pickup outcome (2026-10-31)
 
-- `read_delta` must pass `filters=None` (not `[]`) to delta-rs; pyarrow rejects an
-  empty filter list with "Malformed filters".
-- `make lint-md` is red on three pre-existing findings — that is R8, not a regression;
-  only lint the files you change until R8 lands.
-- The canonical lake holds synthetic data (`data/lake/03_gold` is 61 sessions, 5
-  tickers) and 5 models plus 5 predictions for 2026-10-28. R2's regeneration changes
-  those counts; reset commands are in 20261029-01 §8.4.
-- R5 must write predictions through `run_prediction_job` so the ADR-0021 proof is
-  persisted from the first backfilled date; do not hand-write rows.
+Landed in this order, one commit per stage, each reviewed with a mutation-drilled
+rule before commit:
+
+| Task | Commit | What changed |
+|---|---|---|
+| R3 | `dc200e9` | training summaries carry `validation_status`; metric keys are absent, never `0.0`; both formatters print the reason; `forecast --mode predict` reports `persisted: false` |
+| R6 | `40dcc3d` | `configured_identities` promoted to `devtools/seeding.py`; one implementation, identical fail-closed text |
+| R8 | `899c834` | MD001/MD032 fixed in content, narrow documented MD033 permit, `make lint-md` green |
+| R11 | `8e5cf3b` | writer → real Delta → `/predictions` end-to-end proof test; `FEATURE_SCHEMA_VERSION` replaces the hardcoded `7` |
+| R2 | `59a31d1` | seeded sessions follow the exchange calendar (`is_trading_day` for the single-venue seed, `trading_days_between` for the multi-venue sample); 5y us_equity 1305 weekdays → 1255 sessions, 0 phantom |
+| R7 | `a820737` | `equity doctor` reports `synthetic_provenance`; `make reset-lake` (DRY=1) removes exactly five paths and refuses any lake it cannot prove synthetic |
+| R9 | `a426ff2` | `make showcase` re-verified (74 s, 9 runs, 3 cards) and the strategy-lab notebook re-executed against the refreshed lake |
+| R5 | `97055fc` | bounded as-of refit preload (`make refit-preload`, ≤12 boundaries) writing through `run_prediction_job`; plan-time age refusal, truthful coverage, idempotent re-runs |
+| R10 | `e2c6f42` | proposed ADR-0022 codifying future-envelope reading and the v2 procedure |
+
+**New lake state after this pickup** (canonical `data/lake`):
+
+```text
+03_gold/features     → 305 rows, 61 sessions (2026-08-06 … 2026-10-28), 5 tickers
+04_platinum/predictions → 100 rows, 20 sessions (2026-10-01 … 2026-10-28), 5 tickers,
+                          every row valid | established | current_usable
+data/models          → 35 artifacts (7 refit dates × 5 tickers)
+data/sample          → re-seeded by make showcase; data/findings holds 3 cards
+```
+
+Reproduce the prediction window:
+
+```bash
+uv run python -m equity_lake.devtools.refit_preload \
+  --days 20 --refits 6 --train-window 20 --test-window 5 --embargo-window 1
+```
+
+**Traps confirmed the hard way (keep these):**
+
+- `read_delta` must pass `filters=None` (not `[]`) to delta-rs.
+- `is_trading_day` has **union** semantics: for a multi-venue market it says "some
+  venue trades", so seeding `hk_sg_equity` needs `trading_days_between` (intersection)
+  or `.HK`/`.SI` bars land on the other venue's holidays.
+- `validate=False` and "no fold fits" are different claims; both are `unavailable`,
+  but only the second may blame the folds.
+- Anything destructive must decide "empty" over **every** dataset it would delete,
+  discovered generically — a hand-enumerated subset read as `empty` and wiped a lake.
+- A model older than `DEFAULT_MAX_MODEL_AGE_DAYS` (7 calendar days) is expired at
+  inference, so one refit boundary covers roughly a week of sessions; the preload
+  refuses the plan up front instead of half-writing.
+- `make reset-lake` refuses a `lake_dir` split, a symlinked target, an unrecognised
+  `DRY` value, and any lake that is not provably synthetic.
