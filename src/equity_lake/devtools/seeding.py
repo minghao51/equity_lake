@@ -9,7 +9,7 @@ curated ticker lists).
 
 Callers keep their own :class:`OhlcvProfile` — the distribution parameters are
 per-tool tuning, not shared policy — but the random walk, the Mon–Fri calendar,
-and the curated universes live here.
+the curated universes, and the config-derived identity resolver live here.
 """
 
 from __future__ import annotations
@@ -21,9 +21,15 @@ from datetime import date, timedelta
 import numpy as np
 import polars as pl
 
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.core.paths import LONG_TO_SHORT
+
 # ---------------------------------------------------------------------------
 # Curated universes
 # ---------------------------------------------------------------------------
+
+#: Source market whose config rows supply the canonical venue for seeded rows.
+SEED_SOURCE_MARKET = "us_equity"
 
 #: Small per-market subset used by ``equity bootstrap sample``.
 SAMPLE_TICKERS: dict[str, list[str]] = {
@@ -205,6 +211,38 @@ TEST_DATA_TICKERS: dict[str, list[str]] = {
 
 
 # ---------------------------------------------------------------------------
+# Config-derived identity
+# ---------------------------------------------------------------------------
+
+
+def configured_identities(symbols: list[str]) -> dict[str, InstrumentKey]:
+    """Resolve each seed symbol to its canonical identity via the source config.
+
+    A bare ticker is not identity (ADR-0016), so the venue comes from the
+    configured ``exchange`` label. Symbols absent from the config fail closed:
+    ticker spelling is never used to guess a MIC.
+    """
+    from equity_lake.core.config import TickerConfig
+
+    config = TickerConfig()
+    config_market = LONG_TO_SHORT[SEED_SOURCE_MARKET]
+    identities: dict[str, InstrumentKey] = {}
+    unresolved: list[str] = []
+    for symbol in symbols:
+        metadata = config.get_ticker_metadata(symbol, market=config_market)
+        if metadata is None:
+            unresolved.append(symbol)
+            continue
+        identities[symbol] = metadata.instrument_key(SEED_SOURCE_MARKET)
+    if unresolved:
+        raise ValueError(
+            f"Demo seed symbols have no configured exchange identity: {', '.join(sorted(unresolved))}. "
+            f"Add them to config/tickers.yaml (markets.{config_market}) or seed configured symbols only."
+        )
+    return identities
+
+
+# ---------------------------------------------------------------------------
 # Business-day calendar (weekday approximation — no exchange holidays)
 # ---------------------------------------------------------------------------
 
@@ -358,9 +396,11 @@ __all__ = [
     "DEMO_UNIVERSE",
     "PRICE_FLOOR",
     "SAMPLE_TICKERS",
+    "SEED_SOURCE_MARKET",
     "TEST_DATA_TICKERS",
     "OhlcvProfile",
     "business_days",
+    "configured_identities",
     "ohlcv_schema",
     "synthetic_ohlcv",
     "trailing_business_days",

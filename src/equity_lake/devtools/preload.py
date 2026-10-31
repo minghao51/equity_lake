@@ -28,7 +28,7 @@ from typing import Any
 import structlog
 
 from equity_lake.core.instruments import InstrumentKey
-from equity_lake.devtools.seed_demo import _configured_identities  # same package: config-derived identity, fail-closed
+from equity_lake.devtools.seeding import configured_identities  # config-derived identity, fail-closed
 from equity_lake.features import NoFeatureHistoryError, run_feature_job
 from equity_lake.storage.delta import DeltaError, read_delta
 
@@ -117,7 +117,7 @@ def preload_features(
     if not symbols:
         raise PreloadScopeError("at least one ticker is required")
     if instruments is None:
-        resolved = _configured_identities(sorted(symbols))
+        resolved = configured_identities(sorted(symbols))
         instruments = [resolved[symbol] for symbol in symbols]
 
     rows_written = 0

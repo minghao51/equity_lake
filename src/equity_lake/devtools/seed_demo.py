@@ -24,8 +24,7 @@ import polars as pl
 import structlog
 
 from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey
-from equity_lake.core.paths import LONG_TO_SHORT
-from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, synthetic_ohlcv, trailing_business_days
+from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, configured_identities, synthetic_ohlcv, trailing_business_days
 
 logger = structlog.get_logger(__name__)
 
@@ -125,33 +124,6 @@ def resolve_universe(tickers: list[str] | None) -> list[str]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("seed_demo_group_unavailable", error=str(exc))
     return list(DEMO_UNIVERSE)
-
-
-def _configured_identities(symbols: list[str]) -> dict[str, InstrumentKey]:
-    """Resolve each demo symbol to its canonical identity via the source config.
-
-    A bare ticker is not identity (ADR-0016), so the venue comes from the
-    configured ``exchange`` label. Symbols absent from the config fail closed:
-    ticker spelling is never used to guess a MIC.
-    """
-    from equity_lake.core.config import TickerConfig
-
-    config = TickerConfig()
-    config_market = LONG_TO_SHORT[US_EQUITY_SOURCE_MARKET]
-    identities: dict[str, InstrumentKey] = {}
-    unresolved: list[str] = []
-    for symbol in symbols:
-        metadata = config.get_ticker_metadata(symbol, market=config_market)
-        if metadata is None:
-            unresolved.append(symbol)
-            continue
-        identities[symbol] = metadata.instrument_key(US_EQUITY_SOURCE_MARKET)
-    if unresolved:
-        raise ValueError(
-            f"Demo seed symbols have no configured exchange identity: {', '.join(sorted(unresolved))}. "
-            f"Add them to config/tickers.yaml (markets.{config_market}) or seed configured symbols only."
-        )
-    return identities
 
 
 def stamp_identity(df: pl.DataFrame, identities: dict[str, InstrumentKey]) -> pl.DataFrame:
@@ -267,7 +239,7 @@ def seed_demo(
 
     # Bare tickers are not identity (ADR-0016): stamp the same composite identity
     # the real ingestion path writes, resolved from the source config.
-    identities = _configured_identities(sorted(df["ticker"].unique().to_list()))
+    identities = configured_identities(sorted(df["ticker"].unique().to_list()))
     df = stamp_identity(df, identities)
     proofs = coverage_proofs(df, identities)
 
