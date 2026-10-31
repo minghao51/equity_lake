@@ -53,10 +53,10 @@ GET /predictions             → 100 rows over 20 sessions; all
 | **R7** | Synthetic rows in the canonical lake are indistinguishable from real ingestion (except Gold via coverage source) | provenance/governance | P2 | **Implemented** (`a820737`, D3) | S |
 | **R8** | `make lint-md` exits 2 on three pre-existing findings | tooling | P4 | **Implemented** (`899c834`) | XS |
 | **R9** | `make showcase` / README claims not re-verified after R2 changes the seeded data | verification | P4 | **Implemented** (`a426ff2`) | XS |
-| **R10** | ADR-0021 does not define a `forecast_provenance_version` newer than the reader knows; the reader reports `unknown` (never usable) as a safe interim | decision gap | P4 | **Proposed** [ADR-0022](../decisions/0022-future-forecast-provenance-envelope.md) (`e2c6f42`); owner acceptance pending | XS |
+| **R10** | ADR-0021 does not define a `forecast_provenance_version` newer than the reader knows; the reader reports `unknown` (never usable) as a safe interim | decision gap | P4 | **Implemented** — [ADR-0022](../decisions/0022-future-forecast-provenance-envelope.md) proposed (`e2c6f42`) and **accepted** (`02e1298`) | XS |
 | **R11** | Reviewer nits left on R4: no single writer→table→API end-to-end proof test (a column-name drift would pass both suites), and one API fixture hardcodes `feature_schema_version: 7` | test hygiene | P4 | **Implemented** (`8e5cf3b`) | XS |
-| **R12** | `DeltaTable.to_pyarrow_table()` intermittently aborts the interpreter (`terminate called without an active exception`, exit 134) on deltalake 1.6.0 / pyarrow 21.0.0 — `equity doctor` aborted on roughly a third of runs before R7; the new observation avoids the path via `to_pyarrow_dataset().count_rows()` | storage/reader | P3 | Open — needs its own investigation | S–M |
-| **R13** | Serial-order flake: `tests/unit/test_ml_jobs.py::test_run_prediction_job_clips_and_logs_out_of_bounds_probability` fails in a serial run, passes alone and under `-n auto` | test hygiene | P4 | Open | XS |
+| **R12** | `DeltaTable.to_pyarrow_table()` intermittently aborts the interpreter (`terminate called without an active exception`, exit 134) on deltalake 1.6.0 / pyarrow 21.0.0 — `equity doctor` aborted on roughly a third of runs during parallel work; the R7 observation avoids the path via `to_pyarrow_dataset().count_rows()` | storage/reader | P3 | **Watching** — 0/47 repro attempts at closure; trigger, options and the do-not in [20261031-01 §4.1](20261031-01-next-thread-and-r12-watch.md) | S–M |
+| **R13** | Serial-order flake: `tests/unit/test_ml_jobs.py::test_run_prediction_job_clips_and_logs_out_of_bounds_probability` fails in a serial run, passes alone and under `-n auto` | test hygiene | P4 | **Implemented** (`02e1298`) — cause: `cache_logger_on_first_use` froze `equity_lake.ml`'s logger before `capture_logs` ran | XS |
 
 Order taken: **R1 → R4 → R3 → R6 → R8 → R11 → R2 → R9 → R5 → R7 → R10** — all
 landed in that order on 2026-10-31 (see §9).
@@ -663,61 +663,47 @@ uv run pytest -n auto && uv run ruff check . && uv run ruff format --check . && 
 
 ## 7. Definition of done for this handoff series
 
-- **Done:** R1, R2, R3, R4, R5, R6, R7, R8, R9, R11 — implemented, tested, and
-  recorded with commit pointers in the register above.
+- **Done:** R1–R11 and R13 — implemented, tested, and recorded with commit pointers in
+  the register above. R12 is deliberately *watched*, not fixed (trigger and options in
+  [20261031-01 §4.1](20261031-01-next-thread-and-r12-watch.md)).
 - **Done to the letter:** `make lint-md` exits 0; every doc, README claim, notebook
-  output, and CLI line that this series touched states behaviour that is true when
-  run (R3 and R9 were the two that did not).
-- **Remaining:** R10 needs only the owner's acceptance of
-  [ADR-0022](../decisions/0022-future-forecast-provenance-envelope.md) (proposed, not
-  code). R12 (intermittent `to_pyarrow_table()` abort) and R13 (serial-only test
-  flake) are new observations recorded in the register, not regressions from this
-  work.
-- **Known residuals, deliberate:** 6 pre-R3 `data/models/*.training_summary.json`
-  still carry the old zero placeholders and `GET /models` serves them raw until the
-  next training run or `make reset-lake`; `notebooks/06-ml-prediction.ipynb` still
-  shows its old saved `folds: 0 / mean_accuracy: 0.0` output although its code now
-  prints whatever keys exist (its loop is correct).
+  output, and CLI line that this series touched states behaviour that is true when run
+  (R3 and R9 were the two that did not).
+- **Residuals, all closed at `02e1298`:** the five pre-R3 `*.training_summary.json`
+  files carrying `mean_accuracy: 0.0` were replaced by re-deriving that boundary
+  through the refit preload (35/35 summaries now carry `validation_status`;
+  `GET /models` is homogeneous), and `notebooks/06-ml-prediction.ipynb`'s stale
+  `folds: 0 / mean_accuracy: 0.0` output is cleared.
 - Each closing change updates this register, records the new lake state, and records
   the verified baseline numbers.
 
 ## 8. Next thread: start here
 
-**Baseline:** `e2c6f42` (every register item landed; tree clean). The verified
-numbers in §1 were captured at that commit — refresh them before trusting them.
+**Start with [20261031-01](20261031-01-next-thread-and-r12-watch.md)** — it is the
+current brief: verified baseline, the closure decisions, the three items that remain
+(R12 watch, writer-side `string_view`, the freshness-policy ceiling), the lake state,
+and the traps.
 
-**Do not re-litigate.** ADR-0021 is accepted and immutable; R1's read seam, R4's
-proof columns, R3's "no unmeasured metric is printed", R5's write-through-the-pipeline
-rule and R7's "never report an unmarked lake as real or empty" are contract. A change
-to any of them needs a new ADR.
-
-**What is left, in order:**
-
-1. **R10 acceptance** — read ADR-0022 and accept or amend it (docs only, ~10 min).
-2. **R12** — reproduce the intermittent `DeltaTable.to_pyarrow_table()` abort
-   (exit 134) and decide whether the read seam should stop using it. `equity doctor`
-   now avoids the path, so this is no longer user-visible on that surface.
-3. **R13** — the serial-only flake in `test_ml_jobs.py`; it passes alone and under
-   `-n auto`, so it is ordering, not logic.
-4. The residuals in §7, whenever the next training run happens anyway.
+**Do not re-litigate.** ADR-0021 and ADR-0022 are accepted; R1's read seam, R4's proof
+columns, R3's "no unmeasured metric is printed", R5's write-through-the-pipeline rule,
+R7's "never report an unmarked lake as real or empty", and R10's "no new status
+vocabulary" are contract. A change to any of them needs a new ADR.
 
 **What worked (reuse it):**
 
-1. Dispatch an implementation worker per dependency stage with the frozen contract
-   pasted into the brief, and tell it **not to commit** — the orchestrator reviews
-   the tree and commits.
-2. Run an adversarial `reviewer` pass on the dirty tree **before** committing, one
-   per stage. This pickup it caught four real defects that green suites hid: a
-   vacuous "no write" assertion, a fabricated "validation not requested" reason, a
-   union-semantics calendar filter that seeded venue holidays, and a destructive
-   reset that called a populated lake `empty`.
+1. One implementation worker per dependency stage, frozen contract pasted into the
+   brief, worker told not to commit — the orchestrator reviews the tree and commits.
+2. An adversarial `reviewer` pass on the dirty tree **before** committing, one per
+   stage. This pickup it caught four real defects that green suites hid: a vacuous
+   "no write" assertion, a fabricated "validation not requested" reason, a
+   union-semantics calendar filter that seeded venue holidays, and a destructive reset
+   that called a populated lake `empty`.
 3. Mutation-drill every new rule: remove the rule, run the targeted tests, confirm a
    *named* test fails, restore from a `/tmp` copy (not `git checkout`, which would
-   discard the other uncommitted work), and `diff -q` to prove the restore.
-4. Keep the full-gate run (`pytest -n auto`, ruff, format, mypy,
-   `equity catalog-generate`, `make lint-md`) as the last step, not the first. Run
-   the suite alone: two concurrent `uv run pytest` processes slowed one full run from
-   5 minutes to 21 and made a sub-second test look like it took 44 s.
+   discard other uncommitted work), and `diff -q` to prove the restore.
+4. Full gates last, never first — and run them **one at a time**. Serial `pytest` is a
+   real gate: R13 existed only in the serial order, and two concurrent runs once made a
+   5-minute suite take 21 minutes and a sub-second test report 44 s.
 
 ## 9. Pickup outcome (2026-10-31)
 
@@ -768,3 +754,39 @@ uv run python -m equity_lake.devtools.refit_preload \
   refuses the plan up front instead of half-writing.
 - `make reset-lake` refuses a `lake_dir` split, a symlinked target, an unrecognised
   `DRY` value, and any lake that is not provably synthetic.
+
+### Closure (2026-10-31, `02e1298`)
+
+Three loose ends from §9 were settled after the table above:
+
+- **R10** — ADR-0022 **accepted** as proposed (`unknown` + reason token, no new status
+  vocabulary) with the asymmetric reader/writer rule and the v2 procedure.
+- **R13** — fixed at the test: `cache_logger_on_first_use=True` freezes
+  `equity_lake.ml`'s module logger on first use, so `capture_logs()` cannot rebind it
+  after an earlier serial test ran `setup_structured_logging()` for real. Serial
+  `pytest` went from 1 failed / 1737 passed to **1738 passed, 0 failed**.
+- **Residuals** — the five pre-R3 summaries were replaced by re-deriving the
+  2026-10-27 boundary through `refit_preload --days 2 --refits 1` (35/35 summaries now
+  carry `validation_status`, the five 10-27 rows were rewritten so row and artifact
+  shas stay bound, 100 rows / 20 sessions unchanged), and notebook 06's stale
+  validation output is cleared.
+
+**R12 is now a watch item**, not a task: 0/47 reproduction attempts at closure
+(0/20 gold reads, 0/15 prediction reads, 0/12 `equity doctor` runs), user-visible
+symptom already avoided, and both candidate fixes touch the read seam R1 stabilised.
+The trigger to act, the options and the "do not" are in
+[20261031-01 §4.1](20261031-01-next-thread-and-r12-watch.md).
+
+Final verified baseline at `02e1298`:
+
+```text
+uv run pytest                 → 1738 passed, 17 skipped, 0 failed   (serial)
+uv run pytest -n auto         → 1738 passed, 17 skipped, 0 failed
+uv run ruff check .           → All checks passed
+uv run ruff format --check .  → 320 files already formatted
+uv run mypy                   → Success: no issues found in 174 source files
+uv run equity catalog-generate → no diff
+make lint-md                  → exit 0
+GET /predictions              → 100 rows / 20 sessions, all current_usable
+GET /models                   → 35 summaries, all validation_status: verified
+```
