@@ -96,6 +96,9 @@ nav:
           - 'ADR-0017 (Accepted; implementation/offline-contract reviewed): Additive evolution and replay': decisions/0017-bounded-additive-evolution-and-replay.md
           - 'ADR-0018 (Accepted; implementation/offline-contract reviewed): Private watchlists and delivery': decisions/0018-private-watchlist-events-and-delivery.md
           - 'ADR-0019: CLI Delta-maintenance lake containment': decisions/0019-cli-delta-maintenance-lake-containment.md
+          - 'ADR-0020: Synthetic demo lake as a backtestable surface': decisions/0020-synthetic-demo-lake-as-backtestable-surface.md
+          - 'ADR-0021: Row-bound forecast provenance and prediction usability': decisions/0021-row-bound-forecast-provenance.md
+          - 'ADR-0022: Future forecast-provenance envelope versions': decisions/0022-future-forecast-provenance-envelope.md
 
 plugins:
   - search
