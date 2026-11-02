@@ -44,7 +44,7 @@ GET /predictions             → 100 rows over 20 sessions; all
 
 | ID | Finding | Class | Severity | Status | Effort |
 |---|---|---|---|---|---|
-| **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented** (read seam + `/predictions` filters + doctor observation); writer-side drift still open | M |
+| **R1** | Gold/predictions string columns drift to Arrow `string_view`; every Arrow filter pushdown on them raises | storage/reader | **P1** | **Implemented** (read seam + `/predictions` filters + doctor observation); writer-side drift **accepted and contained** by [ADR-0023](../decisions/0023-writer-side-string-view-drift.md) | M |
 | **R2** | `demo seed` / `bootstrap sample` write bars on exchange holidays (Mon–Fri calendar) | data generation | **P1** | **Implemented** (`59a31d1`) | S–M |
 | **R3** | `ml train` reports `status: trained` with `folds=0 acc=0.000`; `forecast --mode predict` prints a prediction that was never persisted | ML truthfulness | P2 | **Implemented** (`dc200e9`) | S |
 | **R4** | `/predictions` is hardcoded `not_current_usable`; row-bound forecast provenance/semantics are never persisted | API contract | P2 | **Implemented** (`6df4130`, docs `3d9d779`; [ADR-0021](../decisions/0021-row-bound-forecast-provenance.md) + [20261030-02](../handoffs/20261030-02-row-bound-forecast-provenance-implementation.md)) | M–L |
@@ -170,10 +170,11 @@ hiding, absent column, unsupported operator, date-only pushdown);
 `test_api.py::test_filtered_predictions_read_survives_a_merge_rewrite`;
 `test_tracking_readiness.py` drift and clean doctor cases.
 
-**Still open (unchanged by R1).** The storage-level drift: delta-rs merge rewrites
-keep writing `string_view` string columns. R1 makes every reader correct and the
-drift observable; eliminating it at the writer (or via a deltalake upgrade) remains
-its own decision.
+**Writer-side decision (ADR-0023, accepted 2026-10-31).** The storage-level drift
+is real: delta-rs merge rewrites keep writing `string_view` string columns. R1
+makes every `read_delta` reader correct and the drift observable. ADR-0023 keeps
+that read seam, contains the remaining direct string pushdown, and records the
+triggers for revisiting a writer rewrite; it does not eliminate the drift.
 
 ---
 
@@ -585,8 +586,8 @@ statement still true; recorded in the follow-up handoff.
 ## 3. Out of scope (recorded so it is not re-litigated)
 
 - Writer-side elimination of `string_view` (deltalake/pyarrow upgrade or custom
-  writer). R1 mitigates at the read seam and makes the drift visible; a writer fix
-  is a storage change with its own decision.
+  writer). R1 mitigates at the read seam and makes the drift visible; ADR-0023
+  accepts that containment and records when a writer fix would be reconsidered.
 - Broad schema-evolution/DDL hardening (still W06 from an earlier register).
 - Real-vendor corporate-action proofs (ADR-0015 gate) — unchanged.
 - Removing synthetic data from the canonical lake — decision 1 of the previous

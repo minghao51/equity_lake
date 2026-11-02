@@ -6,6 +6,12 @@ and the traps that cost time last round
 closure it records. The register it indexes
 ([20261030-01](20261030-01-postpreload-findings-and-remaining-issues.md)) is fully
 implemented; three items remain open and are specified in §4.
+**Continuation (2026-11-02):** Start new product work with the
+[portfolio/research pickup](20261102-01-portfolio-and-research-pickup.md).
+The accepted closure decisions and R12 watch below remain binding. ADR-0023
+containment is accepted in the working tree; operational refit/freshness work
+is deferred pending evidence, not automatically next in the queue.
+
 **Recorded:** 2026-10-31
 **Baseline commit:** `02e1298` (branch `main`, tree clean)
 **Related:** [20261030-01 register](20261030-01-postpreload-findings-and-remaining-issues.md)
@@ -44,6 +50,11 @@ make showcase                 → exit 0, ~74 s, 9 runs, 3 FindingCards
 GET /predictions              → 100 rows / 20 sessions, all valid | established | current_usable
 GET /models                   → 35 summaries, all validation_status: verified
 ```
+
+**Post-ADR-0023 containment (working tree ahead of `00dad39`):** serial and
+`-n auto` both **1739 passed, 17 skipped, 0 failed**; ruff, `ruff format --check`,
+mypy, `equity catalog-generate`, and `make lint-md` clean. The extra test is the
+drifted-Bronze engineering read; no lake contents or writer behaviour changed.
 
 Serial `pytest` is a first-class gate here, not just `-n auto`: R13 existed only in
 the serial order. If a serial run ever fails while `-n auto` passes, suspect
@@ -131,8 +142,17 @@ the drift visible in `equity doctor` (`storage_schema`). Eliminating the drift m
 changing the writer (a deltalake/pyarrow upgrade or a custom writer) — a storage
 boundary change. Write the ADR first (options, migration of existing files, what it
 does to R1's residual-filter seam and its measured cost), then implement.
+**[ADR-0023](../decisions/0023-writer-side-string-view-drift.md) accepted and
+contained (2026-10-31): keep the read seam, route direct string pushdowns through
+`read_delta`, revisit on a recorded trigger. No writer change or migration is
+authorized.**
 
 ### 4.4 Freshness policy ceiling (decision, then code)
+
+**Owner direction, 2026-11-02:** defer operational refit/freshness enhancement
+until strategy/ML utility and backtesting evidence exist. Keep the current cap;
+follow the [new product plan](../plans/20261102-01-portfolio-and-research-implementation-spec.md)
+rather than treating this historical section as the next implementation task.
 
 `PriceForecaster` caps `max_model_age_days` at `DEFAULT_MAX_MODEL_AGE_DAYS` (7), and
 `predict()` persists that bound per row (`model_max_age_days`), which is what the read

@@ -11,7 +11,11 @@ When guidance conflicts, follow the order defined in `AGENTS.md`: enforced
 contracts first, then accepted decision records in `decisions/`, then these
 architecture pages and guides.
 
-## Current continuation — 2026-10-22
+## Current continuation — 2026-11-02
+
+Start with the [portfolio and research implementation pickup](handoffs/20261102-01-portfolio-and-research-pickup.md), the [staged implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md), and the [product-readiness audit](finding/20261102-product-readiness-audit.md). This is a draft, approval-gated plan: first repair four research correctness defects, then build a private portfolio slice and prove one real-data path before expanding ML. Operational refits/freshness widening are deferred. Preserve the uncommitted accepted ADR-0023 containment; worker/reviewer stages, ignored checkpoints, evidence and safety gates are in the pickup. No implementation or live operations are authorized by drafting.
+
+## Historical incident follow-up — 2026-10-22
 
 The [durable prediction follow-up status](plans/20261021-prediction-follow-up-status.md) records unchanged I02/I03 implementation/offline-contract acceptance and the completed, owner-authorized I01 exact-file backup/isolated-copy verification and two-row targeted delete. The single Delta operation advanced v14→v15 at 2026-10-22T16:38:23Z and left zero active files; historical Delta files remain. Row origin, source actor, and MIC remain unknown. No further mutation is planned. The [2026-10-20 handoff](plans/20261020-prediction-incident-follow-up-handoff.md) retains its initial pending statuses and proposal instructions as historical; the Oct18 incident report remains the source for historical inspection facts and limits. C00–C10 acceptance remains valid for its tested scope, not production operational readiness.
 
@@ -35,6 +39,7 @@ rerun for this update and are not production-data-integrity proof.
 
 ## Start Here
 
+- Current product work: [Next-thread pickup](handoffs/20261102-01-portfolio-and-research-pickup.md) and [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) — portfolio accounting, evidence correctness and real-data feasibility before ML operations
 - New users: [Getting Started](getting-started/quickstart.md)
 - Operators: [Pipeline Usage](user-guide/pipeline.md) — commands, config, scheduling
 - Ingestion details: [Ingestion](user-guide/ingestion.md) — sources, destinations, retries, and recovery
@@ -63,13 +68,12 @@ rerun for this update and are not production-data-integrity proof.
 - [developer/architecture/](developer/architecture/) for system design and subsystem docs
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
-- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md)** for the current brief (baseline, closure decisions, the three open items, the traps); [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register (§9 has what landed), [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records the ADR-0021 work and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload and audit work
+- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261102-01](handoffs/20261102-01-portfolio-and-research-pickup.md)** for product implementation planning and worker/reviewer dispatch; [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md) preserves accepted closure decisions, the R12 watch and the traps; [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register, [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records ADR-0021 implementation and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload work
 - [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
 - [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts
-- [plans/20260804-portfolio-roadmap.md](plans/20260804-portfolio-roadmap.md) for the
-  active roadmap (the archived `technical_roadmap.md` and its coverage map are
-  superseded — see `archive/`)
+- [Current product implementation plan](plans/20261102-01-portfolio-and-research-implementation-spec.md) for the approval-gated portfolio/research task queue
+- [Portfolio showcase roadmap](plans/20260804-portfolio-roadmap.md) for the earlier career-portfolio/showcase context; the current product plan above governs this new work (the archived `technical_roadmap.md` and its coverage map remain superseded — see `archive/`)
 
 ## Notes
 
