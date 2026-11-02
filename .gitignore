@@ -58,6 +58,7 @@ Thumbs.db
 .aws/
 
 # Local tooling
+.agent-progress/
 .claude/
 .context/
 .zcode/

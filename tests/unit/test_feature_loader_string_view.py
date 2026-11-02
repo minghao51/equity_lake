@@ -20,6 +20,7 @@ import pytest
 
 from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
+from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
 from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
 from equity_lake.storage.delta import merge_delta, read_delta, update_delta_columns  # type: ignore[import-untyped]
 
@@ -103,6 +104,57 @@ def test_read_delta_filters_the_same_drifted_gold_table(tmp_path: Path) -> None:
 
     assert frame.height == 3
     assert set(frame["ticker"].to_list()) == {"AAPL"}
+
+
+def _drifted_bronze_lake(tmp_path: Path) -> Path:
+    """Create a Bronze price table, then force one merge rewrite to string_view."""
+    table = "01_bronze/market_data/us_equity"
+    frame = pl.DataFrame(
+        {
+            "market": ["us_equity"] * 6,
+            "mic": ["XNAS"] * 6,
+            "symbol": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT", "MSFT"],
+            "ticker": ["AAPL", "AAPL", "AAPL", "MSFT", "MSFT", "MSFT"],
+            "date": [*_DATES, *_DATES],
+            "open": [10.0] * 6,
+            "high": [11.0] * 6,
+            "low": [9.0] * 6,
+            "close": [10.0] * 6,
+            "volume": [100.0] * 6,
+        }
+    )
+    merge_delta(frame, table, key_columns=_KEY_COLUMNS, partition_by=["date"], lake_dir=tmp_path)
+    update_delta_columns(
+        pl.DataFrame(
+            {
+                "market": ["us_equity"],
+                "mic": ["XNAS"],
+                "symbol": ["AAPL"],
+                "date": [_DATES[0]],
+                "close": [10.5],
+            }
+        ),
+        table,
+        update_columns=["close"],
+        key_columns=_KEY_COLUMNS,
+        lake_dir=tmp_path,
+    )
+    return tmp_path / table
+
+
+def test_feature_engineering_reads_a_drifted_bronze_table(tmp_path: Path) -> None:
+    """ADR-0023: the Bronze symbol scope must not be an Arrow string pushdown."""
+    table = _drifted_bronze_lake(tmp_path)
+    assert "string_view" in {str(pq.read_schema(path).field("ticker").type) for path in table.rglob("*.parquet")}
+
+    engineer = FeatureEngineer.__new__(FeatureEngineer)
+    engineer.market_sources = [("us_equity", table)]
+
+    rows = engineer._load_price_rows(["AAPL", "MSFT"], _DATES[0], _DATES[-1])
+
+    assert rows.height == 6
+    assert set(rows["symbol"].to_list()) == {"AAPL", "MSFT"}
+    assert rows.filter((pl.col("symbol") == "AAPL") & (pl.col("date") == _DATES[0]))["close"].to_list() == [10.5]
 
 
 def test_loader_still_scopes_to_the_requested_instrument(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -247,12 +247,12 @@ def test_run_feature_job_marks_missing_action_coverage_before_output_bar(price_l
 
 
 @pytest.mark.parametrize("storage", ["delta", "parquet"])
-def test_price_reader_pushes_symbol_membership_before_materialization(
+def test_price_reader_scopes_symbol_without_arrow_string_pushdown(
     storage: str,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Both local scan paths send the ticker predicate to the scanner first."""
+    """Delta pushdowns dates only; the Parquet scan can still push the symbol scope."""
     symbols = ["TARGET", *(f"OTHER_{index:04d}" for index in range(3_000))]
     frame = pl.DataFrame(
         {
@@ -293,12 +293,12 @@ def test_price_reader_pushes_symbol_membership_before_materialization(
                 return self.table.schema()
 
             def to_pyarrow_table(self, **kwargs: Any) -> Any:
-                filters: list[tuple[str, str, Any]] = kwargs["filters"]
+                filters: list[tuple[str, str, Any]] = kwargs.get("filters") or []
                 observed_filters.extend(f"{column} {operator} {value}" for column, operator, value in filters)
-                assert any("symbol" in predicate and "in" in predicate and "TARGET" in predicate for predicate in observed_filters)
                 return self.table.to_pyarrow_table(**kwargs)
 
-        monkeypatch.setattr(deltalake, "DeltaTable", _RecordingDeltaTable)
+        # read_delta imports DeltaTable at module load; patch the seam it uses.
+        monkeypatch.setattr("equity_lake.storage.delta.DeltaTable", _RecordingDeltaTable)
     else:
         real_scan_parquet = pl.scan_parquet
 
@@ -319,7 +319,6 @@ def test_price_reader_pushes_symbol_membership_before_materialization(
                 return self
 
             def collect(self, *args: Any, **kwargs: Any) -> pl.DataFrame:
-                assert any("symbol" in predicate and "TARGET" in predicate for predicate in observed_filters)
                 return cast(pl.DataFrame, self.frame.collect(*args, **kwargs))
 
         def scan_parquet(*args: Any, **kwargs: Any) -> _RecordingLazyFrame:
@@ -330,3 +329,9 @@ def test_price_reader_pushes_symbol_membership_before_materialization(
     result = engineer._load_price_rows(["TARGET"], date(2024, 1, 2), date(2024, 1, 2))
     assert result["symbol"].to_list() == ["TARGET"]
     assert result.height == 1
+
+    if storage == "delta":
+        assert any(predicate.startswith("date ") for predicate in observed_filters)
+        assert not any(predicate.startswith("symbol ") for predicate in observed_filters)
+    else:
+        assert any("symbol" in predicate and "TARGET" in predicate for predicate in observed_filters)

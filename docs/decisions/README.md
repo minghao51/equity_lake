@@ -42,3 +42,4 @@ enforced contracts when guidance conflicts.
 | [0020](0020-synthetic-demo-lake-as-backtestable-surface.md) | Synthetic demo lake as a backtestable surface (identity + coverage + `--lake`) | Accepted |
 | [0021](0021-row-bound-forecast-provenance.md) | Row-bound forecast provenance and prediction usability | Accepted |
 | [0022](0022-future-forecast-provenance-envelope.md) | Future forecast-provenance envelope versions: reader tolerance, writer refusal, v2 procedure | Accepted |
+| [0023](0023-writer-side-string-view-drift.md) | Writer-side Arrow `string_view` drift: keep the read seam, contain direct pushdowns, revisit on trigger | Accepted |

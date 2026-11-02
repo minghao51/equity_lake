@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import date
 from types import TracebackType
-from typing import Any, cast
+from typing import Any
 
 import duckdb
 import polars as pl
@@ -44,6 +44,7 @@ from equity_lake.core.paths import LAKE_DIR, PRICE_MARKETS
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
 from equity_lake.features.pipeline import FeaturePipeline
+from equity_lake.storage.delta import read_delta
 from equity_lake.storage.lake_reader import ensure_delta_extension
 
 logger = structlog.get_logger()
@@ -106,14 +107,15 @@ class FeatureEngineer:
                         logger.warning("feature_price_source_missing_columns", market=market, columns=sorted(available))
                         continue
                     selected = [name for name in source_columns if name in available]
-                    source = cast(
-                        pl.DataFrame,
-                        pl.from_arrow(
-                            table.to_pyarrow_table(
-                                columns=selected,
-                                filters=[("date", ">=", start_date), ("date", "<=", end_date), (symbol_column, "in", tickers)],
-                            )
-                        ),
+                    # Bronze is normally large_string, but a merge rewrite can make
+                    # matched files string_view. read_delta pushes the date range
+                    # down and applies the symbol predicate in Polars (ADR-0023);
+                    # a direct Arrow string predicate would raise on a drifted file.
+                    source = read_delta(
+                        path.name,
+                        lake_dir=path.parent,
+                        columns=selected,
+                        filters=[("date", ">=", start_date), ("date", "<=", end_date), (symbol_column, "in", tickers)],
                     )
             else:
                 try:
