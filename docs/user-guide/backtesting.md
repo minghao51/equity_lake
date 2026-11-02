@@ -61,6 +61,31 @@ dotenvx run -- uv run equity arena run --start-date 2024-01-01 --end-date 2024-1
 
 `--strategies` and `--cost-regimes` accept comma-separated subsets (default: all).
 
+### The arena benchmark
+
+The arena's equal-weight buy-and-hold benchmark is a fixed-share curve, not a
+daily-rebalanced one: equal capital is allocated once at the first evaluation
+date (`q_i = initial_cash / (N * close_i(inception))`) and held, so
+`equity(t) = sum(q_i * close_i(t))` on the shared split-neutral marks. There is
+no rebalancing, survivor renormalization, late admission or dividend/FX
+assumption, and it pays no costs and executes with no lag — the documented
+asymmetry against strategies that trade one bar after signal under their fee/tax
+regime remains visible in `scope.benchmark_asymmetry`.
+
+The benchmark requires a complete panel: every scoped instrument must carry a
+mark at inception and at every date in the cohort's date union. An incomplete
+panel, duplicate identity/date key, missing/non-positive/non-finite mark,
+partial canonical identity or non-positive `initial_cash` is rejected with a
+`ValueError` naming the offending identity/date rather than carrying a stale
+price, starting late or filling zero. `run_arena` also rejects a requested
+ticker with no loaded rows, and a non-empty load without a `close` column
+raises instead of yielding an empty benchmark. The inception point equals
+`initial_cash` only to floating-point tolerance (a fixed-share sum can be off by
+about one ULP), so compare it with a relative tolerance. Cards record both
+policies in `scope.benchmark_policy` and
+`scope.benchmark_missing_mark_policy`; a caller-supplied `scope` can add keys but
+cannot replace those four mandatory disclosures.
+
 ### Cost regimes
 
 Costs are modeled as per-trade fee and tax ratios (`COST_REGIMES` in
@@ -195,6 +220,16 @@ result = engine.run()
 ### Momentum
 
 2. **CrossSectionalMomentumStrategy** - Rank stocks by past returns (`lookback_days` 252, `skip_days` 21, `top_pct`/`bottom_pct` 0.3, `rebalance_days` 21, `long_only`, `min_stocks` 10)
+
+   The lookback return and the `skip_days` lag are computed inside one instrument
+   window (`market`, `mic`, `symbol`, or `ticker` for ticker-only frames), so no
+   instrument's lag comes from another symbol, venue or row order, and an
+   instrument receives no target until it has `lookback_days + skip_days` own
+   observations. Candidates are ordered by past return descending, then identity
+   ascending, and selected by ordinal rank: ties are broken deterministically and
+   exactly `max(int(n * top_pct), 1)` names are held (mirrored on the short side
+   with `bottom_pct`, long side winning overlaps). Duplicate identity/date rows
+   raise `InstrumentIdentityError` instead of being resolved by row order.
 
 ### Mean Reversion
 

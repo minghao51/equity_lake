@@ -144,6 +144,14 @@ class TestArenaReportSubcommands:
         assert "--lake" in result.stdout
         assert "canonical lake" in result.stdout
 
+    def test_arena_run_help_documents_completion_exit_policy(self) -> None:
+        """F04: the help states the PARTIAL label and the nonzero exit policy."""
+        result = runner.invoke(app, ["arena", "run", "--help"])
+        assert result.exit_code == 0
+        assert "PARTIAL" in result.stdout
+        assert "Exit codes" in result.stdout
+        assert "evaluated" in result.stdout and "ineligible" in result.stdout
+
     def test_report_backtest_help(self) -> None:
         result = runner.invoke(app, ["report", "backtest", "--help"])
         assert result.exit_code == 0

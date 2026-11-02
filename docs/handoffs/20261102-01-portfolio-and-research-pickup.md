@@ -222,3 +222,32 @@ checkpoints, named regression/mutation evidence, and serialized pytest.
 Start with F01; do not implement portfolio/storage/source ADRs, access private
 accounts, ingest real data, refit models or deploy without their separate gates.
 ```
+
+## 8. Outcome — 2026-11-02 implementation session
+
+B00 executed with commit plan (b): the carried ADR-0023 work committed alone
+(`1b380af`), then the planning docs/ledger (`d85b561`), leaving a clean stage
+baseline. The owner then approved D1 (b), D3 complete-panel missing marks, D4
+(fix the rank-tie defect now, inside F02), D5 signed cost delta, D6 zero/partial
+`exit 1`, and D7 the `evaluated | no_trades | ineligible` vocabulary.
+
+F01 → F04 are implemented, independently reviewed and mutation-proved; details,
+per-round findings and gate counts are in the specification's stage ledger. Final
+frozen-tranche gates: serial **1893 passed / 0 failed / 17 skipped (366 s)**,
+parallel `-n auto` **1893 / 0 / 17 (789 s)**, ruff check/format, `mypy` (174
+files), `equity catalog-generate` (no diff), `make lint-md`, `git diff --check`
+all clean. No catalog, schema, storage, CLI-surface or ADR change was needed for
+this tranche.
+
+Accepted residuals: the shared momentum `initialize()` still reports
+`data["ticker"].n_unique()` (pre-existing, ticker-less composite frames only);
+over-redaction in `_sanitize_failure_reason` for a bare `Basic <word>` sequence;
+a *finite* extreme cost delta still formats `:.2f`; per-run immutable artifact
+layout remains E01 work, so old `data/findings/` directories can still be
+overwritten by a later accepted run.
+
+Next entry gates, each requiring its own decision — do not continue silently:
+P00 portfolio accounting/privacy ADR, D00 offline provider-feasibility packet,
+E00 immutable research-evidence ADR (check the next free ADR number; do not
+assume 0024). No private account access, real ingestion, model refit, scheduling
+or deployment is authorized by this session.

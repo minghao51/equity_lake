@@ -2,6 +2,7 @@ import polars as pl
 import structlog
 
 from equity_lake.backtesting.strategy.base import BaseStrategy, strategy_identity_columns
+from equity_lake.core.instruments import InstrumentIdentityError
 
 logger = structlog.get_logger(__name__)
 
@@ -37,7 +38,25 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
 
         identity_columns = strategy_identity_columns(data)
         weight_keys = ["date", *identity_columns]
-        df = data.with_columns((pl.col("close").pct_change(n=lookback).over(identity_columns).shift(skip_days)).alias("past_return"))
+        # Canonical instrument/date order before any time operation: pct_change and
+        # shift below both read the immediately preceding row inside one instrument
+        # window, so an unsorted frame would let a lag cross instruments or venues.
+        ordered = data.sort([*identity_columns, "date"])
+
+        duplicates = ordered.select(weight_keys).is_duplicated()
+        if duplicates.any():
+            duplicate_row = ordered.filter(duplicates).row(0, named=True)
+            identity_text = ", ".join(f"{column}={duplicate_row[column]!r}" for column in identity_columns)
+            raise InstrumentIdentityError(
+                f"Duplicate instrument/date rows for {identity_text} on {duplicate_row['date']}: "
+                "momentum weights require exactly one observation per instrument-session"
+            )
+
+        df = ordered.with_columns(
+            # Lookback return and skip lag evaluated in the same instrument-local
+            # window; an instrument has no return before lookback + skip own bars.
+            pl.col("close").pct_change(n=lookback).shift(skip_days).over(identity_columns).alias("past_return")
+        )
 
         dates = df["date"].unique().sort()
         rebalance_dates = dates[::rebalance_days].to_list()
@@ -49,7 +68,14 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
             if slice_df.height < min_stocks:
                 continue
 
-            ranked = slice_df.with_columns(pl.col("past_return").rank(descending=True).alias("rank"))
+            # Ordinal rank over a canonical order: past return descending, then
+            # identity ascending. Ties are broken deterministically by identity, so
+            # the cut selects exactly top_count names regardless of input order.
+            ranked = slice_df.sort(
+                ["past_return", *identity_columns],
+                descending=[True, *([False] * len(identity_columns))],
+                nulls_last=True,
+            ).with_row_index("rank", offset=1)
             n = ranked.height
             top_count = max(int(n * top_pct), 1)
 
@@ -75,14 +101,16 @@ class CrossSectionalMomentumStrategy(BaseStrategy):
             weight_frames.append(weights)
 
         if not weight_frames:
-            return data.select(weight_keys).with_columns(pl.lit(0.0).alias("weight"))
+            return ordered.select(weight_keys).with_columns(pl.lit(0.0).alias("weight"))
 
         result = pl.concat(weight_frames)
         return (
-            data.select(weight_keys)
+            ordered.select(weight_keys)
             .join(result, on=weight_keys, how="left")
+            .sort([*identity_columns, "date"])
             .with_columns(pl.col("weight").fill_null(strategy="forward").over(identity_columns))
-            .fill_null(0.0)
+            .with_columns(pl.col("weight").fill_null(0.0))
+            .sort(weight_keys)
         )
 
 

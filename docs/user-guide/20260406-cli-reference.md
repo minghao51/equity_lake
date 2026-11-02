@@ -497,6 +497,41 @@ The lake must contain point-in-time action coverage (ADR-0015) in addition to
 ticker identity; `equity demo seed` writes both, so a seeded sample lake is
 backtestable without any network access.
 
+Every requested `(strategy, cost regime)` pair is attempted independently. The
+summary prints requested/completed/failed/non-evaluable counts, the failed pairs
+(sanitized error type and reason, no absolute paths or credentials) and each
+run's evaluation status (`evaluated`, `no_trades`, `ineligible`).
+
+| Outcome | Exit |
+| --- | --- |
+| every requested pair completed | `0` |
+| any requested pair failed — labelled `PARTIAL`; the successful runs' artifacts are still written | `1` |
+| a requested pair is missing without a recorded failure — labelled `PARTIAL`, with `N requested pair(s) neither completed nor recorded a failure` naming each pair | `1` |
+| a pair is recorded both completed and failed — labelled `PARTIAL`, with `N requested pair(s) are recorded both completed and failed` naming each pair | `1` |
+| no requested run completed — no success banner, no cards, artifacts untouched (writer not called); every requested pair with neither outcome is named | `1` |
+| a completed run or recorded failure outside the request — named as out of scope; never counted as success, never published | unchanged |
+| artifact write failure | `1` |
+
+Completion is measured against the requested pair set (recorded by `run_arena`;
+legacy outcomes without it fall back to their completed plus failed pairs), so
+`1 of 2 requested pair(s) completed` with no recorded failure is a partial
+invocation and exits `1`. The zero-completion guard uses the same measure: an
+outcome that carries a completed run *outside* the request publishes nothing,
+exits `1`, and names those pairs as outside the invocation's request — only the
+requested set is ever published or counted as success. The requested set is
+deduplicated in first-occurrence order before any count is printed, and
+`run_arena` collapses duplicate selections the same way: `--strategies
+momentum,momentum` is one requested pair, reports `1 of 1`, and is not an error.
+
+Only `evaluated` runs (trades present and the universe at least the strategy's
+`min_stocks`) feed the FindingCards; `no_trades`/`ineligible` runs are printed
+with their status and excluded from card evidence. The default five-ticker
+universe is below momentum's `min_stocks=10`, so that run reports
+`ineligible — universe 5 < min_stocks 10` without failing the invocation. There
+is no partial-allowance flag; artifact directories from earlier runs can remain
+under the findings root and nothing is deleted automatically (immutable per-run
+layout is E01's boundary).
+
 ### `equity report backtest`
 
 Run a single backtest under one cost regime and write its report artifacts

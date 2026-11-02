@@ -193,8 +193,10 @@ fails silently.
 - No new parameter, no change to `top_pct`/`bottom_pct`/`min_stocks` semantics.
 
 **Required regressions:** `test_momentum_tie_at_cut_keeps_full_investment` (the
-probe above must sum to `1.0` with two names at `0.5`, and must fail on the old
-rank), `test_momentum_tie_break_is_identity_deterministic` (same returns, venues
+probe above must be fully invested with `top_pct=0.2` selecting exactly
+`top_count=1` name at `1.0`, and `top_pct=0.5` selecting both tied names at `0.5`
+summing to `1.0`; both readings must fail on the old average-rank code),
+`test_momentum_tie_break_is_identity_deterministic` (same returns, venues
 or symbols permuted in input order → same selected set), plus a long/short
 overlap case pinning long precedence.
 
@@ -604,6 +606,194 @@ Docs, schema/catalog, privacy, compatibility: none touched; no lake/model/privat
 Residuals: full serial/parallel gates, ruff/mypy, catalog regeneration deferred to the
   frozen tranche boundary per section 9.
 Next eligible stage: F01 (approved), then F02 (includes the section 3.2a tie fix).
+```
+
+```text
+F01 / done / 2026-11-02T12:42Z:
+Owner-approved scope and policy reference: section 3.1 fixed-share benchmark, conservative
+  complete-panel missing-mark policy, order invariance, card-scope disclosure.
+Dependency and accepted-ADR evidence: B00 commits 1b380af (ADR-0023) and d85b561 (planning);
+  ADR-0010 market keys, ADR-0020 demo-lake surface, ADR-0023 read seam; no new ADR needed.
+Stage-start snapshot and reviewed final diff: d85b561 clean tree; final diff sha256
+  77302c66e8678f5a13b85d614a31e5b2f8f37317a318a8d6225d91294193a203 across exactly
+  arena.py, report.py, tests/unit/test_arena.py and the two arena/backtesting guides.
+Worker invocation/checkpoint: worker rounds 1-3 (ignored checkpoints
+  20261102-f01-worker-{1,2,3}.md) resolved: non-empty frame without close now raises; the
+  benchmark post-condition validates columns/unique/ascending/union-equal dates and finite
+  equity; card/artifact equality proven from run_arena; caller scope can no longer overwrite
+  the four mandatory disclosures; dead InstrumentKey branch removed.
+Independent reviewer, verdict and issue resolution: reviewer read-only rounds 1-3
+  (checkpoints 20261102-f01-reviewer-{1,2,3}.md). Round 1 BLOCKED (1 major, 3 minor), round 2
+  BLOCKED (guard date-union gap), round 3 PASS with one inaccurate test-docstring residual,
+  corrected by the coordinator.
+Named regression and one-rule mutation/restore evidence: test_buyhold_uses_fixed_initial_shares
+  fails on the restored daily-return-averaging rule (mutant terminal 112.5 vs required 100.0),
+  arena.py backed up to /tmp/f01-arena-dirty.py.bak, restored with diff -q identical and the
+  named test green again. Logs /tmp/f01-mutation.log, /tmp/f01-mutation-restored.log.
+Focused tests / final gates / exact counts / retained log locations: tests/unit/test_arena.py
+  57 passed / 0 failed / 0 skipped / 120.0 s serial (/tmp/f01-coordinator-arena.{log,xml});
+  ruff check and format clean on the three code files. Full serial/parallel gates remain
+  deferred to the frozen tranche boundary.
+Docs, schema/catalog, privacy, compatibility and migration status: two user guides updated
+  (fixed-share policy, complete-panel rejection, missing-close behaviour, inception float
+  caveat, scope immutability); no schema, catalog, CLI or storage change; no lake/model write.
+Residuals, explicit stop condition, next eligible stage: inherent one-ULP inception
+  difference (documented, tolerance-pinned); ticker-only fixtures with a missing close column
+  now raise by contract. Stage stops here; F02 is next and adds the section 3.2a tie fix.
+Owner acceptance and authorized coordinator commit (if any): pending tranche acceptance; no
+  stage commit made (commit plan (b) commits once after the full gates).
+```
+
+```text
+F02 / done / 2026-11-02T13:10Z:
+Owner-approved scope and policy reference: section 3.2 locality contract plus the section 3.2a
+  deterministic tie policy the owner asked to fix now (not deferred).
+Dependency and accepted-ADR evidence: F01 accepted; engine already sorts the as-of window by
+  canonical identity and date; no new ADR, schema, catalog or dependency change.
+Stage-start snapshot and reviewed final diff: stage start = F01-accepted tree
+  (/tmp/f01-stage-final.diff, arena.py/report.py/test_arena.py verified byte-identical);
+  final diff sha256 a06de87ba6c941db4cbd2bc777066842d69b7b62e780c4bc34f3db41c422209d over
+  momentum.py, tests/unit/test_momentum_weights.py (new) and the two guides.
+Worker invocation/checkpoint: worker rounds 1-2 (ignored 20261102-f02-worker-{1,2}.md).
+  Round 1 implemented locality/warmup/order/duplicate rejection and the ordinal tie
+  selection. Round 2 replaced the weak as-of test with a post-cutoff-tail perturbation
+  invariance test after the reviewer showed the original could not detect an engine-side leak.
+Independent reviewer, verdict and issue resolution: reviewer read-only rounds 1-3
+  (20261102-f02-reviewer-{1,2,3}.md; round 3 persisted by the coordinator because the preset
+  forbids repo writes). Round 1 BLOCKED (engine as-of test not load-bearing), round 2 BLOCKED
+  (strategy-only probe cannot falsify engine truncation), round 3 PASS once the probe also
+  widened the engine's as-of window in-process and the test failed at
+  tests/unit/test_momentum_weights.py:784 (equity curves 108736.37 vs 28067.19).
+Named regression and one-rule mutation/restore evidence: (A) shift moved outside the identity
+  window -> test_momentum_lag_is_instrument_local and test_momentum_is_order_invariant fail;
+  (B) ordinal selection replaced by average rank() -> test_momentum_tie_at_cut_keeps_full_investment
+  fails on the top_count=1 identity tie-break. Both restored from
+  /tmp/f02-momentum-dirty.py.bak with diff -q identical; logs /tmp/f02-mutation-{a,b}.log.
+Focused tests / final gates / exact counts / retained log locations: tests/unit/test_momentum_weights.py
+  + tests/unit/test_backtesting_regressions.py = 27 passed / 0 failed / 0 skipped / 3.4 s serial
+  after restore (/tmp/f02-coordinator.{log,xml}); ruff check and format clean.
+Docs, schema/catalog, privacy, compatibility and migration status: momentum bullets updated in
+  backtesting.md and the arena/findings guide; output row order is now deterministically
+  key-sorted (all consumers filter/sort by keys); min_stocks=10, rebalance schedule, ranking
+  direction and the weight interface unchanged; no lake/model write.
+Residuals, explicit stop condition, next eligible stage: initialize() still logs
+  data["ticker"].n_unique() so a ticker-less composite frame would fail there (pre-existing,
+  outside F02); pre-existing markdownlint MD029 in backtesting.md. Stage stops here; F03 next.
+Owner acceptance and authorized coordinator commit (if any): pending tranche acceptance.
+```
+
+```text
+F03 / done / 2026-11-02T13:40Z:
+Owner-approved scope and policy reference: section 3.3 signed cost-delta verdict with 1e-12
+  numerical tolerance, no division by Sharpe, no invented turnover, omit unavailable fields.
+Dependency and accepted-ADR evidence: F01 accepted (fixed-share benchmark, mandatory scope keys);
+  no new ADR, schema, catalog or dependency change.
+Stage-start snapshot and reviewed final diff: stage start = F02-accepted tree
+  (/tmp/f02-stage-final.diff); final diff sha256
+  42a940efabf7cf9c8df6f6601ec7a874f4f78ecb7ff200863f450c6b7f0ab684 over report.py (cost
+  block only), tests/unit/test_cost_card.py (new, fast) and the arena/findings guide.
+Worker invocation/checkpoint: worker rounds 1-2 (ignored 20261102-f03-worker-{1,2}.md).
+  Round 1 replaced the ratio rule with finite signed-delta logic. Round 2 added the
+  finite-delta overflow guard, the ambiguous duplicate-regime policy and the boundary tests.
+Independent reviewer, verdict and issue resolution: reviewer rounds 1-3
+  (20261102-f03-reviewer-{1,2,3}.md; rounds 2-3 persisted by the coordinator). Round 1
+  BLOCKED (finite operands overflowed the delta to inf -> null metric and unreadable card;
+  duplicate-regime order dependence). Round 2 returned an incomplete progress-only report, so
+  a bounded verdict round was re-dispatched: PASS with the overflow and duplicate checks
+  reproduced end-to-end. The round-1 out-of-scope finding on docs/user-guide/backtesting.md
+  was dismissed with evidence: that file's diff is byte-identical to the F02-accepted snapshot.
+Named regression and one-rule mutation/restore evidence: restoring the ratio-based verdict
+  plus the turnover sentence fails 19 of 20 cost-card tests, including
+  test_cost_card_negative_sharpe_deterioration_is_negative and
+  test_cost_card_does_not_infer_turnover; report.py restored from
+  /tmp/f03-report-dirty.py.bak with diff -q identical; log /tmp/f03-mutation.log.
+Focused tests / final gates / exact counts / retained log locations: tests/unit/test_cost_card.py
+  20 passed / 0 failed serial (/tmp/f03-coordinator.{log,xml}); tests/unit/test_arena.py 57
+  passed unchanged (/tmp/f03-review2-arena.log); ruff check/format clean.
+Docs, schema/catalog, privacy, compatibility and migration status: cost-card section added to
+  the arena/findings guide; card id/axis/claim/evidence_refs, regime metric keys and the F01
+  mandatory scope keys preserved; `metrics` is a superset plus `cost_regime.sharpe_delta`; no
+  consumer references the removed sentence; no lake/model write.
+Residuals, explicit stop condition, next eligible stage: a finite extreme delta still formats
+  `:.2f`; the stale on-disk data/findings/cost-regime.json keeps the old sentence until a run
+  regenerates it (not rewritten by this stage); strategy-comparison and vs-benchmark cards still
+  read the convenience property (F04 admission scope). Stage stops here; F04 next.
+Owner acceptance and authorized coordinator commit (if any): pending tranche acceptance.
+```
+
+```text
+F04 / done / 2026-11-02T15:05Z:
+Owner-approved scope and policy reference: section 3.4 — per-run isolation, requested/completed/
+  failed recording, zero-completion exit 1 with no writer call, any-failure PARTIAL exit 1,
+  no allow-partial flag, `evaluated | no_trades | ineligible` vocabulary, evaluated-only card
+  admission, unchanged `min_stocks=10`.
+Dependency and accepted-ADR evidence: F01-F03 accepted; no new ADR, schema, catalog or
+  dependency change.
+Stage-start snapshot and reviewed final diff: stage start = F03-accepted tree
+  (/tmp/f03-stage-final.diff); final diff covers arena.py, report.py, cli/commands/arena.py,
+  tests/unit/test_arena.py, tests/unit/test_cli_unified.py, new
+  tests/unit/test_arena_failure_policy.py and the arena/CLI guides; momentum.py,
+  test_momentum_weights.py and test_cost_card.py verified byte-identical to their accepted
+  states at every round.
+Worker invocation/checkpoint: worker rounds 1-6 (ignored 20261102-f04-worker-{1..6}.md). Fixes:
+  strategy construction moved inside the per-pair isolation boundary; sanitizer hardened twice
+  (authorization header, bare bearer/basic scheme, key=value secrets, slash/backslash/drive
+  paths, URL credentials, marker-safe truncation); vacuous 80-day card test reworked to
+  evaluated runs with numeric metric pins; `min_stocks` type/boundary and BaseException
+  propagation coverage; completion accounting moved to the requested set (duplicate dedupe,
+  missing-pair naming, contradictory-pair diagnosis, unrequested pairs never published);
+  zero-completion branch names every missing requested pair.
+Independent reviewer, verdict and issue resolution: reviewer read-only rounds 1-6
+  (20261102-f04-reviewer-*.md; later rounds returned inline and were persisted by the
+  coordinator). Round 1 BLOCKED (strategy constructor outside the isolation boundary;
+  sanitizer credential/path leak; vacuous card test). Round 2 BLOCKED (PARTIAL decided by
+  failures, not the requested set). Round 3 BLOCKED (duplicate requested pairs printed
+  "1 of 2"). Round 4 BLOCKED (zero-completion guard used all completed runs, so an
+  unrequested run could be published). Round 5 BLOCKED (bare `Bearer` and backslash-relative
+  paths still leaked; zero-completion branch did not name missing pairs). Round 6 PASS after
+  an independent adversarial sanitizer battery (no leaks) and the full exit matrix.
+Named regression and one-rule mutation/restore evidence: (A1) zero-completion `Exit(1)`
+  replaced by `return` -> 4 failure-policy tests fail; (A2) partial `Exit(1)` removed -> 6
+  tests fail including test_one_success_one_failure_is_partial_and_exits_one; (B) failure
+  recording removed in run_arena -> 7 tests fail including
+  test_run_arena_isolates_a_real_engine_exception while success-path tests still pass. All
+  restored from /tmp/f04-{cli,arena}-dirty.py.bak with diff -q identical; logs
+  /tmp/f04-mutation-{a1,a2,b}.log.
+Focused tests / final gates / exact counts / retained log locations: 55 passed in
+  tests/unit/test_arena_failure_policy.py; 238 passed in the test_arena + test_cost_card +
+  test_cli_unified trio; logs /tmp/f04-worker6*.xml, /tmp/f04-review6*.log. Full serial and
+  parallel suites, ruff/mypy, catalog regeneration and Markdown lint run at the frozen
+  tranche boundary (see below).
+Docs, schema/catalog, privacy, compatibility and migration status: arena/findings guide and
+  CLI reference document the exit table, evaluation vocabulary, sanitizer rules and the
+  requested-only publication invariant; positional construction of ArenaRun/ArenaOutcome and
+  the public run_arena signature unchanged; card scope gains the four count keys as mandatory
+  disclosures; no lake/model write, no artifact deletion, no catalog/schema change.
+Residuals, explicit stop condition, next eligible stage: over-redaction tradeoff (a bare
+  `Basic <word>` sequence loses the following token; path tokens lose adjacent punctuation) is
+  documented and accepted; the `strategies: ... | regimes: ...` line still lists the whole
+  registry (pre-existing). Tranche stops after F04; E00/P00/D00 each need their own gate.
+Owner acceptance and authorized coordinator commit (if any): pending owner acceptance of the
+  frozen tranche; one coordinator commit after the gates, per commit plan (b).
+```
+
+```text
+F01-F04 frozen tranche gates / run 2026-11-02T16:20Z (serial then parallel, sequential):
+uv sync --group dev --group backtesting            -> exit 0 (/tmp/gate-sync.log)
+uv run pytest --junitxml=/tmp/portfolio-research-serial.xml   -> 1893 passed, 0 failed,
+  0 errors, 17 skipped, 366.2 s (/tmp/portfolio-research-serial.log)
+uv run pytest -n auto --junitxml=/tmp/portfolio-research-parallel.xml -> 1893 passed, 0 failed,
+  0 errors, 17 skipped, 788.6 s (/tmp/portfolio-research-parallel.log)
+uv run ruff check .                                -> exit 0, all checks passed
+uv run ruff format --check .                       -> exit 0, 323 files already formatted
+uv run mypy                                        -> exit 0, no issues in 174 source files
+uv run equity catalog-generate                     -> exit 0, diff vs pre-run copy: unchanged
+   (no pipeline/feature contract change, catalog not regenerated in the commit)
+make lint-md                                       -> exit 0
+git diff --check                                   -> exit 0
+Tranche diff identity before commit: sha256 e91a83ebf2b5a59a3b58b291695903bb7f09a970e5bf3c7c30297b02fdeaeb5b.
+The 17 skips are the pre-existing optional/network-marked selections, unchanged in count from
+  the historical baseline; no skipped path is claimed as verified.
 ```
 
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
