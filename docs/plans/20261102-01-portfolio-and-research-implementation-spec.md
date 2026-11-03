@@ -796,6 +796,67 @@ The 17 skips are the pre-existing optional/network-marked selections, unchanged 
   the historical baseline; no skipped path is claimed as verified.
 ```
 
+### Next-gate decisions recorded (2026-11-02, after the F01-F04 tranche)
+
+```text
+Owner decisions / 2026-11-02T17:10Z:
+P00: proceed with the drafted recommendations for the accounting, persistence, identity,
+  valuation, split, correction and privacy policies (ADR-0024, status Proposed).
+  P00-1 remains OPEN: the single account's market and base currency. The draft records
+  `us_equity` / USD as a PROPOSED selection for owner confirmation; P01 implementation stays
+  blocked until it is confirmed.
+E00: proceed with the drafted recommendations for layout, run ID, latest-attempt vs
+  latest-success, compatibility, snapshot hashing, provenance vocabulary, read surfaces and
+  no-migration policy (ADR-0025, status Proposed).
+D00-1: the offline feasibility packet covers BOTH `us_equity` (yfinance) and `cn_ashare`
+  (existing akshare/efinance integration), evidence only, no source calls.
+D00-2: spend authorization is GenAI/LLM calls YES, market-data purchase NO. The packet must
+  therefore treat licensed/paid data as out of scope and state what free-source evidence can
+  and cannot certify; enrichment-side generation stays separately gated.
+D00-3: confirmed - target root/isolation and any ingestion change stay out of scope until D01.
+Next free ADR number checked against the index: 0024 (0023 is the latest accepted record).
+Neither ADR number is reserved in advance; whichever record is accepted first takes it.
+```
+
+### Next-gate drafting outcome (2026-11-03)
+
+```text
+Records drafted (all uncommitted at the time of writing, all status Proposed):
+docs/decisions/0024-private-portfolio-ledger-and-accounting.md  (P00, 3 open items)
+docs/decisions/0025-immutable-research-evidence-and-run-manifests.md  (E00, 5 open items)
+docs/plans/20261103-01-d00-offline-source-feasibility.md  (D00 evidence packet)
+Index rows and docs/README links added; make lint-md exit 0.
+
+Independent reviews (read-only, separate contexts):
+- ADR fidelity round: initially NEEDS-REVISION on both. ADR-0024 had described the decided
+  split-block policy as open, and carried unapproved normative backup/compaction/SQLite
+  mechanics; ADR-0025 had made the export allowlist mechanism binding. Corrections: split
+  wording distinguishes decided policy from a future amendment; SQLite mechanics demoted to a
+  non-normative note; backup/restore moved to a new open item P00-4; the W&B allowlist
+  mechanism demoted with a new open item E01-5. Final bounded round: ADR-0024 and ADR-0025
+  both READY-FOR-OWNER-ACCEPTANCE, no unapproved normative decision left. The claimed
+  "numbering conflict" was rejected: assigning 0024/0025 while both are Proposed is tentative,
+  and the coordinator reconciles numbers if acceptance order differs.
+- D00 citation round: initially NEEDS-CORRECTION with 11 findings, all of the
+  overstatement kind (a synthetic demo proof generator exists; expiry *is* validated when a
+  proof exists; CN `adj_close == close` is adapter-specific because the yfinance fallback can
+  keep a distinct adjusted close; akshare concurrency is capped at ten workers; "free provable
+  slice" and "needs a licensed feed" were unsupported; Gold refuses feature rows rather than
+  every write; identity accepts provider MIC first; configured universes cannot establish
+  survivorship; ADR-0011 is an assertion, not verified vendor behaviour; label finalization
+  warns and then rewrites stored labels). Every finding was applied; the final bounded round
+  returned D00 PACKET: ACCURATE with the finding that finalization is warn-then-rewrite
+  rather than warn-only. Both BLOCKED-PENDING-EVIDENCE verdicts survived unchanged.
+
+Still owed by the owner (P01/E01/D01 remain blocked until answered):
+1. Accept or amend ADR-0024 and ADR-0025 (status is currently Proposed; acceptance is a
+   prerequisite for P01/E01 implementation).
+2. Confirm P00-1: the single account's market and base currency (`us_equity`/USD is only the
+   proposed selection). P01 implementation is blocked on it.
+3. Choose the D01 direction: accept the `us_equity` raw-price, explicitly-unadjusted slice as
+   the candidate (subject to a licensing/retention check), or defer D01 while P00/E01 proceed.
+```
+
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
 relative links in the three new documents resolved; the embedded Python
 counterexample parsed; Decimal arithmetic confirmed the proposed accounting
