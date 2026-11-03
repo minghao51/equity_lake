@@ -857,6 +857,23 @@ Still owed by the owner (P01/E01/D01 remain blocked until answered):
    the candidate (subject to a licensing/retention check), or defer D01 while P00/E01 proceed.
 ```
 
+```text
+Owner acceptance / 2026-11-03:
+1. ADR-0024 and ADR-0025 accepted as written (status flipped to Accepted; both index rows and
+   the documentation map updated). ADR-0024's P00-1 is closed by the same acceptance:
+   the single account is `us_equity` with base currency USD.
+2. D01 direction approved: the `us_equity` raw-price, explicitly-unadjusted vertical slice is
+   the D01 candidate, subject to the licensing/retention check named in the packet. This does
+   not authorize ingestion, a target-root change or any source call; D01 still needs its own
+   bounded plan and any required source/schema/storage ADR.
+3. Still open and therefore NOT implemented: P00-2 (future split treatment), P00-3 (CLI surface
+   freeze), P00-4 (migration/backup), E01-1..E01-5 (run-ID hash inputs, reader/legacy
+   projection, W&B scope, fixture snapshot hashing, export allowlist).
+Entry conditions now satisfied: P01 ("Approved ADR; fixtures only") is eligible for its core
+  ledger/import scope; the P01 CLI sub-app waits on P00-3. E01 stays blocked until its five
+  open items are frozen into an approved implementation plan.
+```
+
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
 relative links in the three new documents resolved; the embedded Python
 counterexample parsed; Decimal arithmetic confirmed the proposed accounting

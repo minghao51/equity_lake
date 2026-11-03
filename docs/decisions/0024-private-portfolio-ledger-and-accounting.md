@@ -1,9 +1,11 @@
 # ADR-0024: Private Portfolio Ledger and Book Accounting
 
-**Status:** Proposed (2026-11-02). Policy content is owner-approved for
-drafting; the record itself is **not accepted**. Acceptance is a prerequisite
-for any P01 implementation, and acceptance alone does not authorize importing a
-real private account — that needs separate explicit owner authorization.
+**Status:** Accepted (2026-11-03). The owner accepted this record after the P00
+policy review. P00-1 was resolved on acceptance: the ledger covers one private
+account in **`us_equity` with base currency USD**. Acceptance is the P01 entry
+condition (synthetic fixtures only); it does **not** authorize importing a real
+private account or broker data, which needs separate explicit owner
+authorization, and it does not settle the open items listed below.
 **Recorded:** 2026-11-02
 **Deciders:** Repository owner
 **Related:** ADR-0006 (auxiliary data paths), ADR-0016 (canonical instrument
@@ -41,9 +43,9 @@ market and one base currency. It is not a tenant, a service, or a shared store.
 Instruments outside the selected market, or amounts in another currency, are
 rejected rather than approximated (see Decision 6 and 8).
 
-**OPEN (P00-1):** `us_equity` / USD is a **proposed** selection carried forward
-for explicit owner confirmation. It is not decided by this record, and P01
-implementation is blocked until the owner confirms market and base currency.
+**P00-1 (decided at acceptance, 2026-11-03):** the ledger covers one account in
+`us_equity` with base currency USD. Another market or currency would require an
+approved amendment; it is not a runtime option.
 
 ### 2. Non-goals
 
@@ -198,10 +200,11 @@ is hidden inside a read command.
 
 | ID | Open item | Blocks |
 | --- | --- | --- |
-| P00-1 | Account market and base currency. `us_equity` / USD is recorded as a **proposed** selection only and awaits explicit owner confirmation. | All P01 implementation (ledger schema, currency validation, mark selection) and any import. |
 | P00-2 | Replacement split and quantity-adjustment semantics. Decision 9 already decides the *current* policy (reject split events, block valuation of affected positions); what remains open is any future supported split treatment, which needs an approved amendment. | Import of split-affected history and valuation of affected positions — the block stands until an amendment is accepted. |
 | P00-3 | CLI surface freeze listed in Decision 13. | P01 CLI implementation, help-scan coverage, and the user guide. |
 | P00-4 | Migration, compaction and backup/restore policy (mechanism, timing, verification). Decision 3 guarantees only that nothing happens automatically. | Any backup automation, restore tooling, or migration step; P01 ships without them. |
+
+P00-1 is closed: `us_equity` / USD, decided at acceptance (see Decision 1).
 
 ## Consequences
 

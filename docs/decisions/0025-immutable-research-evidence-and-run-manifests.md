@@ -1,9 +1,10 @@
 # ADR-0025: Immutable Research Evidence and Run Manifests
 
-**Status:** Proposed (2026-11-03). Policy content is owner-approved for
-drafting; the record itself is **not accepted**. Acceptance is a prerequisite
-for E01 implementation, and acceptance alone does not authorize publishing,
-exporting, or migrating any existing evidence.
+**Status:** Accepted (2026-11-03). The owner accepted this record after the E00
+policy review. Acceptance is the prerequisite for an *approved E01 implementation
+plan*; it does not itself authorize implementation, publishing, exporting or
+migrating evidence, and the E01 open items below must be frozen before E01
+starts.
 
 **Recorded:** 2026-11-03
 

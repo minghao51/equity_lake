@@ -39,7 +39,7 @@ rerun for this update and are not production-data-integrity proof.
 
 ## Start Here
 
-- Current product work: [Next-thread pickup](handoffs/20261102-01-portfolio-and-research-pickup.md) and [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) — portfolio accounting, evidence correctness and real-data feasibility before ML operations; gate records so far: [ADR-0024 private portfolio ledger](decisions/0024-private-portfolio-ledger-and-accounting.md) (Proposed) and the [D00 offline source-feasibility packet](plans/20261103-01-d00-offline-source-feasibility.md)
+- Current product work: [Next-thread pickup](handoffs/20261102-01-portfolio-and-research-pickup.md) and [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) — portfolio accounting, evidence correctness and real-data feasibility before ML operations; gate records so far: [ADR-0024 private portfolio ledger](decisions/0024-private-portfolio-ledger-and-accounting.md) and [ADR-0025 research evidence](decisions/0025-immutable-research-evidence-and-run-manifests.md) (both Accepted) and the [D00 offline source-feasibility packet](plans/20261103-01-d00-offline-source-feasibility.md)
 - New users: [Getting Started](getting-started/quickstart.md)
 - Operators: [Pipeline Usage](user-guide/pipeline.md) — commands, config, scheduling
 - Ingestion details: [Ingestion](user-guide/ingestion.md) — sources, destinations, retries, and recovery

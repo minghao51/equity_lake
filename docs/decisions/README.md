@@ -43,5 +43,5 @@ enforced contracts when guidance conflicts.
 | [0021](0021-row-bound-forecast-provenance.md) | Row-bound forecast provenance and prediction usability | Accepted |
 | [0022](0022-future-forecast-provenance-envelope.md) | Future forecast-provenance envelope versions: reader tolerance, writer refusal, v2 procedure | Accepted |
 | [0023](0023-writer-side-string-view-drift.md) | Writer-side Arrow `string_view` drift: keep the read seam, contain direct pushdowns, revisit on trigger | Accepted |
-| [0024](0024-private-portfolio-ledger-and-accounting.md) | Private portfolio ledger: append-only events, average-cost book, unadjusted as-of marks | Proposed |
-| [0025](0025-immutable-research-evidence-and-run-manifests.md) | Immutable per-run research evidence: run IDs, manifests, dated curves, last-success latest view | Proposed |
+| [0024](0024-private-portfolio-ledger-and-accounting.md) | Private portfolio ledger (`us_equity`/USD): append-only events, average-cost book, unadjusted as-of marks | Accepted |
+| [0025](0025-immutable-research-evidence-and-run-manifests.md) | Immutable per-run research evidence: run IDs, manifests, dated curves, last-success latest view | Accepted |
