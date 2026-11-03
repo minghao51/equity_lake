@@ -124,6 +124,7 @@ LAYER_BOUNDARIES: dict[str, set[str]] = {
     "features": {"cli", "dashboard"},
     "ingestion": {"cli", "dashboard"},
     "ml": {"signals"},
+    "portfolio": {"cli", "dashboard", "sources", "ml", "signals"},
 }
 
 

@@ -870,8 +870,52 @@ Owner acceptance / 2026-11-03:
    freeze), P00-4 (migration/backup), E01-1..E01-5 (run-ID hash inputs, reader/legacy
    projection, W&B scope, fixture snapshot hashing, export allowlist).
 Entry conditions now satisfied: P01 ("Approved ADR; fixtures only") is eligible for its core
-  ledger/import scope; the P01 CLI sub-app waits on P00-3. E01 stays blocked until its five
-  open items are frozen into an approved implementation plan.
+   ledger/import scope; the P01 CLI sub-app waits on P00-3. E01 stays blocked until its five
+   open items are frozen into an approved implementation plan.
+```
+
+```text
+P01a / done / 2026-11-03T19:05Z (private ledger core: models, store, canonical CSV import, dry-run):
+Owner-approved scope and policy reference: ADR-0024 (Accepted) decisions 1, 3-7, 9, 11, 12 and
+  spec section 5.2; P00-1 closed as `us_equity` / USD at acceptance. Fixtures only.
+Dependency and accepted-ADR evidence: ADR-0024 accepted (f726140); new top-level package work
+  performed per the change matrix (LAYER_BOUNDARIES + architecture/project-structure docs).
+Stage-start snapshot and reviewed final diff: f726140 clean tree; final diff = new
+  src/equity_lake/portfolio/{__init__,models,store,csv_import}.py, core/paths.py (two additive
+  constants), tests/unit/test_portfolio_{ledger,import}.py (new), test_import_boundaries.py
+  (one LAYER_BOUNDARIES entry), and one entry each in the canonical architecture page and the
+  project-structure guide.
+Worker invocation/checkpoint: worker rounds 1-3 (ignored 20261103-p01a-worker-{1,2,3}.md).
+  Round 1 built the package, store and import. Round 2 fixed the Decimal digest collision
+  (`normalize()` context rounding), made unchanged stored events no-ops at validation time
+  (re-imported SELL was falsely an oversell) and removed holdings from error text; round 3
+  applied one redaction rule across models/csv_import/store (raw timestamp echo and Pydantic
+  `input_value` could still leak private values).
+Independent reviewer, verdict and issue resolution: reviewer read-only rounds 1-3 (the first two
+  returned findings; round 3 returned the formal verdict). Round 1 BLOCKED (3 majors + 3 test
+  warnings); round 2 confirmed digest/timeline fixes and flagged the remaining timestamp echo;
+  round 3 PASS after an independent adversarial redaction probe (10 inputs, none leaked) and
+  re-verification of digest injectivity, re-import no-op vs conflict vs genuine oversell.
+Named regression and one-rule mutation/restore evidence: restoring context-rounded
+  `Decimal.normalize()` canonicalisation fails
+  test_content_digest_never_rounds_distinct_long_decimals_together and the absurd-magnitude
+  bounds tests; models.py restored from /tmp/p01a-models-dirty.py.bak with diff -q identical and
+  the 117-test pair green again (/tmp/p01a-mutation.log, /tmp/p01a-restored.log).
+Focused tests / final gates / exact counts / retained log locations: 144 focused (117 portfolio +
+  27 boundaries). Full gates: serial 2011 passed / 0 failed / 17 skipped (250.6 s), parallel
+  2011 / 0 / 17 (355.4 s, sequential), ruff check/format clean, mypy clean (178 files), catalog
+  regeneration unchanged, make lint-md and git diff --check clean. Logs: /tmp/p01a-{serial,
+  parallel}.{log,xml}, /tmp/p01a-{mypy,ruff,format,catalog,lintmd}.log.
+Docs, schema/catalog, privacy, compatibility and migration status: architecture and
+  project-structure entries added; no catalog/schema/storage/CLI/Settings/.env change; no lake
+  or real-account write; data/portfolio/ does not exist in the tree; the package imports only
+  core/ and is forbidden from cli/dashboard/sources/ml/signals by the boundary test.
+Residuals, explicit stop condition, next eligible stage: P01b (CLI sub-app, help-scan, user
+  guide) stays blocked on the open P00-3 CLI-surface freeze; P02 projections, marks, reconciliation,
+  split accounting and P00-4 backup/migration remain unimplemented by design. Real account import
+  still needs separate explicit owner authorization.
+Owner acceptance and authorized coordinator commit (if any): coordinator commit after the full
+  gates, per commit plan (b).
 ```
 
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;

@@ -35,6 +35,7 @@ src/equity_lake/          # Source
 ├── ingestion/            # Data ingestion pipeline (orchestrator, writers, backfill)
 ├── ml/                   # ML inference; run_prediction_job lives in __init__.py
 ├── monitoring/           # Pipeline health checks
+├── portfolio/            # Private ledger (ADR-0024): events, SQLite store, CSV import
 ├── sentiment/            # Sentiment analysis
 ├── signals/              # Signal generators
 ├── sources/              # Market data fetchers (us, cn, hk_sg, jpx, krx, news, sentiment, macro)

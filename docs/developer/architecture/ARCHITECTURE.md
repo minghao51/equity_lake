@@ -173,6 +173,7 @@ repair, backfill, retraining, live sends, or deployment.
 - `src/equity_lake/ml/feature_loader.py`: DuckDB-backed feature loading (`FeatureLoader`)
 - `src/equity_lake/ml/trainer.py`: extracted training utilities (`compute_class_weights`, `compute_shap_importance`, `optimize_threshold`)
 - `src/equity_lake/ml/candidates.py`, `labeling.py`, `validation.py`: ML helper modules
+- `src/equity_lake/portfolio/`: private append-only portfolio ledger (ADR-0024) — versioned events (`models.py`), private SQLite store at `data/portfolio/portfolio.sqlite3` (`store.py`), and the canonical CSV importer with its no-write dry-run preview (`csv_import.py`). Auxiliary, never under `data/lake/` or the catalog; no positions/P&L/NAV projections, valuation marks, reconciliation, splits, FX or CLI surface yet, and no dependency on `cli/`, `dashboard/`, `sources/`, `ml/` or `signals/`.
 
 Unsupported after the June 2026 refactor:
 

@@ -105,6 +105,10 @@ TRACKING_DIR = DATA_DIR / "tracking"
 TRACKING_DB_PATH = TRACKING_DIR / "tracking.sqlite3"
 # Research artifacts (FindingCards, backtest & risk reports) — NOT cataloged.
 FINDINGS_DIR = DATA_DIR / "findings"
+# Private portfolio ledger (ADR-0024) — auxiliary, NOT cataloged, never under
+# data/lake/. Directory 0700 and database 0600 are applied by the writer.
+PORTFOLIO_DIR = DATA_DIR / "portfolio"
+PORTFOLIO_DB_PATH = PORTFOLIO_DIR / "portfolio.sqlite3"
 # Data-quality profiles written by the explicit `equity validate profile` CLI path
 # (in-ingest validation profiles stay in memory) — NOT cataloged.
 PROFILES_DIR = DATA_DIR / "profiles"
@@ -241,6 +245,8 @@ __all__ = [
     "PIPELINE_RESULTS_NAME_PREFIX",
     "PLATINUM_DIR",
     "PLATINUM_PREDICTIONS_DIR",
+    "PORTFOLIO_DB_PATH",
+    "PORTFOLIO_DIR",
     "PRIVATE_WATCHLIST_PATH",
     "PRICE_MARKETS",
     "PriceMarket",
