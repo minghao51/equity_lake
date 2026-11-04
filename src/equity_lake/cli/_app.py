@@ -21,8 +21,13 @@ app = typer.Typer(
 
 @app.callback()
 def _main_callback(ctx: typer.Context) -> None:
-    """Defer signal paths until dry-run is known; keep doctor read-only."""
-    if ctx.invoked_subcommand not in {"signal", "doctor", "tracking"}:
+    """Defer signal paths until dry-run is known; keep doctor read-only.
+
+    ``portfolio`` is skipped too: the private ledger only ever creates its own
+    ``data/portfolio`` directory, so an import or its ``--dry-run`` never touches
+    the lake (ADR-0024 decision 13).
+    """
+    if ctx.invoked_subcommand not in {"signal", "doctor", "tracking", "portfolio"}:
         ensure_dirs()
 
 
@@ -43,6 +48,7 @@ report_app = typer.Typer(help="Report generation (e.g. backtest reports)")
 demo_app = typer.Typer(help="Demo lake seeding for the Strategy Lab showcase")
 ml_app = typer.Typer(help="ML comparison, ablation, and training")
 api_app = typer.Typer(help="Read API server (FastAPI, Phase 2B)")
+portfolio_app = typer.Typer(help="Private portfolio ledger: canonical CSV import into the local US-equity/USD book")
 
 
 def _init_logging(verbose: bool = False) -> None:

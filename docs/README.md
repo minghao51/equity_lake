@@ -49,6 +49,7 @@ rerun for this update and are not production-data-integrity proof.
 - Environment and credentials: [API Keys And Credentials](20260406-api-keys.md)
 - CLI operators: [CLI Reference](user-guide/20260406-cli-reference.md)
 - Private tracking: [Canonical watchlists, readiness, events, and delivery](user-guide/20261016-private-tracking-preview.md) — implementation/offline-contract review accepted; loopback-only API/UI and disabled-by-default delivery
+- Private portfolio: [Canonical CSV import into the private ledger](user-guide/20261103-private-portfolio-ledger.md) — `equity portfolio import` only: canonical CSV, idempotent atomic commits, dry-run that writes nothing; projections/reconcile/backup are not implemented
 - Forecast provenance: [ML availability and provenance](user-guide/20261016-ml-availability-and-provenance.md) — point-in-time proof, refit cutoffs, and remaining source-availability gates
 - Read API: [Private/local API operation](user-guide/20260811-read-api.md) — exposure consent and limits
 - Static hosting: [Dashboard Hosting](user-guide/20260406-dashboard-hosting.md)

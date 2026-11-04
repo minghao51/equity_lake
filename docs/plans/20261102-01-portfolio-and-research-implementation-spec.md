@@ -932,6 +932,43 @@ E01-1..E01-5 frozen as proposed (now recorded in ADR-0025): run ID hashes scope 
 Remaining open after this: P00-2 (future split treatment) and P00-4 (migration/backup) only.
 ```
 
+```text
+P01b / done / 2026-11-03T21:20Z (`equity portfolio import` wired onto the P01a core):
+Owner-approved scope and policy reference: ADR-0024 Decision 13 as frozen by P00-3 (four command
+  names, canonical CSV only, no broker mapping) plus Decision 11 privacy and spec section 5.2.
+Dependency and accepted-ADR evidence: P01a committed (0f6d771); P00-3 closed by owner 2026-11-03.
+Stage-start snapshot and reviewed final diff: 9692ec9 clean tree; changed paths =
+  cli/commands/portfolio.py (new), cli/_app.py, cli/__main__.py, tests/unit/test_portfolio_cli.py
+  (new), tests/unit/test_cli_unified.py, docs/user-guide/20261103-private-portfolio-ledger.md
+  (new), docs/README.md, mkdocs.yml (one nav line). src/equity_lake/portfolio/** untouched.
+Worker invocation/checkpoint: worker rounds 1-2 (ignored 20261103-p01b-worker-{1,2}.md).
+  Round 2 added the MkDocs nav entry and the privacy/log/isolation regressions the reviewer
+  found missing.
+Independent reviewer, verdict and issue resolution: reviewer read-only rounds 1-2. Round 1
+  BLOCKED on the missing MkDocs nav entry plus two minor coverage gaps; round 2 PASS after the
+  nav line (exactly one insertion) and five new tests, including a load-bearing control proving
+  the `ensure_dirs()` skip rather than an unwritable environment.
+Named regression and one-rule mutation/restore evidence: the round-1/round-2 review probes serve
+  as the falsification (frozen registry inspected live; absent commands invoked and refused;
+  dry-run and rejection paths exercised against tmp ledgers). No code mutation was run for this
+  stage because the load-bearing logic is the P01a ledger core, already mutation-proved; the CLI
+  is a thin seam whose tests assert registry, exit codes, echoes and log fields.
+Focused tests / final gates / exact counts / retained log locations: 190 focused (26 CLI + 164
+  unified CLI scans) plus 281 in the regression trio; full gates re-run on the final tree (serial
+  and parallel suites, ruff check/format, mypy, catalog regeneration, Markdown lint,
+  git diff --check) with logs under /tmp/p01b-*.
+Docs, schema/catalog, privacy, compatibility and migration status: user guide added with the 18
+  canonical columns, seven event types, rejections, dry-run guarantees and an explicit
+  not-implemented list; MkDocs nav and docs map updated; no schema/catalog/storage change; only
+  `import` is registered, so positions/summary/reconcile stay unimplemented until P02.
+Residuals, explicit stop condition, next eligible stage: the frozen surface has no `--verbose`,
+  so the value-free append log line can appear on stdout during a commit; `make lint-md` does not
+  validate `mkdocs.yml` (YAML was checked separately). Next: E01a (dated evidence + manifests +
+  immutable run finalisation) under the frozen E01-1..E01-5.
+Owner acceptance and authorized coordinator commit (if any): coordinator commit after the full
+  gates, per commit plan (b).
+```
+
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
 relative links in the three new documents resolved; the embedded Python
 counterexample parsed; Decimal arithmetic confirmed the proposed accounting

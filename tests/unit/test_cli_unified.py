@@ -158,6 +158,28 @@ class TestArenaReportSubcommands:
         assert "report artifacts" in result.stdout
 
 
+class TestPortfolioSubcommands:
+    """P01b: the private-ledger sub-app exposes only the canonical-CSV import."""
+
+    def test_portfolio_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "--help"], env={"COLUMNS": "180"})
+        assert result.exit_code == 0
+        assert "canonical CSV" in result.stdout
+        assert "import" in result.stdout
+
+    def test_portfolio_import_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "import", "--help"], env={"COLUMNS": "180"})
+        assert result.exit_code == 0
+        assert "--file" in result.stdout
+        assert "--dry-run" in result.stdout
+        assert "--account" in result.stdout
+        # ADR-0024 decision 13: the canonical CSV is the only accepted input and
+        # --dry-run writes nothing at all.
+        assert "canonical CSV" in result.stdout
+        assert "writes nothing" in result.stdout
+        assert "Exit codes" in result.stdout
+
+
 class TestDemoSubcommands:
     def test_demo_seed_help(self) -> None:
         result = runner.invoke(app, ["demo", "seed", "--help"])

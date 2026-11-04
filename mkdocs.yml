@@ -49,6 +49,7 @@ nav:
       - Arena and Findings: user-guide/20260829-arena-and-findings.md
       - Signals: user-guide/signals.md
       - Private Canonical Watchlists and Tracking: user-guide/20261016-private-tracking-preview.md
+      - Private Portfolio Ledger (Canonical CSV Import Only): user-guide/20261103-private-portfolio-ledger.md
       - ML Availability and Provenance: user-guide/20261016-ml-availability-and-provenance.md
       - ML Rigor: user-guide/20260810-ml-rigor.md
       - REST API: user-guide/20260811-read-api.md

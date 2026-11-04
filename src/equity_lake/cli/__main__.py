@@ -19,6 +19,7 @@ from equity_lake.cli._app import (
     dashboard_app,
     demo_app,
     ml_app,
+    portfolio_app,
     report_app,
     signal_app,
     tracking_app,
@@ -36,6 +37,7 @@ app.add_typer(report_app, name="report")
 app.add_typer(demo_app, name="demo")
 app.add_typer(ml_app, name="ml")
 app.add_typer(api_app, name="api")
+app.add_typer(portfolio_app, name="portfolio")
 
 
 @dashboard_app.command("build")
@@ -93,6 +95,7 @@ import equity_lake.cli.commands.demo  # noqa: E402, F401
 import equity_lake.cli.commands.ml  # noqa: E402, F401
 import equity_lake.cli.commands.api  # noqa: E402, F401
 import equity_lake.cli.commands.tracking  # noqa: E402, F401
+import equity_lake.cli.commands.portfolio  # noqa: E402, F401
 
 
 if __name__ == "__main__":
