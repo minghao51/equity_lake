@@ -5,7 +5,14 @@ import polars as pl
 
 
 class BacktestResult:
-    """Container for backtest results."""
+    """Container for backtest results.
+
+    ``equity_curve`` stays a bare ``pl.Series`` (ADR-0025 Decision 7); dated
+    evidence is the additive companion ``equity_dates``, populated only from the
+    backend's own timestamps. ``None`` means *undated*, never "a contiguous
+    calendar of ``len(equity_curve)`` sessions": a calendar is never rebuilt
+    from the series length or reindexed (ADR-0025 Decision 6).
+    """
 
     def __init__(
         self,
@@ -19,7 +26,14 @@ class BacktestResult:
         trades: list[dict[str, Any]],
         metrics: dict[str, float],
         warnings: list[str] | None = None,
+        equity_dates: list[date] | None = None,
     ):
+        if equity_dates is not None and len(equity_dates) != equity_curve.len():
+            raise ValueError(
+                "equity_dates must align one-to-one with equity_curve "
+                f"(got {len(equity_dates)} dates for {equity_curve.len()} points); "
+                "the curve is never reindexed to fit a calendar"
+            )
         self.strategy_name = strategy_name
         self.tickers = tickers
         self.start_date = start_date
@@ -31,6 +45,9 @@ class BacktestResult:
         self.metrics = metrics
         #: Human-readable runtime warnings (e.g. stats unavailable) — never stored in metrics.
         self.warnings: list[str] = warnings or []
+        #: Backend session dates aligned with ``equity_curve``, or ``None`` when the
+        #: backend supplied no timestamps (ADR-0025 Decision 6).
+        self.equity_dates: list[date] | None = list(equity_dates) if equity_dates is not None else None
 
     @property
     def total_return(self) -> float:
@@ -65,8 +82,13 @@ Trading:
 {"=" * 60}
         """.strip()
 
+    @property
+    def has_dated_evidence(self) -> bool:
+        """Whether the curve carries backend dates (never inferred from length)."""
+        return self.equity_dates is not None
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "strategy_name": self.strategy_name,
             "tickers": self.tickers,
             "start_date": str(self.start_date),
@@ -77,6 +99,11 @@ Trading:
             "num_trades": len(self.trades),
             "warnings": list(self.warnings),
         }
+        # Present only when the backend actually supplied timestamps: an absent
+        # key means undated, so a consumer can never read a synthetic calendar.
+        if self.equity_dates is not None:
+            payload["equity_dates"] = [day.isoformat() for day in self.equity_dates]
+        return payload
 
 
 __all__ = ["BacktestResult"]

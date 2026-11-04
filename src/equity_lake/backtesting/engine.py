@@ -29,6 +29,19 @@ logger = structlog.get_logger(__name__)
 DEFAULT_FEE_RATIO = 0.001425
 DEFAULT_TAX_RATIO = 0.003
 
+#: Warning recorded when the backend report carries no usable timestamps, so the
+#: curve stays undated rather than gaining a calendar invented from its length
+#: (ADR-0025 Decision 6).
+UNDATED_EQUITY_WARNING = (
+    "equity dates unavailable: the backend report carries no usable date column, so the curve stays undated (no calendar is inferred from its length)"
+)
+
+
+def _warn_if_undated(warnings: list[str], equity_len: int, equity_dates: list[date] | None) -> None:
+    """Record the undated-evidence warning for a non-empty curve without dates."""
+    if equity_dates is None and equity_len > 0 and UNDATED_EQUITY_WARNING not in warnings:
+        warnings.append(UNDATED_EQUITY_WARNING)
+
 
 def _float_scalar(value: Any, default: float = 0.0) -> float:
     try:
@@ -154,6 +167,8 @@ class VectorBacktestEngine:
 
         trades = self._extract_trades(report)
         equity_curve = self._extract_equity_curve(report)
+        equity_dates = self._extract_equity_dates(report, equity_curve)
+        _warn_if_undated(self._warnings, equity_curve.len(), equity_dates)
         self._compute_metrics(stats, report, equity_curve)
 
         result = BacktestResult(
@@ -167,6 +182,7 @@ class VectorBacktestEngine:
             trades=trades,
             metrics=self.metrics,
             warnings=self._warnings,
+            equity_dates=equity_dates,
         )
 
         logger.info(
@@ -451,19 +467,23 @@ class VectorBacktestEngine:
 
         return trades
 
+    @staticmethod
+    def _creturn_value_column(creturn: pl.DataFrame) -> str | None:
+        """The backend's equity-value column, chosen exactly as the curve extraction does."""
+        for candidate in ["creturn", "equity", "portfolio_value", "value"]:
+            if candidate in creturn.columns:
+                return candidate
+        if creturn.width >= 2:
+            return creturn.columns[-1]
+        return None
+
     def _extract_equity_curve(self, report: Any) -> pl.Series:
         creturn = report.creturn
         if creturn is None:
             return pl.Series("equity", [], dtype=pl.Float64)
 
         if isinstance(creturn, pl.DataFrame):
-            value_col = None
-            for candidate in ["creturn", "equity", "portfolio_value", "value"]:
-                if candidate in creturn.columns:
-                    value_col = candidate
-                    break
-            if value_col is None and creturn.width >= 2:
-                value_col = creturn.columns[-1]
+            value_col = self._creturn_value_column(creturn)
 
             if value_col:
                 return (creturn[value_col] * self.initial_cash).rename("equity")
@@ -472,6 +492,50 @@ class VectorBacktestEngine:
             return (creturn * self.initial_cash).rename("equity")
 
         return pl.Series("equity", [], dtype=pl.Float64)
+
+    @staticmethod
+    def _extract_equity_dates(report: Any, equity_curve: pl.Series) -> list[date] | None:
+        """Backend session dates for ``equity_curve``, or ``None`` when unavailable.
+
+        The backend report's ``creturn`` frame carries a real ``date`` column next
+        to the scaled value (ADR-0025 Decision 6). Dates are read, never rebuilt:
+        a positional calendar is never synthesised from the series length, and a
+        date count that does not match the curve yields ``None`` rather than a
+        reindex. Timestamp columns are normalised to ``date``; non-temporal
+        columns (e.g. strings) are treated as unavailable instead of parsed.
+        """
+        creturn = report.creturn
+        if not isinstance(creturn, pl.DataFrame):
+            return None
+
+        value_col = VectorBacktestEngine._creturn_value_column(creturn)
+        date_col: str | None = None
+        for candidate in ("date", "timestamp", "time", "datetime"):
+            if candidate in creturn.columns and candidate != value_col:
+                date_col = candidate
+                break
+        if date_col is None:
+            for name, dtype in creturn.schema.items():
+                if name != value_col and dtype in (pl.Date, pl.Datetime, pl.Datetime("us", "UTC")):
+                    date_col = name
+                    break
+        if date_col is None:
+            return None
+
+        dtype = creturn.schema[date_col]
+        column = creturn[date_col]
+        if dtype == pl.Date:
+            values = column.to_list()
+        elif isinstance(dtype, pl.Datetime):
+            values = column.dt.date().to_list()
+        else:
+            return None
+        if len(values) != equity_curve.len():
+            logger.warning("equity_dates_length_mismatch", dates=len(values), curve=equity_curve.len())
+            return None
+        if any(value is None or isinstance(value, datetime) for value in values):
+            return None
+        return [value for value in values if isinstance(value, date)]
 
 
 __all__ = ["VectorBacktestEngine"]

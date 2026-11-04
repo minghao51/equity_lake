@@ -969,6 +969,56 @@ Owner acceptance and authorized coordinator commit (if any): coordinator commit 
   gates, per commit plan (b).
 ```
 
+```text
+E01a / done / 2026-11-04 (dated evidence, run manifests, immutable run finalisation - write side):
+Owner-approved scope and policy reference: ADR-0025 (Accepted) decisions 1-6 and 9 with the
+  frozen E01-1 and E01-4; spec section 4. E01b (latest projection, legacy readers, W&B) excluded.
+Dependency and accepted-ADR evidence: aeabe4b clean tree (ADR-0025 accepted at f726140, E01-1..5
+  frozen at 9692ec9).
+Stage-start snapshot and reviewed final diff: changed paths = backtesting/evidence.py (new),
+  result.py (additive `equity_dates`), engine.py (backend date extraction), report.py (dated
+  writer + arena caller + strict JSON), arena.py (recorded applied costs on ArenaRun),
+  tests/unit/test_evidence_runs.py (new, 42 tests), ARCHITECTURE.md and the arena/findings guide.
+Worker invocation/checkpoint: worker rounds 1-6 (ignored 20261104-e01a-worker-{1..6}.md).
+  Round 1 built dated evidence + manifest + finaliser. Round 2 wired the one production caller
+  (the correction: without a caller the ADR acceptance was unprovable). Round 3 added applied
+  costs to the run-ID preimage and value comparison. Round 4 recorded the actually-applied costs
+  on ArenaRun (the writer had been guessing defaults) and made curve refusal coherent for
+  non-finite values. Round 5 stopped NaN metrics being persisted. Round 6 applied the same rule
+  to dated trades/cards (refuse non-finite; null only for the engine's open-position sentinel).
+Independent reviewer, verdict and issue resolution: reviewer rounds 1-5. Round 1 BLOCKED (cost
+  omitted from run ID; values not compared; publish race; validator/CLI coverage gaps). Round 2
+  BLOCKED (manifest recorded default costs, not applied ones; NaN curve inconsistent). Round 3
+  BLOCKED (NaN metric persisted). Round 4 BLOCKED (NaN trade/card persisted). Round 5 PASS with
+  the open-position exemption judged safe and narrow (other non-finite fields, including fee and
+  quantity, still refuse).
+Named regression and one-rule mutation/restore evidence: removing the applied costs from
+  RunScope.scope_payload fails test_run_id_covers_the_applied_costs_and_ignores_their_order,
+  test_run_id_ignores_code_identity_and_changes_with_scope and
+  test_manifest_reverifies_the_run_id_against_the_applied_costs; evidence.py restored from
+  /tmp/e01a-evidence-dirty.py.bak with diff -q identical and 42 tests green again
+  (/tmp/e01a-mutation.log, /tmp/e01a-restored.log). Note: SCOPE_FIELD_ORDER is documentation-only
+  (the payload is built explicitly), so an earlier mutation against that tuple was a no-op and
+  was discarded rather than reported as proof.
+Focused tests / final gates / exact counts / retained log locations: focused 42 evidence tests +
+  143 arena/backtesting regressions. Full gates: serial 2082 passed / 0 failed / 17 skipped
+  (421.3 s), parallel 2082 / 0 / 17 (723.2 s, sequential), ruff check/format clean, mypy clean
+  (180 files), catalog regeneration unchanged, make lint-md and git diff --check clean. Logs:
+  /tmp/e01a-{serial,parallel}.{log,xml}, /tmp/e01a-{mypy,ruff,format,catalog,lintmd}.log.
+Docs, schema/catalog, privacy, compatibility and migration status: architecture page and arena
+  guide document the layout, scope-only ID (incl. applied costs), refusal gates, atomic claim and
+  the undated/unrecorded-cost skips; legacy `<strategy>__<regime>/` shapes unchanged; the Series
+  API is unchanged; RUN_PROTOCOL bumped to equity-run-manifest/2 (no run directories exist in the
+  repo to migrate); no schema/catalog/storage change; tests write only to tmp roots.
+Residuals, explicit stop condition, next eligible stage: legacy write path still emits the
+  engine's NaN open-position sentinel and uses permissive JSON (E01b owns it); `findings/writer.py`
+  serialization ownership is E01b; SCOPE_FIELD_ORDER is not yet derived by construction from the
+  payload (drift hazard for E01b); `equity report backtest` remains legacy-only. Stage stops
+  here; E01b is the next eligible E01 subtask.
+Owner acceptance and authorized coordinator commit (if any): coordinator commit after the full
+  gates, per commit plan (b).
+```
+
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
 relative links in the three new documents resolved; the embedded Python
 counterexample parsed; Decimal arithmetic confirmed the proposed accounting

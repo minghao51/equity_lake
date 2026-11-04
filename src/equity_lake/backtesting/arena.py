@@ -203,6 +203,14 @@ class ArenaRun:
     #: ``evaluated`` runs feed the strategy/cost/benchmark cards.
     evaluation_status: Literal["evaluated", "no_trades", "ineligible"] = "evaluated"
     evaluation_notes: tuple[str, ...] = ()
+    #: The fee/tax pair this run's engine was **actually configured with** — the
+    #: :func:`_resolve_regime_costs` result handed to
+    #: :class:`VectorBacktestEngine`, recorded at the run's completion so a writer
+    #: records the applied cost application instead of re-deriving one. ``None``
+    #: means "not recorded" (a legacy or hand-built run): a writer must never guess
+    #: a default for it, because a guessed cost application is worse than an
+    #: admitted unknown (E01a fix round 3).
+    applied_costs: dict[str, float] | None = None
 
 
 @dataclass
@@ -555,7 +563,10 @@ def run_arena(
         completed run carries an ``evaluation_status``: ``ineligible`` when the
         strategy declares an integer ``min_stocks`` the loaded universe cannot
         satisfy, ``no_trades`` when it executed nothing, ``evaluated`` otherwise.
-        Only ``evaluated`` runs are admitted as FindingCard evidence.
+        Only ``evaluated`` runs are admitted as FindingCard evidence. Each completed
+        run also carries ``applied_costs``: the fee/tax pair its engine was actually
+        configured with (the resolved regime, including any ``market_costs``
+        override), so a writer records what was applied rather than a default.
 
     Raises:
         ValueError: when the load is empty, when a requested instrument is
@@ -655,6 +666,10 @@ def run_arena(
                 result=result,
                 evaluation_status=evaluation_status,
                 evaluation_notes=evaluation_notes,
+                # The same resolved pair the engine was built with (one source of
+                # truth, no re-derivation): the copy keeps the record independent of
+                # any later mutation of the config the engine holds.
+                applied_costs=dict(config),
             )
         )
         logger.info(

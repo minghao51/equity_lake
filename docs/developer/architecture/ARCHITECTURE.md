@@ -112,6 +112,125 @@ constants (`US_EQUITY_DIR`, …) point directly at their medallion locations,
 while `US_NEWS_DIR`, `US_SOCIAL_SENTIMENT_DIR`, and `SEC_EXTRACTIONS_DIR` are
 deprecated aliases for their silver paths.
 
+### Research Run Evidence (`data/findings/runs/`)
+
+Research evidence is auxiliary, not a lake table: backtest/arena runs live under
+`data/findings/` (`FINDINGS_DIR`), are not cataloged, are not
+pointblank-validated, and use Pydantic models as the write boundary (ADR-0006,
+ADR-0025 Decision 1). The E01 write side (`backtesting/evidence.py`) makes each
+invocation one immutable run directory and leaves the pre-E01
+`<strategy>__<regime>/` layout untouched as a legacy read-only view (ADR-0025
+Decisions 2, 6, 8):
+
+```text
+data/findings/runs/<UTC-timestamp>Z-<short-scope-hash>/
+├── equity.parquet      # (date, equity) — real backend session dates
+├── drawdown.parquet    # (date, drawdown)
+├── metrics.json
+├── trades.json
+├── <card-id>.json      # FindingCards produced by this run, when any
+└── manifest.json       # written last, never before the artifacts exist
+```
+
+The **run ID** is the SHA-256 of the scope only — protocol/version, canonical
+universe, exact start and end dates, strategy identities, the cost-regime
+identities, initial cash, and strategy/model parameters — serialized in one
+documented field order (`SCOPE_FIELD_ORDER` in `backtesting/evidence.py`). A
+**cost regime's identity is its name plus the fees and taxes actually applied**
+for it (`{"regime", "fee_ratio", "tax_ratio"}`), so two invocations that differ
+only in the resolved `fee_ratio`/`tax_ratio` are different scopes with different
+run IDs — a materially different cost application can never look scope-identical.
+Universe and strategies are sorted and de-duplicated, costs are ordered by regime
+name (one entry per regime), and parameter keys are ordered, so the same scope
+hashes identically regardless of input ordering. The protocol constant
+(`equity-run-manifest/2`) is part of the scope: adding the applied costs to the
+preimage is a protocol change, so IDs minted under version 1 are not comparable
+with current ones. The code commit and the dirty-diff digest live in the manifest
+and never change a scope-identical run ID (frozen decision E01-1).
+
+The **manifest** (`RunManifest`, Pydantic v2, `extra="forbid"`) records the run
+ID and finalized directory name, aware UTC build/finalisation timestamps, protocol
+version, window, canonical universe, strategies/regimes, initial cash, parameters,
+the fees and taxes actually applied per cost regime (`costs`, which the run ID
+preimage also contains — `cost_regimes` must name exactly those regimes), and
+execution-timing assumptions — plus
+the seed (`null` allowed), code commit plus dirty-diff digest, a digest of
+non-secret configuration only, data provenance (`synthetic | real | mixed |
+unknown`), input snapshots (`name`, `sha256`, `source`), per-artifact
+`path`/`sha256`/`bytes`, and per-metric availability (`measured | missing |
+non_finite`). The manifest **re-verifies its own run ID**: a file whose stated
+`run_id` is not reproduced by hashing its recorded scope (including the applied
+costs) is invalid, so a published run's cost application cannot be edited without
+invalidating the run. Input snapshot hashes are the content of what was read at the read
+seam — a Delta version collected after the computation is not snapshot binding
+(frozen decision E01-4). Provenance stays `unknown` unless input snapshots are
+supplied; a path, a table name, or a `01_bronze` location never proves real data.
+Secrets are never read, hashed, or copied: only a digest of the non-secret
+configuration is stored, and secret-named keys are excluded before hashing.
+
+**Finalisation rule.** Artifacts are written into a temporary sibling of
+`data/findings/runs/`, re-read and validated — the dated columns must reproduce the
+backend's own session dates, the equity column must equal the `BacktestResult`'s
+curve **value for value** (same length, exact float equality per element, NaN equal
+only to NaN, null only to null) and so must the drawdown derived from that curve,
+drawdown must be non-positive, JSON must parse — hashed, and only then is
+`manifest.json` written, last, into a directory the publisher claimed with an
+atomic `os.mkdir` (which never replaces a directory that already exists). Any
+failure removes the claimed directory and the temporary directory and leaves no
+finalized run.
+
+**Refusal gate (before that comparison).** A curve is *refused*, not repaired,
+when any equity or drawdown value is null or non-finite (NaN, `+inf`, `-inf`): the
+run names the artifact and the row and fails with no run directory. The refusal is
+deliberate — a finalized run is a checksum-certified claim that the curve *was
+measured*, so a missing or non-finite point is never dropped, zero-filled or
+reindexed into evidence, and it is never persisted as a measured value (F03;
+ADR-0025: a corrupt or incomplete run must not look successful). The element-wise
+value comparison above therefore runs *after* the gate and is only the internal
+consistency check between the written artifact and the result that produced it
+(which is why it treats NaN as equal to NaN).
+
+An existing run directory is never overwritten — not even an empty
+one created between the name check and the publish: a name collision appends
+`-2`, `-3`, … to the directory name, so two identical-scope invocations coexist.
+`validate_run_directory` decides whether a directory is a finalized,
+intact run — manifest parses, `run_dir` matches the directory, every recorded
+artifact exists with the recorded size and SHA-256 — and reports the failing
+reasons otherwise. An undated curve (`BacktestResult.equity_dates is None`) is
+never written into a run directory: legacy undated evidence stays undated and is
+never reindexed or given an invented calendar (ADR-0025 Decision 6). The
+`latest` projection, legacy slug resolution, and reader changes are E01b.
+
+**Who writes run evidence.** `write_arena_artifacts`
+(`backtesting/report.py`) is the production caller: after the legacy
+`<strategy>__<regime>/` reports, `benchmark__equity.parquet` and the FindingCards
+are written, it finalises **one immutable run per completed `ArenaRun`** under
+`<base>/runs/`. `base` roots both layouts (it defaults to `FINDINGS_DIR`, so
+tests point it at a temporary directory) and the legacy directories keep their
+pre-E01 shape byte-for-byte. Each run's scope is its own — that strategy, that
+cost regime with the fees and taxes it actually applied, the run's window,
+universe and initial cash, and `STRATEGY_REGISTRY`'s parameters (the parameters
+`run_arena` constructs). Those costs come from the run itself: `run_arena` records
+the `_resolve_regime_costs` pair it handed to the engine on each completed
+`ArenaRun` (`applied_costs`), and the writer records exactly that. It never
+re-resolves `MARKET_COST_DEFAULTS`, so a `market_costs` override or a per-venue
+default can never be published as a different (default) cost application.
+The writer keeps returning `list[FindingCard]`;
+`write_arena_artifacts_with_evidence` returns `(cards, ArenaEvidenceSummary)` for
+callers that need the evidence outcome. A completed run whose backend curve has
+no dates is **skipped and reported** (`skipped_undated` plus the
+`arena_run_evidence_skipped_undated` / `arena_run_evidence_written` structlog
+events with `finalized`/`skipped_undated` counts): no directory, no manifest, no
+invented calendar, and the other runs still finalise. A run that does not record
+the costs its engine applied (`applied_costs is None` — a legacy or hand-built
+outcome) is skipped through the same mechanism (`skipped_unrecorded_costs`,
+`arena_run_evidence_skipped_costs_not_recorded`): the writer never guesses a
+default cost application, its legacy artifacts and the cards are still written, and
+no run directory or manifest claims a cost pair. A raising `finalise_run` is
+collected so every remaining run is still attempted, and is then re-raised — the
+legacy artifacts and cards already written stay, no partial directory becomes a
+run, and the CLI's writer-exception path still exits `1`.
+
 ## Canonical Identity, Availability, and Private Tracking
 
 `core/instruments.py` defines shared `(market, MIC, symbol)` keys and refuses to

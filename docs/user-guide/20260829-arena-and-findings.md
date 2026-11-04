@@ -216,8 +216,89 @@ Unknown strategy or regime names exit `1` with the accepted values listed.
 
 ## Artifact layout under `data/findings/`
 
+Two layouts coexist while the E01b reader/view change is pending: the **legacy**
+`<strategy>__<regime>/` directories and the new **immutable dated runs** under
+`runs/`. Legacy directories are unchanged by this stage — undated, keyed by the
+pair rather than the run, overwritten by the next run of the same pair — and stay
+readable as-is until E01b adds the read-only compatibility view.
+
+### Immutable dated runs
+
+`equity arena run` writes them: after the legacy per-pair reports, the benchmark
+curve and the FindingCards, the arena writer finalises **one immutable run per
+completed (strategy, cost regime) pair** under `data/findings/runs/`. Each run
+directory records that pair's own scope (strategy, the cost regime **with the fees
+and taxes that regime actually applied**, window, universe, initial cash, and the
+strategy's registry parameters) and its own dated curve — the legacy directories
+are written exactly as before, so nothing about the old layout changes.
+
+The recorded fees/taxes are the ones the run was actually costed with: the arena
+records the resolved pair it configured the engine with on each completed run, and
+the writer records that value. It never re-resolves a market default, so a
+`market_costs` override or a per-venue default reaches the manifest verbatim.
+
+A run's ID is minted from that scope alone, and the applied fees/taxes are part of
+it: two invocations that differ only in the resolved fee or tax ratio are different
+runs, never one scope under two cost applications. Costs are recorded per regime in
+the manifest's `costs` and serialized for the ID in regime-name order, so the same
+scope written with a different costs ordering keeps one ID.
+
+A run whose backend curve carries no dates is **skipped, never repaired**: no run
+directory and no manifest claim dates for it (no calendar is invented from the
+curve length), the skip is reported with its reason in the
+`arena_run_evidence_skipped_undated` log event and in the writer's evidence
+summary, and the other runs of the same invocation still finalise. The legacy
+(undated) artifacts for that pair are still written. A run that does not record the
+costs its engine applied (a legacy or hand-built outcome) is skipped the same way —
+reason `applied costs not recorded`, reported in the writer's evidence summary and
+the `arena_run_evidence_skipped_costs_not_recorded` log event — because a manifest
+that guesses a default cost application is worse than one that admits the costs are
+unknown; its legacy artifacts and the cards are still written.
+
+If finalising one run fails, every remaining run is still attempted, the legacy
+artifacts and cards already written are kept, no partial run directory is
+published, and the command reports the write failure and exits `1`.
+
+A run written by `finalise_run` (`backtesting/evidence.py`, E01 write side) lands
+in `data/findings/runs/<UTC-timestamp>Z-<short-scope-hash>/` and is never
+overwritten by a later invocation of the same scope (a collision appends `-2`,
+`-3`, … to the directory name):
+
+| Path | Contents |
+|---|---|
+| `equity.parquet` | Equity curve as `(date, equity)` — the backend's real session dates, gaps included |
+| `drawdown.parquet` | Drawdown fraction below the running peak, same sessions |
+| `metrics.json` | Strategy, regime, and the full `BacktestResult` metrics dict |
+| `trades.json` | Trade-by-trade execution log |
+| `<card-id>.json` | FindingCards produced by that run, when any (the arena writer keeps its three arena-level cards in the legacy layout, because they compare runs rather than describe one) |
+| `manifest.json` | The run manifest: scope-only run ID (its scope includes the applied fees/taxes, which the ID re-verifies against), scope, costs, execution timing, seed, code commit + dirty-digest, non-secret config digest, provenance (`synthetic`, `real`, `mixed`, or `unknown`), input snapshot hashes, per-artifact checksums, metric availability |
+
+The manifest is written last: artifacts are re-read, their dates **and values**
+checked against the run's `BacktestResult`, and hashed first; then the run is
+published into a directory claimed with an atomic `os.mkdir` that never replaces an
+existing directory, so a failed run leaves no run directory behind and a same-scope
+name collision takes the `-2`, `-3`, … discriminator instead of overwriting. A
+curve carrying a null or non-finite (NaN/`±inf`) equity or drawdown value is
+**refused before that comparison**, with the artifact and row named: a finalized run
+certifies *measured* evidence, so such a point is never dropped, zero-filled or
+reindexed into a published curve. A non-finite *metric* (e.g. `sharpe_ratio`) does
+not refuse the run: `metrics.json` records it as `null` with a `non_finite`
+availability entry in the manifest — never a persisted `NaN`, never a coerced `0` —
+and the validator parses that file strictly, refusing any `NaN`/`Infinity` token or a
+`null` metric whose recorded availability disagrees, while a non-finite *trade* or
+card value is a data defect rather than an unavailable measurement, so it **refuses
+the run** with the artifact, entry and field named (`trades.json entry 3 field
+'price' is non-finite`) instead of being sanitised to `null`, `null` trade fields
+(an open position's pnl/exit price) stay `null`, and the validator parses
+`trades.json` and every recorded card JSON strictly as well.
+`validate_run_directory` reports any run that is incomplete or tampered with. Dates
+always come from the backend; a run whose backend supplied no timestamps stays
+undated and is not written in this layout.
+
+### Legacy directories
+
 `write_arena_artifacts` and `write_backtest_report` (`backtesting/report.py`)
-produce the files below. The layout is keyed by `<strategy>__<regime>`, not by
+produce the files below. This layout is keyed by `<strategy>__<regime>`, not by
 run date — re-running with the same names overwrites the previous artifacts.
 
 | Path | Producer | Contents |
