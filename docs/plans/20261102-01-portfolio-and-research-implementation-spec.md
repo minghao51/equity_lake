@@ -918,6 +918,20 @@ Owner acceptance and authorized coordinator commit (if any): coordinator commit 
   gates, per commit plan (b).
 ```
 
+```text
+Owner approvals / 2026-11-03 (post-P01a):
+P00-3 closed - CLI surface frozen as `equity portfolio import|positions|summary|reconcile` with
+  **canonical CSV only**: no broker-export mapping and no plugin surface in P01/P02. `import`
+  (with dry-run) lands in P01b; `positions`, `summary` and `reconcile` land with the P02
+  projections they read, so the names are frozen but must not be stubbed early.
+E01-1..E01-5 frozen as proposed (now recorded in ADR-0025): run ID hashes scope only with code
+  identity kept in the manifest; legacy slugs resolve to the latest successful run and legacy
+  cards keep resolving inside their own directory; W&B stays out of E01 scope; fixture snapshots
+  are hashed by file content at the read seam; any future export allowlist is enforced at one
+  export seam and E01 adds no export surface.
+Remaining open after this: P00-2 (future split treatment) and P00-4 (migration/backup) only.
+```
+
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
 relative links in the three new documents resolved; the embedded Python
 counterexample parsed; Decimal arithmetic confirmed the proposed accounting

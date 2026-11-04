@@ -195,18 +195,18 @@ serialized and hoped to be harmless — and the W&B table's explicit column list
 W&B projection is in E01 scope at all, and the exact allowlist contents, stay
 open (E01-3 / E01-5).
 
-## Open decisions
+## E01 decisions frozen by the owner (2026-11-03)
 
-E01 must freeze these before implementation. They are deliberately not decided
-here.
+These were open at acceptance and are now decided. They bind E01 implementation;
+changing one needs an approved amendment, not an implementation shortcut.
 
-| ID | Open item | Blocks |
-| --- | --- | --- |
-| E01-1 | The exact run-ID hash inputs: which manifest fields feed `<short-hash>`, their canonicalization and serialization order, and whether the hash covers scope only or scope plus code identity. | The layout, collision handling, and the "two identical-scope invocations coexist" acceptance check. |
-| E01-2 | Which readers keep their legacy shapes, and the exact projection from runs back into them (which run backs a legacy slug, and what a legacy card's `evidence_refs` resolve to). | Reader compatibility tests for `/findings`, `/backtests`, the notebook path, and static/local readers. |
-| E01-3 | Whether the W&B projection is in scope for E01 at all, or stays out of scope until its own change. | The privacy allowlist tests and any change to the comparison path. |
-| E01-4 | The snapshot-hash mechanism for non-Delta fixtures: file-content hash versus immutable fixture-directory hash, and where the read-time seam computes it. | `data_provenance` classification for fixture-driven runs and the synthetic-versus-real distinction. |
-| E01-5 | The export allowlist contents and where it is enforced (one seam versus per-reader), if W&B or any public projection is in scope. | Privacy tests for exported projections. |
+| ID | Frozen decision |
+| --- | --- |
+| E01-1 | The run ID hashes **scope only**: protocol/version, canonical universe, exact date window, strategy and cost-regime identities, initial cash and strategy/model parameters, canonicalised and serialized in one documented field order. The code commit and dirty-diff digest live in the manifest and never change a scope-identical run ID, so two identical-scope invocations coexist (collision handling appends a discriminator instead of overwriting). |
+| E01-2 | A legacy slug resolves to the **latest successful** run with that slug; legacy `<strategy>__<regime>/` directories stay read-only views and a legacy card's `evidence_refs` keep resolving inside their own legacy directory. `/findings` and `/backtests` keep their current default shapes. |
+| E01-3 | The W&B projection is **out of E01 scope**; it stays unchanged until its own approved change. |
+| E01-4 | Non-Delta fixture snapshots are hashed by **file content at the read seam**, not by Delta versions collected after computation. The manifest records those hashes as the inputs actually read. |
+| E01-5 | If any export projection is later added, its allowlist is enforced at **one export seam** starting from the existing W&B column list. E01 itself implements no new export surface. |
 
 ## Compatibility / migration
 

@@ -187,7 +187,7 @@ licensing are the D00 packet's business
 ([specification §6](../plans/20261102-01-portfolio-and-research-implementation-spec.md));
 this record asserts no provider claim.
 
-### 13. Proposed CLI surface (to be frozen at P00)
+### 13. Frozen CLI surface (P00-3 closed 2026-11-03)
 
 A native `equity portfolio import|positions|summary|reconcile` sub-app, wired
 with `add_typer` before the command modules that decorate it, using `Annotated`
@@ -196,15 +196,21 @@ coverage and a user guide. Preview/dry-run performs full validation and reports
 proposed effects with **no** filesystem, database, or WAL writes. No write action
 is hidden inside a read command.
 
+The owner froze these four command names and chose **canonical CSV only**: no
+broker-export mapping and no plugin surface in P01 or P02. `import` (with its
+dry-run) lands with the ledger core; `positions`, `summary` and `reconcile` land
+with the projections they read, so they are named here but not stubbed earlier.
+
 ## Open decisions
 
 | ID | Open item | Blocks |
 | --- | --- | --- |
 | P00-2 | Replacement split and quantity-adjustment semantics. Decision 9 already decides the *current* policy (reject split events, block valuation of affected positions); what remains open is any future supported split treatment, which needs an approved amendment. | Import of split-affected history and valuation of affected positions — the block stands until an amendment is accepted. |
-| P00-3 | CLI surface freeze listed in Decision 13. | P01 CLI implementation, help-scan coverage, and the user guide. |
 | P00-4 | Migration, compaction and backup/restore policy (mechanism, timing, verification). Decision 3 guarantees only that nothing happens automatically. | Any backup automation, restore tooling, or migration step; P01 ships without them. |
 
-P00-1 is closed: `us_equity` / USD, decided at acceptance (see Decision 1).
+Closed at owner acceptance on 2026-11-03: **P00-1** (`us_equity` / USD, Decision 1)
+and **P00-3** (the four frozen command names with canonical-CSV-only import,
+Decision 13).
 
 ## Consequences
 
