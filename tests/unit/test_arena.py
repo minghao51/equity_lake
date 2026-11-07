@@ -24,7 +24,9 @@ from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
     equal_weight_buyhold,
     run_arena,
 )
+from equity_lake.backtesting.attempts import BENCHMARK_ATTEMPT_ARTIFACT  # type: ignore[import-untyped]
 from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence_view import latest_attempt  # type: ignore[import-untyped]
 from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
     build_finding_cards,
     drawdown_series,
@@ -261,17 +263,25 @@ def test_write_arena_artifacts_roundtrip(tmp_path: Path) -> None:
     )
     written = write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4), scope={"synthetic": True})
     first_slug = f"{outcome.runs[0].strategy}__{outcome.runs[0].cost_regime}"
-    assert (tmp_path / first_slug).is_dir()
-    assert (tmp_path / first_slug / "metrics.json").exists()
-    assert (tmp_path / "benchmark__equity.parquet").exists()
+    # E01b.1: no legacy pair directory and no flat benchmark/card is written any more.
+    assert not (tmp_path / first_slug).exists()
+    assert not (tmp_path / "benchmark__equity.parquet").exists()
+    # The invocation's attempt directory owns the benchmark copy and the cards.
+    attempt = latest_attempt(tmp_path)
+    assert attempt is not None
+    assert (attempt.directory / "benchmark__equity.parquet").exists()
     # cards were written and reload cleanly
-    loaded = load_finding_cards(base=tmp_path)
+    loaded = load_finding_cards(base=attempt.directory)
     assert {c.id for c in loaded} == {c.id for c in written}
 
 
 @requires_engine
 def test_card_evidence_refs_point_at_artifacts_write_arena_actually_writes(tmp_path: Path) -> None:
-    """B5: evidence_refs must reference real per-run artifact dirs, not phantom dirs.
+    """B5: the returned cards' evidence_refs name this invocation's real evidence.
+
+    The cards ``write_arena_artifacts`` returns are the ones it persisted, so their refs
+    are already bound: every ref must be a ``run:<run_id>`` for a run this invocation
+    finalised, or the attempt-owned benchmark copy, never a mutable legacy path.
 
     F04: cards admit only ``evaluated`` runs, so the fixture must be long enough for
     the strategy windows to trade (momentum's 252+21 lookback is why the default
@@ -290,15 +300,25 @@ def test_card_evidence_refs_point_at_artifacts_write_arena_actually_writes(tmp_p
     assert {run.evaluation_status for run in outcome.runs} == {"evaluated"}
     cards = write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4))
     assert cards
-    written_dirs = {p.name for p in tmp_path.iterdir() if p.is_dir()}
-    written_files = {p.name for p in tmp_path.iterdir() if p.is_file()}
+    attempt = latest_attempt(tmp_path)
+    assert attempt is not None
+    # E01b.1: the cards are owned by this invocation's attempt directory (never a flat
+    # ``<root>/<id>.json``), so a card cannot inherit a later run's overwritten curve.
+    assert {path.name for path in attempt.directory.glob("*.json")} >= {f"{card.id}.json" for card in cards}
+    assert sorted(tmp_path.glob("*.json")) == []
+    published_run_ids = {pair_outcome.run_id for pair_outcome in attempt.record.outcomes if pair_outcome.run_id is not None}
+    assert published_run_ids
     for card in cards:
         assert card.evidence_refs, f"card {card.id} must carry evidence refs"
         for ref in card.evidence_refs:
-            if ref.endswith("/"):
-                assert ref.rstrip("/") in written_dirs, f"{card.id} references unwritten dir {ref}"
+            if ref.startswith("run:"):
+                # A run reference names a run this invocation actually finalised.
+                assert ref.removeprefix("run:") in published_run_ids, f"{card.id} references an unpublished run {ref}"
+                assert (tmp_path / "runs").is_dir()
             else:
-                assert ref in written_files, f"{card.id} references unwritten file {ref}"
+                # The only other ref is the attempt's own benchmark copy.
+                assert ref == f"attempt:{attempt.record.attempt_id}/{BENCHMARK_ATTEMPT_ARTIFACT}", ref
+                assert (attempt.directory / BENCHMARK_ATTEMPT_ARTIFACT).is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -811,9 +831,12 @@ def test_arena_cards_and_artifact_disclose_fixed_share_benchmark(tmp_path: Path)
         assert card.scope["benchmark_policy"] == BENCHMARK_POLICY
         assert card.scope["benchmark_missing_mark_policy"] == BENCHMARK_MISSING_MARK_POLICY
         assert "benchmark_asymmetry" in card.scope
-    written = pl.read_parquet(tmp_path / "benchmark__equity.parquet")
+    attempt = latest_attempt(tmp_path)
+    assert attempt is not None
+    written = pl.read_parquet(attempt.directory / "benchmark__equity.parquet")
     assert written.equals(benchmark)  # the arena's curve, not a report-side reconstruction
     assert written["equity"].to_list() == [100.0, 150.0, 100.0]
+    assert not (tmp_path / "benchmark__equity.parquet").exists()  # no flat legacy benchmark
 
 
 @requires_engine
@@ -842,8 +865,11 @@ def test_run_arena_benchmark_reaches_cards_and_artifact(tmp_path: Path) -> None:
 
     cards = write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4))
     assert cards
-    written = pl.read_parquet(tmp_path / "benchmark__equity.parquet")
+    attempt = latest_attempt(tmp_path)
+    assert attempt is not None
+    written = pl.read_parquet(attempt.directory / "benchmark__equity.parquet")
     assert written.equals(expected)
+    assert not (tmp_path / "benchmark__equity.parquet").exists()  # no flat legacy benchmark
     for card in cards:
         assert card.scope["benchmark_policy"] == BENCHMARK_POLICY
         assert card.scope["benchmark_missing_mark_policy"] == BENCHMARK_MISSING_MARK_POLICY

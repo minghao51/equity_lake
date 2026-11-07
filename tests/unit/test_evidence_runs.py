@@ -41,6 +41,7 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     MANIFEST_NAME,
     METRICS_ARTIFACT,
     REQUIRED_RUN_ARTIFACTS,
+    SCOPE_FIELD_ORDER,
     TRADES_ARTIFACT,
     CodeIdentity,
     CostApplication,
@@ -55,6 +56,7 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     snapshot_from_file,
     validate_run_directory,
 )
+from equity_lake.backtesting.evidence_view import latest_attempt as latest_evidence_attempt  # type: ignore[import-untyped]
 from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
     APPLIED_COSTS_NOT_RECORDED_SKIP_REASON,
     UNDATED_RUN_EVIDENCE_SKIP_REASON,
@@ -63,7 +65,8 @@ from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
     write_backtest_report,
 )
 from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.findings import FindingCard  # type: ignore[import-untyped]
+from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.findings import FindingCard, write_finding_card  # type: ignore[import-untyped]
 
 requires_engine = pytest.mark.skipif(not POLARS_BACKTEST_AVAILABLE, reason="polars-backtest not installed")
 
@@ -574,6 +577,101 @@ def test_run_id_is_stable_across_process_state(tmp_path: Path) -> None:
     assert _scope(start_date=IRREGULAR_DATES[0] - timedelta(days=1)).run_id() != first
 
 
+def test_scope_payload_order_matches_scope_field_order() -> None:
+    """``SCOPE_FIELD_ORDER`` is documentation *and* the payload builder's source.
+
+    Falsified if :meth:`RunScope.scope_payload` ever hand-orders its keys again: the
+    documented order and the run-ID preimage could drift apart, silently changing what
+    ``run_id`` means (the hazard the attempt payload's equivalent test also pins).
+    """
+    scope = _scope()
+    payload = scope.scope_payload()
+    assert tuple(payload) == SCOPE_FIELD_ORDER
+    assert SCOPE_FIELD_ORDER == ("protocol", "universe", "start_date", "end_date", "strategies", "costs", "initial_cash", "parameters")
+    # Canonicalisation is unchanged: the preimage still hashes the same fields.
+    assert json.loads(scope.canonical_scope_json()) == payload
+    assert scope.run_id() == hashlib.sha256(scope.canonical_scope_json().encode("utf-8")).hexdigest()
+
+
+def _evidence_outcome(strategy: str = "trend_following", regime: str = "realistic") -> ArenaOutcome:
+    """A dated stub outcome (no engine, no lake) that the attempt writer can publish."""
+    frame = pl.DataFrame(
+        {"ticker": ["AAPL"] * len(IRREGULAR_DATES), "date": IRREGULAR_DATES, "close": list(IRREGULAR_VALUES)},
+        schema={"ticker": pl.String, "date": pl.Date, "close": pl.Float64},
+    )
+    run = ArenaRun(
+        strategy=strategy,
+        cost_regime=regime,
+        result=_result(),
+        strategy_params={"lookback": 20},
+        applied_costs={"fee_ratio": 0.001425, "tax_ratio": 0.0},
+    )
+    return ArenaOutcome(
+        runs=[run],
+        data=frame,
+        benchmark=equal_weight_buyhold(frame, initial_cash=100_000.0),
+        initial_cash=100_000.0,
+        requested=[(strategy, regime)],
+        markets=("us_equity",),
+    )
+
+
+def test_arena_writer_writes_no_legacy_paths(tmp_path: Path) -> None:
+    """E01b.1: the arena writer creates no legacy slug dir, flat benchmark or flat card.
+
+    Falsified if any legacy path reappears: the frozen layout is read-only evidence, and
+    an invocation's comparison artifacts must be owned by its own attempt directory.
+    """
+    outcome = _evidence_outcome()
+
+    cards, summary = write_arena_artifacts_with_evidence(outcome, base=tmp_path, run_date=date(2026, 8, 4))
+
+    assert cards
+    assert len(summary.finalized) == 1
+    assert summary.attempt is not None
+    assert summary.attempt.record.status == "complete"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["attempts", "runs"]
+    _assert_no_legacy_writes(tmp_path, outcome)
+
+
+def test_arena_writer_leaves_a_pre_existing_legacy_directory_byte_identical(tmp_path: Path) -> None:
+    """Frozen legacy evidence is never rewritten, migrated or relabelled by a new run.
+
+    Falsified if the writer refreshed a legacy directory, the flat benchmark or a flat
+    card: an earlier card could then silently inherit this run's curve (the exact defect
+    ADR-0025 Decision 8 closes).
+    """
+    legacy = tmp_path / "trend_following__realistic"
+    write_backtest_report(_result(), legacy, strategy="trend_following", cost_regime="realistic")
+    benchmark = tmp_path / "benchmark__equity.parquet"
+    benchmark.write_bytes(b"legacy benchmark bytes")
+    flat_card_path = write_finding_card(_card_for_legacy(), base=tmp_path)
+
+    legacy_before = {path.name: path.read_bytes() for path in sorted(legacy.iterdir())}
+    benchmark_before = benchmark.read_bytes()
+    flat_card_before = flat_card_path.read_bytes()
+
+    _, summary = write_arena_artifacts_with_evidence(_evidence_outcome(), base=tmp_path, run_date=date(2026, 8, 4))
+
+    assert summary.attempt is not None and summary.finalized  # the invocation published its own evidence
+    assert {path.name: path.read_bytes() for path in sorted(legacy.iterdir())} == legacy_before
+    assert benchmark.read_bytes() == benchmark_before
+    assert flat_card_path.read_bytes() == flat_card_before
+    assert (summary.attempt.directory / "benchmark__equity.parquet").is_file()
+
+
+def _card_for_legacy() -> FindingCard:
+    return FindingCard(
+        id="strategy-comparison",
+        axis="strategy",
+        claim="legacy claim",
+        verdict="inconclusive",
+        conclusion="legacy conclusion",
+        metrics={"sharpe": 0.5},
+        run_date=date(2026, 8, 4),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Production caller: run_arena -> write_arena_artifacts finalises run evidence
 # ---------------------------------------------------------------------------
@@ -617,23 +715,31 @@ def _arena_outcome(
     )
 
 
-def _legacy_dirs(root: Path, outcome: Any) -> list[str]:
-    """Legacy per-pair directories under ``root`` (never the ``runs/`` evidence root)."""
-    return sorted(f"{run.strategy}__{run.cost_regime}" for run in outcome.runs if (root / f"{run.strategy}__{run.cost_regime}").is_dir())
+def _assert_no_legacy_writes(root: Path, outcome: Any) -> None:
+    """E01b.1: the arena writer creates **no** legacy path.
 
-
-def _assert_legacy_shape(root: Path, outcome: Any) -> None:
-    """The pre-E01 legacy layout is byte-shape-identical: positional (t, equity), 4 artifacts."""
-    assert _legacy_dirs(root, outcome) == sorted(f"{run.strategy}__{run.cost_regime}" for run in outcome.runs)
+    Legacy ``<strategy>__<regime>/`` directories, the flat
+    ``benchmark__equity.parquet`` and the flat ``<card-id>.json`` cards are frozen
+    read-only evidence: an invocation writes its own immutable ``runs/`` and
+    ``attempts/`` layout instead, so asserting a legacy path here would pin the defect
+    E01 removes.
+    """
     for run in outcome.runs:
-        legacy = root / f"{run.strategy}__{run.cost_regime}"
-        equity = pl.read_parquet(legacy / "equity.parquet")
-        assert equity.columns == ["t", "equity"]  # undated legacy layout, no date column added
-        assert equity["t"].to_list() == list(range(equity.height))
-        assert pl.read_parquet(legacy / DRAWDOWN_ARTIFACT).columns == ["t", "drawdown"]
-        assert "equity_dates" not in json.loads((legacy / "metrics.json").read_text(encoding="utf-8"))
-        assert (legacy / "trades.json").is_file()
-    assert (root / "benchmark__equity.parquet").is_file()
+        assert not (root / f"{run.strategy}__{run.cost_regime}").exists()
+    assert not (root / "benchmark__equity.parquet").exists()
+    assert sorted(root.glob("*.json")) == []
+    # The evidence that used to live at those paths is owned by the attempt directory.
+    attempts_root = root / "attempts"
+    assert attempts_root.is_dir()
+    attempts = [path for path in attempts_root.iterdir() if path.is_dir() and not path.name.startswith(".tmp-")]
+    assert len(attempts) == 1
+    attempt_dir = attempts[0]
+    assert (attempt_dir / "attempt.json").is_file()
+    if not outcome.benchmark.is_empty():
+        assert (attempt_dir / "benchmark__equity.parquet").is_file()
+    for card_id in ("strategy-comparison", "cost-regime", "vs-benchmark"):
+        if (attempt_dir / f"{card_id}.json").is_file():
+            assert json.loads((attempt_dir / f"{card_id}.json").read_text(encoding="utf-8"))["id"] == card_id
 
 
 def _pair_of(manifest: Any) -> tuple[str, str]:
@@ -673,7 +779,12 @@ def test_arena_writer_finalises_one_run_per_completed_pair(tmp_path: Path) -> No
         # universe, cash and registry parameters.
         assert manifest.start_date == run.result.start_date
         assert manifest.end_date == run.result.end_date
-        assert set(manifest.universe) == set(run.result.tickers)
+        # E01c: the arena loaded one frame with full identity, so the universe is its
+        # canonical display keys and the basis is parsed as 'canonical' — not the
+        # requested bare tickers.
+        expected_universe = {InstrumentKey(**row).display_key for row in outcome.data.select(*IDENTITY_COLUMNS).unique().to_dicts()}
+        assert set(manifest.universe) == expected_universe
+        assert manifest.universe_basis == "canonical"
         assert manifest.initial_cash == run.result.initial_cash
         assert manifest.parameters  # strategy parameters are recorded, never empty
 
@@ -692,7 +803,7 @@ def test_arena_writer_finalises_one_run_per_completed_pair(tmp_path: Path) -> No
     assert sorted(pairs) == sorted(completed)  # exactly one run per completed pair, none invented
 
     # The legacy layout is still there, unchanged in shape.
-    _assert_legacy_shape(tmp_path, outcome)
+    _assert_no_legacy_writes(tmp_path, outcome)
 
 
 @requires_engine
@@ -798,13 +909,19 @@ def test_undated_run_is_skipped_and_reported(tmp_path: Path, monkeypatch: pytest
         assert _pair_of(verdict.manifest) != (undated.strategy, undated.cost_regime)  # no manifest claims it
     # The undated pair still has its legacy (undated) artifacts.
     assert not (tmp_path / "runs" / undated_slug).exists()
-    _assert_legacy_shape(tmp_path, outcome)
+    _assert_no_legacy_writes(tmp_path, outcome)
 
 
 @requires_engine
 @pytest.mark.slow
-def test_finalise_failure_surfaces_without_losing_legacy_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failing finalisation still finalises the other runs, keeps legacy artifacts, and raises."""
+def test_finalise_failure_publishes_write_failed_and_still_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failing finalisation keeps the other runs, publishes ``write_failed``, and raises.
+
+    E01b.1 moves the guarantee from "legacy artifacts survive" to "the failure is
+    durable evidence": the attempt record is published with ``status='write_failed'``
+    (naming the pair that failed and the run that did finalise) *before* the exception
+    reaches the caller, and no partial run directory is left behind.
+    """
     import equity_lake.backtesting.evidence as evidence  # noqa: PLC0415 - patch target
 
     original = evidence.finalise_run
@@ -818,13 +935,13 @@ def test_finalise_failure_surfaces_without_losing_legacy_artifacts(tmp_path: Pat
 
     outcome = _arena_outcome(strategies=["mean_reversion", "trend_following"], cost_regimes=["realistic"])
 
-    # The legacy entry point (what the CLI calls) surfaces the failure, so the CLI's
+    # The entry point the CLI calls surfaces the failure, so the CLI's
     # writer-exception path still turns it into exit 1.
     with pytest.raises(RuntimeError, match="simulated finalise failure") as excinfo:
         write_arena_artifacts(outcome, base=tmp_path, run_date=date(2026, 8, 4))
 
     notes = getattr(excinfo.value, "__notes__", [])
-    assert any("finalized" in note for note in notes), notes
+    assert any("write_failed" in note for note in notes), notes
 
     # The other run's evidence survived; the failing run left no directory at all.
     run_dirs = _run_dirs(tmp_path)
@@ -838,8 +955,14 @@ def test_finalise_failure_surfaces_without_losing_legacy_artifacts(tmp_path: Pat
         manifests.append(verdict.manifest)
     assert {tuple(manifest.strategies) for manifest in manifests} == {("mean_reversion",)}
 
-    # Legacy artifacts for *every* pair, including the one whose evidence failed.
-    _assert_legacy_shape(tmp_path, outcome)
+    # The failed write is durable: one attempt record, status write_failed.
+    attempt = latest_evidence_attempt(tmp_path)
+    assert attempt is not None
+    assert attempt.record.status == "write_failed"
+    statuses = {pair_outcome.slug: pair_outcome.outcome for pair_outcome in attempt.record.outcomes}
+    assert statuses == {"mean_reversion__realistic": "completed", "trend_following__realistic": "failed"}
+    # And no legacy path was created for either pair.
+    _assert_no_legacy_writes(tmp_path, outcome)
 
 
 # ---------------------------------------------------------------------------
@@ -1066,7 +1189,7 @@ def test_cli_arena_run_exits_one_when_the_evidence_writer_raises(tmp_path: Path)
     ]
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=OSError("evidence publish failed")),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=OSError("evidence publish failed")),
     ):
         result = CliRunner().invoke(app, args)
 
@@ -1111,7 +1234,7 @@ def test_writer_records_the_costs_the_arena_actually_applied(tmp_path: Path) -> 
     # The recorded application is part of the scope, so the manifest re-verifies it.
     assert validate_run_directory(summary.finalized[0].directory).finalized
     # Legacy artifacts are unchanged by the recorded costs.
-    _assert_legacy_shape(tmp_path, outcome)
+    _assert_no_legacy_writes(tmp_path, outcome)
 
 
 @requires_engine
@@ -1174,7 +1297,7 @@ def test_writer_skips_evidence_when_the_applied_costs_were_not_recorded(tmp_path
     assert _run_dirs(tmp_path) == []  # no run directory for either pair
     assert not (tmp_path / "runs").exists()  # the evidence root was never even created
     # The legacy (pair-keyed) artifacts for both pairs are still written.
-    _assert_legacy_shape(tmp_path, outcome)
+    _assert_no_legacy_writes(tmp_path, outcome)
 
 
 @pytest.mark.parametrize(("bad_value", "reason"), [(float("nan"), "non-finite"), (float("inf"), "non-finite"), (float("-inf"), "non-finite")])

@@ -1,8 +1,12 @@
 # Next Thread — Portfolio and Research Implementation Pickup
 
 **Recorded:** 2026-11-02
-**Status:** Planning handoff; implementation scope/contracts await owner approval.
-**Start here:** [Implementation specification and stage queue](../plans/20261102-01-portfolio-and-research-implementation-spec.md).
+**Status:** Historical pickup, superseded for continuation on 2026-11-06.
+**Current entry point:** [Research readers and portfolio pickup](20261106-01-research-readers-and-portfolio-pickup.md).
+B00, F01–F04, P01a/P01b and E01a are committed; ADR-0024/0025 are accepted.
+Sections below preserve the earlier baseline and approval history, not current
+instructions to restart B00/F01 or assume ADR-0023 remains uncommitted.
+**Original start here:** [Implementation specification and stage queue](../plans/20261102-01-portfolio-and-research-implementation-spec.md).
 **Evidence:** [Tracked A01–A11 audit and counterexamples](../finding/20261102-product-readiness-audit.md).
 **Preserved history:** [Oct31 closure/R12 brief](20261031-01-next-thread-and-r12-watch.md).
 
@@ -209,19 +213,11 @@ or regeneration of the canonical lake. Implementation must revalidate its actual
 changed code. Missing independent reviewer access must be stated as blocked,
 not silently replaced by coordinator self-approval.
 
-## 7. Paste this into the next thread
+## 7. Current next-thread entry point
 
-```text
-Pick up docs/handoffs/20261102-01-portfolio-and-research-pickup.md.
-Read its linked implementation specification and tracked A01–A11 audit first.
-Preserve the dirty ADR-0023 baseline; do B00 and present the F01–F04 minimal
-implementation plan/frozen policy choices for my approval before changing code.
-After approval, use one bounded worker per stage and a separate compatible
-adversarial reviewer on each dirty diff. Require ignored per-attempt Markdown
-checkpoints, named regression/mutation evidence, and serialized pytest.
-Start with F01; do not implement portfolio/storage/source ADRs, access private
-accounts, ingest real data, refit models or deploy without their separate gates.
-```
+The original B00/F01 starter is spent. Use the queue and copyable prompt in
+[the Nov06 pickup](20261106-01-research-readers-and-portfolio-pickup.md#7-paste-into-the-next-thread).
+Next is E01b discovery and a bounded implementation plan, not another F01 pass.
 
 ## 8. Outcome — 2026-11-02 implementation session
 
@@ -233,8 +229,8 @@ baseline. The owner then approved D1 (b), D3 complete-panel missing marks, D4
 
 F01 → F04 are implemented, independently reviewed and mutation-proved; details,
 per-round findings and gate counts are in the specification's stage ledger. Final
-frozen-tranche gates: serial **1893 passed / 0 failed / 17 skipped (366 s)**,
-parallel `-n auto` **1893 / 0 / 17 (789 s)**, ruff check/format, `mypy` (174
+frozen-tranche gates: serial **1876 passed / 0 failed / 17 skipped (366 s)**,
+parallel `-n auto` **1876 / 0 / 17 (789 s)**, ruff check/format, `mypy` (174
 files), `equity catalog-generate` (no diff), `make lint-md`, `git diff --check`
 all clean. No catalog, schema, storage, CLI-surface or ADR change was needed for
 this tranche.
@@ -246,7 +242,8 @@ a *finite* extreme cost delta still formats `:.2f`; per-run immutable artifact
 layout remains E01 work, so old `data/findings/` directories can still be
 overwritten by a later accepted run.
 
-Next entry gates, each requiring its own decision — do not continue silently:
+Entry gates as recorded at this historical F01–F04 boundary (subsequently
+resolved in the ledger; use the Nov06 pickup for current gates):
 P00 portfolio accounting/privacy ADR, D00 offline provider-feasibility packet,
 E00 immutable research-evidence ADR (check the next free ADR number; do not
 assume 0024). No private account access, real ingestion, model refit, scheduling

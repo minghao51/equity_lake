@@ -38,9 +38,11 @@ for the shared feature/model availability contract.
 
 ### `equity report backtest`
 
-Runs a single backtest under one cost regime and writes its report artifacts
-(equity curve, drawdown, metrics, trades) under
-`data/findings/<strategy>__<regime>/`:
+Runs a single backtest under one cost regime and publishes its immutable evidence:
+one run directory under `data/findings/runs/` (dated equity/drawdown, metrics,
+trades, `manifest.json`) plus one attempt record under `data/findings/attempts/`.
+No legacy `<strategy>__<regime>/` directory is written by any command — the frozen
+pre-E01 layout stays readable, never rewritten:
 
 ```bash
 dotenvx run -- uv run equity report backtest --strategy trend_following \
@@ -48,12 +50,23 @@ dotenvx run -- uv run equity report backtest --strategy trend_following \
 ```
 
 `--cost-regime` selects `zero | realistic | high` (default `realistic`).
+`--output-dir` sets the findings root (default `data/findings`).
+
+The manifest records the **universe basis** — `canonical` when every universe entry
+is a canonical `market/MIC/percent-quoted-symbol` identity display key parsed back
+through the identity model, `ticker_only` when it is not — and the **read-seam input
+snapshots** the engine's own loader captured (a Delta `version` per read, or one
+aggregate file-set digest for a non-Delta lake). Neither upgrades
+`data_provenance`, which stays `unknown` until a persisted price-source marker exists
+(open item E01-6). See
+[Arena and findings](20260829-arena-and-findings.md#read-seam-input-snapshots).
 
 ### `equity arena run`
 
 Runs the full strategy arena — strategies `momentum | mean_reversion | trend_following`
-× cost regimes `zero | realistic | high` — and emits FindingCards plus per-run
-artifacts under `data/findings/`:
+× cost regimes `zero | realistic | high` — and publishes one immutable run per
+requested pair plus one attempt directory (three FindingCards + benchmark copy)
+under `data/findings/`; no legacy `<strategy>__<regime>/` directory is written:
 
 ```bash
 dotenvx run -- uv run equity arena run --start-date 2024-01-01 --end-date 2024-12-31

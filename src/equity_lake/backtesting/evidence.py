@@ -7,6 +7,20 @@ dated artifacts into a temporary sibling directory, re-reads and validates them
 (dates, row counts and values), and then publishes them into a directory it claims
 with one atomic ``os.mkdir``.
 
+E01c adds the read-seam binding and the canonical-universe basis (contract items 1
+and 2): the manifest records **how** its ``universe`` entries were obtained
+(``universe_basis``: ``canonical`` display keys parsed out of the identity model, or
+``ticker_only`` bare tickers) and every input snapshot carries the Delta ``version``
+its read consumed. Both are facts the read seam supplies; neither is inferred from a
+path, a table name, or an identity column.
+
+**Provenance stays ``unknown``** on every shipped path, snapshots or not. No caller
+may upgrade it by inference (ADR-0021/0022), because nothing in the lake yet records
+*which price source produced the marks* — that is open item E01-6, which needs its
+own ADR and storage stage. Snapshots prove *which bytes/versions were read*; they do
+not prove the marks are real, so E01 is not complete and this module makes no such
+claim.
+
 Layout (ADR-0025 Decision 2)::
 
     <root>/runs/<UTC-timestamp>Z-<short-hash>/     # e.g. runs/20261104T101500Z-1f2e3d4c5b6a/
@@ -30,10 +44,15 @@ differ only in the resolved ``fee_ratio``/``tax_ratio`` are different scopes and
 never share a run ID. The code commit and the dirty-diff digest live in the
 manifest and never change a scope-identical run ID; collisions are resolved by
 atomically claiming the next free name (``-2``, ``-3``, ...), never by
-overwriting. Provenance (E01-4 / Decision 3) stays ``unknown`` unless input
-snapshots are supplied; snapshot hashes must be taken at the read seam. Secrets
-are never read, hashed, or copied: only a digest of non-secret configuration is
-recorded, and secret-named keys are excluded before hashing.
+overwriting. Secrets are never read, hashed, or copied: only a digest of non-secret
+configuration is recorded, and secret-named keys are excluded before hashing.
+
+Input snapshots (E01-4 / Decision 4) are content digests taken at the read seam:
+the readers record the Delta ``version`` they consumed
+(``read_delta_with_version``, ``load_corporate_action_inputs_with_versions``,
+``BacktestDataLoader.snapshots``) and this module only stores them. A version
+collected after a computation is explicitly *not* snapshot binding, and a snapshot
+never upgrades provenance by itself.
 
 Finalisation is not a claim that *something* was written: before any value is
 compared, a **refusal gate** (:func:`_refuse_unmeasurable_values`) rejects a curve
@@ -68,6 +87,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import unquote
 
 import polars as pl
 import structlog
@@ -75,10 +95,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from equity_lake.backtesting.report import (
     drawdown_series,
-    refuse_non_finite_json,
     write_dated_backtest_report,
 )
 from equity_lake.backtesting.result import BacktestResult
+from equity_lake.core.instruments import InstrumentKey  # noqa: TC001 - runtime validation, not typing only
 from equity_lake.core.paths import FINDINGS_DIR
 from equity_lake.findings import FindingCard, write_finding_card
 
@@ -88,8 +108,13 @@ logger = structlog.get_logger(__name__)
 #: is a different scope and therefore a different run ID. Version 2 adds the applied
 #: fees/taxes to the cost-regime identity, so IDs minted under version 1 (whose
 #: preimage could not distinguish two differently-costed scopes) are not comparable
-#: with current IDs and must not be re-read as if they were.
-RUN_PROTOCOL = "equity-run-manifest/2"
+#: with current IDs and must not be re-read as if they were. Version 3 (E01c) is the
+#: canonical-universe and read-seam-snapshot protocol: a run's universe may be
+#: canonical display keys instead of bare tickers, and its inputs are bound at the
+#: read seam. The universe *values* differ between the two bases, so the ID changes
+#: with the basis by construction — ``universe_basis`` is deliberately not a scope
+#: field (it would be a redundant second spelling of the same fact).
+RUN_PROTOCOL = "equity-run-manifest/3"
 
 #: Subdirectory of the findings root that holds immutable run directories.
 RUNS_DIRNAME = "runs"
@@ -150,6 +175,17 @@ _SECRET_KEY_PATTERN = re.compile(
 
 Provenance = Literal["synthetic", "real", "mixed", "unknown"]
 MetricStatus = Literal["measured", "missing", "non_finite"]
+#: How a manifest's ``universe`` entries were obtained (E01-1 / ADR-0016).
+#:
+#: - ``canonical``: every entry is a canonical ``InstrumentKey`` display key
+#:   (``market/MIC/percent-quoted-symbol``) and was parsed back through the identity
+#:   model, so no MIC was filled and no venue was guessed.
+#: - ``ticker_only``: at least one entry is not a parseable display key, so the
+#:   universe is bare tickers and carries no venue claim at all.
+#:
+#: It is derived by **parsing**, never by guessing, and it is not part of the run-ID
+#: preimage: the identity values themselves already differ between the two bases.
+UniverseBasis = Literal["canonical", "ticker_only"]
 
 __all__ = [
     "DRAWDOWN_ARTIFACT",
@@ -172,15 +208,26 @@ __all__ = [
     "RunManifest",
     "RunScope",
     "RunValidation",
+    "UniverseBasis",
+    "artifact_records",
+    "claim_evidence_directory",
     "digest_non_secret_config",
+    "discard_directory",
+    "file_digest",
     "finalise_run",
+    "is_canonical_universe",
     "is_finalized_run",
     "metric_availability_from_result",
+    "parse_display_key",
     "probe_code_identity",
+    "publish_evidence_directory",
+    "read_json_artifact_strictly",
     "runs_root_for",
     "snapshot_from_bytes",
     "snapshot_from_file",
+    "universe_basis_for",
     "validate_run_directory",
+    "write_card_strictly",
 ]
 
 
@@ -229,6 +276,57 @@ def _strip_secret_keys(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_strip_secret_keys(item) for item in value]
     return value
+
+
+def parse_display_key(entry: str) -> InstrumentKey:
+    """Parse a canonical ``InstrumentKey`` display key, or raise ``ValueError``.
+
+    The accepted shape is exactly :attr:`InstrumentKey.display_key`:
+    ``market/MIC/percent-quoted-symbol``. The parsed key must serialize back to
+    *exactly* the input string, so a non-canonical spelling (a market alias, a
+    lower-case percent escape, a missing or extra segment) is refused rather than
+    silently normalised. Validation is the existing identity model's: the market
+    must be a known price market and the MIC must be one supported for it, so no
+    MIC is ever filled in and no venue is guessed (ADR-0016 Decision 1/2).
+
+    Raises:
+        ValueError: when *entry* is not a canonical display key.
+    """
+    segments = entry.split("/")
+    if len(segments) != 3:
+        raise ValueError(f"not a canonical instrument display key: {entry!r}")
+    market, mic, quoted_symbol = segments
+    if not market.strip() or not mic.strip() or not quoted_symbol:
+        raise ValueError(f"not a canonical instrument display key: {entry!r}")
+    try:
+        key = InstrumentKey(market=market, mic=mic, symbol=unquote(quoted_symbol))
+    except (ValueError, TypeError) as exc:  # pydantic validation errors are ValueErrors
+        raise ValueError(f"not a canonical instrument display key: {entry!r}") from exc
+    if key.display_key != entry:
+        raise ValueError(f"not a canonical instrument display key: {entry!r}")
+    return key
+
+
+def is_canonical_universe(universe: Sequence[str]) -> bool:
+    """Whether **every** entry parses as a canonical display key (no guessing)."""
+    if not universe:
+        return False
+    for entry in universe:
+        try:
+            parse_display_key(entry)
+        except ValueError:
+            return False
+    return True
+
+
+def universe_basis_for(universe: Sequence[str]) -> UniverseBasis:
+    """Derive a universe basis by parsing, never by guessing (E01-1 / ADR-0016).
+
+    ``canonical`` only when *every* entry parses back through
+    :func:`parse_display_key`; anything else — a bare ticker, a malformed display
+    key, an empty universe — is ``ticker_only``, which claims no venue at all.
+    """
+    return "canonical" if is_canonical_universe(universe) else "ticker_only"
 
 
 def digest_non_secret_config(config: Mapping[str, Any] | None) -> str | None:
@@ -312,19 +410,40 @@ class CodeIdentity(BaseModel):
 
 
 class InputSnapshot(BaseModel):
-    """Content hash of an input **as read** (E01-4; never a post-hoc Delta version)."""
+    """Content hash (or immutable snapshot reference) of an input **as read**.
+
+    E01-4: the hash must be taken at the read seam. A Delta input records the
+    ``version`` its read consumed together with a digest of the immutable
+    ``(path, version)`` reference; a non-Delta input records one aggregate content
+    digest of the exact files scanned and leaves ``version`` ``None``. Neither is a
+    post-hoc Delta version lookup (ADR-0025 Decision 4).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1, description="Input identity, e.g. 'fixture:ohclv.parquet'")
-    sha256: str = Field(..., description="Lowercase hex sha256 of the bytes read")
-    source: str = Field(..., min_length=1, description="Read seam, e.g. 'fixture:file', 'lake:bronze', 'synthetic'")
+    sha256: str = Field(..., description="Lowercase hex sha256 of the bytes read (or of the immutable snapshot reference)")
+    source: str = Field(..., min_length=1, description="Read seam, e.g. 'fixture:file', 'lake:delta', 'lake:parquet'")
+    version: str | None = Field(
+        default=None,
+        description="Delta version consumed by the read (as text), or None for a content digest of an enumerated file set",
+    )
 
     @field_validator("sha256")
     @classmethod
     def _validate_sha256(cls, value: str) -> str:
         if re.fullmatch(_SHA256_PATTERN, value) is None:
             raise ValueError("sha256 must be a lowercase hex sha256 digest")
+        return value
+
+    @field_validator("version")
+    @classmethod
+    def _validate_version(cls, value: str | None) -> str | None:
+        """A version is a non-empty decimal string or ``None`` — never ``''``."""
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("version must be None or a non-empty string")
         return value
 
 
@@ -448,8 +567,13 @@ class RunScope(BaseModel):
         return [cost.regime for cost in self.costs]
 
     def scope_payload(self) -> dict[str, Any]:
-        """The canonical scope mapping in the documented field order."""
-        return {
+        """The canonical scope mapping in the documented field order.
+
+        The key order is derived from :data:`SCOPE_FIELD_ORDER` rather than written
+        out here, so the documented order and the run-ID preimage cannot drift apart
+        (``test_scope_payload_order_matches_scope_field_order``).
+        """
+        values: dict[str, Any] = {
             "protocol": self.protocol,
             "universe": list(self.universe),
             "start_date": self.start_date.isoformat(),
@@ -459,6 +583,7 @@ class RunScope(BaseModel):
             "initial_cash": self.initial_cash,
             "parameters": _canonical_value(self.parameters),
         }
+        return {field: values[field] for field in SCOPE_FIELD_ORDER}
 
     def canonical_scope_json(self) -> str:
         """Compact canonical JSON of :meth:`scope_payload` — the run-ID preimage."""
@@ -482,6 +607,14 @@ class RunManifest(BaseModel):
     start_date: date
     end_date: date
     universe: list[str] = Field(..., min_length=1)
+    #: How ``universe`` entries were obtained (E01c). Required, deliberately **not**
+    #: in the run-ID preimage: the identity values themselves already differ between
+    #: the two bases, so the ID still changes with the basis while no redundant field
+    #: enters ``SCOPE_FIELD_ORDER``.
+    universe_basis: UniverseBasis = Field(
+        ...,
+        description="'canonical' when every universe entry is a parsed InstrumentKey display key, else 'ticker_only'",
+    )
     strategies: list[str] = Field(..., min_length=1)
     cost_regimes: list[str] = Field(..., min_length=1)
     initial_cash: float
@@ -532,6 +665,25 @@ class RunManifest(BaseModel):
         if len(paths) != len(set(paths)):
             raise ValueError("artifacts entries must be unique per path")
         return value
+
+    @model_validator(mode="after")
+    def _universe_basis_matches_universe(self) -> RunManifest:
+        """A ``canonical`` claim must be reproducible from the recorded universe.
+
+        The basis is derived by parsing the universe entries, so an explicit claim is
+        only accepted when it agrees with what the entries actually are: a
+        ``canonical`` label over an unparseable entry (or an empty universe) is
+        refused rather than recorded. That is what keeps a run from being *upgraded*
+        to canonical identity by assertion (ADR-0016, ADR-0021/0022: never upgrade
+        evidence by inference).
+        """
+        derived = universe_basis_for(self.universe)
+        if self.universe_basis != derived:
+            raise ValueError(
+                f"universe_basis {self.universe_basis!r} does not match the recorded universe, which parses as {derived!r}: "
+                "a canonical claim requires every universe entry to be an InstrumentKey display key"
+            )
+        return self
 
     @model_validator(mode="after")
     def _provenance_needs_evidence(self) -> RunManifest:
@@ -607,7 +759,7 @@ def runs_root_for(root: Path | None = None) -> Path:
     return (root or FINDINGS_DIR) / RUNS_DIRNAME
 
 
-def _file_digest(path: Path) -> tuple[str, int]:
+def file_digest(path: Path) -> tuple[str, int]:
     """SHA-256 and byte size of a file's content."""
     digest = hashlib.sha256()
     size = 0
@@ -629,7 +781,7 @@ def snapshot_from_file(path: Path, *, name: str | None = None, source: str = "fi
     Reading the bytes is the whole point: a table version looked up after the
     computation describes the table as it is now, not the snapshot consumed.
     """
-    digest, _ = _file_digest(path)
+    digest, _ = file_digest(path)
     return InputSnapshot(name=name or path.name, sha256=digest, source=source)
 
 
@@ -800,7 +952,7 @@ def _non_finite_token_rejecter(artifact: str) -> Callable[[str], Any]:
     return reject
 
 
-def _read_json_artifact_strictly(path: Path, artifact: str) -> Any:
+def read_json_artifact_strictly(path: Path, artifact: str) -> Any:
     """Parse a run JSON artifact, refusing non-finite tokens and unparsable text.
 
     ``json.loads`` accepts ``NaN``/``Infinity``/``-Infinity`` by default, so a
@@ -825,8 +977,8 @@ def _read_json_artifact_strictly(path: Path, artifact: str) -> Any:
 
 
 def _read_metrics_strictly(path: Path) -> Any:
-    """Parse ``metrics.json`` strictly (see :func:`_read_json_artifact_strictly`)."""
-    return _read_json_artifact_strictly(path, METRICS_ARTIFACT)
+    """Parse ``metrics.json`` strictly (see :func:`read_json_artifact_strictly`)."""
+    return read_json_artifact_strictly(path, METRICS_ARTIFACT)
 
 
 def _validate_metrics_artifact(directory: Path, availability: Sequence[MetricAvailability]) -> None:
@@ -946,7 +1098,7 @@ def _validate_dated_artifacts(directory: Path, result: BacktestResult, availabil
     _validate_metrics_artifact(directory, availability)
     # Strict parse: a persisted ``NaN`` token in trades.json is refused, never accepted
     # as measured evidence (a permissive ``json.loads`` would accept it silently).
-    trades = _read_json_artifact_strictly(directory / TRADES_ARTIFACT, TRADES_ARTIFACT)
+    trades = read_json_artifact_strictly(directory / TRADES_ARTIFACT, TRADES_ARTIFACT)
     if not isinstance(trades, list):
         raise ValueError(f"{TRADES_ARTIFACT} must be a JSON list")
 
@@ -970,17 +1122,22 @@ def _validate_json_artifacts(directory: Path, artifacts: Sequence[ArtifactRecord
         if not path.is_file():
             continue  # reported as "artifact missing" by the caller
         try:
-            _read_json_artifact_strictly(path, name)
+            read_json_artifact_strictly(path, name)
         except ValueError as exc:
             reasons.append(str(exc))
     return reasons
 
 
-def _artifact_records(directory: Path) -> list[ArtifactRecord]:
-    """Digest every artifact in the run directory except the manifest itself."""
+def artifact_records(directory: Path, *, exclude: Sequence[str] = (MANIFEST_NAME,)) -> list[ArtifactRecord]:
+    """Digest every artifact in an evidence directory except its marker document.
+
+    ``exclude`` names the directory's own manifest/marker file(s), which are always
+    written after the artifacts and never digest themselves. Shared by the run
+    finaliser (``manifest.json``) and the attempt publisher (``attempt.json``).
+    """
     records: list[ArtifactRecord] = []
-    for path in sorted(p for p in directory.iterdir() if p.is_file() and p.name != MANIFEST_NAME):
-        digest, size = _file_digest(path)
+    for path in sorted(p for p in directory.iterdir() if p.is_file() and p.name not in exclude):
+        digest, size = file_digest(path)
         records.append(ArtifactRecord(path=path.name, sha256=digest, bytes=size))
     return records
 
@@ -989,7 +1146,7 @@ def _write_manifest(directory: Path, manifest: RunManifest) -> None:
     (directory / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
 
 
-def _discard(directory: Path) -> None:
+def discard_directory(directory: Path) -> None:
     """Best-effort removal of a directory this invocation owns, never raising.
 
     Cleanup must not mask the failure that triggered it, so an already-gone or
@@ -1001,50 +1158,87 @@ def _discard(directory: Path) -> None:
         logger.warning("run_cleanup_failed", directory=str(directory), error=str(exc))
 
 
-def _publish(tmp_dir: Path, base_name: str, manifest: RunManifest) -> RunManifest:
-    """Atomically claim the first free discriminated name, then move the run into it.
+def claim_evidence_directory(parent: Path, base_name: str) -> Path:
+    """Atomically claim the first free discriminated directory name under ``parent``.
 
     The claim is ``os.mkdir`` on the candidate name: it either creates the directory
-    or raises ``FileExistsError``, so a directory that appears between the
-    name check and the publish is **never replaced** (``os.rename`` onto an existing
-    empty directory would silently overwrite it). Only after the claim succeeds are
-    the already-written, already-validated artifacts moved in — with
-    ``manifest.json`` written last, so a half-moved directory is never a finalized
-    run. On any failure this removes only the directory this attempt claimed (plus
-    nothing else) and re-raises; the temporary directory stays the caller's to
-    clean up. A collision appends ``-2``, ``-3``, ... (E01-1), so two
-    identical-scope invocations coexist.
+    or raises ``FileExistsError``, so a directory that appears between a name check
+    and the claim is **never replaced** (``os.rename`` onto an existing empty
+    directory would silently overwrite it). A collision appends ``-2``, ``-3``, ...
+    (E01-1), so two identical-scope invocations coexist. Shared by the run publisher
+    (:func:`_publish`) and the attempt publisher
+    (:func:`equity_lake.backtesting.attempts.write_attempt_record`).
+
+    Raises:
+        RuntimeError: when every discriminated candidate is already taken.
     """
-    runs_root = tmp_dir.parent
     for attempt in range(1, _MAX_PUBLISH_ATTEMPTS + 1):
         name = base_name if attempt == 1 else f"{base_name}-{attempt}"
-        target = runs_root / name
+        target = parent / name
         try:
             os.mkdir(target)
         except FileExistsError:
-            logger.warning("run_publish_collision", candidate=name)
+            logger.warning("evidence_publish_collision", candidate=name)
             continue
-        published = manifest.model_copy(update={"run_dir": name})
-        try:
-            for path in sorted(tmp_dir.iterdir()):
-                if path.name == MANIFEST_NAME:  # never a pre-publish manifest inside tmp_dir
-                    continue
-                os.rename(path, target / path.name)
-            _write_manifest(target, published)
-        except BaseException:
-            _discard(target)  # only the directory this attempt claimed
-            raise
-        _discard(tmp_dir)
-        logger.info("run_published", run_dir=str(target), run_id=published.run_id, attempt=attempt)
-        return published
-    raise RuntimeError(f"could not publish run: {_MAX_PUBLISH_ATTEMPTS} collisions for {base_name}")
+        return target
+    raise RuntimeError(f"could not publish evidence: {_MAX_PUBLISH_ATTEMPTS} collisions for {base_name}")
+
+
+def publish_evidence_directory(
+    tmp_dir: Path,
+    base_name: str,
+    finalize: Callable[[Path], None],
+    *,
+    exclude: Sequence[str] = (),
+) -> Path:
+    """Claim a published directory, move the built artifacts in, then finalise last.
+
+    ``finalize`` writes the directory's own marker document (``manifest.json`` for a
+    run, ``attempt.json`` for an attempt) **after** every artifact already exists in
+    the claimed directory, so a half-published directory is never a finalized piece
+    of evidence. On any failure only the directory this attempt claimed is removed
+    (never a pre-existing one) and the error is re-raised; the temporary directory
+    stays the caller's to clean up.
+
+    Returns:
+        The claimed directory whose name is the claimed (possibly discriminated) name.
+    """
+    target = claim_evidence_directory(tmp_dir.parent, base_name)
+    try:
+        for path in sorted(tmp_dir.iterdir()):
+            if path.name in exclude:
+                continue
+            os.rename(path, target / path.name)
+        finalize(target)
+    except BaseException:
+        discard_directory(target)  # only the directory this attempt claimed
+        raise
+    discard_directory(tmp_dir)
+    return target
+
+
+def _publish(tmp_dir: Path, base_name: str, manifest: RunManifest) -> RunManifest:
+    """Publish a finalized run: claim the name, move artifacts in, write the manifest last.
+
+    A collision appends ``-2``, ``-3``, ... (E01-1), so two identical-scope
+    invocations coexist; an existing directory is never replaced.
+    """
+
+    def _finalize(target: Path) -> None:
+        _write_manifest(target, manifest.model_copy(update={"run_dir": target.name}))
+
+    # A pre-publish manifest inside tmp_dir is never evidence, so it is never moved.
+    target = publish_evidence_directory(tmp_dir, base_name, _finalize, exclude=(MANIFEST_NAME,))
+    published = manifest.model_copy(update={"run_dir": target.name})
+    logger.info("run_published", run_dir=str(target), run_id=published.run_id)
+    return published
 
 
 def _resolve_base_name(run_id: str, now: datetime) -> str:
     return f"{now.strftime('%Y%m%dT%H%M%SZ')}-{run_id[:12]}"
 
 
-def _write_card_strictly(card: FindingCard, directory: Path) -> Path:
+def write_card_strictly(card: FindingCard, directory: Path) -> Path:
     """Write one finding card after proving it carries no non-finite number.
 
     A card's ``metrics`` mapping is a measurement, so a non-finite value there is a
@@ -1052,20 +1246,24 @@ def _write_card_strictly(card: FindingCard, directory: Path) -> Path:
     ``NaN``/``Infinity`` as JSON ``null`` (its ``ser_json_inf_nan`` default), i.e. it
     would *sanitise* the defect into a measured-looking document. The payload is
     therefore walked first — naming the artifact and field — and the written file is
-    re-read strictly, so a card artifact inside a finalized run can never carry a
-    non-finite JSON token. The refusal propagates out of finalisation before any run
-    directory is published.
+    re-read strictly, so a card artifact inside a finalized run (or attempt) can
+    never carry a non-finite JSON token. The refusal propagates out of finalisation
+    before any evidence directory is published.
+
+    This is the factored-out card helper the attempt publisher reuses
+    (:mod:`equity_lake.backtesting.attempts`); the strict serialization itself lives
+    in :func:`equity_lake.findings.writer.write_finding_card`, so there is one
+    implementation of the rule.
 
     Raises:
         ValueError: naming the card artifact and the offending key, e.g.
             ``strategy-comparison.json field 'metrics.sharpe' is non-finite``.
     """
     artifact = f"{card.id}.json"
-    refuse_non_finite_json(artifact, card.model_dump(mode="json"))
-    path = write_finding_card(card, base=directory)
+    path = write_finding_card(card, base=directory, refuse_non_finite=True)
     # Belt and braces: the writer owns its serializer, so prove the bytes on disk parse
     # without a non-finite token before the card is digested into the manifest.
-    _read_json_artifact_strictly(path, artifact)
+    read_json_artifact_strictly(path, artifact)
     return path
 
 
@@ -1073,6 +1271,7 @@ def finalise_run(
     result: BacktestResult,
     *,
     scope: RunScope,
+    universe_basis: UniverseBasis | None = None,
     execution: ExecutionTiming | None = None,
     seed: int | None = None,
     config: Mapping[str, Any] | None = None,
@@ -1103,6 +1302,13 @@ def finalise_run(
         scope: The identity-bearing scope (E01-1); its ``run_id()`` is the run ID and
             its ``costs`` are the fees/taxes recorded in the manifest, so the ID and
             the recorded cost application can never drift apart.
+        universe_basis: How ``scope.universe`` entries were obtained. ``None`` (the
+            default) **derives** it by parsing every entry as an
+            :class:`~equity_lake.core.instruments.InstrumentKey` display key: all of
+            them parse (or the universe is empty) -> ``canonical``, otherwise
+            ``ticker_only``. An explicit value always wins but is still validated
+            against the universe it describes — a ``canonical`` claim over an
+            unparseable entry is refused, never recorded.
         execution: Execution-timing assumptions.
         seed: Seed actually used, or ``None`` when there is none.
         config: Non-secret configuration in force — digested, never stored.
@@ -1133,6 +1339,15 @@ def finalise_run(
     digest = config_digest if config_digest is not None else digest_non_secret_config(config)
     code_identity = code if code is not None else probe_code_identity(repo_root)
     availability = list(metric_availability) if metric_availability is not None else metric_availability_from_result(result)
+    # Never guessed: an omitted basis is derived by parsing the recorded universe, and
+    # an explicit one is checked against that same universe before any directory exists
+    # (a ``canonical`` claim over an unparseable entry is refused here, not recorded).
+    basis: UniverseBasis = universe_basis if universe_basis is not None else universe_basis_for(scope.universe)
+    if basis == "canonical" and not is_canonical_universe(scope.universe):
+        raise ValueError(
+            "universe_basis 'canonical' was claimed for a universe that does not parse as InstrumentKey display keys: "
+            f"{list(scope.universe)!r}. A venue is never inferred, so this run would need its real display keys."
+        )
 
     tmp_dir = Path(tempfile.mkdtemp(prefix=_TEMP_PREFIX, dir=runs_root))
     try:
@@ -1143,10 +1358,10 @@ def finalise_run(
             cost_regime=scope.cost_regimes[0] if len(scope.cost_regimes) == 1 else None,
         )
         for card in cards:
-            _write_card_strictly(card, tmp_dir)
+            write_card_strictly(card, tmp_dir)
         _validate_dated_artifacts(tmp_dir, result, availability)
 
-        artifacts = _artifact_records(tmp_dir)
+        artifacts = artifact_records(tmp_dir)
         missing = [name for name in REQUIRED_RUN_ARTIFACTS if name not in {record.path for record in artifacts}]
         if missing:
             raise ValueError(f"finalized run would be missing required artifacts: {missing}")
@@ -1160,6 +1375,7 @@ def finalise_run(
             start_date=scope.start_date,
             end_date=scope.end_date,
             universe=list(scope.universe),
+            universe_basis=basis,
             strategies=list(scope.strategies),
             cost_regimes=scope.cost_regimes,
             initial_cash=scope.initial_cash,
@@ -1176,7 +1392,7 @@ def finalise_run(
         )
         published = _publish(tmp_dir, manifest.run_dir, manifest)
     except BaseException:
-        _discard(tmp_dir)  # the temporary directory only; a claimed run dir is handled by _publish
+        discard_directory(tmp_dir)  # the temporary directory only; a claimed run dir is handled by _publish
         raise
 
     return FinalisedRun(directory=runs_root / published.run_dir, manifest=published)
@@ -1228,7 +1444,7 @@ def validate_run_directory(directory: Path) -> RunValidation:
         if not artifact.is_file():
             reasons.append(f"artifact missing: '{record.path}'")
             continue
-        digest, size = _file_digest(artifact)
+        digest, size = file_digest(artifact)
         if size != record.bytes:
             reasons.append(f"artifact size mismatch: '{record.path}' (recorded {record.bytes}, found {size})")
         if digest != record.sha256:

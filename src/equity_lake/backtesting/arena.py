@@ -23,7 +23,7 @@ import polars as pl
 import structlog
 
 from equity_lake.backtesting.data_loader import BacktestDataLoader
-from equity_lake.backtesting.engine import DEFAULT_FEE_RATIO, DEFAULT_TAX_RATIO, VectorBacktestEngine
+from equity_lake.backtesting.engine import DEFAULT_FEE_RATIO, DEFAULT_TAX_RATIO, VectorBacktestEngine, universe_size
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy import (
     BaseStrategy,
@@ -147,16 +147,7 @@ def _sanitize_failure_reason(exc: BaseException) -> str:
     return text or type(exc).__name__
 
 
-def _universe_size(data: pl.DataFrame) -> int:
-    """Distinct canonical identities in the shared load (``ticker`` for fixtures)."""
-    if set(IDENTITY_COLUMNS).issubset(data.columns):
-        return data.select(*IDENTITY_COLUMNS).unique().height
-    if "ticker" in data.columns:
-        return data["ticker"].n_unique()
-    return 0
-
-
-def _evaluation_status(
+def evaluation_status(
     strategy: BaseStrategy,
     result: BacktestResult,
     universe_size: int,
@@ -166,6 +157,12 @@ def _evaluation_status(
     ``ineligible`` when the strategy declares an integer ``min_stocks`` parameter
     that the loaded universe cannot satisfy (the default momentum/5-ticker case),
     ``no_trades`` when the strategy executed nothing, ``evaluated`` otherwise.
+
+    Public because it is the one classifier for every completed run: the arena
+    records it per pair and the single-report CLI records it on its attempt outcome,
+    so the two paths can never disagree about what counts as evidence. ``strategy``
+    is the instance that actually ran and ``universe_size`` the cohort that was
+    loaded (:func:`equity_lake.backtesting.engine.universe_size`), never a guess.
     """
     min_stocks = strategy.get_param("min_stocks")
     if isinstance(min_stocks, int) and not isinstance(min_stocks, bool) and universe_size < min_stocks:
@@ -203,6 +200,11 @@ class ArenaRun:
     #: ``evaluated`` runs feed the strategy/cost/benchmark cards.
     evaluation_status: Literal["evaluated", "no_trades", "ineligible"] = "evaluated"
     evaluation_notes: tuple[str, ...] = ()
+    #: The strategy parameters the instance that actually ran was built with
+    #: (``dict(strategy.params)``, captured at run time). A writer records these
+    #: instead of re-instantiating the registry default, which could silently drift
+    #: from what ran (E01b.1). An empty mapping means "none recorded", never a guess.
+    strategy_params: dict[str, Any] = field(default_factory=dict)
     #: The fee/tax pair this run's engine was **actually configured with** — the
     #: :func:`_resolve_regime_costs` result handed to
     #: :class:`VectorBacktestEngine`, recorded at the run's completion so a writer
@@ -225,6 +227,21 @@ class ArenaOutcome:
     requested: list[tuple[str, str]] = field(default_factory=list)
     #: Requested pairs that raised, with a sanitized type/reason.
     failed: list[ArenaFailure] = field(default_factory=list)
+    #: The market scope this invocation actually used (E01b.1). It is recorded on the
+    #: attempt record and in the per-run non-secret configuration digest, so a run can
+    #: never claim a market scope it was not loaded with.
+    markets: tuple[str, ...] = ("us_equity",)
+    #: The per-market cost override actually used for the ``realistic`` regime, or
+    #: ``None`` when the invocation used :data:`MARKET_COST_DEFAULTS`. The attempt
+    #: record digests it rather than storing it (E01b.1).
+    market_costs: dict[str, dict[str, float]] | None = None
+    #: Read-seam input snapshots of the shared load (E01c), as plain mappings
+    #: (``{"name", "sha256", "source", "version"}``) copied from
+    #: :meth:`BacktestDataLoader.snapshots`. They are *not* ``InputSnapshot`` models:
+    #: ``backtesting.evidence`` imports ``report``, which imports this module, so the
+    #: conversion lives in the writer. A ``preloaded_data`` outcome carries ``[]`` —
+    #: no read happened here, so there is no snapshot to bind.
+    input_snapshots: list[dict[str, str | None]] = field(default_factory=list)
 
 
 def _benchmark_identity_columns(data: pl.DataFrame) -> list[str]:
@@ -575,11 +592,14 @@ def run_arena(
             duplicate identity/date, incomplete mark panel, invalid mark or
             non-positive ``initial_cash``).
     """
-    data = (
-        preloaded_data
-        if preloaded_data is not None
-        else BacktestDataLoader(lake_dir=lake_dir).load(tickers=tickers, start_date=start_date, end_date=end_date, markets=list(markets))
-    )
+    loader: BacktestDataLoader | None = None
+    if preloaded_data is not None:
+        # The caller loaded this cohort: no read happened here, so there is no
+        # read-seam snapshot to bind (the outcome records `[]`).
+        data = preloaded_data
+    else:
+        loader = BacktestDataLoader(lake_dir=lake_dir)
+        data = loader.load(tickers=tickers, start_date=start_date, end_date=end_date, markets=list(markets))
     if data.is_empty():
         raise ValueError(
             "Arena has no data to backtest (empty load). "
@@ -622,7 +642,7 @@ def run_arena(
     requested_pairs: list[tuple[str, str]] = list(
         dict.fromkeys((strat_name, regime_name) for strat_name in strat_names for regime_name in regime_names)
     )
-    universe_size = _universe_size(data)
+    loaded_universe_size = universe_size(data)
     for strat_name, regime_name in requested_pairs:
         strategy_cls = STRATEGY_REGISTRY[strat_name]
         config = _resolve_regime_costs(regime_name, markets, resolved_market_costs)
@@ -658,14 +678,17 @@ def run_arena(
                 reason=failure.reason,
             )
             continue
-        evaluation_status, evaluation_notes = _evaluation_status(strategy, result, universe_size)
+        run_evaluation_status, evaluation_notes = evaluation_status(strategy, result, loaded_universe_size)
         runs.append(
             ArenaRun(
                 strategy=strat_name,
                 cost_regime=regime_name,
                 result=result,
-                evaluation_status=evaluation_status,
+                evaluation_status=run_evaluation_status,
                 evaluation_notes=evaluation_notes,
+                # Captured from the instance that actually ran, so a writer records
+                # the parameters in force instead of re-deriving a registry default.
+                strategy_params=dict(strategy.params),
                 # The same resolved pair the engine was built with (one source of
                 # truth, no re-derivation): the copy keeps the record independent of
                 # any later mutation of the config the engine holds.
@@ -678,7 +701,7 @@ def run_arena(
             cost_regime=regime_name,
             sharpe=round(result.sharpe_ratio, 3),
             total_return=round(result.total_return, 4),
-            evaluation_status=evaluation_status,
+            evaluation_status=run_evaluation_status,
         )
 
     return ArenaOutcome(
@@ -688,6 +711,13 @@ def run_arena(
         initial_cash=initial_cash,
         requested=requested_pairs,
         failed=failed,
+        markets=tuple(markets),
+        # Recorded exactly as passed: ``None`` means the venue defaults were used, so
+        # a writer digests the override only when there really was one.
+        market_costs=dict(market_costs) if market_costs is not None else None,
+        # Read-seam snapshots of the one shared load. A preloaded frame was not read
+        # here, so ``loader`` never existed and this stays ``[]``.
+        input_snapshots=list(loader.snapshots()) if loader is not None else [],
     )
 
 
@@ -701,5 +731,6 @@ __all__ = [
     "ArenaOutcome",
     "ArenaRun",
     "equal_weight_buyhold",
+    "evaluation_status",
     "run_arena",
 ]

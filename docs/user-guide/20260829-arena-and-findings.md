@@ -2,10 +2,11 @@
 
 The arena and report commands turn lake data into evidence: `equity arena run`
 sweeps the shipped strategies across cost regimes in one shared data load and
-emits FindingCards, while `equity report backtest` produces the artifacts for a
-single run. Everything lands under `data/findings/` — auxiliary storage that is
-not cataloged or pointblank-validated; the Pydantic `FindingCard` model is the
-write-boundary contract. Both commands read OHLCV from the lake, so the window
+emits FindingCards, while `equity report backtest` publishes the immutable run +
+attempt evidence for a single run. Everything lands under `data/findings/` —
+auxiliary storage that is not cataloged or pointblank-validated; the Pydantic
+`FindingCard` model is the write-boundary contract. Both commands read OHLCV from
+the lake, so the window
 must already be ingested (see [Ingestion](ingestion.md)), and the lake must carry
 point-in-time action coverage (ADR-0015) — an unseeded or coverage-less lake
 produces no decisions at all, not neutral ones.
@@ -136,7 +137,7 @@ status, and branches on the completion state:
 | every requested pair completed | `Arena complete: <c> of <r> requested pair(s) completed` | `0` |
 | any requested pair failed | `PARTIAL` label, counts, failed pairs; the successful runs' artifacts are still written | `1` |
 | a requested pair is missing without a recorded failure | `PARTIAL` label, counts, plus `N requested pair(s) neither completed nor recorded a failure: …` naming each pair; the successful runs' artifacts are still written | `1` |
-| no requested run completed | actionable diagnostics, including `N requested pair(s) neither completed nor recorded a failure: …` naming every requested pair with neither outcome; no success banner, no new cards, and the artifact writer is never called | `1` |
+| no requested run completed | actionable diagnostics, including `N requested pair(s) neither completed nor recorded a failure: …` naming every requested pair with neither outcome; no success banner and no run/card evidence, but the invocation **does** publish a `zero_completion` attempt record (its failure must outlive the terminal) | `1` |
 | a completed run (or recorded failure) outside the request | named as out of scope in the diagnostics; never counted as success, never published | — (does not change the exit code) |
 | a pair is recorded both completed and failed | `PARTIAL` label, counts, plus `N requested pair(s) are recorded both completed and failed: …` naming each pair | `1` |
 | artifact write failure | red `arena artifact write failed: …` | `1` |
@@ -184,16 +185,20 @@ status and exits `0` — but the default five-ticker arena cannot satisfy
 momentum's `min_stocks=10`, so that run reports `ineligible`
 (`universe 5 < min_stocks 10`) rather than lowering the default.
 
-Failed pairs are not evidence either. Artifact directories are keyed by
-`<strategy>__<regime>`, so directories from earlier runs can remain under the
-findings root (immutable per-run layout is E01's boundary): a partial invocation
-never refreshed a failed pair's previously published evidence, and nothing is
-deleted automatically.
+Failed pairs are not evidence either. Each invocation publishes its own immutable
+evidence — one attempt directory per invocation plus one run directory per requested
+completed pair — and writes no legacy path at all. The legacy
+`<strategy>__<regime>/` directories, the flat `benchmark__equity.parquet` and the
+flat `<card-id>.json` cards that earlier runs produced stay on disk **frozen and
+read-only**: they are never rewritten, migrated or relabelled, so a partial
+invocation cannot refresh a failed pair's previously published evidence and nothing
+is deleted automatically. Because run evidence is immutable, there are no
+"directories from earlier runs" to confuse with this invocation's results.
 
 ## `equity report backtest`
 
-Runs one strategy under one cost regime, prints the result summary, and writes
-the report artifacts — but no FindingCards:
+Runs one strategy under one cost regime, prints the result summary, and publishes
+that run's immutable evidence — but no FindingCards:
 
 ```bash
 uv run equity report backtest --strategy trend_following \
@@ -209,28 +214,70 @@ uv run equity report backtest --strategy trend_following \
 | `--markets` | `us` | Comma-separated market codes |
 | `--cost-regime` | `realistic` | One of `zero`, `realistic`, `high` |
 | `--initial-cash` | `100000` | Starting capital |
-| `--output-dir`, `-o` | `data/findings` | Findings root |
+| `--output-dir`, `-o` | `data/findings` | Findings root for the run and attempt evidence |
 | `--verbose`, `-v` | off | Debug logging |
 
 Unknown strategy or regime names exit `1` with the accepted values listed.
 
+Each invocation writes **one immutable run** under `<findings root>/runs/` and
+**one attempt record** under `<findings root>/attempts/` — the same layouts and
+writers an arena invocation uses (ADR-0025 Decisions 2, 3 and 5):
+
+- the run's scope is that strategy, that cost regime **with the fee/tax pair the
+  engine was actually configured with**, the result's window and ticker universe,
+  its initial cash, and the strategy parameters that ran;
+- the attempt record carries one `completed` outcome naming the published run ID,
+  its run directory and the shared evaluation status (`evaluated` | `no_trades` |
+  `ineligible`), plus a note naming this command.
+
+`--output-dir` is the findings root for both, and the command writes **no**
+`<strategy>__<regime>/` directory, no flat `benchmark__equity.parquet` and no flat
+card. Its output is therefore latest-success evidence rather than a mutable legacy
+directory: `/backtests` reports this run as the slug's `last_success`, with the
+last attempt's status and age next to it. The command emits no FindingCards, so
+`/findings` is unaffected.
+
+**Costs.** A single report applies the static `COST_REGIMES` pair for
+`--cost-regime`. The per-market `realistic` defaults belong to `equity arena run`,
+which knows the venue; here the manifest and the attempt record both record the
+pair the engine actually applied, never a re-resolved default.
+
+**An undated result is refused.** When the backend supplies no session dates
+(`BacktestResult.equity_dates is None`) the command prints why and exits `1`
+without writing anything — no run directory, no attempt record and no legacy
+directory, because a calendar is never invented from a curve's length. A backtest
+that raises behaves as before: a clean error, exit `1`, nothing written.
+
+**Evaluation cohort.** The attempt's evaluation status comes from the classifier
+the arena uses, given the size of the frame the engine actually loaded. An engine
+that loaded nothing through its own loader (a preloaded frame) has no recorded
+size; the command then classifies the requested tickers and says so in the attempt
+notes, instead of assuming an eligible universe.
+
 ## Artifact layout under `data/findings/`
 
-Two layouts coexist while the E01b reader/view change is pending: the **legacy**
-`<strategy>__<regime>/` directories and the new **immutable dated runs** under
-`runs/`. Legacy directories are unchanged by this stage — undated, keyed by the
-pair rather than the run, overwritten by the next run of the same pair — and stay
-readable as-is until E01b adds the read-only compatibility view.
+`equity arena run` writes two immutable layouts and **no legacy path**:
+
+- `runs/<UTC-timestamp>Z-<short-scope-hash>/` — one directory per requested
+  completed `(strategy, cost regime)` pair (the run evidence);
+- `attempts/<UTC-timestamp>Z-<short-attempt-hash>/` — one directory per
+  invocation (the attempt evidence), owning the three comparison cards and the
+  benchmark copy.
+
+The pre-E01 **legacy** `<strategy>__<regime>/` directories, the flat
+`benchmark__equity.parquet` and the flat `<card-id>.json` cards are a frozen,
+read-only compatibility view over evidence that already exists. They stay where
+they are and stay readable, and an arena invocation never creates, refreshes or
+overwrites one — so a legacy card can never silently inherit a later run's curve.
 
 ### Immutable dated runs
 
-`equity arena run` writes them: after the legacy per-pair reports, the benchmark
-curve and the FindingCards, the arena writer finalises **one immutable run per
-completed (strategy, cost regime) pair** under `data/findings/runs/`. Each run
-directory records that pair's own scope (strategy, the cost regime **with the fees
-and taxes that regime actually applied**, window, universe, initial cash, and the
-strategy's registry parameters) and its own dated curve — the legacy directories
-are written exactly as before, so nothing about the old layout changes.
+The arena writer finalises **one immutable run per requested completed
+(strategy, cost regime) pair** under `data/findings/runs/`. Each run directory
+records that pair's own scope (strategy, the cost regime **with the fees and taxes
+that regime actually applied**, window, universe, initial cash, the strategy
+parameters the run was built with, and a bounded non-secret `config_digest` of the
+markets and market-cost override in force) and its own dated curve.
 
 The recorded fees/taxes are the ones the run was actually costed with: the arena
 records the resolved pair it configured the engine with on each completed run, and
@@ -247,17 +294,17 @@ A run whose backend curve carries no dates is **skipped, never repaired**: no ru
 directory and no manifest claim dates for it (no calendar is invented from the
 curve length), the skip is reported with its reason in the
 `arena_run_evidence_skipped_undated` log event and in the writer's evidence
-summary, and the other runs of the same invocation still finalise. The legacy
-(undated) artifacts for that pair are still written. A run that does not record the
+summary, and the other runs of the same invocation still finalise. No legacy
+artifact is written for that pair either. A run that does not record the
 costs its engine applied (a legacy or hand-built outcome) is skipped the same way —
 reason `applied costs not recorded`, reported in the writer's evidence summary and
 the `arena_run_evidence_skipped_costs_not_recorded` log event — because a manifest
 that guesses a default cost application is worse than one that admits the costs are
-unknown; its legacy artifacts and the cards are still written.
+unknown; the cards are still written.
 
-If finalising one run fails, every remaining run is still attempted, the legacy
-artifacts and cards already written are kept, no partial run directory is
-published, and the command reports the write failure and exits `1`.
+If finalising one run fails, every remaining run is still attempted, the cards
+already written are kept, no partial run directory is published, and the command
+reports the write failure and exits `1`.
 
 A run written by `finalise_run` (`backtesting/evidence.py`, E01 write side) lands
 in `data/findings/runs/<UTC-timestamp>Z-<short-scope-hash>/` and is never
@@ -270,8 +317,8 @@ overwritten by a later invocation of the same scope (a collision appends `-2`,
 | `drawdown.parquet` | Drawdown fraction below the running peak, same sessions |
 | `metrics.json` | Strategy, regime, and the full `BacktestResult` metrics dict |
 | `trades.json` | Trade-by-trade execution log |
-| `<card-id>.json` | FindingCards produced by that run, when any (the arena writer keeps its three arena-level cards in the legacy layout, because they compare runs rather than describe one) |
-| `manifest.json` | The run manifest: scope-only run ID (its scope includes the applied fees/taxes, which the ID re-verifies against), scope, costs, execution timing, seed, code commit + dirty-digest, non-secret config digest, provenance (`synthetic`, `real`, `mixed`, or `unknown`), input snapshot hashes, per-artifact checksums, metric availability |
+| `<card-id>.json` | FindingCards produced by that run, when any (the arena writer keeps its three comparison cards in the invocation's **attempt** directory, because they compare runs rather than describe one) |
+| `manifest.json` | The run manifest: scope-only run ID (its scope includes the applied fees/taxes, which the ID re-verifies against), scope, costs, execution timing, seed, code commit + dirty-digest, non-secret config digest, provenance (`synthetic`, `real`, `mixed`, or `unknown`), the universe basis (`canonical` or `ticker_only`), read-seam input snapshots (`name`, `sha256`, `source`, Delta `version`), per-artifact checksums, metric availability |
 
 The manifest is written last: artifacts are re-read, their dates **and values**
 checked against the run's `BacktestResult`, and hashed first; then the run is
@@ -295,20 +342,151 @@ the run** with the artifact, entry and field named (`trades.json entry 3 field
 always come from the backend; a run whose backend supplied no timestamps stays
 undated and is not written in this layout.
 
-### Legacy directories
+### Immutable attempt directories
 
-`write_arena_artifacts` and `write_backtest_report` (`backtesting/report.py`)
-produce the files below. This layout is keyed by `<strategy>__<regime>`, not by
-run date — re-running with the same names overwrites the previous artifacts.
+Every invocation publishes exactly one attempt directory under
+`data/findings/attempts/` (E01b.1), even when nothing completed:
+
+| Path | Contents |
+|---|---|
+| `benchmark__equity.parquet` | An immutable copy of the fixed-share benchmark curve (only when the curve is non-empty) |
+| `<card-id>.json` | The three comparison cards (`strategy-comparison`, `cost-regime`, `vs-benchmark`), written strictly (a non-finite card value refuses the attempt) |
+| `attempt.json` | Written **last**: protocol, the inputs-only `attempt_id`, the requested pairs, one `PairOutcome` per pair (`completed`, `failed`, `missing`, `contradictory`, `unevidenced`), `status`, one `run_write_failures` entry per run-evidence write that raised, timestamps, window, universe, initial cash, markets, the applied `costs` whose fees/taxes are known, artifact checksums and notes |
+
+The `attempt_id` hashes the **inputs** — protocol, the requested pairs, the
+canonical universe, the exact date window, the initial cash, the markets and the
+applied costs — in one documented field order. It is not an invocation instant:
+two identical invocations share an `attempt_id` and get distinct directories (the
+timestamp plus a `-2`, `-3`, … discriminator live in the directory name).
+`status` is exactly what the recorded outcomes justify:
+
+| Status | Meaning |
+| --- | --- |
+| `complete` | every requested pair is `completed` (and there was at least one) |
+| `partial` | at least one `completed` and at least one non-`completed` |
+| `zero_completion` | no `completed` outcome (includes a request that produced nothing, whose `notes` name why nothing ran) |
+| `write_failed` | at least one run-evidence write raised; it may coexist with completed outcomes |
+
+`write_failed` is enforced, not just labelled: the record must carry at least one
+`run_write_failures` entry (`strategy`, `cost_regime`, `error_type`, `reason`) naming
+the write that raised, every other status must carry none, and each entry's pair must
+be one the invocation requested. A record whose pairs all completed can therefore
+never claim `write_failed`, and a `write_failed` record can never omit its failure.
+
+The **last attempt** is deliberately distinct from the **last successful
+comparable run**: a failed attempt cannot erase the last success, and the age of
+that success stays visible next to the attempt's status. `equity arena run` prints
+a bounded, read-only "previous evidence" block for the requested pairs before it
+starts (last successful run age, or `none`, and the last attempt's status/age), and
+`GET /backtests` exposes both as `last_success` and `last_attempt` (see the
+[Read API](20260811-read-api.md)).
+
+When a run-evidence write fails, the attempt is still published with
+`status='write_failed'` (naming the failed pair and the runs that did finalise)
+**before** the command reports the failure and exits `1`, so the failure is durable
+evidence rather than lost terminal output.
+
+#### Evidence references on attempt-bound cards
+
+`build_finding_cards` emits *unbound* refs in the frozen legacy vocabulary
+(`<strategy>__<regime>/` and `benchmark__equity.parquet`), because those are the
+names the cards have always used. Those names identify a mutable legacy location,
+so the arena writer binds them to immutable evidence before persisting a card
+(`bind_cards_to_evidence`, ADR-0025 Decision 8). Only a ref that is exactly
+`<strategy>__<regime>/` for a pair this invocation **requested** is rewritten: the
+candidate set is explicit, never inferred from string shape, so a slash-terminated
+token that merely looks like a legacy slug (`custom__token/`, `run:abc__def/`,
+`C:\reports\foo__bar/`) or a path below a pair directory
+(`momentum__zero/extra.json`) is preserved verbatim. A card in an attempt directory
+never carries a legacy slug path:
+
+| Written ref | What it identifies (display-only in E01b) |
+| --- | --- |
+| `run:<run_id>` | The validated run this invocation finalised for that pair. Manual resolution only: read `<run_id>` (or the `run_dir`) from the pair's `completed` outcome in the attempt's `attempt.json`, then read the run manifest at `data/findings/runs/<run_dir>/manifest.json`, which is the address of the artifact set (`equity.parquet`, `metrics.json`, …) and re-derives (and re-checks) that same ID. |
+| `attempt:<attempt_id>/benchmark__equity.parquet` | The attempt's **own** immutable benchmark copy under `data/findings/attempts/<attempt dir>/`, never the frozen flat legacy `benchmark__equity.parquet`. Manual resolution only: `<attempt_id>` is the input hash recorded in that attempt's `attempt.json`, and the file sits in the same attempt directory. Written only when the curve is non-empty; otherwise the ref is `unevidenced:benchmark` (next row). |
+| `unevidenced:<strategy>__<regime>` | A pair that was requested but has no immutable run (an undated curve, unrecorded applied costs, or a failed write), so there is no run ID to name. Manual resolution only: the attempt record's matching `PairOutcome` records the reason. |
+| `unevidenced:benchmark` | The attempt's own immutable benchmark artifact is **absent**: the benchmark curve was empty, so the attempt directory holds no `benchmark__equity.parquet` and the ref names that absent artifact instead of a path (never `attempt:<id>/benchmark__equity.parquet`). `benchmark` here is a reserved name, not a `<strategy>__<regime>` slug. Manual resolution only: there is nothing to open — an absent benchmark copy is a fact about the comparison, not a file to look up. |
+
+These four tokens are **display-only references** in E01b: a stable,
+machine-readable vocabulary on the card, not a link any code dereferences. **No
+shipped code path resolves them yet** — `/findings`, `/findings/{card_id}` and
+`evidence_view.finding_cards` return the card with its refs verbatim — so an
+operator follows the manual path in the table. A resolver is not part of this
+change.
+
+Duplicate refs are collapsed preserving first-seen order, and any other ref is
+preserved verbatim: an unknown pointer is reported honestly rather than guessed at
+or dropped. Frozen legacy cards keep their verbatim legacy refs — they are read, never
+rewritten, so the binding rules above describe new attempt-bound cards only.
+
+### Provenance stays `unknown` (E01-6)
+
+Provenance
+stays `unknown` on every path, snapshots or not. E01c does record the canonical
+universe and the read-seam input snapshots, but neither is a provenance upgrade: a
+snapshot proves *which bytes or Delta versions were read*, not *which price source
+produced the marks*. Nothing in the lake persists a price-source marker yet — that
+is open item **E01-6**, with its own ADR and storage stage — so a run that cannot
+name its source stays `unknown` and is never promoted to `real`. Nothing here
+fabricates one, and E01 is not complete until E01-6 lands.
+
+### Canonical universe and basis
+
+Each manifest records `universe_basis`: `canonical`
+when every `universe` entry is an `InstrumentKey` display key
+(`market/MIC/percent-quoted-symbol`) that parses back through the identity model, or
+`ticker_only` when at least one entry does not (a bare ticker, a malformed display
+key). The basis is **derived by parsing, never guessed**: no MIC is filled, no venue
+is inferred from a ticker, and configuration cannot resolve one (ADR-0016). An
+explicit `canonical` claim over an unparseable entry is refused. The basis is not a
+run-ID scope field — the identity values themselves differ between the two bases, so
+the ID changes anyway. `equity arena run` derives its universe from the one loaded
+frame's identity columns; `equity report backtest` uses the display keys its engine
+recorded while loading (falling back to the requested tickers, `ticker_only`, when
+the engine was handed a preloaded frame).
+
+### Read-seam input snapshots
+
+Snapshots are captured *inside* the read that produced
+the data, never looked up afterwards (a version read after the computation describes
+the table as it is then):
+
+| Snapshot `name` | `source` | `sha256` | `version` |
+|---|---|---|---|
+| `price_marks:<market>` | `lake:delta` | digest of the immutable `(table path, version)` reference | the Delta version read (as text) |
+| `price_marks:<market>` | `lake:parquet` | one aggregate digest over the sorted parquet file set actually enumerated | `null` |
+| `action_events:<market>` / `action_coverage:<market>` | `lake:delta` | same reference digest | the Delta version read |
+
+The Delta digest is **not** a content hash of every data file in the table: it binds
+the immutable `(path, version)` reference the read consumed. A non-Delta lake costs
+an extra read pass: the loader enumerates the same `<root>/**/*.parquet` glob the scan
+uses, sorted, before the scan, streams each file, and records one aggregate digest per
+market over `sorted [(relative_path, bytes, file_sha256)]` — so adding, removing or
+rewriting a parquet file changes it, non-parquet files are excluded, and the result
+does not depend on enumeration order. Two documented residuals follow from that: a
+file-set change *after* enumeration is not detected, and **in-memory fixture action
+inputs have no read seam at all**, so they record nothing rather than a fabricated
+hash. An absent action table records no version either. A run built from
+`preloaded_data` read nothing here, so its manifest carries no snapshots.
+
+### Legacy directories (frozen, read-only)
+
+`write_backtest_report` (`backtesting/report.py`) produces the files below. It is
+the frozen-legacy fixture/legacy helper and **no command uses it**: both
+`equity arena run` and `equity report backtest` publish immutable run + attempt
+evidence, and no shipped command creates or overwrites a `<strategy>__<regime>/`
+directory. This layout is keyed by `<strategy>__<regime>`, not by run date:
+re-running the legacy writer with the same names overwrites the previous
+artifacts, which is exactly why it is frozen.
 
 | Path | Producer | Contents |
 |---|---|---|
-| `<strategy>__<regime>/equity.parquet` | arena, report | Equity curve (t, equity) |
-| `<strategy>__<regime>/drawdown.parquet` | arena, report | Drawdown fraction below running peak |
-| `<strategy>__<regime>/metrics.json` | arena, report | Strategy, regime, and the full `BacktestResult` metrics dict |
-| `<strategy>__<regime>/trades.json` | arena, report | Trade-by-trade execution log |
-| `benchmark__equity.parquet` | arena only | Fixed-share equal-weight buy-and-hold equity curve |
-| `<card-id>.json` | arena, `ml compare/ablate` | One FindingCard per file |
+| `<strategy>__<regime>/equity.parquet` | legacy helper | Equity curve (t, equity) |
+| `<strategy>__<regime>/drawdown.parquet` | legacy helper | Drawdown fraction below running peak |
+| `<strategy>__<regime>/metrics.json` | legacy helper | Strategy, regime, and the full `BacktestResult` metrics dict |
+| `<strategy>__<regime>/trades.json` | legacy helper | Trade-by-trade execution log |
+| `benchmark__equity.parquet` | legacy helper (arena before E01b.1) | Fixed-share equal-weight buy-and-hold equity curve |
+| `<card-id>.json` | legacy helper, `ml compare/ablate` | One FindingCard per file |
 
 ## FindingCards
 
@@ -323,15 +501,24 @@ evidence-backed conclusion from a comparison:
 | `verdict` | literal | `positive`, `negative`, or `inconclusive` |
 | `conclusion` | `str` | Honest one-line takeaway of what was found |
 | `metrics` | `dict[str, float]` | Numeric evidence (Sharpes, returns, accuracies) |
-| `evidence_refs` | `list[str]` | Paths to backing artifacts under the findings root |
+| `evidence_refs` | `list[str]` | Pointers to backing artifacts: on attempt-bound arena cards a bound `run:`/`attempt:`/`unevidenced:` token (see [Evidence references on attempt-bound cards](#evidence-references-on-attempt-bound-cards)), on legacy cards the verbatim legacy paths |
 | `run_date` | `date` | When the comparison was run |
 | `scope` | `dict` | Reproducibility metadata: tickers, window, costs, seed |
+
+Cards live in the attempt directory that produced them, not as flat
+`<id>.json` files at the findings root, so each card is bound to one immutable
+invocation. `/findings` resolves an id to the newest attempt-bound card and falls
+back to a frozen legacy flat card, so the three ids and their verdict semantics are
+unchanged for consumers.
 
 A `negative` verdict is a valid — and encouraged — result, not an error:
 "no strategy beats buy-and-hold after costs" is a strong portfolio conclusion.
 `write_finding_card` (`findings/writer.py`) validates the model before touching
-disk and writes `data/findings/<id>.json`; `load_finding_cards` reads back
-best-effort, skipping corrupt files so one bad artifact never breaks consumers.
+disk: the ML comparison/ablation writers persist a flat `data/findings/<id>.json`,
+while arena cards are written into the attempt directory that produced them.
+`load_finding_cards` reads back the flat (legacy) cards best-effort, skipping
+corrupt files so one bad card never breaks consumers; `/findings` resolves ids
+attempt-bound cards first (see the layout section above).
 
 Card admission: only runs whose `evaluation_status` is `evaluated` are read.
 `no_trades` and `ineligible` runs are excluded from every metric and verdict, and

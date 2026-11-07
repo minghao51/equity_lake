@@ -1,5 +1,55 @@
+"""Load local price bars for backtesting, recording read-seam input snapshots.
+
+Snapshot binding (ADR-0025 Decision 4, frozen decision E01-4) happens **here**,
+because this is the seam where a backtest's prices and corporate-action inputs are
+actually read. Nothing is looked up afterwards: a Delta version fetched after the
+computation would describe the table as it is then, not the snapshot consumed.
+
+The snapshots are accumulated as **plain mappings**
+(``{"name", "sha256", "source", "version"}``) and exposed by
+:meth:`BacktestDataLoader.snapshots`; this module deliberately does not import
+:mod:`equity_lake.backtesting.evidence` (the live chain is
+``evidence -> report -> arena -> data_loader``, so importing it back would be a
+cycle). The caller converts the mappings into ``InputSnapshot`` models.
+
+Digest conventions:
+
+- **Delta price marks** (``name="price_marks:<market>"``, ``source="lake:delta"``):
+  ``sha256(f"delta:{table_path}@v{version}")`` — a digest of the immutable
+  ``(path, version)`` **reference** the read consumed, not a content hash of every
+  data file in the table. Re-reading the same version yields the same digest; any
+  later commit invalidates nothing, it simply is a different snapshot.
+- **Non-Delta (parquet) price marks** (``name="price_marks:<market>"``,
+  ``source="lake:parquet"``, ``version=None``): the loader enumerates the same
+  ``<root>/**/*.parquet`` glob the scan uses, sorted and before the scan, streams
+  each file to hash it, and records **one aggregate** snapshot per market,
+  ``sha256(canonical JSON of sorted [(relative_path, bytes, file_sha256)])``. This
+  costs an extra read pass over the files. A file that appears, disappears or
+  changes *after* enumeration is a residual this digest does not detect — it binds
+  the file set as enumerated, and nothing more.
+- **Corporate-action inputs** (``name="action_events:<market>"`` /
+  ``name="action_coverage:<market>"``, ``source="lake:delta"``): one snapshot per
+  table actually read, same ``(path, version)`` digest convention, from the version
+  captured by the read itself
+  (:func:`equity_lake.ingestion.corporate_actions.load_corporate_action_inputs_with_versions`).
+  An absent table was not read, so it records no snapshot rather than a fabricated
+  hash. In-memory ``action_inputs`` fixtures have no read seam at all and therefore
+  record nothing — a documented residual, never an invented digest.
+
+``preloaded_data`` means the loader never ran, so :meth:`snapshots` returns ``[]``.
+
+Scope is **one load, not one loader**: :meth:`BacktestDataLoader.load` starts by
+clearing the accumulated snapshot map (and the action-input read cache) so a loader
+reused for a second load re-reads the seam and :meth:`snapshots` then describes the
+second read — a snapshot captured during an earlier load can never be reported
+alongside newer data. Within one load each ``name`` is recorded once: a market's
+price table is read once per load, and action tables are read once per identity per
+load, so one snapshot per name is the whole story.
+"""
+
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
@@ -26,11 +76,44 @@ logger = structlog.get_logger(__name__)
 _PIT_RAW_COLUMNS = {column: f"__pit_raw_{column}" for column in ("open", "high", "low", "close", "volume")}
 _PIT_ACTION_CONTEXT = "__pit_action_context"
 
+#: Read-seam snapshot sources. One string per seam, so a manifest can be read back
+#: to the code path that produced the digest.
+SNAPSHOT_SOURCE_DELTA = "lake:delta"
+SNAPSHOT_SOURCE_PARQUET = "lake:parquet"
+
 
 def _json_default(value: object) -> str:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
     raise TypeError(f"Cannot encode {type(value).__name__} in point-in-time action context")
+
+
+def _stream_digest(path: Path) -> tuple[str, int]:
+    """SHA-256 and byte count of a file, streamed so a large parquet file is not held."""
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _delta_reference_digest(table_path: Path, version: int) -> str:
+    """Digest of an immutable ``(table path, version)`` reference (not file contents)."""
+    return hashlib.sha256(f"delta:{table_path}@v{version}".encode()).hexdigest()
+
+
+def _parquet_file_set_digest(files: Sequence[Path], *, root: Path) -> str:
+    """One aggregate digest over an enumerated, sorted parquet file set.
+
+    The payload is canonical JSON of ``sorted [(relative_path, bytes, file_sha256)]``,
+    so the digest is stable regardless of enumeration order and changes when a file
+    is added, removed, renamed or rewritten.
+    """
+    entries = sorted([path.relative_to(root).as_posix(), *reversed(_stream_digest(path))] for path in files)
+    payload = json.dumps(entries, separators=(",", ":"), ensure_ascii=True, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 AdjustmentMode = Literal["none", "splits", "total_return"]
@@ -60,7 +143,60 @@ class BacktestDataLoader:
         self.action_inputs = action_inputs
         self.lake_dir = Path(lake_dir) if lake_dir is not None else None
         self._action_input_cache: dict[tuple[str, str, str], tuple[pl.DataFrame, pl.DataFrame]] = {}
+        #: Read-seam input snapshots of the current load, keyed by name so one
+        #: market's two action tables and one price table are each recorded once.
+        #: Cleared at the start of every :meth:`load` (see the module docstring).
+        self._snapshots: dict[str, dict[str, str | None]] = {}
         logger.info("BacktestDataLoader initialized", cache_enabled=cache_enabled, lake_dir=str(self.lake_dir) if self.lake_dir else None)
+
+    def snapshots(self) -> list[dict[str, str | None]]:
+        """The inputs the most recent load actually read, as plain mappings, name-sorted.
+
+        Each entry is ``{"name", "sha256", "source", "version"}``; ``version`` is the
+        Delta version string captured by the read (``None`` for a non-Delta file-set
+        digest). Scoped to the latest :meth:`load`: that call clears the map before
+        reading, so these describe the data the caller is about to use and never an
+        earlier load's read of the same table name. Empty when nothing was read by
+        the latest load — ``preloaded_data`` never reaches here, and in-memory fixture
+        action inputs have no read seam.
+
+        Plain mappings, not ``InputSnapshot`` models, so this module keeps no import
+        of :mod:`equity_lake.backtesting.evidence` (which imports ``report``, which
+        imports ``arena``, which imports this module).
+        """
+        return [dict(entry) for entry in sorted(self._snapshots.values(), key=lambda entry: str(entry["name"]))]
+
+    def _record_delta_snapshot(self, name: str, table_path: Path, version: int) -> None:
+        """Record an immutable ``(path, version)`` reference digest for one table read.
+
+        One entry per ``name`` per load: the first read of a given table in the
+        current load wins, and the map is cleared when the next load starts.
+        """
+        if name in self._snapshots:
+            return
+        self._snapshots[name] = {
+            "name": name,
+            "sha256": _delta_reference_digest(table_path, version),
+            "source": SNAPSHOT_SOURCE_DELTA,
+            "version": str(version),
+        }
+
+    def _record_parquet_snapshot(self, name: str, root: Path) -> None:
+        """Record one aggregate content digest over the parquet file set at ``root``.
+
+        Enumerated with the same glob the scan uses, sorted, **before** the scan; a
+        file-set change after this enumeration is a documented residual. One entry
+        per ``name`` per load, like the Delta variant.
+        """
+        if name in self._snapshots:
+            return
+        files = sorted(root.glob("**/*.parquet"))
+        self._snapshots[name] = {
+            "name": name,
+            "sha256": _parquet_file_set_digest(files, root=root),
+            "source": SNAPSHOT_SOURCE_PARQUET,
+            "version": None,
+        }
 
     def load(
         self,
@@ -77,7 +213,18 @@ class BacktestDataLoader:
         Bare symbols are accepted only when stored or explicitly trusted
         historical provenance resolves them to one canonical identity. Current
         configuration and ticker spelling are never historical provenance.
+
+        Read-seam snapshots are **scoped to this call**: the accumulated map and the
+        action-input read cache are cleared before anything is read, so
+        :meth:`snapshots` afterwards describes this load's reads and a loader reused
+        for a later load never reports the earlier one's version/digest. Within the
+        call each snapshot name is recorded once, and distinct markets contribute
+        distinct names.
         """
+        # Snapshot scope is the load, not the loader: reset before any read so a stale
+        # entry can never be reported next to data this load fetched.
+        self._snapshots.clear()
+        self._action_input_cache.clear()
         selected_markets = list(PRICE_MARKETS) if markets is None else markets
         requested_columns = columns or ["ticker", "date", "open", "high", "low", "close", "volume"]
         symbols = [ticker if isinstance(ticker, str) else ticker.symbol for ticker in tickers]
@@ -139,12 +286,17 @@ class BacktestDataLoader:
             return market_dir(market)
         return delta_table_path(MARKET_DIR_MAP[market], lake_dir)
 
-    @staticmethod
     def _read_market(
-        market: str, symbols: list[str], start_date: date, end_date: date, columns: list[str], lake_dir: Path | None = None
+        self, market: str, symbols: list[str], start_date: date, end_date: date, columns: list[str], lake_dir: Path | None = None
     ) -> pl.DataFrame:
-        """Read a bounded market/date scope, retaining explicit stored identity."""
+        """Read a bounded market/date scope, retaining explicit stored identity.
+
+        Records this market's read-seam snapshot here, inside the read: the Delta
+        version is taken from the constructed :class:`DeltaTable` before the scan,
+        and the non-Delta path digests the enumerated file set before its scan.
+        """
         data_dir = BacktestDataLoader._market_data_dir(market, lake_dir)
+        snapshot_name = f"price_marks:{market}"
         if not data_dir.exists():
             logger.warning("Market data directory not found", market=market, path=str(data_dir), hint="Run equity ingest command first")
             return pl.DataFrame()
@@ -153,12 +305,17 @@ class BacktestDataLoader:
 
         if DeltaTable.is_deltatable(str(data_dir)):
             table = DeltaTable(str(data_dir))
+            # Read-seam capture: the version of the table object that will produce the
+            # frame, taken before the scan (never a post-computation lookup).
+            self._record_delta_snapshot(snapshot_name, data_dir, int(table.version()))
             available = {field.name for field in table.schema().fields}
             if "date" not in available:
                 return pl.DataFrame()
             filters: list[tuple[str, str, object]] = [("date", ">=", start_date), ("date", "<=", end_date)]
             raw = pl.DataFrame(table.to_pyarrow_table(filters=filters))
         else:
+            # Enumerated and digested before the scan, with the scan's own glob.
+            self._record_parquet_snapshot(snapshot_name, data_dir)
             raw = pl.scan_parquet(str(data_dir / "**" / "*.parquet"), hive_partitioning=True).collect()
             if "date" not in raw.columns:
                 return pl.DataFrame()
@@ -185,13 +342,32 @@ class BacktestDataLoader:
         return raw.select([column for column in keep if column in raw.columns])
 
     def _action_inputs_for(self, instrument: InstrumentKey) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """One instrument's action inputs, recording the lake read's versions once.
+
+        A lake read has a read seam, so the version each table was read at is
+        recorded here (``action_events:<market>`` / ``action_coverage:<market>``,
+        one snapshot per market). An absent table was not read and records nothing;
+        in-memory fixture inputs (``self.action_inputs``) have no read seam at all
+        and likewise record nothing — never a fabricated hash.
+        """
         cached = self._action_input_cache.get(instrument.tuple)
         if cached is not None:
             return cached
         if self.action_inputs is None:
-            from equity_lake.ingestion.corporate_actions import load_corporate_action_inputs
+            from equity_lake.ingestion.corporate_actions import (
+                corporate_action_coverage_table,
+                corporate_actions_table,
+                load_corporate_action_inputs_with_versions,
+            )
 
-            result = load_corporate_action_inputs(instrument.market, lake_dir=self.lake_dir)
+            actions, coverage, versions = load_corporate_action_inputs_with_versions(instrument.market, lake_dir=self.lake_dir)
+            result = (actions, coverage)
+            self._record_action_snapshots(
+                instrument.market,
+                events_table=corporate_actions_table(instrument.market, "silver"),
+                coverage_table=corporate_action_coverage_table(instrument.market),
+                versions=versions,
+            )
         else:
             try:
                 result = self.action_inputs[instrument.tuple]
@@ -199,6 +375,27 @@ class BacktestDataLoader:
                 raise AvailabilityContractError(f"No action input fixture for {instrument.display_key}") from exc
         self._action_input_cache[instrument.tuple] = result
         return result
+
+    def _record_action_snapshots(
+        self,
+        market: str,
+        *,
+        events_table: str,
+        coverage_table: str,
+        versions: Mapping[str, int | None],
+    ) -> None:
+        """Record one ``(path, version)`` snapshot per action table actually read.
+
+        ``versions`` maps lake-relative table name -> the version its read consumed,
+        or ``None`` when the table is absent. An absent table records no snapshot at
+        all: there is no read to bind, and a hash for an unread table would be
+        invented evidence.
+        """
+        for name, table in ((f"action_events:{market}", events_table), (f"action_coverage:{market}", coverage_table)):
+            version = versions.get(table)
+            if version is None:
+                continue
+            self._record_delta_snapshot(name, delta_table_path(table, self.lake_dir), version)
 
     def _scope_action_inputs(self, instrument: InstrumentKey) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Scope market-wide action tables to one identity without guessing collisions."""
@@ -387,4 +584,4 @@ class BacktestDataLoader:
         self.close()
 
 
-__all__ = ["BacktestDataLoader"]
+__all__ = ["SNAPSHOT_SOURCE_DELTA", "SNAPSHOT_SOURCE_PARQUET", "BacktestDataLoader"]

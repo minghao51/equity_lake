@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -187,6 +188,161 @@ def test_backtests_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     response = client.get("/backtests")
     assert response.status_code == 200
     assert response.json()[0]["slug"] == "momentum__zero"
+
+
+# --- E01b.1: real-directory read projections --------------------------------
+
+_EVIDENCE_DATES = [date(2022, 1, 3), date(2022, 1, 4), date(2022, 1, 10), date(2022, 1, 13)]
+_EVIDENCE_VALUES = [100_000.0, 100_500.0, 99_250.0, 101_000.0]
+
+
+def _evidence_result() -> Any:
+    from equity_lake.backtesting.result import BacktestResult  # noqa: PLC0415 - optional group
+
+    return BacktestResult(
+        strategy_name="trend_following",
+        tickers=["AAPL", "MSFT"],
+        start_date=_EVIDENCE_DATES[0],
+        end_date=_EVIDENCE_DATES[-1],
+        initial_cash=100_000.0,
+        final_cash=_EVIDENCE_VALUES[-1],
+        equity_curve=pl.Series("equity", _EVIDENCE_VALUES, dtype=pl.Float64),
+        trades=[],
+        metrics={"total_return": 0.01, "sharpe_ratio": 0.75},
+        equity_dates=_EVIDENCE_DATES,
+    )
+
+
+def test_backtests_endpoint_shape_includes_additive_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``/backtests`` keeps the legacy payload and adds ``last_success``/``last_attempt``.
+
+    E01b.1 reads a real tmp tree (``deps.FINDINGS_DIR`` monkeypatched), not a stubbed
+    row list: the projection must serve a validated run's payload plus the additive
+    keys, and must not drop or rename an existing key.
+    """
+    from equity_lake.backtesting.attempts import PairOutcome, RunWriteFailure, write_attempt_record  # noqa: PLC0415 - optional group
+    from equity_lake.backtesting.evidence import (  # noqa: PLC0415 - optional group
+        CodeIdentity,
+        CostApplication,
+        RunScope,
+        finalise_run,
+    )
+    from equity_lake.backtesting.report import write_backtest_report  # noqa: PLC0415 - optional group
+
+    legacy = tmp_path / "trend_following__realistic"
+    write_backtest_report(_evidence_result(), legacy, strategy="trend_following", cost_regime="realistic")
+    legacy_payload = json.loads((legacy / "metrics.json").read_text(encoding="utf-8"))
+    scope = RunScope(
+        universe=["AAPL", "MSFT"],
+        start_date=_EVIDENCE_DATES[0],
+        end_date=_EVIDENCE_DATES[-1],
+        strategies=["trend_following"],
+        costs=[CostApplication(regime="realistic", fee_ratio=0.001425, tax_ratio=0.0)],
+        initial_cash=100_000.0,
+    )
+    run = finalise_run(_evidence_result(), scope=scope, code=CodeIdentity(commit="a" * 40), root=tmp_path)
+    write_attempt_record(
+        tmp_path,
+        requested=[("trend_following", "realistic")],
+        outcomes=[PairOutcome(strategy="trend_following", cost_regime="realistic", outcome="failed", error_type="RuntimeError", reason="boom")],
+        start_date=_EVIDENCE_DATES[0],
+        end_date=_EVIDENCE_DATES[-1],
+        universe=["AAPL", "MSFT"],
+        initial_cash=100_000.0,
+        markets=["us_equity"],
+        status="write_failed",
+        run_write_failures=[RunWriteFailure(strategy="trend_following", cost_regime="realistic", error_type="RuntimeError", reason="boom")],
+    )
+
+    monkeypatch.setattr(deps, "FINDINGS_DIR", tmp_path)
+    response = TestClient(create_app()).get("/backtests")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert [row["slug"] for row in rows] == ["trend_following__realistic"]
+    row = rows[0]
+    assert set(row) == set(legacy_payload) | {"slug", "last_success", "last_attempt"}
+    assert row["last_success"]["run_id"] == run.manifest.run_id
+    assert row["last_success"]["run_dir"] == run.directory.name
+    assert row["last_success"]["age_seconds"] >= 0
+    assert row["last_attempt"]["status"] == "write_failed"
+    assert row["last_attempt"]["completed"] == 0
+    assert row["last_attempt"]["failed"] == [
+        {"strategy": "trend_following", "cost_regime": "realistic", "error_type": "RuntimeError", "reason": "boom"}
+    ]
+
+
+def test_findings_endpoint_resolves_attempt_bound_cards(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``/findings`` resolves each id to the newest attempt card, else the legacy file.
+
+    E01b.1 reads a real tmp tree (``deps.FINDINGS_DIR`` monkeypatched): the attempt-bound
+    card must win for its id while a legacy-only id keeps being served, and the legacy
+    file must stay byte-identical (frozen evidence is only read).
+    """
+    from equity_lake.backtesting.attempts import PairOutcome, write_attempt_record  # noqa: PLC0415 - optional group
+    from equity_lake.findings import write_finding_card  # noqa: PLC0415 - optional group
+
+    legacy_path = write_finding_card(
+        FindingCard(
+            id="strategy-comparison",
+            axis="strategy",
+            claim="legacy claim",
+            verdict="negative",
+            conclusion="legacy conclusion",
+            run_date=date(2026, 11, 6),
+        ),
+        base=tmp_path,
+    )
+    legacy_bytes = legacy_path.read_bytes()
+    write_finding_card(
+        FindingCard(
+            id="legacy-only-card",
+            axis="risk",
+            claim="legacy only",
+            verdict="inconclusive",
+            conclusion="still served",
+            run_date=date(2026, 11, 6),
+        ),
+        base=tmp_path,
+    )
+    write_attempt_record(
+        tmp_path,
+        requested=[("trend_following", "realistic")],
+        outcomes=[PairOutcome(strategy="trend_following", cost_regime="realistic", outcome="missing")],
+        start_date=_EVIDENCE_DATES[0],
+        end_date=_EVIDENCE_DATES[-1],
+        universe=["AAPL"],
+        initial_cash=100_000.0,
+        markets=["us_equity"],
+        cards=[
+            FindingCard(
+                id="strategy-comparison",
+                axis="strategy",
+                claim="attempt claim",
+                verdict="positive",
+                conclusion="attempt conclusion",
+                run_date=date(2026, 11, 6),
+            )
+        ],
+        status="zero_completion",
+        notes=["nothing ran"],
+    )
+
+    monkeypatch.setattr(deps, "FINDINGS_DIR", tmp_path)
+    client = TestClient(create_app())
+    response = client.get("/findings")
+
+    assert response.status_code == 200
+    cards = {card["id"]: card for card in response.json()}
+    assert set(cards) == {"strategy-comparison", "legacy-only-card"}
+    assert cards["strategy-comparison"]["conclusion"] == "attempt conclusion"  # attempt-bound wins
+    assert cards["legacy-only-card"]["conclusion"] == "still served"
+    assert [card["id"] for card in response.json()] == sorted(cards)  # id-sorted
+
+    detail = client.get("/findings/strategy-comparison")
+    assert detail.status_code == 200
+    assert detail.json()["conclusion"] == "attempt conclusion"
+    assert legacy_path.read_bytes() == legacy_bytes  # frozen legacy card, only read
 
 
 # --- bounded predictions reads and row status -------------------------------

@@ -6,16 +6,17 @@ Wires two sub-apps (declared in :mod:`equity_lake.cli._app`, registered in
 - ``equity arena run`` — run strategies x cost regimes on lake data, emit the
   Phase 1 FindingCards (strategy / cost / benchmark) + per-run artifacts.
 - ``equity report backtest`` — run a single backtest under one cost regime and
-  write its report artifacts (equity/drawdown/metrics/trades). ``backtest`` stays
-  a flat top-level command; report sub-commands live here (B1 decision).
+  publish its immutable run + attempt evidence. ``backtest`` stays a flat top-level
+  command; report sub-commands live here (B1 decision).
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import replace
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, Literal
 
 import typer
 
@@ -23,6 +24,152 @@ from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_market
 from equity_lake.cli._display import print_finding_cards
 
 _DEFAULT_TICKERS = "AAPL,MSFT,GOOGL,AMZN,NVDA"
+
+#: Bound on the read-only "previous evidence" block: one line per requested pair,
+#: capped so a wide sweep cannot flood the terminal.
+_PREVIOUS_EVIDENCE_PAIR_LIMIT = 12
+
+
+def _format_age(seconds: float) -> str:
+    """Compact human age for the previous-evidence block (seconds are exact)."""
+    total = max(int(seconds), 0)
+    days, remainder = divmod(total, 86_400)
+    hours, remainder = divmod(remainder, 3_600)
+    minutes, secs = divmod(remainder, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _previous_evidence_lines(root: Path, pairs: Sequence[tuple[str, str]], *, now: datetime | None = None) -> list[str]:
+    """Bounded read-only "previous evidence" lines for the *requested* pairs only.
+
+    Prints the age of the last **successful** comparable run (or ``none``) next to
+    the last **attempt** status/age for each requested pair, so a failed attempt is
+    visible without hiding the age of the last real success (ADR-0025 Decision 5).
+    Read-only: no writes, no new CLI option, and a reader failure never fails the run.
+    """
+    from equity_lake.backtesting import evidence_view  # noqa: PLC0415 - keep the CLI import seam light
+
+    clock = (now or datetime.now(UTC)).astimezone(UTC)
+    try:
+        successes = evidence_view.latest_success_by_slug(root)
+    except Exception as exc:  # noqa: BLE001 - a preview must never break the invocation
+        return [f"  previous evidence unavailable: {type(exc).__name__}"]
+
+    lines: list[str] = []
+    for strategy, cost_regime in pairs[:_PREVIOUS_EVIDENCE_PAIR_LIMIT]:
+        slug = f"{strategy}__{cost_regime}"
+        success = successes.get(slug)
+        success_text = (
+            "last successful run: none"
+            if success is None
+            else f"last successful run: {_format_age((clock - success.manifest.finalized_at).total_seconds())} ago"
+        )
+        try:
+            attempt = evidence_view.latest_attempt_for_slug(slug, root)
+        except Exception:  # noqa: BLE001 - same rule: a preview never breaks the invocation
+            attempt = None
+        attempt_text = (
+            "last attempt: none"
+            if attempt is None
+            else f"last attempt: {attempt.record.status} {_format_age((clock - attempt.record.finalized_at).total_seconds())} ago"
+        )
+        lines.append(f"  {slug}: {success_text}; {attempt_text}")
+    hidden = len(pairs) - _PREVIOUS_EVIDENCE_PAIR_LIMIT
+    if hidden > 0:
+        lines.append(f"  ... {hidden} further requested pair(s) not shown")
+    return lines
+
+
+def _publish_zero_completion_attempt(
+    *,
+    root: Path,
+    started_at: datetime,
+    requested_pairs: Sequence[tuple[str, str]],
+    failed: Sequence[Any],
+    missing_pairs: Sequence[tuple[str, str]],
+    contradictory_pairs: Sequence[tuple[str, str]],
+    tickers: Sequence[str],
+    markets: Sequence[str],
+    start_date: date,
+    end_date: date,
+    initial_cash: float,
+) -> Path | None:
+    """Publish the durable ``zero_completion`` attempt record for this invocation.
+
+    The invocation produced no completed requested run, so there is no run directory
+    and no card — but the *attempt* is still evidence: which pairs were requested and
+    how each was classified (failed / missing / contradictory) must survive the
+    terminal (ADR-0025 Decision 5). Returns the published directory, or ``None`` when
+    the attempt record itself could not be written (reported, never fatal to the
+    documented exit code).
+    """
+    from equity_lake.backtesting.attempts import PairOutcome, PairRequest, write_attempt_record  # noqa: PLC0415
+
+    failures_by_pair = {(failure.strategy, failure.cost_regime): failure for failure in failed}
+    missing = set(missing_pairs)
+    contradictory = set(contradictory_pairs)
+    outcomes: list[PairOutcome] = []
+    for strategy, cost_regime in requested_pairs:
+        pair = (strategy, cost_regime)
+        if pair in contradictory:
+            outcomes.append(PairOutcome(strategy=strategy, cost_regime=cost_regime, outcome="contradictory"))
+            continue
+        failure = failures_by_pair.get(pair)
+        if failure is not None:
+            outcomes.append(
+                PairOutcome(
+                    strategy=strategy,
+                    cost_regime=cost_regime,
+                    outcome="failed",
+                    error_type=failure.error_type,
+                    reason=failure.reason,
+                )
+            )
+            continue
+        # Neither completed, failed nor contradictory: missing evidence, never a
+        # recorded error (the CLI wording owns that distinction).
+        outcomes.append(PairOutcome(strategy=strategy, cost_regime=cost_regime, outcome="missing"))
+
+    notes: list[str] = []
+    if not requested_pairs:
+        notes.append("no pair was requested, so this invocation attempted no run and has no evidence to publish")
+    elif missing:
+        notes.append(f"{len(missing)} requested pair(s) neither completed nor recorded a failure: missing evidence, not a recorded error")
+    try:
+        finalised = write_attempt_record(
+            root,
+            requested=[PairRequest(strategy=strategy, cost_regime=cost_regime) for strategy, cost_regime in requested_pairs],
+            outcomes=outcomes,
+            start_date=start_date,
+            end_date=end_date,
+            universe=sorted({str(ticker).strip() for ticker in tickers if str(ticker).strip()}) or ["unspecified"],
+            initial_cash=float(initial_cash),
+            markets=list(markets) or ["us_equity"],
+            costs=(),
+            benchmark=None,
+            cards=(),
+            runs=(),
+            summary_facts={
+                "requested": len(requested_pairs),
+                "completed": 0,
+                "failed": len(failures_by_pair),
+                "missing": len(missing),
+                "contradictory": len(contradictory),
+            },
+            status="zero_completion",
+            notes=notes,
+            started_at=started_at,
+        )
+    except Exception as exc:  # noqa: BLE001 - the documented exit code must survive this
+        typer.secho(f"attempt record could not be written: {exc}", fg=typer.colors.RED)
+        return None
+    return finalised.directory
 
 
 @arena_app.command("run")
@@ -62,12 +209,36 @@ def arena_run(
     Invariant: the requested set is the only thing that may be published or counted
     as success — a run recorded outside ``requested`` is named in the diagnostics but
     never counted, never written and never substitutes for a requested pair.
+
+    Evidence: every invocation publishes one immutable **attempt** directory under
+    ``<findings root>/attempts/`` that owns the three comparison cards and the
+    benchmark copy, plus one immutable **run** directory per requested completed pair
+    under ``<findings root>/runs/``. Legacy ``<strategy>__<regime>/`` directories and
+    flat cards are frozen read-only evidence from earlier runs: they are read, never
+    rewritten. A zero-completion invocation still publishes its attempt record (no
+    run directory), so its failure is durable rather than only terminal output.
     """
     from equity_lake.backtesting.arena import COST_REGIMES, STRATEGY_REGISTRY, run_arena
-    from equity_lake.backtesting.report import write_arena_artifacts
+    from equity_lake.backtesting.report import write_arena_artifacts_with_evidence
+    from equity_lake.core.paths import FINDINGS_DIR  # noqa: PLC0415 - the documented findings root
 
     _init_logging(verbose)
     base = Path(output_dir) if output_dir else None
+    evidence_root = base or FINDINGS_DIR
+    attempt_started_at = datetime.now(UTC)
+
+    # Read-only preview **before** the run: the age of the last successful comparable
+    # run next to the last attempt's status/age, for the requested pairs only.
+    requested_hint = list(
+        dict.fromkeys(
+            (strategy, cost_regime)
+            for strategy in (_parse_comma_list(strategies) or list(STRATEGY_REGISTRY))
+            for cost_regime in (_parse_comma_list(cost_regimes) or list(COST_REGIMES))
+        )
+    )
+    typer.echo("previous evidence for the requested pairs (read-only):")
+    for line in _previous_evidence_lines(evidence_root, requested_hint):
+        typer.echo(line)
 
     try:
         outcome = run_arena(
@@ -131,7 +302,7 @@ def arena_run(
         # evidence, so refuse before a writer could replace latest artifacts — a run
         # that completed outside the request must not publish anything either.
         typer.secho(
-            "arena produced no completed runs for the requested pairs — no artifacts or cards were written.",
+            "arena produced no completed runs for the requested pairs — no run evidence or cards were written.",
             fg=typer.colors.RED,
         )
         typer.echo(f"requested: {requested} pair(s) | completed: 0 | failed: {len(failed)}")
@@ -176,12 +347,29 @@ def arena_run(
         typer.echo(
             f"Fix the failures above (window, universe or coverage) and re-run; existing artifacts under {target} were left untouched, not deleted."
         )
+        # The attempt is still evidence: publish the classification durably (no run
+        # directory, no card) before exiting nonzero (ADR-0025 Decision 5).
+        attempt_dir = _publish_zero_completion_attempt(
+            root=evidence_root,
+            started_at=attempt_started_at,
+            requested_pairs=requested_pairs,
+            failed=failed,
+            missing_pairs=missing_pairs,
+            contradictory_pairs=contradictory_pairs,
+            tickers=_parse_comma_list(tickers) or [],
+            markets=_parse_markets(markets) or ["us_equity"],
+            start_date=date.fromisoformat(start_date),
+            end_date=date.fromisoformat(end_date),
+            initial_cash=initial_cash,
+        )
+        if attempt_dir is not None:
+            typer.echo(f"Attempt record: {attempt_dir} (status zero_completion; no run directory was created)")
         raise typer.Exit(1)
 
     try:
         # Publish only what was requested: the writer and the cards see the requested
         # completed runs (and requested failures) exclusively.
-        cards = write_arena_artifacts(
+        cards, summary = write_arena_artifacts_with_evidence(
             replace(outcome, runs=publishable_runs, requested=requested_pairs, failed=failed),
             base=base,
             run_date=date.today(),
@@ -259,10 +447,19 @@ def arena_run(
         typer.echo("\nFindingCards:")
         print_finding_cards(cards)
     typer.echo(f"\nArtifacts + cards written to: {target}")
+    if summary.attempt is not None:
+        typer.echo(
+            f"Attempt evidence: {summary.attempt.directory} (status {summary.attempt.record.status}; "
+            f"{len(summary.finalized)} immutable run(s) finalized)"
+        )
+    for slug in sorted(summary.skipped_undated):
+        typer.secho(f"  {slug}: no immutable run evidence (undated curve; no calendar is invented)", fg=typer.colors.YELLOW)
+    for slug in sorted(summary.skipped_unrecorded_costs):
+        typer.secho(f"  {slug}: no immutable run evidence (applied costs not recorded; no default is guessed)", fg=typer.colors.YELLOW)
     typer.echo(
-        "Note: artifacts are keyed by <strategy>__<regime>, so directories from earlier runs can remain "
-        "(per-run immutable layout is E01); nothing was deleted, and failed pairs did not refresh any "
-        "previously published evidence."
+        "Note: each invocation writes its own immutable attempt directory (which owns the three cards and the "
+        "benchmark copy) plus one run directory per completed pair under runs/; legacy <strategy>__<regime>/ "
+        "directories and flat cards from earlier runs are frozen and read-only, so nothing was overwritten or deleted."
     )
     if partial:
         raise typer.Exit(1)
@@ -280,15 +477,47 @@ def report_backtest(
     ] = "us_equity",
     cost_regime: Annotated[str, typer.Option("--cost-regime", help="Cost regime: zero|realistic|high")] = "realistic",
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
-    output_dir: Annotated[str | None, typer.Option("--output-dir", "-o", help="Findings dir (default: data/findings)")] = None,
+    output_dir: Annotated[
+        str | None,
+        typer.Option("--output-dir", "-o", help="Findings root for the run and attempt evidence (default: data/findings)"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
-    """Run a single backtest and write its report artifacts (no FindingCard)."""
+    """Run one backtest and publish immutable run + attempt evidence.
+
+    Writes one run directory under ``<findings root>/runs/`` and one attempt
+    record under ``<findings root>/attempts/``; ``--output-dir`` is that
+    findings root. No legacy path is written: no ``<strategy>__<regime>/``
+    directory, no flat ``benchmark__equity.parquet`` and no flat card, so this
+    invocation becomes latest-success evidence for its slug instead of
+    overwriting a frozen pre-E01 directory.
+
+    The run records what actually ran: the fee/tax pair the engine was
+    configured with (the static ``COST_REGIMES`` pair for ``--cost-regime``,
+    not the arena's per-market ``realistic`` defaults), the strategy
+    parameters in force, the resample the engine used, and a bounded
+    non-secret ``config_digest``. Its attempt outcome carries the shared
+    evaluation status (evaluated | no_trades | ineligible).
+
+    An undated result (``BacktestResult.equity_dates is None``) is refused:
+    no calendar is invented, nothing is written, and the exit code is 1.
+
+    Exit codes: 0 when the run and its attempt record are published; 1 when
+    the backtest raises, the result carries no dated evidence, or the evidence
+    cannot be written.
+    """
+    from equity_lake.backtesting.arena import evaluation_status
+    from equity_lake.backtesting.attempts import PairOutcome, PairRequest, write_attempt_record
+    from equity_lake.backtesting.evidence import CostApplication, ExecutionTiming, InputSnapshot, RunScope, finalise_run
     from equity_lake.backtesting.factory import build_backtest_engine
-    from equity_lake.backtesting.report import write_backtest_report
     from equity_lake.core.paths import FINDINGS_DIR
 
     _init_logging(verbose)
+    # ``--output-dir`` is the findings root: the run and its attempt record both live
+    # under it, so one invocation can never split its evidence across two trees.
+    root = Path(output_dir) if output_dir else FINDINGS_DIR
+    started_at = datetime.now(UTC)
+
     try:
         engine = build_backtest_engine(
             strategy=strategy,
@@ -309,7 +538,132 @@ def report_backtest(
         typer.secho(f"backtest failed: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1) from exc
 
-    out_dir = (Path(output_dir) if output_dir else FINDINGS_DIR) / f"{strategy}__{cost_regime}"
-    write_backtest_report(result, out_dir, strategy=strategy, cost_regime=cost_regime)
+    if result.equity_dates is None:
+        # Decision 6: a dated run never gains a calendar inferred from the series
+        # length, and the frozen legacy layout is not written by any command — so an
+        # undated result publishes nothing at all.
+        typer.secho(
+            "refusing to publish this run: the result carries no dated evidence "
+            "(BacktestResult.equity_dates is None). Undated curves are never given an invented "
+            "calendar, so no run directory, attempt record or legacy "
+            f"{strategy}__{cost_regime}/ directory was written under {root}.",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
+
+    # The costs recorded are the pair the engine was actually configured with (the
+    # static COST_REGIMES entry for this regime), never a re-resolution of
+    # COST_REGIMES/MARKET_COST_DEFAULTS here: the arena's per-market ``realistic``
+    # defaults do not apply to a single report.
+    costs = [
+        CostApplication(
+            regime=cost_regime,
+            fee_ratio=float(engine.fee_ratio),
+            tax_ratio=float(engine.tax_ratio),
+        )
+    ]
+
+    # The cohort the evaluation classifier is given: the size of the frame the engine
+    # itself loaded. A backend that never loaded through the engine's loader has no
+    # recorded size, so the requested tickers are used *and* the substitution is
+    # disclosed in the attempt notes rather than assumed silently.
+    notes: list[str] = ["published by the `equity report backtest` command (single strategy under one cost regime)"]
+    loaded_universe_size = getattr(engine, "loaded_universe_size", None)
+    if loaded_universe_size is None:
+        loaded_universe_size = len({str(ticker).strip() for ticker in result.tickers if str(ticker).strip()})
+        notes.append(
+            f"evaluation cohort: the requested tickers ({loaded_universe_size} distinct), because this engine recorded no loaded-universe size"
+        )
+    run_evaluation_status, evaluation_notes = evaluation_status(engine.strategy, result, loaded_universe_size)
+    notes.extend(f"evaluation: {note}" for note in evaluation_notes)
+
+    try:
+        # The universe this run actually consulted. When the engine loaded its own
+        # frame it recorded the canonical display keys it read (identity_model-derived,
+        # no MIC filled); otherwise the requested tickers are recorded with the
+        # ``ticker_only`` basis, which claims no venue at all (E01c item 1).
+        loaded_identities = getattr(engine, "loaded_identities", None)
+        universe_basis: Literal["canonical", "ticker_only"] = "canonical" if loaded_identities else "ticker_only"
+        if loaded_identities:
+            universe = [str(identity) for identity in loaded_identities]
+        else:
+            universe = [str(ticker) for ticker in result.tickers if str(ticker).strip()]
+            notes.append("universe basis: ticker_only, because this engine recorded no loaded canonical identity")
+        # Read-seam snapshots: whatever the engine's own loader read (empty when it
+        # had none, e.g. a preloaded frame). Provenance is deliberately not passed —
+        # it stays 'unknown' because no persisted price-source marker exists (E01-6).
+        engine_loader = getattr(engine, "data_loader", None)
+        read_snapshots = getattr(engine_loader, "snapshots", None)
+        loader_snapshots: list[dict[str, str | None]] = list(read_snapshots()) if read_snapshots is not None else []
+        input_snapshots = [
+            InputSnapshot(name=str(snapshot["name"]), sha256=str(snapshot["sha256"]), source=str(snapshot["source"]), version=snapshot.get("version"))
+            for snapshot in loader_snapshots
+        ]
+        scope = RunScope(
+            universe=universe,
+            start_date=result.start_date,
+            end_date=result.end_date,
+            strategies=[strategy],
+            costs=costs,
+            initial_cash=float(result.initial_cash),
+            # The parameters of the instance that actually ran, never a registry default.
+            parameters=dict(engine.strategy.params),
+        )
+        finalised = finalise_run(
+            result,
+            scope=scope,
+            universe_basis=universe_basis,
+            execution=ExecutionTiming(
+                trade_at_price="close",
+                resample=engine.resample,
+                note=f"decision at the session close of each session; the engine resampled the curve with {engine.resample!r}",
+            ),
+            # The bounded non-secret configuration actually in force on this path: it is
+            # digested into the manifest and never stored (ADR-0025 Decision 3).
+            config={"markets": list(engine.markets), "adjust": engine.adjust, "cost_regime": cost_regime},
+            input_snapshots=input_snapshots,
+            data_provenance="unknown",
+            seed=None,
+            cards=(),
+            root=root,
+        )
+    except Exception as exc:  # noqa: BLE001 — an evidence write failure must stay visible and nonzero
+        typer.secho(f"run evidence could not be written: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
+    try:
+        attempt = write_attempt_record(
+            root,
+            requested=[PairRequest(strategy=strategy, cost_regime=cost_regime)],
+            outcomes=[
+                PairOutcome(
+                    strategy=strategy,
+                    cost_regime=cost_regime,
+                    outcome="completed",
+                    run_id=finalised.manifest.run_id,
+                    run_dir=finalised.directory.name,
+                    evaluation_status=run_evaluation_status,
+                )
+            ],
+            start_date=result.start_date,
+            end_date=result.end_date,
+            universe=list(scope.universe),
+            initial_cash=float(result.initial_cash),
+            markets=list(engine.markets),
+            costs=costs,
+            benchmark=None,
+            cards=(),
+            runs=[finalised],
+            summary_facts={"command": "equity report backtest", "evaluation_status": run_evaluation_status},
+            notes=notes,
+            started_at=started_at,
+        )
+    except Exception as exc:  # noqa: BLE001 — the run evidence is already durable; report both facts
+        typer.secho(f"attempt record could not be written: {exc}", fg=typer.colors.RED)
+        typer.echo(f"Run evidence was finalized at: {finalised.directory}")
+        raise typer.Exit(1) from exc
+
     typer.echo(result.summary())
-    typer.echo(f"\nReport written to: {out_dir}")
+    typer.echo(f"\nRun evidence: {finalised.directory}")
+    typer.echo(f"Attempt evidence: {attempt.directory} (status {attempt.record.status})")
+    typer.echo(f"evaluation status: {run_evaluation_status}" + (f" — {'; '.join(evaluation_notes)}" if evaluation_notes else ""))

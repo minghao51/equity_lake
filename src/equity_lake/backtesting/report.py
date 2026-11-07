@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import polars as pl
@@ -24,16 +24,18 @@ import structlog
 from equity_lake.backtesting.arena import (
     BENCHMARK_MISSING_MARK_POLICY,
     BENCHMARK_POLICY,
-    STRATEGY_REGISTRY,
     ArenaOutcome,
     ArenaRun,
+    _sanitize_failure_reason,
 )
 from equity_lake.backtesting.metrics import DEFAULT_RISK_FREE_RATE, equity_curve_metrics
 from equity_lake.backtesting.result import BacktestResult
-from equity_lake.findings import FindingCard, write_finding_card
+from equity_lake.findings import FindingCard
+from equity_lake.findings.writer import refuse_non_finite_json
 
 if TYPE_CHECKING:  # pragma: no cover - typing only (evidence imports this module)
-    from equity_lake.backtesting.evidence import FinalisedRun
+    from equity_lake.backtesting.attempts import AttemptStatus, FinalisedAttempt, PairOutcome
+    from equity_lake.backtesting.evidence import CostApplication, FinalisedRun, UniverseBasis
 
 logger = structlog.get_logger(__name__)
 
@@ -88,6 +90,16 @@ def write_backtest_report(
     ``equity_dates`` is deliberately not merged into ``metrics.json``. Dated
     evidence inside an immutable run directory is written by
     :func:`write_dated_backtest_report`.
+
+    **No command uses this function.** It is the frozen-legacy fixture/legacy
+    helper: it exists for tests and for reading or reproducing the pre-E01 layout,
+    never for production output. Every shipped writer path publishes immutable run
+    and attempt evidence instead — ``equity arena run`` through
+    :func:`write_arena_artifacts` and ``equity report backtest`` through
+    :func:`equity_lake.backtesting.evidence.finalise_run` plus
+    :func:`equity_lake.backtesting.attempts.write_attempt_record` — so no command
+    creates or overwrites a ``<strategy>__<regime>/`` directory (ADR-0025
+    Decision 8).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     equity = result.equity_curve
@@ -111,62 +123,6 @@ def write_backtest_report(
         "metrics": out_dir / "metrics.json",
         "trades": out_dir / "trades.json",
     }
-
-
-def _json_location(path: tuple[Any, ...]) -> str:
-    """Render a JSON path as ``entry 3 field 'price'`` (an empty path is ``payload``)."""
-    parts: list[str] = []
-    fields: list[str] = []
-    for node in path:
-        if isinstance(node, int) and not isinstance(node, bool):
-            if fields:
-                parts.append(f"field {'.'.join(fields)!r}")
-                fields = []
-            parts.append(f"entry {node}")
-        else:
-            fields.append(str(node))
-    if fields:
-        parts.append(f"field {'.'.join(fields)!r}")
-    return " ".join(parts) if parts else "payload"
-
-
-def refuse_non_finite_json(artifact: str, payload: Any, _path: tuple[Any, ...] = ()) -> None:
-    """Refuse a JSON payload carrying a non-finite number, naming artifact and location.
-
-    ``json.dumps(..., allow_nan=False)`` refuses the payload too, but its message
-    names neither the artifact nor the offending entry/field, so a reviewer cannot
-    tell *which* value is a defect. A non-finite price, fee or quantity is a data
-    defect, not an unavailable measurement, so the run is **refused** rather than
-    sanitised to ``null`` (ADR-0025; F03 precedent: an unavailable number is omitted,
-    never persisted — and a measured-looking number is never invented).
-
-    ``None`` fields pass: an open position legitimately has no realised pnl or exit
-    price, and a JSON ``null`` is the honest encoding for it.
-
-    Raises:
-        ValueError: naming the artifact and the offending index/key, e.g.
-            ``trades.json entry 3 field 'price' is non-finite``.
-    """
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            refuse_non_finite_json(artifact, value, (*_path, str(key)))
-        return
-    if isinstance(payload, (list, tuple)):
-        for index, value in enumerate(payload):
-            refuse_non_finite_json(artifact, value, (*_path, index))
-        return
-    if payload is None or isinstance(payload, (bool, str, bytes)):
-        return
-    try:
-        numeric = float(payload)
-    except (TypeError, ValueError):
-        return
-    if not math.isfinite(numeric):
-        raise ValueError(
-            f"{artifact} {_json_location(_path)} is non-finite: a non-finite number is a data defect, not an "
-            "unavailable measurement, so the run is refused rather than publishing NaN/Infinity as evidence "
-            "(ADR-0025; F03 precedent)"
-        )
 
 
 def dump_json_artifact_strictly(artifact: str, payload: Any, *, indent: int | None = 2) -> str:
@@ -423,6 +379,14 @@ def build_finding_cards(
     but the four mandatory disclosures — ``benchmark_policy``,
     ``benchmark_missing_mark_policy``, ``benchmark_asymmetry`` and
     ``sharpe_risk_free_rate`` — are written last and cannot be replaced.
+
+    ``evidence_refs`` are **unbound**: they use the frozen legacy vocabulary
+    (``<strategy>__<regime>/`` and ``benchmark__equity.parquet``), which names a
+    mutable legacy location rather than this invocation's immutable evidence. The
+    arena writer binds them with
+    :func:`equity_lake.backtesting.attempts.bind_cards_to_evidence` before persisting
+    a card (ADR-0025 Decision 8); a caller that persists a card directly must bind it
+    the same way, or the card points at whatever a different run last wrote there.
     """
     caller_scope = dict(scope or {})
     # Callers may add reproducibility keys (e.g. ``synthetic``, ``universe``) but the
@@ -714,11 +678,13 @@ APPLIED_COSTS_NOT_RECORDED_SKIP_REASON = (
 
 @dataclass
 class ArenaEvidenceSummary:
-    """Immutable-run evidence outcome of one arena artifact write.
+    """Immutable-evidence outcome of one arena artifact write.
 
-    ``finalized`` holds the published :class:`FinalisedRun` records.
-    ``skipped_undated`` maps a legacy ``<strategy>__<regime>`` slug to the reason its
-    run was **not** finalised because the backend curve carried no dates (see
+    ``finalized`` holds the published :class:`FinalisedRun` records and ``attempt``
+    the one :class:`FinalisedAttempt` this invocation published (``None`` only when
+    the attempt record itself could not be written). ``skipped_undated`` maps a
+    ``<strategy>__<regime>`` slug to the reason its run was **not** finalised because
+    the backend curve carried no dates (see
     :data:`UNDATED_RUN_EVIDENCE_SKIP_REASON`), and ``skipped_unrecorded_costs`` does
     the same for a run that did not record the costs its engine applied (see
     :data:`APPLIED_COSTS_NOT_RECORDED_SKIP_REASON`). Both are the same skip
@@ -730,6 +696,23 @@ class ArenaEvidenceSummary:
     finalized: list[FinalisedRun] = field(default_factory=list)
     skipped_undated: dict[str, str] = field(default_factory=dict)
     skipped_unrecorded_costs: dict[str, str] = field(default_factory=dict)
+    attempt: FinalisedAttempt | None = None
+
+
+@dataclass
+class _RunEvidenceWrite:
+    """One invocation's finalized runs plus the failures and skips it recorded.
+
+    Internal shape between finalisation and attempt publication: the public
+    :class:`ArenaEvidenceSummary` stays the caller-facing view, while
+    ``finalized_by_pair``/``failure_details`` let the attempt record classify every
+    requested pair exactly once.
+    """
+
+    summary: ArenaEvidenceSummary = field(default_factory=ArenaEvidenceSummary)
+    finalized_by_pair: dict[tuple[str, str], FinalisedRun] = field(default_factory=dict)
+    failure_details: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
+    failures: list[BaseException] = field(default_factory=list)
 
 
 def _recorded_costs(run: ArenaRun) -> dict[str, float] | None:
@@ -745,51 +728,121 @@ def _recorded_costs(run: ArenaRun) -> dict[str, float] | None:
     return costs
 
 
-def _strategy_parameters(strategy: str) -> dict[str, Any]:
-    """The parameters actually in force for ``strategy`` (empty when unknown).
+def _requested_pairs(outcome: ArenaOutcome) -> list[tuple[str, str]]:
+    """Every requested pair, de-duplicated in first-occurrence order.
 
-    ``run_arena`` builds every strategy as ``STRATEGY_REGISTRY[name]()``, so the
-    registry's default instance carries exactly the parameters that ran. An
-    unregistered strategy records no parameters rather than invented ones.
+    ``run_arena`` records the request; a legacy library outcome without it falls back
+    to the pairs that actually ran or failed, so existing fixtures keep a coherent
+    recorded scope.
     """
-    factory = STRATEGY_REGISTRY.get(strategy)
-    if factory is None:
-        return {}
-    return dict(factory().params)
+    recorded = list(outcome.requested) or [(run.strategy, run.cost_regime) for run in outcome.runs] + [
+        (failure.strategy, failure.cost_regime) for failure in outcome.failed
+    ]
+    return list(dict.fromkeys(recorded))
 
 
-def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaEvidenceSummary:
-    """Finalise one immutable run per completed :class:`ArenaRun` under ``root/runs``.
+def _requested_runs(outcome: ArenaOutcome, pairs: Sequence[tuple[str, str]]) -> list[ArenaRun]:
+    """The completed runs whose pair was requested and not recorded as a failure.
+
+    A pair that the outcome records as failed publishes no run evidence, and that
+    includes the contradictory case where the same pair is recorded both completed and
+    failed: a self-contradicting pair must never become the "latest success", because a
+    failed attempt leaving misleading healthy evidence is exactly what ADR-0025
+    Decision 5 forbids. Nothing outside the request is published either.
+    """
+    requested = set(pairs)
+    recorded_failures = {(failure.strategy, failure.cost_regime) for failure in outcome.failed}
+    return [run for run in outcome.runs if (run.strategy, run.cost_regime) in requested and (run.strategy, run.cost_regime) not in recorded_failures]
+
+
+def _loaded_canonical_universe(outcome: ArenaOutcome) -> list[str] | None:
+    """Canonical display keys of the shared load, or ``None`` when it cannot prove them.
+
+    The arena loaded **one** frame for every run, so its identity columns are what the
+    invocation actually consulted: they are parsed through the identity model into
+    display keys (``market/MIC/percent-quoted-symbol``). A ticker-only fixture, a
+    malformed identity or an empty frame returns ``None``, and the caller records the
+    run's own bare tickers with the ``ticker_only`` basis instead.
+
+    A missing MIC is **never** filled and a venue is never guessed (ADR-0016
+    Decision 1/2), which is why this is a parse of what was loaded rather than a
+    reconstruction: an unparseable frame is disclosed as ``ticker_only``.
+
+    Falsified by: claiming ``canonical`` for a ticker-only fixture, filling a blank
+    MIC, or resolving a ticker to a venue from configuration.
+    """
+    from equity_lake.core.instruments import (  # noqa: PLC0415 - evidence imports this module
+        InstrumentIdentityError,
+        InstrumentKey,
+        identity_key_values,
+    )
+
+    try:
+        keys = identity_key_values(outcome.data)
+    except (InstrumentIdentityError, ValueError):
+        return None
+    if not keys:
+        return None
+    return sorted({InstrumentKey(market=market, mic=mic, symbol=symbol).display_key for market, mic, symbol in keys}) or None
+
+
+def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> _RunEvidenceWrite:
+    """Finalise one immutable run per requested completed :class:`ArenaRun` under ``root/runs``.
 
     Each run's scope is its own: that strategy, that cost regime, the run's window
-    and universe, its initial cash, that strategy's parameters, and the fees/taxes
-    that regime actually applied — read from ``run.applied_costs``, the pair the
-    arena recorded when it built the engine. The writer never re-resolves
-    :data:`MARKET_COST_DEFAULTS`, so an override or a per-market default can never
-    be recorded wrongly. Runs that cannot be finalised are skipped and reported: an
-    undated run, and a run with no recorded applied costs (never guessed). A raising
-    ``finalise_run`` is collected so the remaining runs still finalise, and is then
-    re-raised so the write failure reaches the caller.
+    and universe, its initial cash, the strategy parameters the run was built with
+    (``run.strategy_params``, captured from the instance that actually ran — never
+    re-instantiated from the registry here), and the fees/taxes that regime actually
+    applied — read from ``run.applied_costs``, the pair the arena recorded when it
+    built the engine. The writer never re-resolves :data:`MARKET_COST_DEFAULTS`, so
+    an override or a per-market default can never be recorded wrongly. Each run also
+    records a bounded, non-secret ``config_digest`` of the configuration actually in
+    force on this path (markets plus the ``market_costs`` override used).
+
+    Runs that cannot be finalised are skipped and reported: an undated run, and a run
+    with no recorded applied costs (never guessed). A raising ``finalise_run`` is
+    collected per pair so the remaining runs still finalise; the caller publishes the
+    attempt record for what did finalise and only then re-raises, so a write failure
+    is durable evidence rather than a lost one.
     """
     from equity_lake.backtesting.evidence import (  # noqa: PLC0415 - evidence imports this module
         CodeIdentity,
         CostApplication,
         ExecutionTiming,
+        InputSnapshot,
         RunScope,
+        digest_non_secret_config,
         finalise_run,
         probe_code_identity,
     )
 
-    summary = ArenaEvidenceSummary()
-    if not outcome.runs:
-        return summary
+    evidence = _RunEvidenceWrite()
+    summary = evidence.summary
+    requested_runs = _requested_runs(outcome, _requested_pairs(outcome))
+    if not requested_runs:
+        return evidence
+
+    # The canonical universe the shared load can prove (``None`` when it cannot), plus
+    # the read-seam snapshots that load recorded. The conversions are plain-mapping ->
+    # ``InputSnapshot`` here, in the writer, so ``arena``/``data_loader`` keep no
+    # import of this module.
+    loaded_universe = _loaded_canonical_universe(outcome)
+    input_snapshots = [
+        InputSnapshot(name=str(snapshot["name"]), sha256=str(snapshot["sha256"]), source=str(snapshot["source"]), version=snapshot.get("version"))
+        for snapshot in outcome.input_snapshots
+    ]
+
+    # The configuration actually in force in this path: the scoped markets and the
+    # market-cost override the arena really used ({} when it used the defaults).
+    # Secret-named keys are stripped before hashing and the config itself is never stored.
+    config_digest = digest_non_secret_config({"markets": list(outcome.markets), "market_costs": dict(outcome.market_costs or {})})
 
     # Probed lazily and once per write: code identity never changes a run ID, and an
     # invocation with no datable run has nothing to record it in.
     code: CodeIdentity | None = None
-    failures: list[BaseException] = []
-    for run in outcome.runs:
+    for run in requested_runs:
         slug = _run_slug(run)
+        pair = (run.strategy, run.cost_regime)
         if run.result.equity_dates is None:
             summary.skipped_undated[slug] = UNDATED_RUN_EVIDENCE_SKIP_REASON
             logger.warning(
@@ -798,7 +851,7 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaE
                 cost_regime=run.cost_regime,
                 slug=slug,
                 reason=UNDATED_RUN_EVIDENCE_SKIP_REASON,
-                legacy_artifacts=str(root / slug),
+                evidence_root=str(root),
             )
             continue
         applied = _recorded_costs(run)
@@ -810,14 +863,23 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaE
                 cost_regime=run.cost_regime,
                 slug=slug,
                 reason=APPLIED_COSTS_NOT_RECORDED_SKIP_REASON,
-                legacy_artifacts=str(root / slug),
+                evidence_root=str(root),
             )
             continue
         try:
             if code is None:
                 code = probe_code_identity()
+            # Universe: the parseable identity of the load the arena read, else this
+            # run's own tickers with the basis that claims no venue at all (E01c).
+            universe: list[str]
+            universe_basis: UniverseBasis
+            if loaded_universe is not None:
+                universe, universe_basis = list(loaded_universe), "canonical"
+            else:
+                universe = [str(ticker) for ticker in run.result.tickers if str(ticker).strip()]
+                universe_basis = "ticker_only"
             scope = RunScope(
-                universe=[str(ticker) for ticker in run.result.tickers if str(ticker).strip()],
+                universe=universe,
                 start_date=run.result.start_date,
                 end_date=run.result.end_date,
                 strategies=[run.strategy],
@@ -833,11 +895,16 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaE
                     )
                 ],
                 initial_cash=float(run.result.initial_cash),
-                parameters=_strategy_parameters(run.strategy),
+                # Captured from the instance that ran; an empty mapping means
+                # "none recorded", never a registry-default guess (E01b.1).
+                parameters=dict(run.strategy_params),
             )
             finalised = finalise_run(
                 run.result,
                 scope=scope,
+                # Derived by parsing the loaded frame, recorded as a parsed fact (never
+                # a guess); an explicit claim over an unparseable universe is refused.
+                universe_basis=universe_basis,
                 # The engine trades at the session close with its default daily
                 # resample (arena runs pass no resample override).
                 execution=ExecutionTiming(
@@ -845,11 +912,17 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaE
                     resample="D",
                     note="decision at the session close of each session, evaluated daily (engine default resample)",
                 ),
+                config_digest=config_digest,
                 code=code,
+                # Read-seam snapshots of the shared load. Provenance is deliberately
+                # NOT passed: it stays 'unknown' even here, because no persisted
+                # price-source marker exists yet (open item E01-6, ADR-0021/0022).
+                input_snapshots=input_snapshots,
                 root=root,
             )
         except Exception as exc:  # noqa: BLE001 - one run's evidence failure must not stop the others
-            failures.append(exc)
+            evidence.failures.append(exc)
+            evidence.failure_details[pair] = (type(exc).__name__, _sanitize_failure_reason(exc) or type(exc).__name__)
             logger.error(
                 "arena_run_evidence_failed",
                 strategy=run.strategy,
@@ -860,6 +933,7 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaE
             )
             continue
         summary.finalized.append(finalised)
+        evidence.finalized_by_pair[pair] = finalised
         logger.info(
             "arena_run_evidence_finalized",
             slug=slug,
@@ -870,22 +944,229 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> ArenaE
     logger.info(
         "arena_run_evidence_written",
         root=str(root),
-        runs=len(outcome.runs),
+        runs=len(requested_runs),
         finalized=len(summary.finalized),
         skipped_undated=len(summary.skipped_undated),
         skipped_unrecorded_costs=len(summary.skipped_unrecorded_costs),
-        failed=len(failures),
+        failed=len(evidence.failures),
+        universe_basis="canonical" if loaded_universe is not None else "ticker_only",
+        input_snapshots=len(input_snapshots),
     )
-    if failures:
-        # Every run was attempted first, so the other runs' evidence and the legacy
-        # artifacts already written stay; the caller sees a write failure.
-        first = failures[0]
-        first.add_note(
-            f"arena run evidence: {len(summary.finalized)} of {len(outcome.runs)} run(s) finalized before "
-            f"{len(failures)} failed; legacy artifacts under {root} are untouched and no partial run directory was published"
+    return evidence
+
+
+def _attempt_outcomes(outcome: ArenaOutcome, evidence: _RunEvidenceWrite) -> list[PairOutcome]:
+    """Classify every requested pair exactly once, in request order (Decision 5)."""
+    from equity_lake.backtesting.attempts import PairOutcome  # noqa: PLC0415 - attempts imports evidence
+
+    completed_runs = {(run.strategy, run.cost_regime) for run in outcome.runs}
+    arena_failures = {(failure.strategy, failure.cost_regime): failure for failure in outcome.failed}
+    outcomes: list[PairOutcome] = []
+    for strategy, cost_regime in _requested_pairs(outcome):
+        pair = (strategy, cost_regime)
+        slug = f"{strategy}__{cost_regime}"
+        completed = pair in completed_runs
+        recorded_failure = arena_failures.get(pair)
+        evidence_failure = evidence.failure_details.get(pair)
+        if completed and recorded_failure is not None:
+            # A pair cannot be both a completed run and a recorded failure: name the
+            # contradiction instead of silently picking a side.
+            outcomes.append(PairOutcome(strategy=strategy, cost_regime=cost_regime, outcome="contradictory"))
+            continue
+        if evidence_failure is not None:
+            outcomes.append(
+                PairOutcome(
+                    strategy=strategy,
+                    cost_regime=cost_regime,
+                    outcome="failed",
+                    error_type=evidence_failure[0],
+                    reason=evidence_failure[1],
+                )
+            )
+            continue
+        if recorded_failure is not None:
+            outcomes.append(
+                PairOutcome(
+                    strategy=strategy,
+                    cost_regime=cost_regime,
+                    outcome="failed",
+                    error_type=recorded_failure.error_type,
+                    reason=recorded_failure.reason,
+                )
+            )
+            continue
+        if completed:
+            finalised = evidence.finalized_by_pair.get(pair)
+            if finalised is not None:
+                run = next(run for run in outcome.runs if (run.strategy, run.cost_regime) == pair)
+                outcomes.append(
+                    PairOutcome(
+                        strategy=strategy,
+                        cost_regime=cost_regime,
+                        outcome="completed",
+                        run_id=finalised.manifest.run_id,
+                        run_dir=finalised.directory.name,
+                        evaluation_status=run.evaluation_status,
+                    )
+                )
+            elif slug in evidence.summary.skipped_undated:
+                outcomes.append(PairOutcome(strategy=strategy, cost_regime=cost_regime, outcome="unevidenced", reason="undated_curve"))
+            else:
+                outcomes.append(PairOutcome(strategy=strategy, cost_regime=cost_regime, outcome="unevidenced", reason="applied_costs_not_recorded"))
+            continue
+        outcomes.append(PairOutcome(strategy=strategy, cost_regime=cost_regime, outcome="missing"))
+    return outcomes
+
+
+def _attempt_costs(runs: Sequence[ArenaRun]) -> list[CostApplication]:
+    """One applied cost application per regime whose fees/taxes the runs recorded."""
+    from equity_lake.backtesting.evidence import CostApplication  # noqa: PLC0415 - evidence imports this module
+
+    costs: dict[str, CostApplication] = {}
+    for run in runs:
+        applied = _recorded_costs(run)
+        if applied is None or run.cost_regime in costs:
+            continue
+        costs[run.cost_regime] = CostApplication(
+            regime=run.cost_regime,
+            fee_ratio=float(applied["fee_ratio"]),
+            tax_ratio=float(applied["tax_ratio"]),
         )
-        raise first
-    return summary
+    return [costs[regime] for regime in sorted(costs)]
+
+
+def _attempt_universe(outcome: ArenaOutcome) -> list[str]:
+    """The instruments this invocation was scoped to (never empty).
+
+    Canonical ``(market, MIC, symbol)`` universe identity is deferred to E01c, so
+    this is the requested ticker set as the arena recorded it.
+    """
+    tickers = {str(ticker).strip() for run in outcome.runs for ticker in run.result.tickers if str(ticker).strip()}
+    if not tickers and "ticker" in outcome.data.columns:
+        tickers = {str(value).strip() for value in outcome.data["ticker"].to_list() if value is not None and str(value).strip()}
+    return sorted(tickers) or ["unspecified"]
+
+
+def _attempt_window(outcome: ArenaOutcome) -> tuple[date, date]:
+    """The exact date window the runs actually used."""
+    if outcome.runs:
+        return min(run.result.start_date for run in outcome.runs), max(run.result.end_date for run in outcome.runs)
+    if "date" in outcome.data.columns and not outcome.data.is_empty():
+        dates = outcome.data["date"]
+        return cast("date", dates.min()), cast("date", dates.max())
+    today = date.today()
+    return today, today
+
+
+def _publish_attempt_record(
+    outcome: ArenaOutcome,
+    evidence: _RunEvidenceWrite,
+    *,
+    cards: Sequence[FindingCard],
+    root: Path,
+) -> tuple[list[FindingCard], FinalisedAttempt]:
+    """Publish the one immutable attempt directory this invocation owns.
+
+    The attempt owns the three arena comparison cards and the benchmark copy, one
+    ``PairOutcome`` per requested pair, the applied costs whose fees/taxes are known,
+    and the run evidence that did finalise. It records a ``write_failed`` status when
+    a run-evidence write raised, naming each such write in ``run_write_failures``, so
+    the failure is durable before the exception reaches the caller (ADR-0025
+    Decision 5).
+
+    The cards are built with **unbound** legacy-vocabulary refs, so they are bound to
+    this invocation's evidence (``run:<run_id>``, ``attempt:<attempt_id>/...``,
+    ``unevidenced:<slug>``, ``unevidenced:benchmark``) here, at the one choke point
+    every persisted arena card passes through (ADR-0025 Decision 8). Only the requested
+    pairs' slugs are eligible for binding, and the benchmark ref is bound to this
+    attempt's copy **only** when this attempt really writes
+    ``benchmark__equity.parquet``: an empty curve writes no copy, so the token then
+    becomes ``unevidenced:benchmark`` rather than a path that does not exist.
+
+    Returns:
+        The **bound** cards that were persisted, plus the published attempt. Returning
+        the cards actually written keeps a caller's round-trip check meaningful: what
+        it holds is byte-for-byte what the attempt directory holds.
+    """
+    from equity_lake.backtesting.attempts import (  # noqa: PLC0415 - attempts imports evidence
+        PairRequest,
+        RunWriteFailure,
+        attempt_id_for,
+        bind_cards_to_evidence,
+        write_attempt_record,
+    )
+
+    pairs = _requested_pairs(outcome)
+    requested_runs = _requested_runs(outcome, pairs)
+    outcomes = _attempt_outcomes(outcome, evidence)
+    completed = sum(1 for pair_outcome in outcomes if pair_outcome.outcome == "completed")
+    if evidence.failures:
+        status: AttemptStatus = "write_failed"
+    elif completed and completed == len(pairs):
+        status = "complete"
+    elif completed:
+        status = "partial"
+    else:
+        status = "zero_completion"
+    notes: list[str] = []
+    if not pairs:
+        notes.append("no pair was requested, so this invocation attempted no run and has no run evidence to point at")
+    start_date, end_date = _attempt_window(outcome)
+    universe = _attempt_universe(outcome)
+    costs = _attempt_costs(requested_runs)
+    pair_requests = [PairRequest(strategy=strategy, cost_regime=cost_regime) for strategy, cost_regime in pairs]
+    attempt_id = attempt_id_for(
+        requested=pair_requests,
+        universe=universe,
+        start_date=start_date,
+        end_date=end_date,
+        initial_cash=outcome.initial_cash,
+        markets=list(outcome.markets),
+        costs=costs,
+    )
+    # The single statement of whether this attempt writes ``benchmark__equity.parquet``:
+    # the binder below is told the same fact the writer is, so a card can never name a
+    # benchmark copy the attempt omits.
+    benchmark = outcome.benchmark if not outcome.benchmark.is_empty() else None
+    bound_cards = bind_cards_to_evidence(
+        cards,
+        runs_by_slug={f"{strategy}__{cost_regime}": run.manifest.run_id for (strategy, cost_regime), run in evidence.finalized_by_pair.items()},
+        requested_slugs={f"{strategy}__{cost_regime}" for strategy, cost_regime in pairs},
+        attempt_id=attempt_id,
+        benchmark_written=benchmark is not None,
+    )
+    run_write_failures = [
+        RunWriteFailure(strategy=strategy, cost_regime=cost_regime, error_type=error_type, reason=reason)
+        for (strategy, cost_regime), (error_type, reason) in evidence.failure_details.items()
+    ]
+    summary_facts: dict[str, Any] = {
+        "requested": len(pairs),
+        "completed": completed,
+        "failed": sum(1 for pair_outcome in outcomes if pair_outcome.outcome == "failed"),
+        "missing": sum(1 for pair_outcome in outcomes if pair_outcome.outcome == "missing"),
+        "contradictory": sum(1 for pair_outcome in outcomes if pair_outcome.outcome == "contradictory"),
+        "unevidenced": sum(1 for pair_outcome in outcomes if pair_outcome.outcome == "unevidenced"),
+        "skipped_undated": sorted(evidence.summary.skipped_undated),
+        "skipped_unrecorded_costs": sorted(evidence.summary.skipped_unrecorded_costs),
+    }
+    return bound_cards, write_attempt_record(
+        root,
+        requested=pair_requests,
+        outcomes=outcomes,
+        run_write_failures=run_write_failures,
+        start_date=start_date,
+        end_date=end_date,
+        universe=universe,
+        initial_cash=outcome.initial_cash,
+        markets=list(outcome.markets),
+        costs=costs,
+        benchmark=benchmark,
+        cards=bound_cards,
+        runs=evidence.summary.finalized,
+        summary_facts=summary_facts,
+        status=status,
+        notes=notes,
+    )
 
 
 def write_arena_artifacts(
@@ -895,19 +1176,28 @@ def write_arena_artifacts(
     run_date: date | None = None,
     scope: dict[str, Any] | None = None,
 ) -> list[FindingCard]:
-    """Write per-run reports, immutable run evidence and the three Phase 1 FindingCards under ``base``.
+    """Write the immutable run/attempt evidence and return the three Phase 1 FindingCards.
 
-    Each run's legacy artifacts land under ``<base>/<strategy>__<regime>/`` exactly
-    as before, and each completed run is **additionally** finalised as one immutable
-    dated run under ``<base>/runs/`` (ADR-0025 Decision 2). ``base`` roots both
-    layouts, so tests can point at a temporary directory; it defaults to
-    ``FINDINGS_DIR``.
+    Each requested completed pair is finalised as one immutable dated run under
+    ``<base>/runs/``, and the invocation publishes one immutable attempt directory
+    under ``<base>/attempts/`` that owns the three comparison cards and the benchmark
+    copy (ADR-0025 Decisions 2, 3 and 8). ``base`` roots the layout, so tests can
+    point at a temporary directory; it defaults to ``FINDINGS_DIR``.
 
-    Returns the written cards, so every existing caller is unaffected. The
-    run-evidence outcome (which runs were finalised, which were skipped and why) is
-    returned by :func:`write_arena_artifacts_with_evidence`, which this function
-    delegates to — the extra mechanism is a second return value on that sibling
-    rather than a changed return type here.
+    **No legacy path is written**: no ``<strategy>__<regime>/`` directory, no flat
+    ``benchmark__equity.parquet`` and no flat ``<card-id>.json`` card. Legacy files
+    written before E01 stay frozen, readable and untouched.
+
+    Returns the cards it actually persisted: the evidence refs are bound to this
+    invocation's runs and attempt directory (``run:<run_id>``,
+    ``attempt:<attempt_id>/benchmark__equity.parquet``,
+    ``unevidenced:<slug>``, ``unevidenced:benchmark``), which
+    is exactly what the attempt directory holds on disk. Every existing caller is
+    unaffected. The evidence
+    outcome (which runs were finalised, which were skipped and why, and the attempt
+    directory) is returned by :func:`write_arena_artifacts_with_evidence`, which this
+    function delegates to — the extra mechanism is a second return value on that
+    sibling rather than a changed return type here.
     """
     cards, _ = write_arena_artifacts_with_evidence(outcome, base=base, run_date=run_date, scope=scope)
     return cards
@@ -920,49 +1210,75 @@ def write_arena_artifacts_with_evidence(
     run_date: date | None = None,
     scope: dict[str, Any] | None = None,
 ) -> tuple[list[FindingCard], ArenaEvidenceSummary]:
-    """Write the arena artifacts **and** one immutable run per completed pair.
+    """Write the arena evidence: one immutable run per completed pair, one attempt record.
 
-    Writes, in this order: the legacy per-run reports under
-    ``<base>/<strategy>__<regime>/`` (unchanged shape), the benchmark artifact, the
-    FindingCards, and finally the immutable dated runs under ``<base>/runs/``.
-    Ordering matters: evidence is written last, so a finalisation failure never
-    costs the legacy artifacts or the cards.
+    Writes, in this order: one immutable dated run per requested completed pair under
+    ``<base>/runs/``, then one attempt directory under ``<base>/attempts/`` that owns
+    the three comparison cards and the benchmark copy (ADR-0025 Decision 2/3/8). No
+    legacy path is written.
 
     Returns:
-        The written cards plus the :class:`ArenaEvidenceSummary`. A run whose
-        backend curve carries no dates is skipped and reported in
-        ``skipped_undated`` (no fabricated calendar, no manifest claiming dates), and
-        a run that does not record the costs its engine applied is skipped and
-        reported in ``skipped_unrecorded_costs`` (no guessed default cost
-        application); neither ever stops the other runs.
+        The cards this invocation **persisted** — evidence refs already bound to its
+        runs and attempt directory, so each returned card equals the card reloaded
+        from the attempt directory field-for-field — plus the
+        :class:`ArenaEvidenceSummary`, whose ``attempt``
+        is the published attempt record. A run whose backend curve carries no dates
+        is skipped and reported in ``skipped_undated`` (no fabricated calendar, no
+        manifest claiming dates), and a run that does not record the costs its engine
+        applied is skipped and reported in ``skipped_unrecorded_costs`` (no guessed
+        default cost application); neither ever stops the other runs.
 
     Raises:
-        Exception: the first ``finalise_run`` failure, re-raised after every run has
-            been attempted, with a note recording how many runs finalized. A
-            partially written temporary directory never becomes a run.
+        Exception: the first run-evidence write failure, re-raised **after** the
+            attempt record recording it as ``write_failed`` has been published, so the
+            failure is durable and the caller still sees it. A partially written
+            temporary directory never becomes a run or an attempt.
     """
-    from equity_lake.core.paths import FINDINGS_DIR
+    from equity_lake.core.paths import FINDINGS_DIR  # noqa: PLC0415 - keep the CLI import seam lazy
 
     root = base or FINDINGS_DIR
     root.mkdir(parents=True, exist_ok=True)
     run_date = run_date or date.today()
 
-    for run in outcome.runs:
-        slug = _run_slug(run)
-        write_backtest_report(run.result, root / slug, strategy=run.strategy, cost_regime=run.cost_regime)
+    # Immutable run evidence first: one dated run per requested completed pair.
+    evidence = _finalise_arena_run_evidence(outcome, root=root)
+    unbound_cards = build_finding_cards(outcome, run_date=run_date, scope=scope)
 
-    # benchmark artifact
-    if not outcome.benchmark.is_empty():
-        outcome.benchmark.write_parquet(root / "benchmark__equity.parquet")
+    # The cards the attempt actually persisted (evidence refs bound to this
+    # invocation's runs/attempt) are what this function returns, so a caller's
+    # round-trip check compares against the persisted bytes rather than a
+    # pre-binding copy.
+    cards = unbound_cards
+    attempt: FinalisedAttempt | None = None
+    try:
+        cards, attempt = _publish_attempt_record(outcome, evidence, cards=unbound_cards, root=root)
+    except Exception:  # noqa: BLE001 - never mask a run-evidence failure with a record failure
+        if not evidence.failures:
+            raise
+        logger.error(
+            "arena_attempt_record_failed",
+            root=str(root),
+            error="the attempt record could not be published; the run-evidence failure below is the reported one",
+        )
+        raise evidence.failures[0] from None
+    evidence.summary.attempt = attempt
+    logger.info(
+        "arena_artifacts_written",
+        root=str(root),
+        runs=len(evidence.summary.finalized),
+        cards=len(cards),
+        attempt_dir=str(attempt.directory),
+        attempt_status=attempt.record.status,
+    )
 
-    cards = build_finding_cards(outcome, run_date=run_date, scope=scope)
-    for card in cards:
-        write_finding_card(card, base=root)
-    logger.info("arena_artifacts_written", root=str(root), runs=len(outcome.runs), cards=len(cards))
-
-    # Additional immutable run evidence: one dated run per completed pair.
-    summary = _finalise_arena_run_evidence(outcome, root=root)
-    return cards, summary
+    if evidence.failures:
+        first = evidence.failures[0]
+        first.add_note(
+            f"arena run evidence: {len(evidence.summary.finalized)} run(s) finalized before {len(evidence.failures)} failed; "
+            f"attempt {attempt.directory.name} was published with status '{attempt.record.status}' and no legacy path was written"
+        )
+        raise first
+    return cards, evidence.summary
 
 
 __all__ = [

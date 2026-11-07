@@ -18,6 +18,7 @@ from numbers import Real
 from pathlib import Path
 from typing import Any
 
+from equity_lake.backtesting import evidence_view
 from equity_lake.core.availability import AVAILABILITY_SCHEMA_VERSION, PRICE_ADJUSTMENT_VERSION
 from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, MARKET_MICS, InstrumentKey
 from equity_lake.core.paths import FINDINGS_DIR, MODELS_DIR, canonical_market
@@ -30,14 +31,18 @@ from equity_lake.core.schemas import (
     PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
 )
 from equity_lake.findings.models import FindingCard
-from equity_lake.findings.writer import load_finding_cards
 from equity_lake.signals.history import load_signals
 from equity_lake.storage.delta import DeltaReadError, delta_table_path
 
 
 def list_findings() -> list[FindingCard]:
-    """Load every serialized FindingCard under ``data/findings/``."""
-    return load_finding_cards()
+    """Load every FindingCard under ``data/findings/``, resolved by id (E01b.1).
+
+    An attempt-bound card (``runs``/``attempts`` evidence) wins over a legacy flat
+    ``<id>.json`` card for the same id, so a reader can never be shown a card that a
+    later invocation silently re-pointed at a different run. Reads only.
+    """
+    return evidence_view.finding_cards(FINDINGS_DIR)
 
 
 def list_signals(target_date: date) -> list[dict[str, Any]]:
@@ -723,16 +728,14 @@ def list_predictions(
 
 
 def list_backtests() -> list[dict[str, Any]]:
-    """List arena/backtest run reports (``data/findings/<slug>/metrics.json``)."""
-    runs: list[dict[str, Any]] = []
-    for metrics_path in sorted(FINDINGS_DIR.glob("*/metrics.json")):
-        try:
-            data: dict[str, Any] = json.loads(metrics_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        data["slug"] = metrics_path.parent.name
-        runs.append(data)
-    return runs
+    """List arena/backtest run reports for ``/backtests`` (E01b.1 read projection).
+
+    One row per legacy ``<strategy>__<regime>`` slug: the latest **validated**
+    success's ``metrics.json`` payload when one exists, else the frozen legacy
+    ``metrics.json``, plus the additive ``last_success`` and ``last_attempt`` keys
+    (ADR-0025 Decision 5/8). Existing keys are never dropped or renamed. Reads only.
+    """
+    return evidence_view.backtest_rows(FINDINGS_DIR)
 
 
 __all__ = [

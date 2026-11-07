@@ -60,22 +60,53 @@ def corporate_action_coverage_table(market: str) -> str:
     return f"{root.parent.name}/corporate_action_coverage/{canonical_market(market)}"
 
 
+def load_corporate_action_inputs_with_versions(
+    market: str, *, lake_dir: Path | None = None
+) -> tuple[pl.DataFrame, pl.DataFrame, dict[str, int | None]]:
+    """Read Silver action events, coverage proofs **and** the versions read (E01-4).
+
+    Snapshot binding (ADR-0025 Decision 4) needs the version the read consumed, so
+    the version comes from the read seam itself (:func:`read_delta_with_version`),
+    never from a lookup taken after a computation. Kept in ``ingestion`` — which
+    knows the table names — so no ``backtesting`` import enters this layer.
+
+    Returns:
+        ``(actions, coverage, versions)``. ``versions`` maps each lake-relative table
+        name (as returned by :func:`corporate_actions_table` /
+        :func:`corporate_action_coverage_table`) to the Delta version that produced
+        its frame, or ``None`` when the table is absent — an absent table has no
+        version, and none is invented for it.
+    """
+    from equity_lake.storage.delta import DeltaReadError, read_delta_with_version
+
+    versions: dict[str, int | None] = {}
+    events_table = corporate_actions_table(market, "silver")
+    covering_table = corporate_action_coverage_table(market)
+    try:
+        actions, events_version = read_delta_with_version(events_table, lake_dir=lake_dir)
+    except DeltaReadError:
+        actions = pl.DataFrame(schema=CORPORATE_ACTION_SCHEMA)
+        events_version = None
+    versions[events_table] = events_version
+    try:
+        coverage, coverage_version = read_delta_with_version(covering_table, lake_dir=lake_dir)
+    except DeltaReadError:
+        coverage = pl.DataFrame(schema=CORPORATE_ACTION_COVERAGE_SCHEMA)
+        coverage_version = None
+    versions[covering_table] = coverage_version
+    return actions, coverage, versions
+
+
 def load_corporate_action_inputs(market: str, *, lake_dir: Path | None = None) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Read Silver action events and their separate verified coverage proofs.
 
     Missing tables are returned as typed empty frames; strict consumers then
     reject the absent proof instead of interpreting emptiness as no actions.
-    """
-    from equity_lake.storage.delta import DeltaReadError, read_delta
 
-    try:
-        actions = read_delta(corporate_actions_table(market, "silver"), lake_dir=lake_dir)
-    except DeltaReadError:
-        actions = pl.DataFrame(schema=CORPORATE_ACTION_SCHEMA)
-    try:
-        coverage = read_delta(corporate_action_coverage_table(market), lake_dir=lake_dir)
-    except DeltaReadError:
-        coverage = pl.DataFrame(schema=CORPORATE_ACTION_COVERAGE_SCHEMA)
+    Delegates to :func:`load_corporate_action_inputs_with_versions` and discards the
+    read versions, so both entry points can never read differently.
+    """
+    actions, coverage, _versions = load_corporate_action_inputs_with_versions(market, lake_dir=lake_dir)
     return actions, coverage
 
 
@@ -253,6 +284,7 @@ __all__ = [
     "corporate_actions_table",
     "ingest_corporate_actions",
     "load_corporate_action_inputs",
+    "load_corporate_action_inputs_with_versions",
     "max_stored_ex_date",
     "max_stored_ex_dates",
 ]

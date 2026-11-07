@@ -359,12 +359,83 @@ def read_delta(
             operator. Callers that genuinely want an empty frame on failure must
             catch this.
     """
+    frame, _version = _read_delta_frame(table, version=version, lake_dir=lake_dir, filters=filters, columns=columns, capture_version=False)
+    return frame
+
+
+def read_delta_with_version(
+    table: str,
+    *,
+    lake_dir: Path | None = None,
+    filters: list[tuple[str, str, Any]] | None = None,
+    columns: list[str] | None = None,
+) -> tuple[pl.DataFrame, int]:
+    """Read a Delta table **and** the version that produced the frame (E01-4).
+
+    Snapshot binding (ADR-0025 Decision 4) requires the version to be captured by
+    the read itself: a version looked up after the computation describes the table
+    as it is then, not the snapshot the computation consumed. This shares one
+    implementation with :func:`read_delta`, which asks for the same frame *without*
+    the version, so the two can never disagree about what was read. The difference is
+    only the version requirement: this entry point needs a table object that can
+    report its version, while :func:`read_delta` never calls ``version()``.
+
+    Args:
+        filters: Same predicate contract as :func:`read_delta`.
+        columns: Same projection contract as :func:`read_delta`.
+
+    Returns:
+        ``(frame, version)`` where ``version`` is read from the
+        :class:`deltalake.DeltaTable` instance that produced ``frame``, taken
+        immediately after construction and before the scan (the latest version at
+        that moment).
+
+    Raises:
+        DeltaReadError: Under exactly :func:`read_delta`'s conditions, and also if
+            the table object cannot supply its version — no version is invented to
+            stand in for one that was never read.
+    """
+    frame, read_version = _read_delta_frame(table, lake_dir=lake_dir, filters=filters, columns=columns, capture_version=True)
+    if read_version is None:  # pragma: no cover - capture_version=True always supplies one or raises
+        raise DeltaReadError(table, RuntimeError("table did not report a version for the read"))
+    return frame, read_version
+
+
+def _read_delta_frame(
+    table: str,
+    *,
+    version: int | None = None,
+    lake_dir: Path | None = None,
+    filters: list[tuple[str, str, Any]] | None = None,
+    columns: list[str] | None = None,
+    capture_version: bool = True,
+) -> tuple[pl.DataFrame, int | None]:
+    """Read a Delta table and optionally return its read-seam version.
+
+    ``version`` selects an explicit snapshot; ``None`` reads the latest.
+
+    ``capture_version`` makes the version requirement explicit. When it is ``True``
+    the version is taken from the constructed table object **before** the scan, so it
+    names the snapshot the scan consumed rather than whatever is current afterwards,
+    and a table object that cannot report one is a read failure. When it is
+    ``False`` ``version()`` is never called and the returned version is ``None``:
+    that is what :func:`read_delta` asks for, so the blind reader's capability
+    contract stays exactly what it was before version capture existed.
+    """
     table_path = delta_table_path(table, lake_dir)
     try:
         dt = DeltaTable(str(table_path), version=version) if version is not None else DeltaTable(str(table_path))
     except Exception as exc:
         logger.exception("delta_read_failed", table=table, path=str(table_path))
         raise DeltaReadError(table, exc) from exc
+
+    read_version: int | None = None
+    if capture_version:
+        try:
+            read_version = int(dt.version())
+        except Exception as exc:  # noqa: BLE001 - an unreadable version is an unreadable snapshot
+            logger.exception("delta_read_failed", table=table, path=str(table_path))
+            raise DeltaReadError(table, exc) from exc
 
     pushdown, residual = _split_filters(dt, table, filters)
     read_columns, hidden_columns = _with_residual_columns(columns, residual)
@@ -384,7 +455,7 @@ def read_delta(
         frame = _apply_residual_filters(frame, residual)
     if hidden_columns:
         frame = frame.drop(hidden_columns)
-    return frame
+    return frame, read_version
 
 
 #: Operators accepted for a string filter that cannot be pushed down.
@@ -655,6 +726,7 @@ __all__ = [
     "merge_delta",
     "migrate_parquet_to_delta",
     "read_delta",
+    "read_delta_with_version",
     "update_delta_columns",
     "vacuum_delta",
     "write_delta",

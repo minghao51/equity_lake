@@ -38,8 +38,9 @@ from equity_lake.backtesting.arena import (
     equal_weight_buyhold,
     run_arena,
 )
+from equity_lake.backtesting.attempts import validate_attempt_directory  # type: ignore[import-untyped]
 from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE  # type: ignore[import-untyped]
-from equity_lake.backtesting.report import build_finding_cards  # type: ignore[import-untyped]
+from equity_lake.backtesting.report import ArenaEvidenceSummary, build_finding_cards  # type: ignore[import-untyped]
 from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
 from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
 from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
@@ -76,7 +77,12 @@ def _benchmark_frame() -> pl.DataFrame:
 
 
 def _stub_result(*, sharpe: float | None = 0.5, trades: int = 2, metrics: dict[str, float] | None = None) -> BacktestResult:
-    """A stub result; ``sharpe=None`` omits ``sharpe_ratio``, ``metrics`` wins outright."""
+    """A dated stub result; ``sharpe=None`` omits ``sharpe_ratio``, ``metrics`` wins outright.
+
+    E01b.1 writes immutable per-run evidence only for dated runs, so a dated stub is
+    what lets the CLI tests assert the *new* evidence location (``runs/`` +
+    ``attempts/``) instead of the frozen legacy directories.
+    """
     resolved: dict[str, float] = {"total_return": 0.01} if metrics is None else dict(metrics)
     if metrics is None and sharpe is not None:
         resolved["sharpe_ratio"] = sharpe
@@ -90,6 +96,7 @@ def _stub_result(*, sharpe: float | None = 0.5, trades: int = 2, metrics: dict[s
         equity_curve=pl.Series("equity", [100.0, 110.0, 100.0, 110.0]),
         trades=[{"ticker": "AAA", "date": str(_D2)}] * trades,
         metrics=resolved,
+        equity_dates=[_D1, _D2, _D3, _D4],
     )
 
 
@@ -99,15 +106,70 @@ def _outcome(
     requested: list[tuple[str, str]] | None = None,
     failed: list[ArenaFailure] | None = None,
 ) -> ArenaOutcome:
+    """An in-memory outcome whose completed runs carry what ``run_arena`` records.
+
+    E01b.1's writer records the applied costs and the strategy parameters the run was
+    built with; a stub without them is a *legacy* run and is skipped by design, so the
+    fixture fills them exactly as ``run_arena`` does.
+    """
     frame = _ticker_frame()
+    prepared = runs if runs is not None else []
+    for run in prepared:
+        if run.applied_costs is None:
+            run.applied_costs = {"fee_ratio": 0.001425, "tax_ratio": 0.0}
+        if not run.strategy_params:
+            run.strategy_params = {"lookback": 20}
     return ArenaOutcome(
-        runs=runs if runs is not None else [],
+        runs=prepared,
         data=frame,
         benchmark=equal_weight_buyhold(frame, initial_cash=100.0),
         initial_cash=100.0,
         requested=requested if requested is not None else [],
         failed=failed if failed is not None else [],
     )
+
+
+def _attempt_dir(root: Path) -> Path:
+    """The one published attempt directory under ``root`` (temporaries excluded)."""
+    attempts_root = root / "attempts"
+    assert attempts_root.is_dir(), sorted(path.name for path in root.iterdir())
+    attempts = [path for path in attempts_root.iterdir() if path.is_dir() and not path.name.startswith(".tmp-")]
+    assert len(attempts) == 1, [path.name for path in attempts]
+    return attempts[0]
+
+
+def _run_dirs(root: Path) -> list[Path]:
+    """Published immutable run directories under ``root/runs``."""
+    runs_root = root / "runs"
+    if not runs_root.is_dir():
+        return []
+    return sorted(path for path in runs_root.iterdir() if path.is_dir() and not path.name.startswith(".partial-"))
+
+
+def _assert_no_legacy_artifacts(root: Path, slugs: tuple[str, ...] = ()) -> None:
+    """E01b.1: no pair-keyed directory, no flat benchmark and no flat card is written."""
+    for slug in slugs:
+        assert not (root / slug).exists(), slug
+    assert not (root / "benchmark__equity.parquet").exists()
+    assert sorted(root.glob("*.json")) == []
+
+
+def _assert_zero_completion_evidence(root: Path, *, requested: int, failed: int) -> None:
+    """A zero-completion invocation persists its classification and nothing else.
+
+    The attempt record is the only artifact: no run directory, no card and no
+    benchmark, because nothing of this invocation's request was measured.
+    """
+    assert sorted(path.name for path in root.iterdir()) == ["attempts"]
+    attempt = _attempt_dir(root)
+    assert sorted(path.name for path in attempt.iterdir()) == ["attempt.json"]
+    verdict = validate_attempt_directory(attempt)
+    assert verdict.finalized, verdict.reasons
+    assert verdict.record is not None
+    assert verdict.record.status == "zero_completion"
+    assert len(verdict.record.outcomes) == requested
+    assert sum(1 for outcome in verdict.record.outcomes if outcome.outcome == "failed") == failed
+    _assert_no_legacy_artifacts(root)
 
 
 def _strategy_class_name(registry_name: str) -> str:
@@ -232,7 +294,8 @@ def test_zero_completion_names_missing_requested_pairs(tmp_path: Path) -> None:
     guide promises such pairs are reported by name, but the zero-completion branch
     used to print only counts and recorded failures. Both missing pairs must be
     named (``<strategy>__<regime>``), the writer must stay untouched, and the
-    existing "no artifacts or cards were written" line must remain.
+    existing "no run evidence or cards were written" line must remain, and the
+    invocation must still publish its ``zero_completion`` attempt record.
     """
     outcome = _outcome(
         runs=[],
@@ -245,12 +308,13 @@ def test_zero_completion_names_missing_requested_pairs(tmp_path: Path) -> None:
 
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=_writer_must_not_be_called),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=_writer_must_not_be_called),
     ):
         result = runner.invoke(app, _waitless_cli_args("--output-dir", str(tmp_path)))
 
     assert result.exit_code == 1, result.stdout
-    assert "no artifacts or cards were written" in result.stdout
+    assert "no run evidence or cards were written" in result.stdout
+    assert "Attempt record:" in result.stdout
     assert "requested: 2 pair(s) | completed: 0 | failed: 0" in result.stdout
     # Every missing requested pair is named, not merely counted.
     assert "2 requested pair(s) neither completed nor recorded a failure" in result.stdout
@@ -261,7 +325,8 @@ def test_zero_completion_names_missing_requested_pairs(tmp_path: Path) -> None:
     assert "Arena complete" not in result.stdout
     assert "Arena PARTIAL" not in result.stdout
     assert "FindingCards:" not in result.stdout
-    assert list(tmp_path.iterdir()) == []
+    assert "no run evidence or cards were written" in result.stdout
+    _assert_zero_completion_evidence(tmp_path, requested=2, failed=0)
 
 
 def test_sanitize_failure_reason_truncates_long_messages_to_200_chars() -> None:
@@ -301,7 +366,7 @@ def test_all_failed_outcome_exits_one_and_never_calls_writer(tmp_path: Path) -> 
 
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=_writer_must_not_be_called),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=_writer_must_not_be_called),
     ):
         result = runner.invoke(app, _waitless_cli_args("--output-dir", str(tmp_path)))
 
@@ -313,8 +378,8 @@ def test_all_failed_outcome_exits_one_and_never_calls_writer(tmp_path: Path) -> 
     assert "Arena complete" not in result.stdout
     assert "Arena PARTIAL" not in result.stdout
     assert "FindingCards:" not in result.stdout
-    # Nothing was written: the writer would have replaced latest artifacts.
-    assert list(tmp_path.iterdir()) == []
+    # No card/run evidence was written; only the classification record is durable.
+    _assert_zero_completion_evidence(tmp_path, requested=2, failed=2)
 
 
 def test_unrequested_completed_run_is_not_published(tmp_path: Path) -> None:
@@ -337,7 +402,7 @@ def test_unrequested_completed_run_is_not_published(tmp_path: Path) -> None:
 
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=_writer_must_not_be_called),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=_writer_must_not_be_called),
     ):
         result = runner.invoke(app, _waitless_cli_args("--output-dir", str(tmp_path)))
 
@@ -352,7 +417,7 @@ def test_unrequested_completed_run_is_not_published(tmp_path: Path) -> None:
     assert "Arena complete" not in result.stdout
     assert "Arena PARTIAL" not in result.stdout
     assert "FindingCards:" not in result.stdout
-    assert list(tmp_path.iterdir()) == []
+    _assert_zero_completion_evidence(tmp_path, requested=1, failed=0)
 
 
 def test_unrequested_pairs_are_never_counted_or_published(tmp_path: Path) -> None:
@@ -370,13 +435,13 @@ def test_unrequested_pairs_are_never_counted_or_published(tmp_path: Path) -> Non
     )
     seen: list[ArenaOutcome] = []
 
-    def _writer_spy(written: ArenaOutcome, **kwargs: Any) -> list[Any]:
+    def _writer_spy(written: ArenaOutcome, **kwargs: Any) -> tuple[list[Any], ArenaEvidenceSummary]:
         seen.append(written)
-        return []
+        return [], ArenaEvidenceSummary()
 
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=_writer_spy),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=_writer_spy),
     ):
         result = runner.invoke(app, _waitless_cli_args("--output-dir", str(tmp_path)))
 
@@ -404,7 +469,7 @@ def test_write_failure_stays_visible_and_nonzero(tmp_path: Path) -> None:
     )
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=OSError("disk full")),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=OSError("disk full")),
     ):
         result = runner.invoke(app, _waitless_cli_args("--output-dir", str(tmp_path)))
 
@@ -428,14 +493,21 @@ def test_one_success_one_failure_is_partial_and_exits_one(tmp_path: Path) -> Non
     assert "PARTIAL" in result.stdout
     assert "requested: 2 | completed: 1 | failed: 1" in result.stdout
     assert "momentum__realistic: ValueError: no decisions" in result.stdout
-    # The successful run's evidence exists and its result was retained on the outcome.
+    # The successful run's evidence is published as its own immutable run directory,
+    # and the comparison artifacts are owned by this invocation's attempt directory.
     assert [run.strategy for run in outcome.runs] == ["mean_reversion"]
-    assert (tmp_path / "mean_reversion__realistic" / "equity.parquet").exists()
-    assert (tmp_path / "mean_reversion__realistic" / "trades.json").exists()
-    assert (tmp_path / "benchmark__equity.parquet").exists()
-    assert not (tmp_path / "momentum__realistic").exists()
-    # Discloses that old artifact directories can remain (E01 owns immutability).
-    assert "can remain" in result.stdout
+    runs = _run_dirs(tmp_path)
+    assert len(runs) == 1
+    assert (runs[0] / "equity.parquet").exists()
+    assert (runs[0] / "trades.json").exists()
+    assert (runs[0] / "manifest.json").exists()
+    attempt = _attempt_dir(tmp_path)
+    assert (attempt / "benchmark__equity.parquet").exists()
+    assert (attempt / "attempt.json").exists()
+    # The frozen legacy layout is never recreated for the failed pair either.
+    _assert_no_legacy_artifacts(tmp_path, ("mean_reversion__realistic", "momentum__realistic"))
+    # Discloses that legacy directories are frozen and never written.
+    assert "frozen and read-only" in result.stdout
 
 
 def test_full_matrix_exits_zero_without_partial_label(tmp_path: Path) -> None:
@@ -455,14 +527,20 @@ def test_full_matrix_exits_zero_without_partial_label(tmp_path: Path) -> None:
     assert "Arena complete: 2 of 2 requested pair(s) completed" in result.stdout
     assert "requested: 2 | completed: 2 | failed: 0 | non-evaluable: 0" in result.stdout
     assert "neither completed nor recorded a failure" not in result.stdout
-    # Temporary-output artifact test for the arena command.
-    for slug in ("mean_reversion__zero", "mean_reversion__realistic"):
-        for name in ("equity.parquet", "drawdown.parquet", "metrics.json", "trades.json"):
-            assert (tmp_path / slug / name).exists(), (slug, name)
-    assert (tmp_path / "benchmark__equity.parquet").exists()
-    assert (tmp_path / "cost-regime.json").exists()
-    assert (tmp_path / "strategy-comparison.json").exists()
-    assert (tmp_path / "vs-benchmark.json").exists()
+    # Temporary-output artifact test for the arena command: one immutable run per pair.
+    runs = _run_dirs(tmp_path)
+    assert len(runs) == 2
+    for run_dir in runs:
+        for name in ("equity.parquet", "drawdown.parquet", "metrics.json", "trades.json", "manifest.json"):
+            assert (run_dir / name).exists(), (run_dir.name, name)
+        # The redesigned layout stores real sessions, never the positional legacy column.
+        assert pl.read_parquet(run_dir / "equity.parquet").columns == ["date", "equity"]
+    attempt = _attempt_dir(tmp_path)
+    assert (attempt / "benchmark__equity.parquet").exists()
+    assert (attempt / "cost-regime.json").exists()
+    assert (attempt / "strategy-comparison.json").exists()
+    assert (attempt / "vs-benchmark.json").exists()
+    _assert_no_legacy_artifacts(tmp_path, ("mean_reversion__zero", "mean_reversion__realistic"))
 
 
 def test_fewer_completed_than_requested_without_failures_is_partial_and_exits_one(tmp_path: Path) -> None:
@@ -488,11 +566,14 @@ def test_fewer_completed_than_requested_without_failures_is_partial_and_exits_on
     assert "momentum__realistic" in result.stdout
     assert "Arena complete" not in result.stdout
     assert "failed pairs (sanitized):" not in result.stdout
-    # Writer behaviour: completed > 0, so the successful artifacts were written.
-    assert (tmp_path / "momentum__zero" / "equity.parquet").exists()
-    assert (tmp_path / "momentum__zero" / "metrics.json").exists()
-    assert (tmp_path / "benchmark__equity.parquet").exists()
-    assert not (tmp_path / "momentum__realistic").exists()
+    # Writer behaviour: completed > 0, so the successful run's evidence was written.
+    runs = _run_dirs(tmp_path)
+    assert len(runs) == 1
+    assert (runs[0] / "equity.parquet").exists()
+    assert (runs[0] / "metrics.json").exists()
+    assert (runs[0] / "manifest.json").exists()
+    assert (_attempt_dir(tmp_path) / "benchmark__equity.parquet").exists()
+    _assert_no_legacy_artifacts(tmp_path, ("momentum__zero", "momentum__realistic"))
 
 
 def test_duplicate_requested_pairs_are_deduplicated(tmp_path: Path) -> None:
@@ -559,8 +640,11 @@ def test_duplicate_requested_pairs_in_mocked_outcome_do_not_mislead(tmp_path: Pa
     assert "1 of 2" not in result.stdout
     assert "PARTIAL" not in result.stdout
     assert "neither completed nor recorded a failure" not in result.stdout
-    # The single completed run's artifacts are still published.
-    assert (tmp_path / "mean_reversion__zero" / "equity.parquet").exists()
+    # The single completed run's evidence is still published exactly once.
+    runs = _run_dirs(tmp_path)
+    assert len(runs) == 1
+    assert (runs[0] / "equity.parquet").exists()
+    _assert_no_legacy_artifacts(tmp_path, ("mean_reversion__zero",))
 
 
 def test_pair_recorded_both_completed_and_failed_is_diagnosed(tmp_path: Path) -> None:
@@ -606,7 +690,10 @@ def test_completed_equals_requested_without_failures_exits_zero(tmp_path: Path) 
     assert "requested: 1 | completed: 1 | failed: 0" in result.stdout
     assert "PARTIAL" not in result.stdout
     assert "neither completed nor recorded a failure" not in result.stdout
-    assert (tmp_path / "mean_reversion__zero" / "equity.parquet").exists()
+    runs = _run_dirs(tmp_path)
+    assert len(runs) == 1
+    assert (runs[0] / "equity.parquet").exists()
+    _assert_no_legacy_artifacts(tmp_path, ("mean_reversion__zero",))
 
 
 def test_zero_completed_without_failures_exits_one_and_never_calls_writer(tmp_path: Path) -> None:
@@ -622,7 +709,7 @@ def test_zero_completed_without_failures_exits_one_and_never_calls_writer(tmp_pa
 
     with (
         patch("equity_lake.backtesting.arena.run_arena", return_value=outcome),
-        patch("equity_lake.backtesting.report.write_arena_artifacts", side_effect=_writer_must_not_be_called),
+        patch("equity_lake.backtesting.report.write_arena_artifacts_with_evidence", side_effect=_writer_must_not_be_called),
     ):
         result = runner.invoke(app, _waitless_cli_args("--output-dir", str(tmp_path)))
 
@@ -631,7 +718,7 @@ def test_zero_completed_without_failures_exits_one_and_never_calls_writer(tmp_pa
     assert "requested: 2 pair(s) | completed: 0 | failed: 0" in result.stdout
     assert "Arena complete" not in result.stdout
     assert "Arena PARTIAL" not in result.stdout
-    assert list(tmp_path.iterdir()) == []
+    _assert_zero_completion_evidence(tmp_path, requested=2, failed=0)
 
 
 def test_legacy_outcome_without_requested_counts_completed_pairs(tmp_path: Path) -> None:
@@ -671,7 +758,7 @@ def test_legacy_outcome_without_requested_includes_failed_pairs(tmp_path: Path) 
     assert "momentum__zero: RuntimeError: boom" in result.stdout
     # No pair is missing here: every derived requested pair is completed or failed.
     assert "neither completed nor recorded a failure" not in result.stdout
-    assert (tmp_path / "mean_reversion__zero" / "equity.parquet").exists()
+    assert len(_run_dirs(tmp_path)) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -904,9 +991,11 @@ def test_cli_strategy_constructor_failure_is_partial_and_exits_one(tmp_path: Pat
     assert "requested: 2 | completed: 1 | failed: 1" in result.stdout
     assert "momentum__zero: RuntimeError: strategy init failed for <path>" in result.stdout
     assert "/tmp/private" not in result.stdout
-    # Partial diagnostics keep the successful run's evidence on disk.
-    assert (tmp_path / "mean_reversion__zero" / "equity.parquet").exists()
-    assert not (tmp_path / "momentum__zero").exists()
+    # Partial diagnostics keep the successful run's evidence on disk (its own run dir).
+    runs = _run_dirs(tmp_path)
+    assert len(runs) == 1
+    assert (runs[0] / "equity.parquet").exists()
+    _assert_no_legacy_artifacts(tmp_path, ("mean_reversion__zero", "momentum__zero"))
 
 
 def test_run_arena_nan_sharpe_metric_is_not_evaluated_evidence(tmp_path: Path) -> None:
@@ -1070,6 +1159,10 @@ def test_cli_partial_diagnostics_with_real_run_arena_and_engine(tmp_path: Path) 
     assert "requested: 2 | completed: 1 | failed: 1" in result.stdout
     assert "momentum__zero: RuntimeError: synthetic momentum failure at <path>" in result.stdout
     assert "/home/howt/private" not in result.stdout
-    # The successful (real engine) run wrote its artifacts and stays on disk.
-    assert (out_dir / "mean_reversion__zero" / "equity.parquet").exists()
-    assert (out_dir / "benchmark__equity.parquet").exists()
+    # The successful (real engine) run wrote its immutable evidence and stays on disk.
+    runs = _run_dirs(out_dir)
+    assert len(runs) == 1
+    assert (runs[0] / "equity.parquet").exists()
+    assert (_attempt_dir(out_dir) / "benchmark__equity.parquet").exists()
+    assert not (out_dir / "mean_reversion__zero").exists()
+    assert not (out_dir / "benchmark__equity.parquet").exists()

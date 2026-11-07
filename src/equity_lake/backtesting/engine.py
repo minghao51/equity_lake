@@ -50,6 +50,39 @@ def _float_scalar(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def universe_size(data: pl.DataFrame) -> int:
+    """Distinct canonical identities in a load (``ticker`` for fixtures).
+
+    The full ``(market, mic, symbol)`` identity is counted whenever all three columns
+    are present, so the same ticker on two venues is two instruments; a ticker-only
+    fixture falls back to distinct tickers, and a frame carrying neither identity
+    yields ``0`` (the classifier then reports an unusable cross-section rather than
+    inventing one). This is the one place the loaded-cohort size is defined: the
+    arena's evaluation classifier and the single-report CLI both use it.
+    """
+    if set(IDENTITY_COLUMNS).issubset(data.columns):
+        return data.select(*IDENTITY_COLUMNS).unique().height
+    if "ticker" in data.columns:
+        return data["ticker"].n_unique()
+    return 0
+
+
+def loaded_identity_keys(data: pl.DataFrame) -> list[str] | None:
+    """Canonical display keys of a loaded frame, or ``None`` when it cannot prove them.
+
+    The universe a run *consulted* is a fact of the frame the engine read, so it is
+    derived from that frame's full ``(market, mic, symbol)`` identity through the
+    identity model — never from the requested tickers and never from a guessed MIC
+    (ADR-0016 Decision 1/2). A frame without full identity returns ``None``: an
+    unknown universe is disclosed, not upgraded, so a caller records its bare
+    tickers with ``ticker_only`` instead.
+    """
+    if not set(IDENTITY_COLUMNS).issubset(data.columns):
+        return None
+    keys = sorted({InstrumentKey(**row).display_key for row in data.select(*IDENTITY_COLUMNS).unique().to_dicts()})
+    return keys or None
+
+
 def _join_strategy_weights(data: pl.DataFrame, weights: pl.DataFrame) -> pl.DataFrame:
     """Join strategy signals on date plus full instrument identity when present."""
     has_composite_identity = set(IDENTITY_COLUMNS).issubset(data.columns)
@@ -95,6 +128,20 @@ class VectorBacktestEngine:
         self.resample = self.config.get("resample", "D")
         self.stop_loss = self.config.get("stop_loss", 1.0)
         self.take_profit = self.config.get("take_profit", float("inf"))
+
+        #: Size of the frame this engine actually loaded through its own loader, or
+        #: ``None`` before a load and for a ``preloaded_data`` frame the engine did not
+        #: load (the caller owns that cohort, so it must disclose its own size rather
+        #: than have this engine guess one). Set by :meth:`_load_data`.
+        self.loaded_universe_size: int | None = None
+
+        #: Canonical display keys of the frame this engine actually loaded through its
+        #: own loader (``market/MIC/percent-quoted-symbol``), or ``None`` before a load
+        #: and for a ``preloaded_data`` frame — the engine did not read it, so it does
+        #: not claim its universe. Only these keys (not the requested tickers) prove a
+        #: ``canonical`` universe basis (E01c contract item 1). Set by
+        #: :meth:`_load_data`.
+        self.loaded_identities: list[str] | None = None
 
         # Created lazily on first _load_data() call without preloaded_data — the
         # loader opens a DuckDB connection, and arena runs must not pay for it.
@@ -198,16 +245,27 @@ class VectorBacktestEngine:
 
     def _load_data(self) -> pl.DataFrame:
         if self.preloaded_data is not None:
+            # The caller loaded this cohort; ``loaded_universe_size`` and
+            # ``loaded_identities`` stay ``None`` so a classifier or a writer cannot
+            # mistake the caller's frame for one this engine read.
             return self.preloaded_data.clone()
         if self.data_loader is None:
             self.data_loader = BacktestDataLoader()
-        return self.data_loader.load(
+        loaded = self.data_loader.load(
             tickers=self._requested_tickers,
             start_date=self.start_date,
             end_date=self.end_date,
             markets=self.markets,
             adjust=self.adjust,
         )
+        self.loaded_universe_size = universe_size(loaded)
+        self.loaded_identities = loaded_identity_keys(loaded)
+        logger.info(
+            "backtest_data_loaded",
+            universe_size=self.loaded_universe_size,
+            canonical_identities=len(self.loaded_identities or ()),
+        )
+        return loaded
 
     @staticmethod
     def _decode_action_context(payload: str) -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -538,4 +596,4 @@ class VectorBacktestEngine:
         return [value for value in values if isinstance(value, date)]
 
 
-__all__ = ["VectorBacktestEngine"]
+__all__ = ["VectorBacktestEngine", "universe_size"]
