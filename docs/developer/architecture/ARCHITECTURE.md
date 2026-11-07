@@ -143,10 +143,12 @@ run IDs — a materially different cost application can never look scope-identic
 Universe and strategies are sorted and de-duplicated, costs are ordered by regime
 name (one entry per regime), and parameter keys are ordered, so the same scope
 hashes identically regardless of input ordering. The protocol constant
-(`equity-run-manifest/2`) is part of the scope: adding the applied costs to the
-preimage is a protocol change, so IDs minted under version 1 are not comparable
-with current ones. The code commit and the dirty-diff digest live in the manifest
-and never change a scope-identical run ID (frozen decision E01-1).
+(`equity-run-manifest/3`) is part of the scope: adding the applied costs to the
+preimage was version 2, and version 3 is the canonical-universe/read-seam-snapshot
+protocol, so IDs minted under an earlier protocol are not comparable with current
+ones (no migration, no legacy reader branch). The code commit and the dirty-diff
+digest live in the manifest and never change a scope-identical run ID (frozen
+decision E01-1).
 
 The **manifest** (`RunManifest`, Pydantic v2, `extra="forbid"`) records the run
 ID and finalized directory name, aware UTC build/finalisation timestamps, protocol
@@ -156,15 +158,52 @@ preimage also contains — `cost_regimes` must name exactly those regimes), and
 execution-timing assumptions — plus
 the seed (`null` allowed), code commit plus dirty-diff digest, a digest of
 non-secret configuration only, data provenance (`synthetic | real | mixed |
-unknown`), input snapshots (`name`, `sha256`, `source`), per-artifact
-`path`/`sha256`/`bytes`, and per-metric availability (`measured | missing |
-non_finite`). The manifest **re-verifies its own run ID**: a file whose stated
-`run_id` is not reproduced by hashing its recorded scope (including the applied
-costs) is invalid, so a published run's cost application cannot be edited without
-invalidating the run. Input snapshot hashes are the content of what was read at the read
-seam — a Delta version collected after the computation is not snapshot binding
-(frozen decision E01-4). Provenance stays `unknown` unless input snapshots are
-supplied; a path, a table name, or a `01_bronze` location never proves real data.
+unknown`), the **universe basis** (`canonical | ticker_only`), input snapshots
+(`name`, `sha256`, `source`, `version`), per-artifact `path`/`sha256`/`bytes`, and
+per-metric availability (`measured | missing | non_finite`). The manifest
+**re-verifies its own run ID**: a file whose stated `run_id` is not reproduced by
+hashing its recorded scope (including the applied costs) is invalid, so a published
+run's cost application cannot be edited without invalidating the run.
+
+`universe_basis` says **how** the `universe` entries were obtained and is required
+(`extra="forbid"` unchanged), but it is deliberately **not** a scope field: the
+identity values themselves differ between the two bases, so the run ID changes with
+the basis and no redundant field enters `SCOPE_FIELD_ORDER`. It is derived by
+**parsing**, never by guessing: every entry must round-trip through
+`InstrumentKey.display_key` (`market/MIC/percent-quoted-symbol`) for `canonical`,
+otherwise the universe is `ticker_only`. A missing MIC is never filled, a venue is
+never inferred from a ticker or from configuration (ADR-0016 Decision 1/2), and an
+explicit `canonical` claim over an unparseable entry is refused at both the model
+boundary and in `finalise_run`.
+
+Input snapshots are content digests taken at the **read seam** — a Delta version
+collected after the computation is not snapshot binding (frozen decision E01-4).
+The versions are captured where the read happens: `read_delta_with_version` (one
+implementation; `read_delta` delegates and discards the version),
+`load_corporate_action_inputs_with_versions` in `ingestion` (no `backtesting` import,
+so no new layer edge), and `BacktestDataLoader.snapshots()`, which accumulates plain
+mappings — never `InputSnapshot` models, because
+`evidence -> report -> arena -> data_loader` is a live import chain. A Delta price or
+action read records `version=str(table.version())` with
+`sha256(f"delta:{table_path}@v{version}")`, a digest of the immutable
+`(path, version)` reference, **not** a content hash of every data file. A non-Delta
+price read enumerates the scan's own `<root>/**/*.parquet` glob (sorted, before the
+scan), streams each file and records one aggregate digest per market over
+`sorted [(relative_path, bytes, file_sha256)]` with `version=None`; that costs an
+extra read pass, and a file-set change after enumeration is a documented residual.
+An absent action table and in-memory fixture action inputs have no read to bind and
+record nothing; `preloaded_data` means no read happened, so its snapshots are `[]`.
+Wiring: `run_arena` sets additively on `ArenaOutcome.input_snapshots` and the arena
+writer converts them for `finalise_run`; `equity report backtest` reads
+`engine.data_loader.snapshots()`.
+
+Provenance stays `unknown` on **every** shipped path, including when snapshots
+exist: a snapshot proves which bytes/versions were read, not which price source
+produced the marks, and no persisted price-source marker exists yet (open item
+E01-6). A path, a table name, a `01_bronze` location or a bronze identity column
+never proves real data, and nothing derives a provenance — so the model's
+"non-unknown requires snapshots" rule stays a necessary, not sufficient, condition.
+E01 is not complete until E01-6 lands.
 Secrets are never read, hashed, or copied: only a digest of the non-secret
 configuration is stored, and secret-named keys are excluded before hashing.
 
@@ -199,25 +238,81 @@ artifact exists with the recorded size and SHA-256 — and reports the failing
 reasons otherwise. An undated curve (`BacktestResult.equity_dates is None`) is
 never written into a run directory: legacy undated evidence stays undated and is
 never reindexed or given an invented calendar (ADR-0025 Decision 6). The
-`latest` projection, legacy slug resolution, and reader changes are E01b.
+latest-success projection, legacy slug resolution and the reader changes are
+E01b.1 (`evidence_view.py`, below).
 
-**Who writes run evidence.** `write_arena_artifacts`
-(`backtesting/report.py`) is the production caller: after the legacy
-`<strategy>__<regime>/` reports, `benchmark__equity.parquet` and the FindingCards
-are written, it finalises **one immutable run per completed `ArenaRun`** under
-`<base>/runs/`. `base` roots both layouts (it defaults to `FINDINGS_DIR`, so
-tests point it at a temporary directory) and the legacy directories keep their
-pre-E01 shape byte-for-byte. Each run's scope is its own — that strategy, that
-cost regime with the fees and taxes it actually applied, the run's window,
-universe and initial cash, and `STRATEGY_REGISTRY`'s parameters (the parameters
-`run_arena` constructs). Those costs come from the run itself: `run_arena` records
-the `_resolve_regime_costs` pair it handed to the engine on each completed
+### Arena Attempt Evidence (`data/findings/attempts/`)
+
+An attempt is the account of **one invocation**: which pairs it requested, what
+happened to each of them, and the comparison artifacts (the three arena
+FindingCards and the benchmark curve) that describe the comparison rather than one
+run. Since E01b.1 (`backtesting/attempts.py`) one directory per invocation owns
+them (ADR-0025 Decisions 4, 5, 8):
+
+```text
+data/findings/attempts/<UTC-timestamp>Z-<short-attempt-hash>/
+├── benchmark__equity.parquet   # immutable copy, only when the curve is non-empty
+├── <card-id>.json              # strategy-comparison, cost-regime, vs-benchmark
+└── attempt.json                # written last, inside the claimed directory
+```
+
+`ATTEMPT_FIELD_ORDER` (`backtesting/attempts.py`: protocol, requested, universe,
+start_date, end_date, initial_cash, markets, costs) is both the documented order
+and the source of truth the payload builder iterates, and
+`test_attempt_payload_order_matches_attempt_field_order` pins it (the run scope
+has the equivalent `test_scope_payload_order_matches_scope_field_order`). An
+attempt ID identifies **inputs**, not an invocation instant: two identical
+invocations share an `attempt_id` and get distinct directories (timestamp plus the
+`-2`, `-3`, … collision discriminator), and `attempt.json` re-derives its own ID
+from the inputs it records, so an edited record is refused. `PairOutcome` records
+each requested pair exactly once, in request order, as `completed | failed |
+missing | contradictory | unevidenced` (the last two carry the fixed skip reasons
+`undated_curve` and `applied_costs_not_recorded`), and `status` must be the
+status those outcomes justify: `complete`, `partial`, `zero_completion` (which
+also covers the empty request, whose `notes` must name why nothing ran), or
+`write_failed` (at least one run-evidence write raised; it may coexist with
+completed outcomes, and the record must carry one `run_write_failures` entry —
+pair, `error_type`, `reason` — per raised write, while every other status must
+carry none, so an all-completed record cannot claim `write_failed`). A completed
+outcome must name the finalized run it claims,
+and a supplied run must be named by a completed outcome, so the record cannot
+assert evidence it did not check. Publishing uses the same atomic claim,
+temporary-directory build and "marker last" discipline as a run
+(`claim_evidence_directory` / `publish_evidence_directory` in
+`backtesting/evidence.py`), so a ``.tmp-`` build never looks like an attempt.
+
+**Who writes evidence.** `write_arena_artifacts` (`backtesting/report.py`) is the
+production caller. It finalises **one immutable run per requested completed
+`ArenaRun`** under `<base>/runs/`, then publishes **one attempt directory** under
+`<base>/attempts/` that owns the three comparison cards and the benchmark copy.
+`base` roots both (it defaults to `FINDINGS_DIR`, so tests point it at a temporary
+directory). Cards are built with unbound legacy-vocabulary refs and bound in the
+writer by `bind_cards_to_evidence` to `run:<run_id>`, `attempt:<attempt_id>/…`,
+`unevidenced:<slug>` or `unevidenced:benchmark` (the benchmark copy is absent for
+an empty curve), so no card persisted in an attempt directory names a mutable
+legacy location (ADR-0025 Decision 8). These refs are display-only in E01b: no
+code path dereferences them yet. It writes **no legacy path**: no `<strategy>__<regime>/` directory, no
+flat `benchmark__equity.parquet`, no flat `<card-id>.json` (E01b.1 owner decision
+D1). The single-report path (`equity report backtest`, same CLI module) is the
+second production caller: it finalises one run for its own result and publishes one
+attempt record with a single `completed` outcome, recording the fee/tax pair its
+engine was actually configured with, the strategy parameters that ran, the engine's
+resample rule and the loaded-universe size the shared evaluation classifier used —
+so **no command writes the legacy layout**. Each run's scope is its own — that strategy, that cost regime with the fees
+and taxes it actually applied, the run's window, universe and initial cash, and
+the strategy parameters the run was built with (`ArenaRun.strategy_params`,
+captured from the instance that ran; an empty mapping means "none recorded", never
+a registry-default guess). Those costs come from the run itself: `run_arena`
+records the `_resolve_regime_costs` pair it handed to the engine on each completed
 `ArenaRun` (`applied_costs`), and the writer records exactly that. It never
 re-resolves `MARKET_COST_DEFAULTS`, so a `market_costs` override or a per-venue
-default can never be published as a different (default) cost application.
+default can never be published as a different (default) cost application. Each run
+also records a bounded, non-secret `config_digest` of `{"markets": [...],
+"market_costs": <the override actually used or {}>}`.
+
 The writer keeps returning `list[FindingCard]`;
-`write_arena_artifacts_with_evidence` returns `(cards, ArenaEvidenceSummary)` for
-callers that need the evidence outcome. A completed run whose backend curve has
+`write_arena_artifacts_with_evidence` returns `(cards, ArenaEvidenceSummary)`,
+whose `attempt` is the published record. A completed run whose backend curve has
 no dates is **skipped and reported** (`skipped_undated` plus the
 `arena_run_evidence_skipped_undated` / `arena_run_evidence_written` structlog
 events with `finalized`/`skipped_undated` counts): no directory, no manifest, no
@@ -225,11 +320,27 @@ invented calendar, and the other runs still finalise. A run that does not record
 the costs its engine applied (`applied_costs is None` — a legacy or hand-built
 outcome) is skipped through the same mechanism (`skipped_unrecorded_costs`,
 `arena_run_evidence_skipped_costs_not_recorded`): the writer never guesses a
-default cost application, its legacy artifacts and the cards are still written, and
-no run directory or manifest claims a cost pair. A raising `finalise_run` is
-collected so every remaining run is still attempted, and is then re-raised — the
-legacy artifacts and cards already written stay, no partial directory becomes a
-run, and the CLI's writer-exception path still exits `1`.
+default cost application and no run directory or manifest claims a cost pair. A
+raising `finalise_run` is collected so every remaining run is still attempted; the
+attempt record is then published with `status='write_failed'` **before** the
+exception is re-raised, so the failure is durable rather than terminal-only and
+the CLI's writer-exception path still exits `1`. A pair recorded as failed (or as
+both completed and failed) publishes no run evidence at all, so a contradictory
+outcome can never become the latest success.
+
+**Readers (E01b.1).** `backtesting/evidence_view.py` is pure reads over that tree
+(no writes, no `mkdir`): `validated_runs` / `latest_success_by_slug` project
+validated runs only, `validated_attempts` / `latest_attempt` /
+`latest_attempt_for_slug` project validated attempts newest-first, `legacy_slugs`
+lists the frozen pair directories, `backtest_rows` is the `/backtests`
+projection, and `finding_cards` resolves each card id to the newest attempt-bound
+card, falling back to the frozen flat card. The **last attempt** stays distinct
+from the **last successful comparable run** (ADR-0025 Decision 5): a failed
+attempt cannot erase the last success, its age, or its identity, and neither a
+missing/truncated manifest, a corrupt artifact, nor an undated/unrecorded-cost skip
+ever advances the success projection. `api/deps.py` delegates both endpoints to
+that view and keeps reading the module-level `FINDINGS_DIR` so tests can
+monkeypatch it.
 
 ## Canonical Identity, Availability, and Private Tracking
 
@@ -292,7 +403,7 @@ repair, backfill, retraining, live sends, or deployment.
 - `src/equity_lake/ml/feature_loader.py`: DuckDB-backed feature loading (`FeatureLoader`)
 - `src/equity_lake/ml/trainer.py`: extracted training utilities (`compute_class_weights`, `compute_shap_importance`, `optimize_threshold`)
 - `src/equity_lake/ml/candidates.py`, `labeling.py`, `validation.py`: ML helper modules
-- `src/equity_lake/portfolio/`: private append-only portfolio ledger (ADR-0024) — versioned events (`models.py`), private SQLite store at `data/portfolio/portfolio.sqlite3` (`store.py`), and the canonical CSV importer with its no-write dry-run preview (`csv_import.py`). Auxiliary, never under `data/lake/` or the catalog; no positions/P&L/NAV projections, valuation marks, reconciliation, splits, FX or CLI surface yet, and no dependency on `cli/`, `dashboard/`, `sources/`, `ml/` or `signals/`.
+- `src/equity_lake/portfolio/`: private portfolio ledger (ADR-0024, ADR-0026) — versioned events (`models.py`), private SQLite store at `data/portfolio/portfolio.sqlite3` (`store.py`), the canonical CSV importer with its no-write dry-run preview (`csv_import.py`), deterministic effective-date replay into quantity/cash/average-cost basis/realized gain (`projections.py`), stored raw as-of book marks with exact-venue session age and as-of valuation (`marks.py`), and canonical statement reconciliation (`reconcile.py`). Auxiliary, never under `data/lake/` or the catalog. Read commands (`positions`, `summary`, `reconcile`) open the store read-only and create nothing; there is no operational mark producer, no split accounting, no FX, no backup/migration and no dependency on `cli/`, `dashboard/`, `sources/`, `ml/` or `signals/`.
 
 Unsupported after the June 2026 refactor:
 

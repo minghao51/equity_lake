@@ -8,7 +8,7 @@ and timezone.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import date
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xc
@@ -113,6 +113,27 @@ def instrument_sessions_between(instrument: InstrumentKey, start: date, end: dat
     return [session.date() for session in sessions]
 
 
+def instrument_session_close(instrument: InstrumentKey, session: date) -> datetime | None:
+    """Scheduled close (UTC) of one exact-MIC session, or ``None`` when it is no session.
+
+    This is the one calendar fact book marks need (ADR-0026 decision 5): a
+    session-close mark's ``as_of`` must equal the exact venue's scheduled close,
+    so an early close or a holiday is decided by that venue's calendar and never
+    approximated by a weekday or a 21:00 UTC convention. Returns an aware UTC
+    instant; no timezone, session or holiday registry is duplicated here.
+    """
+    calendar_name = _MIC_TO_CALENDAR.get(instrument.mic)
+    if calendar_name is None:
+        raise ValueError(f"No exchange calendar configured for MIC {instrument.mic!r}")
+    calendar = _get_calendar(calendar_name)
+    if not calendar.is_session(session):
+        return None
+    # ``exchange_calendars`` ships no stubs, so the call is ``Any``; the typed
+    # local keeps the declared return type honest instead of leaking ``Any``.
+    close: datetime = calendar.session_close(session).to_pydatetime().astimezone(UTC)
+    return close
+
+
 def count_trading_days(market: str, start: date, end: date) -> int:
     return len(trading_days_between(market, start, end))
 
@@ -141,8 +162,6 @@ def market_timezone(market: str) -> ZoneInfo:
 
 
 def market_now(market: str) -> date:
-    from datetime import datetime
-
     tz = market_timezone(market)
     return datetime.now(tz).date()
 
@@ -150,6 +169,7 @@ def market_now(market: str) -> date:
 __all__ = [
     "classify_market_sessions",
     "count_trading_days",
+    "instrument_session_close",
     "instrument_sessions_between",
     "is_instrument_trading_day",
     "is_trading_day",

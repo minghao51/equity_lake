@@ -45,3 +45,5 @@ enforced contracts when guidance conflicts.
 | [0023](0023-writer-side-string-view-drift.md) | Writer-side Arrow `string_view` drift: keep the read seam, contain direct pushdowns, revisit on trigger | Accepted |
 | [0024](0024-private-portfolio-ledger-and-accounting.md) | Private portfolio ledger (`us_equity`/USD): append-only events, average-cost book, unadjusted as-of marks | Accepted |
 | [0025](0025-immutable-research-evidence-and-run-manifests.md) | Immutable per-run research evidence: run IDs, manifests, dated curves, last-success latest view | Accepted |
+| [0026](0026-portfolio-projection-precision-marks-and-reconciliation.md) | P02 amendment to ADR-0024: Decimal replay, stored raw marks/session age, unknown basis and statement tolerances | Accepted |
+| [0027](0027-row-bound-price-source-provenance.md) | E01-6 extension to ADR-0025: row-bound price origin, snapshot-bound aggregation and no retrospective relabeling | Accepted |

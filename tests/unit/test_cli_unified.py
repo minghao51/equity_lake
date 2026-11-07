@@ -153,19 +153,25 @@ class TestArenaReportSubcommands:
         assert "evaluated" in result.stdout and "ineligible" in result.stdout
 
     def test_report_backtest_help(self) -> None:
+        """E01b.2: the single report publishes run + attempt evidence, not a legacy dir."""
         result = runner.invoke(app, ["report", "backtest", "--help"])
         assert result.exit_code == 0
-        assert "report artifacts" in result.stdout
+        assert "attempt evidence" in result.stdout
+        assert "Findings root for the run and attempt" in result.stdout
+        assert "undated" in result.stdout
 
 
 class TestPortfolioSubcommands:
-    """P01b: the private-ledger sub-app exposes only the canonical-CSV import."""
+    """P01b import plus the P02 read reports on the private-ledger sub-app."""
 
     def test_portfolio_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "--help"], env={"COLUMNS": "180"})
         assert result.exit_code == 0
         assert "canonical CSV" in result.stdout
         assert "import" in result.stdout
+        # P02: the three frozen read reports are registered, not stubbed.
+        for present in ("positions", "summary", "reconcile"):
+            assert present in result.stdout
 
     def test_portfolio_import_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "import", "--help"], env={"COLUMNS": "180"})
@@ -177,6 +183,32 @@ class TestPortfolioSubcommands:
         # --dry-run writes nothing at all.
         assert "canonical CSV" in result.stdout
         assert "writes nothing" in result.stdout
+        assert "Exit codes" in result.stdout
+
+    def test_portfolio_positions_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "positions", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "--as-of" in result.stdout
+        assert "--marks" in result.stdout
+        assert "--account" in result.stdout
+        assert "--max-stale-sessions" in result.stdout
+        assert "effective-date reconstruction" in result.stdout
+        assert "Exit codes" in result.stdout
+
+    def test_portfolio_summary_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "summary", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "--as-of" in result.stdout
+        assert "--marks" in result.stdout
+        assert "withholding are **unavailable**, not zero" in result.stdout
+        assert "Exit codes" in result.stdout
+
+    def test_portfolio_reconcile_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "reconcile", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "--as-of" in result.stdout
+        assert "--statement" in result.stdout
+        assert "0.00000001 share and 0.01 USD" in result.stdout
         assert "Exit codes" in result.stdout
 
 

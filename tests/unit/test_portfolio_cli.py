@@ -1,5 +1,7 @@
-"""CLI contracts for ``equity portfolio import`` (P01b, ADR-0024 decision 13).
+"""CLI contracts for the private portfolio ledger (P01b import, P02 read reports).
 
+``import`` is the only write path; ``positions``, ``summary`` and ``reconcile``
+are the frozen P02 read reports (ADR-0024 decision 13, ADR-0026 decision 7).
 Fixtures are invented: a neutral ``main`` account label, an invented instrument and
 invented amounts. No broker file, no real account data, no network and no lake write.
 
@@ -12,8 +14,11 @@ call time by ``portfolio_db_path``), so a test can never touch the repository's
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
+import json
 import re
+import stat
 from pathlib import Path
 
 import pytest
@@ -511,19 +516,16 @@ def test_import_help_states_the_frozen_exit_contract() -> None:
     assert "nothing is written" in result.stdout.lower()
 
 
-def test_only_import_is_registered() -> None:
-    """The frozen surface is not faked: no P02 command is registered, stubbed or hinted."""
+def test_only_import_and_the_read_reports_are_registered() -> None:
+    """The frozen surface is exactly the import plus the three P02 read reports."""
     registered = {command.name for command in portfolio_app.registered_commands}
-    assert registered == {"import"}
+    assert registered == {"import", "positions", "summary", "reconcile"}
     assert portfolio_app.registered_groups == []
 
     help_result = runner.invoke(app, ["portfolio", "--help"], env={"COLUMNS": "180"})
     assert help_result.exit_code == 0, help_result.output
-    assert "import" in help_result.stdout
-    for absent in ("positions", "summary", "reconcile"):
-        assert absent not in help_result.stdout
-        invocation = runner.invoke(app, ["portfolio", absent])
-        assert invocation.exit_code != 0, (absent, invocation.output)
+    for present in ("import", "positions", "summary", "reconcile"):
+        assert present in help_result.stdout, present
 
 
 def test_portfolio_group_help_is_listed_on_the_unified_cli() -> None:
@@ -531,3 +533,545 @@ def test_portfolio_group_help_is_listed_on_the_unified_cli() -> None:
 
     assert result.exit_code == 0, result.output
     assert "portfolio" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# P02 read commands: positions, summary, reconcile (ADR-0026 decision 7)
+# ---------------------------------------------------------------------------
+
+SNAPSHOT = "2024-01-05T21:00:00Z"
+PRIVATE_PRICE = "987654.32"
+
+
+def _positions(*args: str) -> Result:
+    return runner.invoke(app, ["portfolio", "positions", *args])
+
+
+def _summary(*args: str) -> Result:
+    return runner.invoke(app, ["portfolio", "summary", *args])
+
+
+def _reconcile(*args: str) -> Result:
+    return runner.invoke(app, ["portfolio", "reconcile", *args])
+
+
+def _marks_file(
+    directory: Path,
+    *,
+    price: object = "125",
+    provenance: str = "synthetic",
+    session: str = "2024-01-05",
+    as_of: str = "2024-01-05T21:00:00+00:00",
+    blocks: list[dict[str, str]] | None = None,
+    name: str = "marks.json",
+) -> Path:
+    document = {
+        "schema_version": 1,
+        "marks": [
+            {
+                "market": "us_equity",
+                "mic": "XNAS",
+                "symbol": SYMBOL,
+                "currency": "USD",
+                "price": price,
+                "session": session,
+                "as_of": as_of,
+                "source": "fixture",
+                "price_basis": "unadjusted",
+                "provenance": provenance,
+            }
+        ],
+        "valuation_blocks": blocks or [],
+    }
+    path = directory / name
+    path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def _statement_file(directory: Path, *, quantity: str = "11", cash: str = "924", name: str = "statement.csv") -> Path:
+    text = (
+        "account,as_of,line_type,market,mic,symbol,currency,quantity,cash\n"
+        f"main,{SNAPSHOT},CASH,,,,USD,,{cash}\n"
+        f"main,{SNAPSHOT},POSITION,us_equity,XNAS,{SYMBOL},USD,{quantity},\n"
+    )
+    path = directory / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _seeded_ledger(tmp_path: Path) -> None:
+    """Import the hand-oracle timeline: cash 924, 11 shares, realized gain 90."""
+    path = _write_csv(tmp_path, _hand_oracle_rows())
+    result = _import("--file", str(path))
+    assert result.exit_code == 0, result.output
+
+
+def _ledger_snapshot(root: Path) -> dict[str, tuple[str, int]]:
+    """Every path under the private data root with its content hash and mode."""
+    snapshot: dict[str, tuple[str, int]] = {}
+    for path in sorted(root.rglob("*")):
+        mode = stat.S_IMODE(path.stat().st_mode)
+        if path.is_dir():
+            snapshot[f"{path.relative_to(root)}/"] = ("dir", mode)
+        else:
+            snapshot[str(path.relative_to(root))] = (hashlib.sha256(path.read_bytes()).hexdigest(), mode)
+    return snapshot
+
+
+@pytest.mark.parametrize("command", ["positions", "summary", "reconcile"])
+def test_read_command_help_states_required_inputs_and_the_exit_contract(command: str) -> None:
+    result = runner.invoke(app, ["portfolio", command, "--help"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "--as-of" in result.stdout
+    assert "--account" in result.stdout
+    assert "Exit codes" in result.stdout
+    assert "read paths" in result.stdout.lower()
+
+
+def test_valuation_help_states_the_staleness_bound_and_marks_requirement() -> None:
+    for command in ("positions", "summary"):
+        result = runner.invoke(app, ["portfolio", command, "--help"], env={"COLUMNS": "200"})
+
+        assert result.exit_code == 0, result.output
+        assert "--marks" in result.stdout
+        assert "--max-stale-sessions" in result.stdout
+        assert "never above 1" in result.stdout
+
+
+def test_reconcile_help_states_the_canonical_statement_only() -> None:
+    result = runner.invoke(app, ["portfolio", "reconcile", "--help"], env={"COLUMNS": "200"})
+
+    assert result.exit_code == 0, result.output
+    assert "--statement" in result.stdout
+    assert "canonical" in result.stdout
+    assert "never created or mapped from a broker export" in result.stdout
+
+
+def test_positions_reports_the_hand_oracle(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    marks = _marks_file(tmp_path)
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(marks))
+
+    assert result.exit_code == 0, result.output
+    stdout = result.stdout
+    assert "quantity 11" in stdout
+    assert "basis 1177.00" in stdout
+    assert "average cost 107.00" in stdout
+    assert "realized gain 90.00" in stdout
+    assert "mark 125 (fixture, provenance synthetic)" in stdout
+    assert "session 2024-01-05" in stdout
+    assert "age 0 session(s), bound 1" in stdout
+    assert "value 1375.00" in stdout
+    assert "unrealized gain 198.00" in stdout
+    assert "cash 924.00" in stdout
+    assert "marked position value 1375.00" in stdout
+    assert "NAV 2299.00" in stdout
+    assert "total gain 299.00" in stdout
+    assert "effective-date reconstruction" in stdout
+
+
+def test_summary_reports_the_hand_oracle_and_an_unavailable_breakdown(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    marks = _marks_file(tmp_path)
+
+    result = _summary("--as-of", SNAPSHOT, "--marks", str(marks))
+
+    assert result.exit_code == 0, result.output
+    stdout = result.stdout
+    assert "cash 924.00" in stdout
+    assert "fees counted once: embedded 7.00, standalone 0.00" in stdout
+    assert "net dividend income 11.00" in stdout
+    assert "gross dividend income and withholding unavailable" in stdout
+    assert "realized gain 90.00" in stdout
+    assert "NAV 2299.00" in stdout
+    assert "unrealized gain 198.00" in stdout
+    assert "total gain 299.00" in stdout
+    assert "allocation of NAV:" in stdout
+    assert "0.598086" in stdout and "0.401914" in stdout
+
+
+def test_summary_reports_external_flows_as_not_profit(tmp_path: Path, isolated_ledger: Path) -> None:
+    rows = [
+        _row(_DEPOSIT, cash_effect="500.00"),
+        _row(_DEPOSIT, external_id="evt-0002", event_type="WITHDRAWAL", sequence="2", cash_effect="-200.00"),
+    ]
+    path = _write_csv(tmp_path, rows)
+    assert _import("--file", str(path)).exit_code == 0
+
+    result = _summary("--as-of", SNAPSHOT, "--marks", str(_marks_file(tmp_path)))
+
+    assert result.exit_code == 0, result.output
+    assert "deposits 500.00, withdrawals 200.00, net 300.00 (external flows, never profit)" in result.stdout
+    assert "NAV 300.00" in result.stdout
+
+
+def test_positions_names_the_blocker_and_exits_one_when_a_mark_is_missing(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    empty_marks = tmp_path / "empty-marks.json"
+    empty_marks.write_text(json.dumps({"schema_version": 1, "marks": [], "valuation_blocks": []}), encoding="utf-8")
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(empty_marks))
+
+    assert result.exit_code == 1
+    assert "cash 924.00" in result.stdout
+    assert "marked position value 0.00" in result.stdout
+    assert "NAV unavailable" in result.stdout
+    assert f"XNAS:{SYMBOL}: no stored mark" in result.output
+    assert "cannot be valued" in result.output
+
+
+@pytest.mark.parametrize("command", ["positions", "summary"])
+def test_stale_mark_prints_a_partial_report_and_exits_one(command: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    marks = _marks_file(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", command, "--as-of", "2024-01-09T21:00:00Z", "--marks", str(marks)])
+
+    assert result.exit_code == 1
+    assert "924.00" in result.stdout
+    assert "NAV unavailable" in result.stdout
+    assert "older than the staleness bound" in result.output
+
+
+def test_quantity_uncertain_block_withholds_valuation_and_names_the_holding(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    marks = _marks_file(
+        tmp_path,
+        blocks=[{"market": "us_equity", "mic": "XNAS", "symbol": SYMBOL, "reason": "unsupported_quantity_adjustment"}],
+    )
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(marks))
+
+    assert result.exit_code == 1
+    assert "quantity uncertain" in result.stdout
+    assert "recorded quantity is uncertain" in result.output
+
+
+@pytest.mark.parametrize("command", ["positions", "summary", "reconcile"])
+def test_missing_as_of_exits_one_with_the_required_option_message(command: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", command])
+
+    assert result.exit_code == 1
+    assert "--as-of is required" in result.output
+
+
+@pytest.mark.parametrize("value", ["2024-01-05T21:00:00", "2024-01-05 21:00", "not-a-time"])
+@pytest.mark.parametrize("command", ["positions", "summary"])
+def test_naive_or_invalid_as_of_exits_one(command: str, value: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", command, "--as-of", value, "--marks", str(_marks_file(tmp_path))])
+
+    assert result.exit_code == 1
+    assert "timezone-aware" in result.output or "not an ISO-8601 timestamp" in result.output
+
+
+def test_missing_ledger_is_unavailable_and_creates_nothing(tmp_path: Path, isolated_ledger: Path) -> None:
+    marks = _marks_file(tmp_path)
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(marks))
+
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+    assert "never create" in result.output
+    _assert_no_ledger_written(tmp_path, isolated_ledger)
+
+
+def test_missing_marks_file_exits_one_and_creates_nothing(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    absent = tmp_path / "absent-marks.json"
+    before = _ledger_snapshot(isolated_ledger)
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(absent))
+
+    assert result.exit_code == 1
+    assert "names a file that does not exist" in result.output
+    assert not absent.exists()
+    assert _ledger_snapshot(isolated_ledger) == before
+
+
+def test_missing_statement_exits_one_and_creates_nothing(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    absent = tmp_path / "absent-statement.csv"
+    before = _ledger_snapshot(isolated_ledger)
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(absent))
+
+    assert result.exit_code == 1
+    assert "names a file that does not exist" in result.output
+    assert not absent.exists()
+    assert _ledger_snapshot(isolated_ledger) == before
+
+
+@pytest.mark.parametrize("value", ["2", "-1", "3"])
+def test_max_stale_sessions_above_one_is_refused(value: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(_marks_file(tmp_path)), "--max-stale-sessions", value)
+
+    assert result.exit_code == 1
+    assert "must be 0 or 1" in result.output
+
+
+def test_zero_session_bound_is_accepted_for_a_same_session_mark(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(_marks_file(tmp_path)), "--max-stale-sessions", "0")
+
+    assert result.exit_code == 0, result.output
+    assert "NAV 2299.00" in result.stdout
+    assert "bound 0" in result.stdout
+
+
+def test_reconcile_reports_matched_lines_and_exits_zero(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(_statement_file(tmp_path)))
+
+    assert result.exit_code == 0, result.output
+    assert "cash: statement 924.00, ledger 924.00, delta 0.00, tolerance 0.01, matched" in result.stdout
+    assert "quantity XNAS:" in result.stdout
+    assert "tolerance 0.00000001, matched" in result.stdout
+    assert "overall: matched" in result.stdout
+    assert "not tax certification" in result.stdout
+
+
+def test_reconcile_mismatch_exits_one_and_never_adjusts_the_ledger(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    before = _ledger_snapshot(isolated_ledger)
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(_statement_file(tmp_path, quantity="9", cash="900")))
+
+    assert result.exit_code == 1
+    assert "delta -2" in result.stdout
+    assert "delta -24.00" in result.stdout
+    assert "overall: mismatched" in result.stdout
+    assert "the ledger was not adjusted and no balancing event was inserted" in result.output
+    assert _ledger_snapshot(isolated_ledger) == before
+
+
+def test_reconcile_unavailable_exits_one(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    partial = tmp_path / "cash-only.csv"
+    partial.write_text(f"account,as_of,line_type,market,mic,symbol,currency,quantity,cash\nmain,{SNAPSHOT},CASH,,,,USD,,924\n", encoding="utf-8")
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(partial))
+
+    assert result.exit_code == 1
+    assert "overall: unavailable" in result.stdout
+    assert "omits an open ledger holding" in result.stdout
+
+
+def test_reconcile_rejects_a_malformed_statement_without_echoing_values(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    broken = tmp_path / "broken.csv"
+    broken.write_text(
+        f"account,as_of,line_type,market,mic,symbol,currency,quantity,cash\nmain,{SNAPSHOT},CASH,,,,EUR,,{PRIVATE_PRICE}\n",
+        encoding="utf-8",
+    )
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(broken))
+
+    assert result.exit_code == 1
+    assert "rejected" in result.output
+    assert PRIVATE_PRICE not in result.output
+    assert SYMBOL not in result.output
+
+
+def test_invalid_marks_file_is_refused_without_echoing_private_values(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    # A JSON number instead of decimal text: the rejected value must not be echoed.
+    marks = _marks_file(tmp_path, price=float(PRIVATE_PRICE))
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(marks))
+
+    assert result.exit_code == 1
+    assert "decimal text" in result.output
+    assert PRIVATE_PRICE not in result.output
+    assert SYMBOL not in result.output
+
+
+def test_read_paths_leave_the_ledger_bytes_and_permissions_unchanged(tmp_path: Path, isolated_ledger: Path) -> None:
+    """Success and rejection paths both write nothing: no DB, journal, cache or mark file."""
+    _seeded_ledger(tmp_path)
+    marks = _marks_file(tmp_path)
+    statement = _statement_file(tmp_path)
+    before = _ledger_snapshot(isolated_ledger)
+
+    invocations = [
+        ["portfolio", "positions", "--as-of", SNAPSHOT, "--marks", str(marks)],
+        ["portfolio", "summary", "--as-of", SNAPSHOT, "--marks", str(marks)],
+        ["portfolio", "reconcile", "--as-of", SNAPSHOT, "--statement", str(statement)],
+        # Rejection paths.
+        ["portfolio", "positions", "--as-of", "2024-01-09T21:00:00Z", "--marks", str(marks)],
+        ["portfolio", "summary", "--as-of", SNAPSHOT, "--marks", str(tmp_path / "absent.json")],
+        ["portfolio", "reconcile", "--as-of", SNAPSHOT, "--statement", str(_statement_file(tmp_path, quantity="9", name="mismatch.csv"))],
+        ["portfolio", "positions", "--as-of", "2024-01-05T21:00:00Z", "--max-stale-sessions", "5"],
+    ]
+    results = [runner.invoke(app, args) for args in invocations]
+
+    assert [result.exit_code for result in results] == [0, 0, 0, 1, 1, 1, 1], [result.output for result in results]
+    assert _ledger_snapshot(isolated_ledger) == before
+    for suffix in COMPANION_SUFFIXES:
+        assert list(tmp_path.rglob(f"*{suffix}")) == []
+
+
+@pytest.mark.parametrize("command", ["positions", "summary"])
+def test_incomplete_valuation_keeps_identities_out_of_stderr(command: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    """ADR-0026 decision 7: identities belong in the report, not in a value-free error message."""
+    _seeded_ledger(tmp_path)
+    empty_marks = tmp_path / "empty-marks.json"
+    empty_marks.write_text(json.dumps({"schema_version": 1, "marks": [], "valuation_blocks": []}), encoding="utf-8")
+
+    result = runner.invoke(app, ["portfolio", command, "--as-of", SNAPSHOT, "--marks", str(empty_marks)])
+
+    assert result.exit_code == 1
+    # The requested local report (stdout) names the affected instrument ...
+    assert SYMBOL in result.stdout
+    assert f"XNAS:{SYMBOL}" in result.stdout
+    # ... while stderr carries only a value-free category tally.
+    assert SYMBOL not in result.stderr
+    assert "XNAS" not in result.stderr
+    assert "cannot be valued" in result.stderr
+    assert "missing_mark 1" in result.stderr
+    assert "no private value is written to this message" in result.stderr
+
+
+@pytest.mark.parametrize("command", ["positions", "summary"])
+def test_missing_marks_option_exits_one(command: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", command, "--as-of", SNAPSHOT])
+
+    assert result.exit_code == 1
+    assert "--marks is required" in result.output
+
+
+def test_missing_statement_option_exits_one(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", "reconcile", "--as-of", SNAPSHOT])
+
+    assert result.exit_code == 1
+    assert "--statement is required" in result.output
+
+
+def test_stale_valuation_stderr_is_value_free(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", "positions", "--as-of", "2024-01-09T21:00:00Z", "--marks", str(_marks_file(tmp_path))])
+
+    assert result.exit_code == 1
+    assert "stale_mark 1" in result.stderr
+    assert SYMBOL not in result.stderr
+
+
+def test_duplicate_statement_header_exits_one_without_a_traceback(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    duplicated = tmp_path / "duplicated.csv"
+    duplicated.write_text(
+        f"account,account,as_of,line_type,market,mic,symbol,currency,quantity,cash\nmain,main,{SNAPSHOT},CASH,,,,USD,,924\n",
+        encoding="utf-8",
+    )
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(duplicated))
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "repeats 2 column name" in result.output
+
+
+def test_header_only_statement_exits_one_without_a_traceback(tmp_path: Path, isolated_ledger: Path) -> None:
+    _seeded_ledger(tmp_path)
+    empty = tmp_path / "header-only.csv"
+    empty.write_text("account,as_of,line_type,market,mic,symbol,currency,quantity,cash\n", encoding="utf-8")
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(empty))
+
+    assert result.exit_code == 1
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "no data rows" in result.output
+
+
+def test_private_filename_is_never_echoed_in_an_error(tmp_path: Path, isolated_ledger: Path) -> None:
+    """A user-supplied filename can embed a symbol or an account label: errors stay value-free."""
+    _seeded_ledger(tmp_path)
+    leaky = _marks_file(tmp_path, name=f"{SYMBOL}-{PRIVATE_ACCOUNT}-marks.json")
+
+    marked = _positions("--as-of", SNAPSHOT, "--marks", str(leaky))
+    missing = _positions("--as-of", SNAPSHOT, "--marks", str(tmp_path / f"{SYMBOL}-absent.json"))
+    statement = _reconcile("--as-of", SNAPSHOT, "--statement", str(tmp_path / f"{SYMBOL}-absent.csv"))
+
+    assert (marked.exit_code, missing.exit_code, statement.exit_code) == (0, 1, 1)
+    for result in (missing, statement):
+        assert SYMBOL not in result.output
+        assert PRIVATE_ACCOUNT not in result.output
+        assert "does not exist" in result.output
+
+
+@pytest.mark.parametrize("command", ["positions", "summary"])
+def test_unprojectable_stored_event_is_reported_without_ledger_text(command: str, tmp_path: Path, isolated_ledger: Path) -> None:
+    """A stored row can pass import yet fail projection; its text must not reach stderr.
+
+    The event contract does not check that ``cash_effect`` equals
+    ``quantity*price+fees`` — the projection does. Such a row is stored with a
+    user-supplied external ID, which a read surface must never repeat
+    (ADR-0026 decision 7).
+    """
+    leaky = _row(_OPENING, external_id="PRIVATESYM")
+    inconsistent = _row(_BUY, cash_effect="-600.00")  # 5 * 120 + 5 = 605
+    path = _write_csv(tmp_path, [leaky, inconsistent])
+    assert _import("--file", str(path)).exit_code == 0
+    before = _ledger_snapshot(isolated_ledger)
+    marks = _marks_file(tmp_path)
+
+    result = runner.invoke(app, ["portfolio", command, "--as-of", SNAPSHOT, "--marks", str(marks)])
+
+    assert result.exit_code == 1
+    assert "cannot support this projection" in result.stderr
+    assert "re-validate the source canonical CSV" in result.stderr
+    assert "PRIVATESYM" not in result.stderr
+    assert "PRIVATESYM" not in result.stdout
+    assert "-600" not in result.stderr
+    assert _ledger_snapshot(isolated_ledger) == before
+
+
+def test_unprojectable_stored_event_is_reported_without_ledger_text_in_reconcile(tmp_path: Path, isolated_ledger: Path) -> None:
+    leaky = _row(_OPENING, external_id="PRIVATESYM")
+    inconsistent = _row(_BUY, cash_effect="-600.00")
+    path = _write_csv(tmp_path, [leaky, inconsistent])
+    assert _import("--file", str(path)).exit_code == 0
+
+    result = _reconcile("--as-of", SNAPSHOT, "--statement", str(_statement_file(tmp_path)))
+
+    assert result.exit_code == 1
+    assert "cannot support this projection" in result.stderr
+    assert "PRIVATESYM" not in result.stderr
+
+
+def test_unsupported_ledger_version_is_reported_without_forwarding_metadata(tmp_path: Path, isolated_ledger: Path) -> None:
+    """Store metadata comes from the private file: the read reports a fixed refusal."""
+    import sqlite3
+
+    _seeded_ledger(tmp_path)
+    db_path = portfolio_db_path(isolated_ledger)
+    before = _ledger_snapshot(isolated_ledger)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("PRAGMA user_version=987654")
+    finally:
+        connection.close()
+
+    result = _positions("--as-of", SNAPSHOT, "--marks", str(_marks_file(tmp_path)))
+
+    assert result.exit_code == 1
+    assert "refused this read" in result.stderr
+    assert "LedgerStoreError" in result.stderr
+    assert "987654" not in result.stderr
+    assert "987654" not in result.stdout
+    # The read neither recreated nor migrated the file: only the version changed.
+    assert sorted(_ledger_snapshot(isolated_ledger)) == sorted(before)

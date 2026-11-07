@@ -21,6 +21,7 @@ logging, and mutating commands accept `--dry-run` to simulate without writes.
 | Unstructured & news | `news`, `sentiment`, `transcripts`, `ratings`, `sec`, `financials` |
 | Intelligence & ML | `forecast`, `ml compare`, `ml ablate`, `ml train` |
 | Analysis | `query`, `signal scan`, `signal history`, `tracking`, `backtest`, `arena run`, `report backtest` |
+| Private portfolio | `portfolio import`, `portfolio positions`, `portfolio summary`, `portfolio reconcile` |
 | Maintenance & ops | `monitor`, `delta-vacuum`, `delta-compact`, `delta-migrate`, `catalog-generate`, `dashboard build`, `dashboard serve` |
 | Config & validation | `config show`, `config get`, `config validate`, `config export`, `validate check`, `validate profile`, `validate drift` |
 | Utilities | `doctor`, `bootstrap sample`, `demo seed`, `api serve` |
@@ -444,6 +445,44 @@ options and privacy boundaries. `scan --dry-run` is a no-read/no-inference/
 no-persistence/no-delivery plan. Delivery is disabled unless `--enable-live` is
 explicitly passed; the opportunity webhook is distinct from health webhooks.
 
+### `equity portfolio`
+
+`equity portfolio import` is the only write path: it accepts the canonical CSV
+only (no broker-export mapping, no plugin) and `--dry-run` validates fully and
+writes nothing.
+
+`equity portfolio positions|summary|reconcile` are read-only reports over the same
+private ledger. Each needs an explicit timezone-aware `--as-of` plus `--marks`
+(valuation) or `--statement` (reconciliation), and each takes the neutral
+`--account` label (default `main`). The valuation commands accept
+`--max-stale-sessions` as `0` or `1` only. Reads never create a database,
+directory, journal, mark file or cache, and a missing ledger is unavailable rather
+than an empty account.
+
+```bash
+uv run equity portfolio positions --as-of 2024-01-05T21:00:00Z --marks marks.json
+uv run equity portfolio summary --as-of 2024-01-05T21:00:00Z --marks marks.json
+uv run equity portfolio reconcile --as-of 2024-01-05T21:00:00Z --statement statement.csv
+```
+
+`positions` prints holdings with basis status, average cost, realized gain, the
+selected mark (price, source, provenance, session, completed-session age), value,
+unrealized gain and blockers. `summary` prints cash, flows, fees, net dividend
+income, gains, the valid marked subtotal and — only when every required mark is
+valid — complete NAV and allocation. Gross dividend income and withholding are
+unavailable (schema v1 stores net dividend cash only), never zero. `reconcile`
+compares statement quantities and cash line by line with inclusive tolerances of
+`0.00000001` share and `0.01` USD.
+
+Exit codes: `0` only for a complete result (for `reconcile`: every line matched);
+`1` for required unavailability, a mismatch, or invalid input. Partial reports stay
+visible, and a nonzero exit never means they were complete. Private values appear
+only in the requested local report, never in error text.
+
+See the [private portfolio guide](20261103-private-portfolio-ledger.md) for the
+canonical CSV, the stored mark JSON, the staleness rule and the accounting
+contract.
+
 ### `equity backtest`
 
 Backtest trading strategies (shares the strategy registry with
@@ -469,8 +508,8 @@ uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
 
 ### `equity arena run`
 
-Run the strategy arena (strategies × cost regimes) and emit FindingCards plus
-per-run artifacts.
+Run the strategy arena (strategies × cost regimes) and publish one immutable run per
+requested completed pair plus one attempt directory per invocation.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -481,7 +520,7 @@ per-run artifacts.
 | `--initial-cash` | float | `100000` | Initial capital |
 | `--strategies` | str | all | Comma-separated strategy names |
 | `--cost-regimes` | str | all | Comma-separated regimes (`zero`, `realistic`, `high`) |
-| `--output-dir`, `-o` | str | `data/findings` | Findings dir |
+| `--output-dir`, `-o` | str | `data/findings` | Findings root (runs + attempts) |
 | `--lake` | str | canonical lake | Lake root to read prices and action coverage from |
 
 ```bash
@@ -528,15 +567,24 @@ Only `evaluated` runs (trades present and the universe at least the strategy's
 with their status and excluded from card evidence. The default five-ticker
 universe is below momentum's `min_stocks=10`, so that run reports
 `ineligible — universe 5 < min_stocks 10` without failing the invocation. There
-is no partial-allowance flag; artifact directories from earlier runs can remain
-under the findings root and nothing is deleted automatically (immutable per-run
-layout is E01's boundary).
+is no partial-allowance flag. Artifacts are immutable: each invocation writes one
+`runs/<ts>-<hash>/` per requested completed pair and one `attempts/<ts>-<hash>/`
+that owns the three comparison cards and the benchmark copy; nothing is deleted
+automatically, and the pre-E01b legacy `<strategy>__<regime>/` directories are a
+frozen read-only view that no command writes any more. See the
+[Arena and findings guide](20260829-arena-and-findings.md#artifact-layout-under-datafindings)
+for the full layout, the `last_attempt`/`last_success` fields and the display-only
+`run:`/`attempt:`/`unevidenced:` card references.
 
 ### `equity report backtest`
 
-Run a single backtest under one cost regime and write its report artifacts
-(equity/drawdown/metrics/trades) to `data/findings/<strategy>__<regime>/`. No
-FindingCard.
+Run a single backtest under one cost regime and publish one immutable run
+(`data/findings/runs/<ts>-<hash>/`) plus one attempt record
+(`data/findings/attempts/<ts>-<hash>/`). No FindingCard, and no legacy
+`<strategy>__<regime>/` directory. An undated result is refused (exit `1`, nothing
+written). The fee/tax pair actually applied is read from the engine and recorded in
+the run manifest: a single report uses the static `COST_REGIMES` pair, not the
+arena's per-market `realistic` defaults.
 
 | Flag | Type | Default | Notes |
 |---|---|---|---|
@@ -547,7 +595,7 @@ FindingCard.
 | `--markets` | str | `us_equity` | Comma-separated market codes |
 | `--cost-regime` | str | `realistic` | `zero`, `realistic`, or `high` |
 | `--initial-cash` | float | `100000` | Initial capital |
-| `--output-dir`, `-o` | str | `data/findings` | Findings dir |
+| `--output-dir`, `-o` | str | `data/findings` | Findings root for the run and attempt evidence |
 
 ```bash
 uv run equity report backtest --strategy mean_reversion --cost-regime high \

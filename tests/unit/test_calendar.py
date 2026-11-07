@@ -7,6 +7,7 @@ import pytest
 
 from equity_lake.core.calendar import (  # type: ignore[import-untyped]
     count_trading_days,
+    instrument_session_close,
     instrument_sessions_between,
     is_instrument_trading_day,
     is_trading_day,
@@ -176,7 +177,7 @@ class TestResolveTradingDateGuard:
     """
 
     def test_unknown_market_raises_instead_of_hanging(self) -> None:
-        from equity_lake.core.dates import resolve_trading_date
+        from equity_lake.core.dates import resolve_trading_date  # type: ignore[import-untyped]
 
         with pytest.raises(ValueError, match="Unknown price market"):
             resolve_trading_date(None, days_back=1, today=date(2026, 6, 2), market="cn_ashar")
@@ -194,3 +195,47 @@ class TestResolveTradingDateGuard:
         # Both vocabularies resolve identically on the CN calendar.
         kwargs = {"days_back": 1, "today": date(2026, 6, 8)}
         assert resolve_trading_date(None, market="cn", **kwargs) == resolve_trading_date(None, market="cn_ashare", **kwargs)
+
+
+class TestInstrumentSessionClose:
+    """Exact-MIC scheduled closes for book-mark validation and session age (P02b).
+
+    Expected values are the venues' published closes: 21:00 UTC for a regular US
+    session, 18:00 UTC for the 2024-11-29 early close and 17:00 UTC for the
+    2024-07-03 early close. No default 21:00 convention is assumed.
+    """
+
+    def test_regular_us_session_close(self) -> None:
+        from datetime import UTC, datetime
+
+        close = instrument_session_close(InstrumentKey(market="us_equity", mic="XNAS", symbol="AAA"), date(2024, 1, 5))
+
+        assert close == datetime(2024, 1, 5, 21, 0, tzinfo=UTC)
+
+    def test_early_close_is_honoured(self) -> None:
+        from datetime import UTC, datetime
+
+        instrument = InstrumentKey(market="us_equity", mic="XNYS", symbol="AAA")
+
+        assert instrument_session_close(instrument, date(2024, 11, 29)) == datetime(2024, 11, 29, 18, 0, tzinfo=UTC)
+        assert instrument_session_close(instrument, date(2024, 7, 3)) == datetime(2024, 7, 3, 17, 0, tzinfo=UTC)
+
+    def test_weekend_and_holiday_have_no_close(self) -> None:
+        instrument = InstrumentKey(market="us_equity", mic="XNYS", symbol="AAA")
+
+        assert instrument_session_close(instrument, date(2024, 1, 6)) is None
+        assert instrument_session_close(instrument, date(2024, 1, 1)) is None
+
+    def test_unknown_mic_raises_instead_of_guessing(self) -> None:
+        instrument = InstrumentKey.model_construct(market="us_equity", mic="ZZZZ", symbol="AAA")
+
+        with pytest.raises(ValueError, match="No exchange calendar configured"):
+            instrument_session_close(instrument, date(2024, 1, 5))
+
+    def test_agrees_with_the_trading_day_helper(self) -> None:
+        instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAA")
+
+        assert instrument_session_close(instrument, date(2024, 1, 5)) is not None
+        assert is_instrument_trading_day(instrument, date(2024, 1, 5)) is True
+        assert instrument_session_close(instrument, date(2024, 1, 7)) is None
+        assert is_instrument_trading_day(instrument, date(2024, 1, 7)) is False

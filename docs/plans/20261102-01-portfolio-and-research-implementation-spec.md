@@ -1,11 +1,16 @@
 # Portfolio and Research — Implementation Plan and Specification
 
 **Recorded:** 2026-11-02
-**Status:** Draft for owner approval; no stage below is implemented by this document.
+**Status (updated 2026-11-06):** Active specification and outcome ledger. B00,
+F01–F04, P00/E00/D00, P01a/P01b, E01a, E01b.1, E01b.2 and E01c are complete for
+their recorded scope; whole E01 still needs E01-6. P02 is the next eligible
+planning stage. Future implementation still needs its bounded approval gate.
 **Purpose:** Personal portfolio monitoring and a defensible raw-data → structured-data
 → features → research → optional ML-signal workflow.
 **Evidence:** [A01–A11 audit](../finding/20261102-product-readiness-audit.md).
-**Execution:** [Worker/reviewer pickup](../handoffs/20261102-01-portfolio-and-research-pickup.md).
+**Execution:** [Current pickup and next-thread queue](../handoffs/20261107-01-portfolio-projections-and-open-items.md).
+The [original Nov02 pickup](../handoffs/20261102-01-portfolio-and-research-pickup.md)
+is historical. §10 records approvals, reviews and outcomes; §2 is the current queue.
 
 ## 1. Product direction and authorization
 
@@ -16,12 +21,13 @@ ML value. Do not prioritize operational refits or widen the seven-day age cap.
 Controlled historical fitting for an approved experiment is distinct from
 production retraining and must use isolated artifacts.
 
-This draft specifies proposed behaviour, not accepted new architecture. Before
-code changes, the owner approves the selected stage and its proposed contract.
-Acceptance of this plan does **not** automatically accept an ADR, choose a broker,
-market/currency or accounting method, authorize source/spend/private-data access,
-or activate delivery/scheduling/deployment. Architecture/storage/schema changes
-require accepted ADRs and the change-matrix work in `AGENTS.md` first.
+This specification contains implemented stages and approval-gated future work.
+Before new code changes, the owner approves the selected bounded stage plan.
+ADR-0024/0025 and the decisions recorded in §10 are accepted; do not reopen them
+as if nothing had been decided. Approval does **not** authorize private-data or
+provider access, source spend, delivery/scheduling/deployment, or the rest of the
+roadmap. Architecture/storage/schema changes require accepted ADRs and the
+change-matrix work in `AGENTS.md` first.
 
 ### Explicit non-goals
 
@@ -36,33 +42,44 @@ require accepted ADRs and the change-matrix work in `AGENTS.md` first.
 
 ## 2. Baseline and stage queue
 
-The audit baseline is `00dad39` plus a **dirty** accepted ADR-0023 implementation
-and `.gitignore` checkpoint exclusion. Preserve that work. Its historical full
+**Current code baseline:** `603fc8d` on `main` (E01a), clean before the
+2026-11-06 handoff-only refresh. ADR-0023 was preserved and committed separately
+at `1b380af`; do not redo B00 or look for a deliberately dirty baseline.
+
+**Historical audit baseline:** `00dad39` plus the then-dirty accepted ADR-0023
+implementation and `.gitignore` checkpoint exclusion. Its historical full
 gates were 1739 passed / 17 skipped, serial and parallel, with clean ruff/mypy,
 unchanged generated catalog and passing Markdown lint. The audit's separate
 78-test selection passed, but four diagnostic counterexamples still reproduced.
 Neither result establishes real-market performance. Re-establish actual baseline
 and dependency groups in the pickup thread; never copy historical counts as new.
 
-| Stage | Deliverable | Depends on | Entry approval | Initial status |
+| Stage | Deliverable | Depends on | Entry approval / remaining gate | Current status (2026-11-06) |
 | --- | --- | --- | --- | --- |
-| B00 | Freeze/review the carried working tree and record baseline | — | Owner-approved handling of existing changes | Pending |
-| F01 | True fixed-share, identity-safe benchmark | B00 | Approve §3.1 | Pending |
-| F02 | Instrument-local momentum lag and deterministic ordering | B00 | Approve §3.2 | Pending |
-| F03 | Honest signed cost comparison | F01 | Approve §3.3 | Pending |
-| F04 | Failure-isolated arena with truthful completion/exit policy | F01–F03 | Approve §3.4 | Pending |
-| E00 | Research-artifact/reader compatibility ADR | F04 | Owner accepts new ADR, §4 | Decision blocked |
-| E01 | Immutable runs, dated curves and latest/read compatibility | E00 | Approved implementation plan | Blocked by E00 |
-| P00 | Private accounting ADR and broker format contract | F04 | Owner decisions in §5.1 | Decision blocked |
-| P01 | Validated private ledger and idempotent import | P00 | Approved ADR; fixtures only | Blocked by P00 |
-| P02 | Positions, cash, marks, P&L and reconciliation | P01 | Approved valuation/accounting policy | Blocked by P01 |
+| B00 | Preserve/freeze carried ADR-0023 work | — | Completed separately | Complete: `1b380af`, `d85b561` |
+| F01–F04 | Benchmark, momentum/ties, signed costs, arena completion | B00 | Approved and reviewed | Complete: `df4e423` |
+| P00 | Private accounting/privacy ADR and account/import policy | F04 | ADR-0024 accepted; US/USD, canonical CSV only | Complete; future split and backup policies remain open |
+| E00 | Research-artifact/reader compatibility ADR | F04 | ADR-0025 accepted; E01-1..5 frozen | Complete |
+| D00 | US and CN offline feasibility packet | F04 | No source calls; adjusted/PIT evidence blocked | Complete: packet reviewed |
+| P01a | Validated private ledger and atomic idempotent import | P00 | Fixtures only | Complete: `0f6d771` |
+| P01b | Import CLI, help scans, user guide | P01a | P00-3 closed | Complete: `aeabe4b` |
+| E01a | Dated evidence and immutable per-pair write side | E00 | Approved write-side scope | Complete: `603fc8d`; not full E01 |
+| E01b.1 | Attempt records, last attempt/latest success, arena legacy-write removal | E01a | Owner-approved bounded plan (2026-11-06) | Complete (uncommitted): attempt dir, validated-run readers, frozen legacy view |
+| E01b.2 | Migrate `equity report backtest` off the legacy layout | E01b.1 | Owner-authorized continuation (2026-11-06) | Complete (uncommitted): run + attempt evidence, no production legacy writer |
+| E01c | Canonical universe identity and read-seam snapshot binding | E01b.1/E01b.2 | Owner-approved 2026-11-06: protocol v3, provenance stays `unknown` | Complete (uncommitted): protocol v3, universe basis, Delta/parquet read-seam snapshots |
+| E01-6 | Persisted price-source marker (the only honest route to `real`/`synthetic`) | E01c | Needs its own ADR + storage/schema decision and backfill answer | Open; blocks declaring E01 complete |
+| P02 | Positions, cash, marks, P&L, reconciliation and three read CLI commands | P01a/P01b | Approve bounded fixture-only plan under ADR-0024/§5.3 | Eligible for planning |
+| D01 | Authorized US raw/unadjusted data slice | D00 | Candidate chosen; licensing/retention, source-call and target-root authorization still required | Decision gated |
 | P03 | Private Streamlit portfolio/readiness console | P02 | Approve private UI scope; research panel waits for E01 | Blocked by P02 |
-| D00 | Offline source-feasibility and lineage decision packet | F04 | Approve investigation scope; no source calls | Pending after F04 |
-| D01 | One authorized real-data vertical slice | D00 | Source/scope authorization and any required ADRs | Decision blocked |
-| R00 | Synthetic controls and computational scale benchmark | F04, E01 | Frozen experiment/budget, §7 | Blocked by dependencies |
-| R01 | Real-data baseline strategy evidence | R00, D01 | Frozen universe/window/holdout/costs | Decision blocked |
-| R02 | Incremental ML experiment, not deployment/refitting | R01 | Frozen ML hypothesis/timing/promotion criteria | Decision blocked |
+| R00 | Synthetic controls and computational scale benchmark | F04, completed E01 | Frozen experiment and numeric resource budget, §7 | Blocked by dependencies |
+| R01 | Real-data baseline strategy evidence | R00, D01 | Frozen universe/window/holdout/costs | Decision gated |
+| R02 | Incremental ML experiment, not deployment/refitting | R01 | Frozen ML hypothesis/timing/promotion criteria | Decision gated |
 | H00 | Single sanitized public Pages deployment | E01 | Separate hosting/privacy decision | Deferred |
+
+The in-session todo list is a convenience, not the cross-thread source of
+truth. Use this table, §10 and the current handoff. Whole E01 remains partial
+until E01c (and any further identified write-side gaps) satisfy ADR-0025; the
+provenance upgrade needs a persisted price-source marker that does not exist yet.
 
 **Owner approval (2026-11-02 UTC):** B00 commit plan (b) — separate commits for the carried
 ADR-0023 work and the planning docs, then one F01–F04 tranche commit after the full gates.
@@ -70,8 +87,9 @@ F01 fixed-share benchmark with the conservative complete-panel missing-mark poli
 instrument-local locality contract **plus the added deterministic tie policy (§3.2a)**; F03
 signed cost-delta verdict with `1e-12` numerical tolerance; F04 zero/partial-run `exit 1` with
 the `evaluated | no_trades | ineligible` vocabulary. The owner asked for the reproduced
-rank-tie defect to be fixed now, inside F02, rather than deferred. B00 is done; F01–F04 are
-approved for implementation in the order below; P00/E00/D00/R00 remain unapproved.
+rank-tie defect to be fixed now, inside F02, rather than deferred. B00 is done; F01–F04 were
+approved for implementation in order. This paragraph records the Nov02 approval;
+later P00/E00/D00 decisions are recorded in §10 and the current queue above.
 
 Recommended implementation order is B00 → F01 → F02 → F03 → F04. Then P00 and
 D00 can be investigated independently; E00/E01 must precede persisted research
@@ -567,11 +585,11 @@ run/deployment authorization remain separate.
 
 ## 10. Approval and outcome ledger
 
-At drafting all stage states remain as recorded in §2. No implementation or new
-ADR has been accepted here. Before the first worker, record the owner's approval
-(or requested amendment) of F01's fixed-share/missing-mark policy, F02's locality
-contract, F03's signed-delta verdict, and F04's partial-run exit policy. Record
-P00/E00/provider/experiment decisions separately when their stages become eligible.
+The entries below preserve dated approvals and stage outcomes. The Nov02 draft
+started with no new implementation/ADR acceptance; subsequent entries record
+F01–F04, accepted ADR-0024/0025, P01a/P01b and E01a. Use the current §2 queue
+and Nov06 handoff for next work, not a historical entry's then-pending gate.
+Record new P02/E01b/provider/experiment decisions explicitly when approved.
 
 Use this entry shape per stage; link a dated tracked report if it becomes long:
 
@@ -780,9 +798,9 @@ Owner acceptance and authorized coordinator commit (if any): pending owner accep
 ```text
 F01-F04 frozen tranche gates / run 2026-11-02T16:20Z (serial then parallel, sequential):
 uv sync --group dev --group backtesting            -> exit 0 (/tmp/gate-sync.log)
-uv run pytest --junitxml=/tmp/portfolio-research-serial.xml   -> 1893 passed, 0 failed,
+uv run pytest --junitxml=/tmp/portfolio-research-serial.xml   -> 1876 passed, 0 failed,
   0 errors, 17 skipped, 366.2 s (/tmp/portfolio-research-serial.log)
-uv run pytest -n auto --junitxml=/tmp/portfolio-research-parallel.xml -> 1893 passed, 0 failed,
+uv run pytest -n auto --junitxml=/tmp/portfolio-research-parallel.xml -> 1876 passed, 0 failed,
   0 errors, 17 skipped, 788.6 s (/tmp/portfolio-research-parallel.log)
 uv run ruff check .                                -> exit 0, all checks passed
 uv run ruff format --check .                       -> exit 0, 323 files already formatted
@@ -902,8 +920,8 @@ Named regression and one-rule mutation/restore evidence: restoring context-round
   bounds tests; models.py restored from /tmp/p01a-models-dirty.py.bak with diff -q identical and
   the 117-test pair green again (/tmp/p01a-mutation.log, /tmp/p01a-restored.log).
 Focused tests / final gates / exact counts / retained log locations: 144 focused (117 portfolio +
-  27 boundaries). Full gates: serial 2011 passed / 0 failed / 17 skipped (250.6 s), parallel
-  2011 / 0 / 17 (355.4 s, sequential), ruff check/format clean, mypy clean (178 files), catalog
+  27 boundaries). Full gates: serial 1994 passed / 0 failed / 17 skipped (250.6 s), parallel
+  1994 / 0 / 17 (355.4 s, sequential), ruff check/format clean, mypy clean (178 files), catalog
   regeneration unchanged, make lint-md and git diff --check clean. Logs: /tmp/p01a-{serial,
   parallel}.{log,xml}, /tmp/p01a-{mypy,ruff,format,catalog,lintmd}.log.
 Docs, schema/catalog, privacy, compatibility and migration status: architecture and
@@ -956,7 +974,9 @@ Named regression and one-rule mutation/restore evidence: the round-1/round-2 rev
 Focused tests / final gates / exact counts / retained log locations: 190 focused (26 CLI + 164
   unified CLI scans) plus 281 in the regression trio; full gates re-run on the final tree (serial
   and parallel suites, ruff check/format, mypy, catalog regeneration, Markdown lint,
-  git diff --check) with logs under /tmp/p01b-*.
+  git diff --check) with logs under /tmp/p01b-*. Captured full-suite results: serial 2023
+  passed / 17 skipped (354.4 s); parallel 2023 passed / 17 skipped (720.3 s), zero
+  failures/errors (2040 total JUnit cases, including the skips).
 Docs, schema/catalog, privacy, compatibility and migration status: user guide added with the 18
   canonical columns, seven event types, rejections, dry-run guarantees and an explicit
   not-implemented list; MkDocs nav and docs map updated; no schema/catalog/storage change; only
@@ -1001,8 +1021,8 @@ Named regression and one-rule mutation/restore evidence: removing the applied co
   (the payload is built explicitly), so an earlier mutation against that tuple was a no-op and
   was discarded rather than reported as proof.
 Focused tests / final gates / exact counts / retained log locations: focused 42 evidence tests +
-  143 arena/backtesting regressions. Full gates: serial 2082 passed / 0 failed / 17 skipped
-  (421.3 s), parallel 2082 / 0 / 17 (723.2 s, sequential), ruff check/format clean, mypy clean
+  143 arena/backtesting regressions. Full gates: serial 2065 passed / 0 failed / 17 skipped
+  (421.3 s), parallel 2065 / 0 / 17 (723.2 s, sequential), ruff check/format clean, mypy clean
   (180 files), catalog regeneration unchanged, make lint-md and git diff --check clean. Logs:
   /tmp/e01a-{serial,parallel}.{log,xml}, /tmp/e01a-{mypy,ruff,format,catalog,lintmd}.log.
 Docs, schema/catalog, privacy, compatibility and migration status: architecture page and arena
@@ -1019,8 +1039,377 @@ Owner acceptance and authorized coordinator commit (if any): coordinator commit 
   gates, per commit plan (b).
 ```
 
+### Handoff reconciliation — 2026-11-06
+
+Current code baseline `603fc8d`; no product edits in this refresh. The current
+queue and [Nov06 handoff](../handoffs/20261106-01-research-readers-and-portfolio-pickup.md)
+replace the spent B00/F01 starter. E01b remains pending; E01 as a whole is not
+complete. Owner decisions in the dated ledger entries remain historical records;
+the current queue and accepted ADRs govern continuation.
+
+Count correction from existing `/tmp/{portfolio-research,p01a,p01b,e01a}-`
+`{serial,parallel}.xml` and E01a pytest logs: earlier summaries called total
+JUnit cases passed, including 17 skips. Correct passed counts are 1876
+(F01–F04), 1994 (P01a), 2023 (P01b), 2065 (E01a), each with 17 skipped and zero
+failures/errors in both modes. Corresponding records above are corrected; git
+history is not rewritten. No Python suite rerun is claimed for this docs update.
+Earlier ADR-0023 counts are retained as historical, not re-audited here.
+
+Handoff-only verification: `make lint-md` and `git diff --check` passed; 71
+relative links/anchors across the four changed documents resolved. A separate
+read-only reviewer checked queue, authorization, source-observed E01 limitations
+and corrected counts; its one finding (the stale §10 draft-status paragraph)
+was corrected. No product/ADR edits, Python suite run or catalog regeneration.
+Documentation remains uncommitted for pickup; preserve these four paths.
+
 Draft validation on 2026-11-02: `make lint-md` and `git diff --check` passed;
 relative links in the three new documents resolved; the embedded Python
 counterexample parsed; Decimal arithmetic confirmed the proposed accounting
 hand oracle. No product tests were rerun merely for drafting. Independent
 implementation review and fresh implementation gates remain future work.
+
+```text
+E01b.1 / done / 2026-11-06 (attempt records, latest-success readers, arena legacy-write removal):
+Owner-approved scope and policy reference: ADR-0025 (Accepted) decisions 2-5 and 7-9 with frozen
+  E01-1..E01-5; spec section 4; handoff 20261106-01. Owner decisions of 2026-11-06: the legacy
+  freeze is confirmed and extended — the arena path writes **no** legacy path at all instead of
+  freezing a path mid-use; `/backtests` rows keep their keys and gain additive
+  `last_success`/`last_attempt`; `/findings` resolves an id to the newest attempt-bound card and
+  falls back to the legacy card; one attempt directory owns the comparison cards and the benchmark
+  copy; E01 stays partial after this stage.
+Dependency and accepted-ADR evidence: 603fc8d (E01a) plus the dirty docs-only handoff refresh,
+  preserved untouched by every worker round.
+Stage-start snapshot and reviewed final diff: source = backtesting/attempts.py (new),
+  backtesting/evidence_view.py (new), backtesting/evidence.py (shared publish/card/digest helpers
+  factored out; scope payload order derived from SCOPE_FIELD_ORDER), report.py (no legacy writes;
+  attempt publication including a durable `write_failed`; bound card refs; config digest; strategy
+  params from the instance that ran), arena.py (additive `ArenaRun.strategy_params`,
+  `ArenaOutcome.markets`/`market_costs`), findings/writer.py (opt-in strict card write), api/deps.py
+  (projections), cli/commands/arena.py (previous-evidence block, zero-completion attempt, attempt
+  path output); tests = new test_evidence_attempts.py (34) and test_evidence_readers.py (15), plus
+  updated test_evidence_runs/test_arena/test_arena_failure_policy/test_api; docs = arena/findings
+  guide, read-api guide, ARCHITECTURE canonical page, notebooks/11-strategy-lab.ipynb reader import.
+Worker invocation/checkpoint: worker rounds 1-4 (private /tmp/e01b-worker-checkpoint.md; sanitized
+  summary in ignored .agent-progress/portfolio-research/). Round 2 fixed the three round-1 review
+  findings (`write_failed` must record its failure evidence; card refs bound to run IDs; notebook
+  read path). Round 3 fixed three warnings (explicit slug candidate set instead of shape matching;
+  the writer returns the cards it persisted; the token vocabulary documented as display-only).
+  Round 4 fixed a benchmark ref that could name an artifact the attempt never wrote.
+Independent reviewer, verdict and issue resolution: reviewer rounds 1-3 returned NEEDS-REVISION
+  (round 1: two majors plus a notebook consumer regression; round 2: three warnings; round 3: one
+  warning) and every finding was fixed in the next worker round. Round 4's delta review reported no
+  functional regression and one doc mismatch; the coordinator corrected the ARCHITECTURE token
+  summary and the final verdict round returned PASS. Round 4's first response omitted the required
+  verdict line and was re-requested with read-only verification allowed; the ledger records the
+  PASS that was actually returned.
+Named regression and one-rule mutation/restore evidence: (a) accepting non-finalized verdicts in
+  `validated_runs` fails test_latest_success_ignores_a_damaged_newer_run[missing-manifest]
+  (/tmp/e01b-mutation.log); (b) deleting the `write_failed` failure-evidence rule fails
+  test_status_consistency_complete_partial_zero_completion_write_failed (/tmp/e01b-mutation2.log).
+  Both files restored from /tmp/e01b-{evidence_view,attempts}-dirty.py.bak with `diff -q` identical
+  and the 49 attempts+readers tests green again (/tmp/e01b-restored.log).
+Focused tests / final gates / exact counts / retained log locations: focused 298 tests (296 passed,
+  0 failed, 2 skipped: lightgbm absent). Full gates: serial 2119 passed / 0 failed / 17 skipped / 97
+  deselected (467.5 s), parallel 2119 / 0 / 17 (476.1 s, run sequentially), ruff check/format clean,
+  mypy clean (182 files), catalog regeneration byte-identical, `make lint-md` and `git diff --check`
+  clean. Logs: /tmp/e01b-{serial,parallel}.{log,xml}, /tmp/e01b-{ruff,format,mypy,catalog,lintmd,
+  lintmd2,diffcheck}.log. The 2065 → 2119 passed delta is +54 tests (34 attempts + 15 readers + 3
+  runs + 2 api), consistent with the new modules rather than unexplained drift.
+Docs, schema/catalog, privacy, compatibility and migration status: both guides document the
+  runs+attempts layout, the absence of legacy writes, the frozen legacy view, last-attempt vs
+  last-success, the display-only `run:`/`attempt:`/`unevidenced:` vocabulary and the
+  `equity report backtest` legacy caveat; the canonical ARCHITECTURE page is updated. No
+  catalog/schema/storage/Settings/.env change; no lake, private-account or runtime `data/` write
+  (catalog regeneration byte-identical; all tests use tmp roots). `/findings` and `/backtests` keep
+  their response shapes; the latter gains `last_success`/`last_attempt` additively.
+Residuals, explicit stop condition, next eligible stage: E01b.2 (`equity report backtest` is the
+  last legacy writer and needs the applied costs recorded from the built engine) and E01c (canonical
+  `(market, MIC, symbol)` universe identity, read-seam input snapshot hashing, provenance upgrade)
+  remain open, so E01 is partial and provenance stays `unknown`. W&B is untouched. Advisory checks
+  on the changed paths are false positives: `int()` of a `timedelta` total and pre-existing literal
+  parsing, plus anchored hex patterns on module constants rather than user input. Stage stops here.
+Owner acceptance and authorized coordinator commit (if any): none. The stage and the 2026-11-06
+  documentation refresh remain uncommitted for owner review.
+```
+
+```text
+E01b.2 / done / 2026-11-06 (`equity report backtest` migrated off the legacy layout):
+Owner-approved scope and policy reference: ADR-0025 decisions 2-5 and 7-9 with frozen
+  E01-1..E01-5; owner instruction "proceed with the open items still"; contract
+  /tmp/e01b2-contract.md. This removes the last production legacy writer.
+Dependency and accepted-ADR evidence: uncommitted E01b.1 stage; no run or attempt directories existed
+  before either stage, so there is no migration surface.
+Stage-start snapshot and reviewed final diff: cli/commands/arena.py (`report_backtest` rewrites one
+  run + one attempt under the findings root; undated results refused with exit 1 and nothing
+  written), backtesting/arena.py (`_evaluation_status` made public, `_universe_size` moved out),
+  backtesting/engine.py (shared `universe_size`; `loaded_universe_size` recorded when the engine
+  itself loaded data), backtesting/report.py (docstring only: `write_backtest_report` has no
+  production caller), tests/unit/test_report_backtest.py (new, 15 tests) and one tightened
+  help-scan pin; docs = arena/findings guide (`report backtest` section and legacy table) and one
+  ARCHITECTURE clause.
+Worker invocation/checkpoint: worker round 1 (/tmp/e01b2-worker-checkpoint.md); the worker ran its
+  own falsification checks and restored the sources before the final pass.
+Independent reviewer, verdict and issue resolution: separate read-only reviewer, verdict PASS with
+  no findings; it independently confirmed the observed-cost path, the undated/raising empty-root
+  behaviour, the shared classifier and disclosure note, the no-legacy-writer claim, the help pins,
+  and that E01c/P02/D01/W&B were untouched. (Its focused count of 432 differs from the worker's
+  441 collection tally; the coordinator's full-suite counts below are authoritative.)
+Named regression and one-rule mutation/restore evidence: replacing the recorded applied costs with a
+  constant (`fee_ratio=0.0`/`tax_ratio=0.0`) fails
+  test_report_backtest_records_the_applied_fee_and_tax_from_the_engine[high-0.005-0.003]
+  (/tmp/e01b2-mutation.log); cli/commands/arena.py restored from
+  /tmp/e01b2-arena-cli-dirty.py.bak with `diff -q` identical and the 15 focused tests green again
+  (/tmp/e01b2-restored.log).
+Focused tests / final gates / exact counts / retained log locations: focused 441 tests (0 failed, 0
+  skipped). Full gates: serial 2134 passed / 0 failed / 17 skipped / 97 deselected (501.8 s),
+  parallel 2134 / 0 / 17 (671.3 s, run sequentially), ruff check/format clean, mypy clean (182
+  files), catalog regeneration byte-identical, `make lint-md` and `git diff --check` clean. Logs:
+  /tmp/e01b2-{serial,parallel}.{log,xml}, /tmp/e01b2-{ruff,format,mypy,catalog,lintmd,diffcheck}.log.
+  Delta vs E01b.1 is +15 passed, exactly the new report-backtest tests.
+Docs, schema/catalog, privacy, compatibility and migration status: the guide now states that
+  `report backtest` publishes run + attempt evidence, that `--output-dir` is the findings root, that
+  undated results are refused, that a single report applies the static `COST_REGIMES` pair rather
+  than the arena's per-market `realistic` defaults (the manifest records the pair actually applied),
+  and that `write_backtest_report` has no production caller. No catalog/schema/storage/Settings
+  change; no `data/` write (catalog regeneration byte-identical; tests use tmp roots); readers and
+  `/findings`+`/backtests` shapes unchanged.
+Residuals, explicit stop condition, next eligible stage: E01c remains — canonical
+  `(market, MIC, symbol)` universe identity in the run scope (a `RUN_PROTOCOL` bump, so no earlier
+  run is comparable), read-seam input snapshot binding (Delta version at read time; content hashes
+  for non-Delta roots), and provenance, which must **stay `unknown`**: no persisted price-source
+  marker exists and the action-coverage `source` column is not price provenance, so an upgrade by
+  inference would violate ADR-0021/0022. A persisted price-source marker is a new open item (E01-6)
+  needing its own storage/ADR decision. Advisory diagnostics on the touched path are the
+  contract-mandated engine cost reads, refused downstream by `CostApplication`.
+Owner acceptance and authorized coordinator commit (if any): none; the stage remains uncommitted.
+```
+
+```text
+E01c / done / 2026-11-06 (canonical universe identity and read-seam snapshot binding):
+Owner-approved scope and policy reference: ADR-0025 Decisions 3-4 and 9 with frozen E01-1/E01-4,
+  plus ADR-0016 canonical identity and ADR-0021/0022 (no inference). Owner approved 2026-11-06:
+  (a) RUN_PROTOCOL v3 (IDs change by design; nothing to migrate), (b) provenance stays `unknown`
+  with the persisted price-source marker recorded as open item E01-6, (c) the additive
+  `InputSnapshot.version` field and one aggregate content digest per non-Delta read root.
+Dependency and accepted-ADR evidence: uncommitted E01b.1/E01b.2 stage; no run or attempt directory
+  exists locally or in the repo, so no evidence is re-read under the new scope.
+Stage-start snapshot and reviewed final diff: backtesting/{evidence,report,arena,data_loader,
+  engine}.py, storage/delta.py, ingestion/corporate_actions.py, cli/commands/arena.py; tests =
+  tests/unit/test_evidence_snapshots.py (new, 17), +2 in test_report_backtest.py, pins in
+  test_evidence_runs/test_evidence_readers; docs = arena/findings guide, backtesting guide and the
+  canonical ARCHITECTURE page. No new ADR: E01c implements accepted Decisions 3-4 and changes no
+  boundary (additive reader functions only).
+Worker invocation/checkpoint: worker rounds 1-3 (/tmp/e01c-worker-checkpoint.md). Round 2 fixed the
+  reviewer's two warnings; round 3 fixed the regression the full gate found.
+Independent reviewer, verdict and issue resolution: reviewer round 1 NEEDS-REVISION (loader-reuse
+  could publish a stale snapshot version/digest; a new test reintroduced the `/2` literal);
+  round 2 fixed both (per-load snapshot and action-cache reset with reuse tests; the old-protocol
+  assertion is derived from `RUN_PROTOCOL`). Round 3 delta review PASS. The coordinator's full
+  serial gate then caught a regression the focused set had missed: `read_delta` began demanding a
+  `dt.version()` capability, breaking the legitimate versionless `_RecordingDeltaTable` double in
+  tests/unit/test_feature_jobs.py. Worker round 3 made version capture explicitly opt-in
+  (`capture_version`; the blind reader never calls `version()` and `read_delta_with_version`
+  refuses a versionless table with `DeltaReadError`) and added two named tests; the final delta
+  review returned PASS with no findings.
+Named regression and one-rule mutation/restore evidence: (a) ignoring an explicit Delta `version=`
+pin fails test_delta_price_read_records_the_version_it_read; (b) replacing the per-file content
+  hash in the aggregate parquet digest with the file size fails
+  test_non_delta_price_read_digests_exactly_the_scanned_files. Both files restored with `diff -q`
+  identical and the focused snapshot tests green again (/tmp/e01c-mutation{,2}.log,
+  /tmp/e01c-restored.log).
+Focused tests / final gates / exact counts / retained log locations: focused 526 tests (0 failed)
+  after the widened set; the earlier 460-test set was too narrow, which is why the full gate caught
+  the versionless-table regression. Full gates: serial 2155 passed / 0 failed / 17 skipped / 97
+  deselected (377.3 s), parallel 2155 / 0 / 17 (411.1 s, run sequentially), ruff check/format clean,
+  mypy clean (182 files), catalog regeneration byte-identical, make lint-md and git diff --check
+  clean. Logs: /tmp/e01c-{serial2,parallel}.{log,xml}, /tmp/e01c-{ruff,format,mypy,catalog,lintmd,
+  diffcheck}.log, /tmp/e01c-r3-*.log. Delta vs E01b.2 is +21 passed (17 snapshot + 2 protocol + 2
+  versionless-table tests).
+Docs, schema/catalog, privacy, compatibility and migration status: the guides and ARCHITECTURE page
+  document protocol v3, `universe_basis` (canonical vs `ticker_only`, derived by parsing, never by
+  guessing a MIC), the snapshot table (`price_marks:<market>` / `action_events:<market>` /
+  `action_coverage:<market>`, `lake:delta` with the read-seam version and a `(path, version)`
+  reference digest, `lake:parquet` with one aggregate content digest over the sorted scanned file
+  set), the extra non-Delta read pass, and that provenance stays `unknown` until E01-6. No
+  catalog/schema/storage/Settings change; no `data/` write (catalog regeneration byte-identical;
+  tests use tmp roots); `/findings` and `/backtests` shapes unchanged; `read_delta` and
+  `load_corporate_action_inputs` keep their signatures and behaviour.
+Residuals, explicit stop condition, next eligible stage: provenance stays `unknown` and E01 is not
+  complete until E01-6 lands (a persisted price-source marker; ADR + storage/schema decision +
+  backfill answer). In-memory fixture action inputs have no read seam and record no snapshot; a
+  non-Delta file-set change after enumeration is not detected; the Delta digest binds
+  `(path, version)` rather than file contents; `preloaded_data` records no snapshots. `equity-run-
+  manifest/2` remains only in historical handoff/ledger text describing commit `603fc8d` and the
+  E01a stage, which is intentionally not rewritten. Advisory diagnostics on the touched paths are
+  the known unchecked-numeric-parser pattern on validated inputs.
+Owner acceptance and authorized coordinator commit (if any): none; E01b.1, E01b.2, E01c and the
+  2026-11-06 documentation refresh remain uncommitted for owner review.
+```
+
+### P02 plan approval and two ADR drafts — 2026-11-07
+
+The owner approved the bounded fixture-only P02 plan in the current pickup
+("approve on the plan"), then explicitly requested both ADR drafts ("we should
+draft both"). This records plan approval, not ADR acceptance or implementation
+completion. Current deliverable: documentation only; stop for review of the drafts
+before code. No worker/reviewer invocation or implementation acceptance is claimed.
+
+- [Proposed ADR-0026](../decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md)
+  records the P02 accounting/precision/mark/reconciliation amendment to ADR-0024:
+  one invented US/USD account; sequence-ordered effective-date replay; Decimal
+  precision 256, partial-sale basis rounded half-even to 38 fractional USD digits,
+  full-close residual conservation; unknown basis never zero; local stored raw
+  fixture marks with a one-completed-venue-session default and no widening;
+  inclusive quantity/cash tolerances of 0.00000001 share / 0.01 USD; the frozen
+  `positions`, `summary`, `reconcile` commands with honest unavailable/exit states.
+  SQLite schema v1 stays unchanged. Gross/withholding fields unsupported by v1
+  remain unavailable. Exact input models and conservative refusal rules are draft
+  details for owner review, not silently accepted changes to ADR-0024.
+- [Proposed ADR-0027](../decisions/0027-row-bound-price-source-provenance.md)
+  separately proposes E01-6 row-bound price-origin fields, producer evidence,
+  snapshot-bound complete-scope aggregation, an evidence-protocol change and the
+  explicit answer of no retrospective backfill/relabeling. Its storage/schema,
+  encoding and compatibility choices are proposed only. E01-6 implementation is
+  not authorized; research provenance remains `unknown` on shipped paths and
+  E01 cannot yet be declared complete.
+
+Stage-start verification: HEAD `603fc8d`, 24 modified + 8 untracked, nothing
+staged. The handoff's §10 seven-untracked count is stale; its header's eight
+matches actual status. Preserve B00/F01–F04/P01a/P01b/E01a/b/c; do not restart
+completed work. Accepted ADRs remain unchanged. This entry is appended to the
+carried ledger rather than rewriting historical stage evidence.
+
+Next gate: owner review/acceptance of ADR-0026 before P02 code; independently,
+ADR-0027 acceptance plus its own approved bounded implementation plan before
+E01-6 code. Existing one-writer/separate adversarial reviewer, formal verdict,
+external checkpoints, coordinator mutation/restore and serialized-test contracts
+remain required for implementation. D01, P00-2 and P00-4 remain gated. No commit,
+private-account/broker access, provider/LLM call, real ingestion, refit/training,
+migration/backfill/reset/backup automation, deployment, W&B change or freshness
+widening is authorized. Nothing under runtime `data/` is part of this draft.
+
+### ADR-0026/0027 acceptance and P02 continuation — 2026-11-07
+
+The owner explicitly accepted both ADRs ("accept both") and requested a pickup
+for another agent. [ADR-0026](../decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md)
+and [ADR-0027](../decisions/0027-row-bound-price-source-provenance.md) are now
+**Accepted**. This entry supersedes the preceding same-day draft-status/ADR
+acceptance gates without rewriting that historical drafting record. Earlier
+§2/§10 planning-only status is superseded by this continuation decision.
+
+The bounded fixture-only P02 plan was already approved; its policy gate is now
+satisfied. Next-agent implementation scope is P02 only: deterministic Decimal
+average-cost replay and honest unknown-basis P&L; stored raw fixture marks and
+exact-venue session staleness; statement reconciliation; and working
+`equity portfolio positions|summary|reconcile`, with tests and required docs.
+Present the minimal file plan before code; obtain owner approval of deviations.
+No P02 product code or implementation acceptance is claimed in this update.
+
+Use the [P02 implementation pickup](../handoffs/20261107-02-p02-fixture-only-implementation-pickup.md)
+for work packages, intended paths, frozen checks, the worker/reviewer protocol,
+final gates and a copyable prompt. It replaces the Nov07-01 planning-only starter
+for continuation, while preserving that file's carried inventory and evidence.
+Expect 25 modified + 11 untracked after this documentation update, with nothing
+staged; verify actual git status and preserve the dirty baseline outside the repo.
+B00/F01–F04/P01a/P01b/E01a/b/c are done and must not be restarted.
+
+ADR-0027 acceptance does not authorize E01-6 implementation: freeze exact
+source/summary encodings and IDs, golden fixtures, v3/v4 compatibility and its
+own bounded file plan at a separate approved gate. Existing research provenance
+stays `unknown`, historical artifacts stay unchanged and E01 remains incomplete.
+D01, P00-2/P00-4, P03 and operational use remain gated. No commit, private account,
+provider/LLM processing, real ingestion, refit, migration/backfill/reset, backup
+automation, deployment, W&B change or freshness widening is authorized.
+
+### P02 implementation outcome — 2026-11-07
+
+**Stage / state / recorded UTC:** P02a, P02b and P02c implemented, reviewed offline
+and **accepted by the owner on 2026-11-07**; **not staged, not committed** (acceptance
+is not commit authorization).
+
+**Owner-approved scope and policy reference:** the bounded fixture-only P02 plan
+plus accepted [ADR-0026](../decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md)
+under [ADR-0024](../decisions/0024-private-portfolio-ledger-and-accounting.md)
+and §5.3. One invented `us_equity`/USD account, SQLite schema v1 unchanged, no
+E01-6, no P03, no D01.
+
+**Stage-start snapshot:** HEAD `603fc8d`, 25 modified + 11 untracked, nothing
+staged; diff/hashes/tarball preserved under `/tmp/p02-baseline/`. A content-hash
+comparison at the end proves only the 11 P02 paths differ from that snapshot, so
+the carried E01b.1/E01b.2/E01c work is byte-identical.
+
+**Delivered:** `portfolio/projections.py` (sequence-ordered effective-date replay,
+local `prec=256` context with exactness refusal, exact single-rounding half-even
+38-digit partial-sale basis, full-close residual conservation, unknown-basis
+stickiness, fees counted once, oversell/negative-cash/monetary refusals,
+order/restart invariance); `portfolio/marks.py` (strict version-1 mark envelope,
+exact-MIC scheduled-close validation including early closes and holidays,
+latest-eligible selection with same-instant conflict blocking and no fallback,
+completed-session age, complete/partial valuation with named blockers and no
+marked-only denominator); `portfolio/reconcile.py` (canonical statement CSV,
+duplicate/multi-cash/mixed-account/mixed-instant rejection, inclusive 1e-8-share
+and 0.01-USD tolerances, signed deltas, unavailable-precedence, no mutation);
+additive `portfolio/__init__.py` exports; one `core/calendar.py` helper
+(`instrument_session_close`); and the frozen `positions`, `summary` and
+`reconcile` commands on the existing sub-app with exit-0-only-for-complete,
+value-free stderr and no write on any read path.
+
+**Independent reviewer, verdict and resolution:** three separate adversarial
+reviewers (one per dirty package, read-only, formal verdict line). P02a: two
+`NEEDS-REVISION` rounds → `PASS`; P02b: one round → `PASS`; P02c: three rounds →
+`PASS`. Every finding was a real defect, fixed and regression-tested:
+aggregate realized gain and the `net_external_flow`/`total_fees` properties (and
+the whole valuation layer) previously performed Decimal arithmetic outside the
+explicit context; `embedded_fees` was summed from surviving positions so fees
+vanished after liquidation; duplicate statement header columns were silently
+reinterpreted and a header-only statement raised `KeyError`; the CLI wrote
+blocker identities, user-supplied filenames and store metadata (`user_version`)
+to stderr. Root fix: `exact_add`/`exact_sub`/`exact_mul` now operate *through* the
+passed context (`context.add/subtract/multiply`) so flags and precision always
+match. Error text on read paths is fixed text plus an exception class only.
+
+**Named regressions and mutation/restore evidence:** hand oracle (basis 1000 →
+1605 → 1177, cash 924, value 1375, NAV 2299, unrealized 198, total gain 299),
+half-even halfway cases both directions, 38-digit repeating cost, full-close
+conservation, unknown-basis across liquidation/reopening, hostile-precision
+exactness for totals and valuation, weekend/holiday/early-close age, conflict with
+an older valid mark present, split-block withholding, statement tolerance
+equality/just-over, duplicate-header and header-only rejection, stderr privacy
+(identities, filenames, ledger metadata), and read no-write snapshots. Three
+coordinator mutations, each killing its named test and restored byte-identically
+from `/tmp` backups (`diff -q`): half-even tie → half-up; inclusive tolerance →
+exclusive; reconcile mismatch no longer exiting 1.
+
+**Focused tests / final gates / exact counts / retained logs:**
+`/tmp/p02-focused3.log` 553 passed (widened portfolio, ledger/import, unified CLI,
+calendar dependants and import boundaries). Final gates, sequentially:
+`/tmp/p02-serial.log` + `.xml` **2356 passed, 17 skipped, 97 deselected** (460.5 s);
+`/tmp/p02-parallel.log` + `.xml` **2356 passed, 17 skipped** (696.1 s);
+`ruff check` and `ruff format --check` clean; strict `mypy` clean (185 source
+files); catalog regeneration to an isolated `/tmp` path byte-identical
+(sha `0536211e…516873`) with `data/` untouched; `make lint-md` clean;
+`git diff --check` clean; LSP probe over the six changed source files: 0
+diagnostics. JUnit totals are not quoted as passes; the counts above are the
+runner's pass/skip lines.
+
+**Docs, schema/catalog, privacy, compatibility and migration status:** portfolio
+user guide rewritten for import + read reports + mark JSON + staleness +
+reconciliation + accounting rules; scoped portfolio section in the CLI reference;
+additive `ARCHITECTURE.md` portfolio line; `docs/README.md` status block and the
+private-portfolio index bullet. No lake schema, migration, catalog row, Settings
+key, dependency or `cli/_app.py` change. Schema v1 and its append-only/idempotent
+import contract are untouched, so existing ledgers remain readable. Privacy: read
+paths create nothing, log no private value, and print identities only inside the
+requested local report. Upstream research provenance remains `unknown`.
+
+**Residuals, explicit stop condition, next eligible stage:** no operational mark
+producer, split accounting, backup/migration (P00-2/P00-4), FX, split discovery or
+P03 console. Known pre-existing P01 observation, deliberately untouched: the
+canonical *import* CSV parser still accepts a duplicated header column name. E01-6
+stays unimplemented and gated behind its own bounded plan.
+
+**Owner acceptance:** **accepted 2026-11-07** (owner: "accept on the delivered
+items"). Acceptance covers the delivered P02 implementation as reviewed and gated
+above. It does **not** authorize staging, a commit, or progression to E01-6, P03 or
+D01: the stage remains uncommitted, and any staging/commit needs a separate
+explicit owner instruction naming the files. Remaining gates are unchanged.
