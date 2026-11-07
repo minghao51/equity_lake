@@ -254,6 +254,20 @@ def parse_csv_text(text: str, *, source_digest: str | None = None) -> tuple[Ledg
                 )
             ]
         )
+    duplicated_positions = [index + 1 for index, column in enumerate(fieldnames) if fieldnames.count(column) > 1]
+    if duplicated_positions:
+        # Rows are built with ``dict(zip(fieldnames, values))``, which silently keeps
+        # only the LAST value of a repeated name — a duplicated money column stored a
+        # different amount than the row intended. The header must name each column
+        # exactly once; positions are reported instead of repeating header text.
+        raise LedgerValidationError(
+            [
+                LedgerIssue(
+                    f"canonical CSV header repeats {len(duplicated_positions)} column name(s) at position(s) {duplicated_positions!r}; "
+                    "the frozen schema names each column exactly once, and the duplicated names are not echoed"
+                )
+            ]
+        )
 
     digest = source_digest or hashlib.sha256(text.encode("utf-8")).hexdigest()
     events: list[LedgerEvent] = []

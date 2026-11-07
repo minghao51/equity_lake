@@ -595,3 +595,49 @@ def test_multiple_fills_of_one_instrument_accumulate_in_sequence_order(tmp_path:
     commit_events(parse_csv_text(_csv(rows)), data_dir=data_dir)
     stored = LedgerStore(data_dir=data_dir).load_events()
     assert [event.sequence for event in stored] == [1, 2, 3, 4]
+
+
+class TestHeaderIntegrity:
+    """The frozen header must name each column exactly once (ADR-0024 decision 4).
+
+    ``parse_csv_text`` builds each row with ``dict(zip(fieldnames, values))``, so a
+    repeated column name silently keeps only the LAST value. A duplicated
+    ``cash_effect`` therefore stored a different amount than the row intended,
+    with no error — the exact class of silent misinterpretation the frozen
+    header exists to prevent.
+    """
+
+    def test_duplicate_canonical_header_column_is_rejected(self) -> None:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow([*CANONICAL_CSV_COLUMNS, "cash_effect"])
+        writer.writerow([*[_row(_DEPOSIT)[column] for column in CANONICAL_CSV_COLUMNS], "1.00"])
+
+        with pytest.raises(LedgerValidationError) as excinfo:
+            parse_csv_text(buffer.getvalue())
+
+        message = str(excinfo.value)
+        assert "repeats 2 column name" in message
+        assert "exactly once" in message
+        # The duplicated value and the stored-looking amount are never echoed.
+        assert DECIMAL_LIKE.search(message) is None, message
+
+    def test_duplicate_header_never_silently_reinterprets_a_money_column(self) -> None:
+        """Pre-fix this parsed successfully and kept the LAST cash_effect (1.00)."""
+        buffer = io.StringIO()
+        writer = csv.writer(buffer, lineterminator="\n")
+        writer.writerow([*CANONICAL_CSV_COLUMNS, "cash_effect"])
+        writer.writerow([*[_row(_DEPOSIT, cash_effect="500.00")[column] for column in CANONICAL_CSV_COLUMNS], "1.00"])
+
+        with pytest.raises(LedgerValidationError, match="exactly once"):
+            parse_csv_text(buffer.getvalue())
+
+    def test_duplicate_header_is_rejected_before_any_row_is_parsed(self) -> None:
+        duplicated = "account,account," + ",".join(column for column in CANONICAL_CSV_COLUMNS if column != "account") + "\n"
+
+        with pytest.raises(LedgerValidationError, match="exactly once"):
+            parse_csv_text(duplicated)
+
+    def test_header_only_file_is_still_an_empty_import(self) -> None:
+        """Unchanged pre-existing behaviour: no data rows means no events to import."""
+        assert parse_csv_text(",".join(CANONICAL_CSV_COLUMNS) + "\n") == ()
