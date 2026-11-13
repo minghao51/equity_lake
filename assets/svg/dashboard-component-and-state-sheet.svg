@@ -1,0 +1,202 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1250" width="1800" height="1250" role="img">
+  <title>Dashboard component &amp; state sheet — one vocabulary for two renderers</title>
+  <desc>A shared design-review vocabulary maps eleven current Streamlit and static-export primitives. Six state cards define loading, empty, unavailable, partial, refused and gated display behavior for future reuse, not a claim that these states are implemented today. Semantic rules preserve exact accounting, visible provenance, private-book authorization and explicit absence of evidence.</desc>
+  <style type="text/css">
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12.5px; fill: #0f172a; }
+    .title { font-size: 26px; font-weight: 700; }
+    .subtitle { font-size: 14.5px; fill: #5b6b82; }
+    .section { font-size: 15.5px; font-weight: 600; }
+    .body { font-size: 12.5px; }
+    .shared { font-weight: 600; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+    .annotation { font-size: 11px; fill: #5b6b82; }
+    .footer { font-size: 11px; fill: #5b6b82; }
+    .muted { fill: #5b6b82; }
+    .accent { fill: #1f6feb; }
+    .ok { fill: #1a7f37; }
+    .warn { fill: #9a6700; }
+    .danger { fill: #b42318; }
+    .gated { fill: #6b7280; }
+    .panel { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1.5; }
+    .line { stroke: #c9d4e3; stroke-width: 1.5; fill: none; }
+    .chip { fill: #ffffff; stroke-width: 1.5; }
+  </style>
+  <rect width="1800" height="1250" fill="#ffffff"/>
+
+  <g id="page-heading">
+    <text class="title" x="40" y="48">Dashboard component &amp; state sheet — one vocabulary for two renderers</text>
+    <text class="subtitle" x="40" y="77">Derived from the primitives each renderer already uses. Reuse these names in any new panel, mock or review.</text>
+    <line class="line" x1="40" y1="98" x2="1760" y2="98"/>
+  </g>
+
+  <g id="component-vocabulary" aria-label="Component vocabulary: Streamlit, shared review name, static CSS">
+    <text class="section" x="40" y="126">Component vocabulary</text>
+    <text class="annotation" x="1760" y="126" text-anchor="end">01 / CURRENT PRIMITIVES · 11 SHARED NAMES</text>
+    <rect x="40" y="142" width="1720" height="344" rx="10" fill="#ffffff"/>
+    <rect x="40" y="142" width="1720" height="36" rx="10" fill="#eef3fa"/>
+    <rect x="620" y="178" width="480" height="308" rx="10" fill="#eef3fa"/>
+    <text class="body shared muted" x="64" y="166">Streamlit · as used today</text>
+    <text class="body shared accent" x="644" y="166">Shared name · use in design review</text>
+    <text class="body shared muted" x="1124" y="166">Static CSS / HTML · as used today</text>
+    <path class="line" d="M620 142V486 M1100 142V486 M40 178H1760 M40 206H1760 M40 234H1760 M40 262H1760 M40 290H1760 M40 318H1760 M40 346H1760 M40 374H1760 M40 402H1760 M40 430H1760 M40 458H1760"/>
+
+    <g id="component-page-shell">
+      <text class="mono" x="64" y="197">st.title, st.caption</text>
+      <circle cx="650" cy="192" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="197">Page shell / hero</text>
+      <text class="mono" x="1124" y="197">.hero, .eyebrow, .muted</text>
+    </g>
+    <g id="component-section-heading">
+      <text class="mono" x="64" y="225">st.subheader, st.divider</text>
+      <circle cx="650" cy="220" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="225">Section heading</text>
+      <text class="mono" x="1124" y="225">&lt;h2&gt;, section blocks</text>
+    </g>
+    <g id="component-kpi">
+      <text class="mono" x="64" y="253">st.columns + text</text>
+      <circle cx="650" cy="248" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="253">KPI / metric</text>
+      <text class="mono" x="1124" y="253">.grid, .metric</text>
+    </g>
+    <g id="component-data-table">
+      <text class="mono" x="64" y="281">st.dataframe</text>
+      <circle cx="650" cy="276" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="281">Data table</text>
+      <text class="mono" x="1124" y="281">&lt;table&gt; in .card</text>
+    </g>
+    <g id="component-notice-info">
+      <text class="mono" x="64" y="309">st.info</text>
+      <circle cx="650" cy="304" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="309">Notice — info</text>
+      <text class="mono" x="1124" y="309">.alerts (info)</text>
+    </g>
+    <g id="component-notice-warning">
+      <text class="mono" x="64" y="337">st.warning</text>
+      <circle cx="650" cy="332" r="4" fill="#9a6700"/>
+      <text class="shared" x="668" y="337">Notice — warning</text>
+      <text class="mono" x="1124" y="337">.alerts (warn)</text>
+    </g>
+    <g id="component-notice-error">
+      <text class="mono" x="64" y="365">st.error</text>
+      <circle cx="650" cy="360" r="4" fill="#b42318"/>
+      <text class="shared" x="668" y="365">Notice — error</text>
+      <text class="mono" x="1124" y="365">.alerts (error)</text>
+    </g>
+    <g id="component-notice-success">
+      <text class="mono" x="64" y="393">st.success</text>
+      <circle cx="650" cy="388" r="4" fill="#1a7f37"/>
+      <text class="shared" x="668" y="393">Notice — success</text>
+      <text class="mono" x="1124" y="393">.alerts (ok)</text>
+    </g>
+    <g id="component-raw-payload">
+      <text class="mono" x="64" y="421">st.json</text>
+      <circle cx="650" cy="416" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="421">Raw payload view</text>
+      <text class="mono" x="1124" y="421">&lt;pre&gt; block</text>
+    </g>
+    <g id="component-navigation">
+      <text class="mono" x="64" y="449">sidebar st.selectbox("Page", …)</text>
+      <circle cx="650" cy="444" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="449">Navigation</text>
+      <text class="mono" x="1124" y="449">.nav, .nav-link, .nav-link.active</text>
+    </g>
+    <g id="component-page-config">
+      <text class="mono" x="64" y="477">st.set_page_config</text>
+      <circle cx="650" cy="472" r="4" fill="#1f6feb"/>
+      <text class="shared" x="668" y="477">Page config / chrome</text>
+      <text class="mono" x="1124" y="477">document head + .nav bar</text>
+    </g>
+    <rect class="line" x="40" y="142" width="1720" height="344" rx="10"/>
+    <text class="annotation" x="40" y="508">No shared UI module exists today (<tspan class="mono">dashboard/_common.py</tspan> holds data loading only).</text>
+    <text class="annotation" x="40" y="526">These two vocabularies are aligned by intent, not by code — that is the gap a future refactor would close.</text>
+    <text class="annotation" x="40" y="544">Static notices share <tspan class="mono">.alerts</tspan>; (info / warn / error / ok) denote intent, not separate CSS variants. Streamlit metric text is rendered by column <tspan class="mono">.metric()</tspan> calls.</text>
+  </g>
+
+  <g id="state-matrix" aria-label="Six required display states for future reuse">
+    <text class="section" x="40" y="577">State matrix</text>
+    <text class="annotation" x="1760" y="577" text-anchor="end">02 / REUSE RULES · NOT A CLAIM OF IMPLEMENTED STATE COVERAGE</text>
+
+    <g id="state-loading" aria-label="Loading: placeholder only, never a real-looking zero">
+      <rect class="panel" x="40" y="594" width="560" height="174" rx="10"/>
+      <rect class="chip" x="64" y="614" width="120" height="28" rx="10" stroke="#1f6feb"/>
+      <text class="section accent" x="80" y="634">Loading</text>
+      <text class="annotation" x="576" y="634" text-anchor="end">01 / READING</text>
+      <text x="64" y="666">Data is still being read.</text>
+      <text x="64" y="698"><tspan class="shared accent">LOOK</tspan><tspan>  Skeleton / placeholder only.</tspan></text>
+      <text x="64" y="742"><tspan class="shared">NEVER</tspan><tspan>  A zero that looks like a real value.</tspan></text>
+    </g>
+
+    <g id="state-empty" aria-label="Empty: source exists but has no rows; explicitly say no data yet">
+      <rect class="panel" x="620" y="594" width="560" height="174" rx="10"/>
+      <rect class="chip" x="644" y="614" width="120" height="28" rx="10" stroke="#1f6feb"/>
+      <text class="section accent" x="660" y="634">Empty</text>
+      <text class="annotation" x="1156" y="634" text-anchor="end">02 / NO ROWS</text>
+      <text x="644" y="666">The source exists and genuinely has no rows.</text>
+      <text x="644" y="698"><tspan class="shared accent">LOOK</tspan><tspan>  Show “no data yet” explicitly.</tspan></text>
+      <text x="644" y="742"><tspan class="shared">NEVER</tspan><tspan>  Conflate no rows with unavailable evidence.</tspan></text>
+    </g>
+
+    <g id="state-unavailable" aria-label="Unavailable: amber reason and scope, never zero or an ambiguous blank">
+      <rect class="panel" x="1200" y="594" width="560" height="174" rx="10"/>
+      <rect class="chip" x="1224" y="614" width="150" height="28" rx="10" stroke="#9a6700"/>
+      <text class="section warn" x="1240" y="634">Unavailable</text>
+      <text class="annotation" x="1736" y="634" text-anchor="end">03 / NO EVIDENCE</text>
+      <text x="1224" y="666">Required evidence is missing or quarantined.</text>
+      <text class="annotation" x="1224" y="684">Stale/missing mark · unknown basis · no marker · quarantined value</text>
+      <text x="1224" y="708"><tspan class="shared warn">LOOK</tspan><tspan>  Amber; show the reason and the scope.</tspan></text>
+      <text x="1224" y="742"><tspan class="shared warn">NEVER</tspan><tspan>  Render 0, or a blank cell that reads as zero.</tspan></text>
+    </g>
+
+    <g id="state-partial" aria-label="Partial: identify valid and withheld components; a subtotal is never a total">
+      <rect class="panel" x="40" y="784" width="560" height="174" rx="10"/>
+      <rect class="chip" x="64" y="804" width="120" height="28" rx="10" stroke="#9a6700"/>
+      <text class="section warn" x="80" y="824">Partial</text>
+      <text class="annotation" x="576" y="824" text-anchor="end">04 / INCOMPLETE</text>
+      <text x="64" y="856">Some components are complete; some are withheld.</text>
+      <text x="64" y="888"><tspan class="shared warn">LOOK</tspan><tspan>  Amber; show valid components.</tspan></text>
+      <text x="64" y="906">Name exactly what is withheld.</text>
+      <text x="64" y="932"><tspan class="shared warn">NEVER</tspan><tspan>  Present a subtotal as a total.</tspan></text>
+    </g>
+
+    <g id="state-refused" aria-label="Refused: red, value-free reason and next action; nothing was written">
+      <rect class="panel" x="620" y="784" width="560" height="174" rx="10"/>
+      <rect class="chip" x="644" y="804" width="120" height="28" rx="10" stroke="#b42318"/>
+      <text class="section danger" x="660" y="824">Refused</text>
+      <text class="annotation" x="1156" y="824" text-anchor="end">05 / REJECTED</text>
+      <text x="644" y="856">Input rejected: invalid file, conflict or invariant violated.</text>
+      <text x="644" y="888"><tspan class="shared danger">LOOK</tspan><tspan>  Red; value-free reason plus the next action.</tspan></text>
+      <text x="644" y="932"><tspan class="shared danger">ALWAYS</tspan><tspan>  Nothing was written; never imply a commit.</tspan></text>
+    </g>
+
+    <g id="state-gated" aria-label="Gated: not authorized, grey, never interactive">
+      <rect class="panel" x="1200" y="784" width="560" height="174" rx="10"/>
+      <rect class="chip" x="1224" y="804" width="120" height="28" rx="10" stroke="#6b7280"/>
+      <text class="section gated" x="1240" y="824">Gated</text>
+      <text class="annotation" x="1736" y="824" text-anchor="end">06 / PLAN ONLY</text>
+      <text x="1224" y="856">The surface is planned but is not authorized.</text>
+      <text x="1224" y="888"><tspan class="shared gated">LOOK</tspan><tspan>  Grey; labelled </tspan><tspan class="mono gated">GATED — NOT AUTHORIZED</tspan><tspan>.</tspan></text>
+      <text x="1224" y="932"><tspan class="shared gated">NEVER</tspan><tspan>  Look interactive; gated means not built.</tspan></text>
+    </g>
+
+    <g id="state-invariants" aria-label="Non-negotiable state invariants">
+      <rect x="40" y="978" width="1720" height="60" rx="10" fill="#f2f5fa" stroke="#c9d4e3" stroke-width="1.5"/>
+      <text class="mono" x="64" y="1012">unavailable ≠ 0 · unknown ≠ real · mixed is an aggregate, never a row kind · partial subtotal is never a total · refused means nothing was written · gated means not built</text>
+    </g>
+  </g>
+
+  <g id="semantic-rules" aria-label="Semantic rules the UI must not break">
+    <text class="section" x="40" y="1074">Semantic rules the UI must not break</text>
+    <text class="annotation" x="1760" y="1074" text-anchor="end">03 / EVIDENCE BEFORE PRESENTATION</text>
+    <rect class="panel" x="40" y="1088" width="1720" height="118" rx="10"/>
+    <circle cx="67" cy="1109" r="3" fill="#1f6feb"/>
+    <text x="80" y="1114">Money in cents (half-even) and quantities exact; a display value never feeds a calculation.</text>
+    <circle cx="67" cy="1135" r="3" fill="#1f6feb"/>
+    <text x="80" y="1140">Provenance (<tspan class="mono">synthetic | unknown</tspan>, and finally <tspan class="mono">real | mixed</tspan> when E01-6 lands) is always shown next to any value derived from prices; absence of evidence is <tspan class="mono">unknown</tspan>, never assumed.</text>
+    <circle cx="67" cy="1161" r="3" fill="#1f6feb"/>
+    <text x="80" y="1166">Private book data is CLI-only today; a console surfacing it is gated (P03) and loopback-bound.</text>
+    <circle cx="67" cy="1187" r="3" fill="#1f6feb"/>
+    <text x="80" y="1192">Every panel must render an explicit empty/unavailable state — no silent fallbacks.</text>
+  </g>
+
+  <text class="footer" x="40" y="1233">2026-11-07 · equity_lake · sources: dashboard/streamlit_app.py, dashboard/exporter.py · design artifact, not a contract · aligns with assets/svg/p02-*.svg tokens</text>
+</svg>

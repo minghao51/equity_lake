@@ -1,0 +1,246 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1250" width="1800" height="1250" role="img">
+  <title>Dashboard pages — comparison grid</title>
+  <desc>Six schematic page thumbnails in a three-column, two-row comparison grid: Overview, Dataset Explorer / Datasets, Health, Update History / Updates, Config, and Private Tracking Preview. Matching chrome, bodies, and footer chips expose renderer-specific labels and page availability. Values are explicitly unavailable rather than fabricated. Private tracking is a loopback-gated, read-only preview with no delivery or writes. A bottom strip summarizes consistency requirements and shared colour semantics.</desc>
+  <defs>
+    <style type="text/css"><![CDATA[
+      text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; font-size: 11.5px; }
+      .title { font-size: 26px; font-weight: 700; }
+      .subtitle { font-size: 14.5px; fill: #5b6b82; }
+      .thumb-title { font-size: 14px; font-weight: 600; }
+      .annotation { font-size: 11px; }
+      .footer { font-size: 11px; fill: #5b6b82; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .muted { fill: #5b6b82; }
+      .accent { fill: #1f6feb; }
+      .ok { fill: #1a7f37; }
+      .warn { fill: #9a6700; }
+      .danger { fill: #b42318; }
+      .gated { fill: #6b7280; }
+      .semibold { font-weight: 600; }
+      .card { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1.5; }
+      .surface { fill: #ffffff; stroke: #c9d4e3; stroke-width: 1.5; }
+      .alternate { fill: #eef3fa; stroke: #c9d4e3; stroke-width: 1.5; }
+      .code { fill: #f2f5fa; stroke: #c9d4e3; stroke-width: 1.5; }
+      .rule { stroke: #c9d4e3; stroke-width: 1.5; fill: none; }
+      .chip { fill: #ffffff; stroke-width: 1.5; }
+    ]]></style>
+  </defs>
+
+  <rect width="1800" height="1250" fill="#ffffff"/>
+  <g id="heading">
+    <text x="60" y="54" class="title">Dashboard pages — comparison grid</text>
+    <text x="1740" y="53" text-anchor="end" class="annotation accent semibold">PAGE INVENTORY / SCHEMATIC</text>
+    <text x="60" y="84" class="subtitle">Six pages, two renderers. Field names are the ones the renderers actually use; anything not built is marked GATED.</text>
+    <path d="M60 109 H1740" class="rule"/>
+  </g>
+
+  <!-- Identical 540 × 430 frames; shared chrome 0–60 and footer 386–430. -->
+  <g id="overview" transform="translate(60 136)" aria-label="Overview, Streamlit and static">
+    <rect width="540" height="430" rx="10" class="card"/>
+    <text x="18" y="25" class="thumb-title">Overview</text>
+    <text x="18" y="46" class="annotation muted">Streamlit + static (index.html)</text>
+    <text x="522" y="25" text-anchor="end" class="annotation muted mono">01</text>
+    <path d="M0 60 H540 M0 386 H540" class="rule"/>
+    <rect x="18" y="76" width="142" height="22" rx="6" class="chip" stroke="#1f6feb"/>
+    <text x="29" y="91" class="annotation accent semibold">BOTH RENDERERS</text>
+
+    <rect x="18" y="120" width="504" height="68" rx="6" class="alternate"/>
+    <text x="30" y="142" class="semibold">App title</text>
+    <text x="144" y="142" class="mono">dashboard.title</text>
+    <text x="30" y="164" class="muted">App subtitle</text>
+    <text x="144" y="164" class="mono muted">dashboard.subtitle</text>
+
+    <rect x="18" y="204" width="160" height="58" rx="6" class="surface"/>
+    <rect x="190" y="204" width="160" height="58" rx="6" class="surface"/>
+    <rect x="362" y="204" width="160" height="58" rx="6" class="surface"/>
+    <text x="28" y="226" class="mono">datasets_available</text>
+    <text x="200" y="226" class="mono">tracked_datasets</text>
+    <text x="372" y="226" class="mono">latest_update</text>
+    <text x="28" y="248" class="muted">unavailable</text>
+    <text x="200" y="248" class="muted">unavailable</text>
+    <text x="372" y="248" class="muted">unavailable</text>
+
+    <rect x="18" y="278" width="504" height="58" rx="6" class="surface"/>
+    <text x="30" y="301" class="semibold">Health snapshot</text>
+    <rect x="420" y="287" width="90" height="22" rx="6" class="chip" stroke="#6b7280"/>
+    <text x="465" y="302" text-anchor="middle" class="annotation gated">unavailable</text>
+    <text x="30" y="323" class="muted">Summary unavailable — no health report.</text>
+    <text x="18" y="356" class="annotation muted">GitHub Actions cron (UTC): 0 1 * * 1-5</text>
+    <text x="18" y="374" class="annotation muted">Timezone: UTC</text>
+
+    <rect x="18" y="396" width="178" height="22" rx="6" class="chip" stroke="#6b7280"/>
+    <text x="29" y="411" class="annotation gated semibold">EMPTY / UNAVAILABLE</text>
+    <text x="210" y="411" class="annotation muted">No live values illustrated.</text>
+  </g>
+
+  <g id="datasets" transform="translate(630 136)" aria-label="Dataset Explorer in Streamlit, Datasets in static; label divergence">
+    <rect width="540" height="430" rx="10" class="card"/>
+    <text x="18" y="25" class="thumb-title">Dataset Explorer / Datasets</text>
+    <text x="18" y="46" class="annotation muted">Streamlit: Dataset Explorer · static: Datasets</text>
+    <text x="522" y="25" text-anchor="end" class="annotation muted mono">02</text>
+    <path d="M0 60 H540 M0 386 H540" class="rule"/>
+    <rect x="18" y="76" width="155" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <text x="29" y="91" class="annotation warn semibold">LABEL DIVERGENCE</text>
+
+    <rect x="18" y="124" width="504" height="60" rx="6" class="surface"/>
+    <path d="M18 154 H522 M103 124 V184 M186 124 V184 M238 124 V184 M304 124 V184 M403 124 V184" class="rule"/>
+    <text x="26" y="145" class="mono">name</text>
+    <text x="111" y="145" class="mono">available</text>
+    <text x="194" y="145" class="mono">rows</text>
+    <text x="246" y="145" class="mono">symbols</text>
+    <text x="312" y="145" class="mono">latest_date</text>
+    <text x="411" y="145" class="mono">path</text>
+    <text x="26" y="175" class="muted">N/A</text>
+    <text x="111" y="175" class="annotation muted">unavailable</text>
+    <text x="194" y="175" class="muted">N/A</text>
+    <text x="246" y="175" class="muted">N/A</text>
+    <text x="312" y="175" class="muted">N/A</text>
+    <text x="411" y="175" class="muted">N/A</text>
+    <text x="18" y="205" class="annotation muted">No dataset summary available; N/A does not mean zero.</text>
+
+    <rect x="18" y="224" width="504" height="139" rx="6" class="surface"/>
+    <text x="30" y="247" class="semibold">Selected dataset preview table + path</text>
+    <rect x="30" y="264" width="480" height="28" rx="4" class="code"/>
+    <text x="42" y="282" class="mono muted">path: unavailable</text>
+    <rect x="30" y="308" width="480" height="39" rx="4" class="alternate"/>
+    <text x="42" y="332" class="muted">Preview unavailable — select an available dataset.</text>
+
+    <rect x="18" y="396" width="350" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <text x="29" y="411" class="annotation warn">label differs per renderer — open decision</text>
+  </g>
+
+  <g id="health" transform="translate(1200 136)" aria-label="Health, both renderers">
+    <rect width="540" height="430" rx="10" class="card"/>
+    <text x="18" y="25" class="thumb-title">Health</text>
+    <text x="18" y="46" class="annotation muted">Streamlit + static</text>
+    <text x="522" y="25" text-anchor="end" class="annotation muted mono">03</text>
+    <path d="M0 60 H540 M0 386 H540" class="rule"/>
+    <rect x="18" y="76" width="142" height="22" rx="6" class="chip" stroke="#1f6feb"/>
+    <text x="29" y="91" class="annotation accent semibold">BOTH RENDERERS</text>
+
+    <rect x="18" y="120" width="504" height="58" rx="6" class="surface"/>
+    <text x="30" y="143" class="semibold">Overall status</text>
+    <rect x="306" y="130" width="52" height="22" rx="6" class="chip" stroke="#1a7f37"/>
+    <rect x="368" y="130" width="62" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <rect x="440" y="130" width="70" height="22" rx="6" class="chip" stroke="#b42318"/>
+    <text x="332" y="145" text-anchor="middle" class="annotation ok">ok</text>
+    <text x="399" y="145" text-anchor="middle" class="annotation warn">warn</text>
+    <text x="475" y="145" text-anchor="middle" class="annotation danger">error</text>
+    <text x="30" y="166" class="annotation muted">Status options shown; current status unavailable.</text>
+
+    <text x="18" y="201" class="semibold">Checks list</text>
+    <rect x="18" y="212" width="504" height="36" rx="6" class="surface"/>
+    <text x="30" y="235" class="muted">No checks available — report unavailable.</text>
+
+    <rect x="18" y="265" width="504" height="98" rx="6" class="alternate"/>
+    <text x="30" y="289" class="semibold">Alerts panel</text>
+    <text x="30" y="313" class="mono muted">.alerts / st.warning / st.error</text>
+    <text x="30" y="343" class="muted">Alerts unavailable — no health report.</text>
+
+    <rect x="18" y="396" width="178" height="22" rx="6" class="chip" stroke="#6b7280"/>
+    <text x="29" y="411" class="annotation gated semibold">EMPTY / UNAVAILABLE</text>
+    <text x="210" y="411" class="annotation muted">No implicit “all clear”.</text>
+  </g>
+
+  <g id="updates" transform="translate(60 590)" aria-label="Update History in Streamlit, Updates in static; label divergence">
+    <rect width="540" height="430" rx="10" class="card"/>
+    <text x="18" y="25" class="thumb-title">Update History / Updates</text>
+    <text x="18" y="46" class="annotation muted">Streamlit: Update History · static: Updates</text>
+    <text x="522" y="25" text-anchor="end" class="annotation muted mono">04</text>
+    <path d="M0 60 H540 M0 386 H540" class="rule"/>
+    <rect x="18" y="76" width="155" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <text x="29" y="91" class="annotation warn semibold">LABEL DIVERGENCE</text>
+
+    <text x="18" y="127" class="semibold">History table · newest first by <tspan class="mono">updated_at</tspan></text>
+    <rect x="18" y="142" width="504" height="88" rx="6" class="surface"/>
+    <path d="M18 177 H522 M210 142 V177" class="rule"/>
+    <text x="30" y="164" class="mono">updated_at ↓</text>
+    <text x="224" y="164" class="annotation muted">… representative columns</text>
+    <text x="30" y="209" class="muted">History unavailable — no rows to display.</text>
+    <text x="18" y="252" class="annotation muted">row fields come from data/update_history.parquet;</text>
+    <text x="18" y="269" class="annotation muted">columns shown as representative</text>
+
+    <rect x="18" y="286" width="504" height="77" rx="6" class="code"/>
+    <text x="30" y="308" class="semibold">Pipeline results</text>
+    <text x="30" y="330" class="mono">name</text>
+    <text x="210" y="330" class="mono">JSON payload</text>
+    <text x="30" y="350" class="muted">unavailable</text>
+    <text x="210" y="350" class="muted">unavailable</text>
+
+    <rect x="18" y="396" width="350" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <text x="29" y="411" class="annotation warn">label differs per renderer — open decision</text>
+  </g>
+
+  <g id="config" transform="translate(630 590)" aria-label="Config, static only; no Streamlit equivalent">
+    <rect width="540" height="430" rx="10" class="card"/>
+    <text x="18" y="25" class="thumb-title">Config</text>
+    <text x="18" y="46" class="annotation muted">Static renderer</text>
+    <text x="522" y="25" text-anchor="end" class="annotation muted mono">05</text>
+    <path d="M0 60 H540 M0 386 H540" class="rule"/>
+    <rect x="18" y="76" width="114" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <text x="29" y="91" class="annotation warn semibold">STATIC ONLY</text>
+
+    <rect x="18" y="120" width="504" height="58" rx="6" class="surface"/>
+    <text x="30" y="142" class="semibold">Site title / subtitle</text>
+    <text x="30" y="165" class="mono muted">dashboard.title / dashboard.subtitle</text>
+    <text x="18" y="199" class="semibold">Schedule</text>
+    <rect x="18" y="210" width="504" height="52" rx="6" class="surface"/>
+    <path d="M270 210 V262" class="rule"/>
+    <text x="30" y="230" class="mono">cron</text>
+    <text x="282" y="230" class="mono">timezone</text>
+    <text x="30" y="251" class="mono muted">0 1 * * 1-5</text>
+    <text x="282" y="251" class="muted">UTC</text>
+
+    <rect x="18" y="278" width="504" height="58" rx="6" class="surface"/>
+    <text x="30" y="300" class="semibold">Output / limit settings</text>
+    <text x="30" y="323" class="muted">Values unavailable in this schematic.</text>
+    <text x="18" y="356" class="annotation warn">no Streamlit equivalent page today</text>
+    <text x="18" y="374" class="annotation muted">no secrets are rendered</text>
+
+    <rect x="18" y="396" width="190" height="22" rx="6" class="chip" stroke="#9a6700"/>
+    <text x="29" y="411" class="annotation warn semibold">RENDERER-ONLY PAGE</text>
+    <text x="222" y="411" class="annotation muted">Public settings only.</text>
+  </g>
+
+  <g id="private-tracking" transform="translate(1200 590)" aria-label="Private Tracking Preview, Streamlit only and loopback-gated">
+    <rect width="540" height="430" rx="10" class="card"/>
+    <text x="18" y="25" class="thumb-title">Private Tracking Preview</text>
+    <text x="18" y="46" class="annotation muted">Streamlit renderer · no static equivalent</text>
+    <text x="522" y="25" text-anchor="end" class="annotation muted mono">06</text>
+    <path d="M0 60 H540 M0 386 H540" class="rule"/>
+    <rect x="18" y="76" width="310" height="22" rx="6" class="chip" stroke="#6b7280"/>
+    <text x="29" y="91" class="annotation gated semibold">STREAMLIT ONLY · LOOPBACK-GATED</text>
+
+    <rect x="18" y="120" width="504" height="30" rx="6" fill="#eef3fa" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="270" y="140" text-anchor="middle" class="annotation gated semibold">GATED PREVIEW</text>
+    <rect x="18" y="162" width="504" height="60" rx="6" class="surface"/>
+    <text x="30" y="185" class="semibold">Readiness summary</text>
+    <text x="30" y="207" class="gated">GATED — unavailable outside loopback</text>
+    <rect x="18" y="234" width="504" height="54" rx="6" class="surface"/>
+    <text x="30" y="256" class="semibold">Inbox / digest preview</text>
+    <text x="30" y="278" class="gated">GATED — no private data illustrated</text>
+
+    <text x="18" y="316" class="annotation muted">
+      <tspan x="18" dy="0">only rendered when the app is bound to a loopback address;</tspan>
+      <tspan x="18" dy="19">forwarded/proxy access is rejected (ADR-0018).</tspan>
+      <tspan x="18" dy="19">No delivery, no writes.</tspan>
+    </text>
+    <rect x="18" y="396" width="160" height="22" rx="6" class="chip" stroke="#6b7280"/>
+    <text x="29" y="411" class="annotation gated semibold">GATED / READ-ONLY</text>
+    <text x="192" y="411" class="annotation muted">Access boundary, not a delivery UI.</text>
+  </g>
+
+  <g id="comparison-notes" aria-label="What the grid shows">
+    <rect x="60" y="1048" width="1680" height="136" rx="10" class="alternate"/>
+    <text x="80" y="1074" class="thumb-title">What the grid shows</text>
+    <circle cx="84" cy="1096" r="3" fill="#9a6700"/>
+    <text x="98" y="1100">Two pages carry renderer-specific labels (Dataset Explorer/Datasets, Update History/Updates).</text>
+    <circle cx="84" cy="1118" r="3" fill="#9a6700"/>
+    <text x="98" y="1122">Each renderer owns one page the other lacks (Config static-only; Private Tracking Preview app-only).</text>
+    <circle cx="84" cy="1140" r="3" fill="#1f6feb"/>
+    <text x="98" y="1144">Every page must render explicit empty / unavailable states — never a silent zero or a blank cell that reads as zero.</text>
+    <circle cx="84" cy="1162" r="3" fill="#6b7280"/>
+    <text x="98" y="1166">Colour semantics are shared across all six pages: <tspan class="ok">green ok</tspan><tspan>, </tspan><tspan class="warn">amber partial/divergence</tspan><tspan>, </tspan><tspan class="danger">red error/refused</tspan><tspan>, </tspan><tspan class="gated">grey gated</tspan><tspan>.</tspan></text>
+  </g>
+  <text x="60" y="1217" class="footer">2026-11-07 · equity_lake · sources: dashboard/streamlit_app.py, dashboard/exporter.py, dashboard/_common.py · schematic thumbnails, not pixel-accurate</text>
+</svg>

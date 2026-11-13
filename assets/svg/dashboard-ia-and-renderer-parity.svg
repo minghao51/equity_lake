@@ -1,0 +1,178 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1150" width="1800" height="1150" role="img">
+  <title>Dashboard information architecture — one IA, two renderers, drifted</title>
+  <desc>Parity matrix comparing the interactive Streamlit application with the published static HTML exporter. Both navigation lists contain five entries, covering four shared logical pages. Overview and Health are in parity. Dataset Explorer versus Datasets and Update History versus Updates diverge in label. Config is static-only. Private Tracking Preview is Streamlit-only and loopback-gated. Separate label literals and no shared page registry allow drift; CI does not compare the renderers. Label standardisation versus deliberately distinct voices remains an open owner decision. This design artifact proposes no fix.</desc>
+  <defs>
+    <style type="text/css">
+      text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12.5px; fill: #0f172a; }
+      .title { font-size: 26px; font-weight: 700; }
+      .subtitle { font-size: 14.5px; fill: #5b6b82; }
+      .section { font-size: 15.5px; font-weight: 600; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+      .annotation { font-size: 11.5px; }
+      .muted { fill: #5b6b82; }
+      .strong { font-weight: 600; }
+      .accent { fill: #1f6feb; }
+      .green { fill: #1a7f37; }
+      .amber { fill: #9a6700; }
+      .red { fill: #b42318; }
+      .gated { fill: #6b7280; }
+      .rule { stroke: #c9d4e3; stroke-width: 1.5; }
+      .footer { font-size: 11px; fill: #5b6b82; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1150" rx="10" fill="#ffffff"/>
+  <g id="heading">
+    <text x="40" y="65" class="title">Dashboard information architecture — one IA, two renderers, drifted</text>
+    <text x="40" y="95" class="subtitle">Streamlit app (interactive) vs static HTML exporter (published). Same underlying pages; labels and page sets do not match today.</text>
+  </g>
+
+  <g id="navigation-conventions">
+    <text x="40" y="143" class="strong accent">5 app entries · 5 export entries · 4 shared logical pages</text>
+    <text x="790" y="143" class="annotation muted">2 label divergences · 1 exclusive page per renderer</text>
+    <g class="code-chip">
+      <rect x="40" y="159" width="1720" height="44" rx="10" fill="#f2f5fa" stroke="#c9d4e3" stroke-width="1.5"/>
+      <text x="64" y="186" class="mono">exporter.NAV_LINKS = [("Overview","index.html"), ("Datasets","datasets.html"), ("Health","health.html"), ("Updates","updates.html"), ("Config","config.html")]</text>
+    </g>
+    <g class="code-chip">
+      <rect x="40" y="215" width="1720" height="44" rx="10" fill="#f2f5fa" stroke="#c9d4e3" stroke-width="1.5"/>
+      <text x="64" y="242" class="mono">selectbox("Page", ["Overview", "Dataset Explorer", "Health", "Update History", "Private Tracking Preview"])</text>
+    </g>
+  </g>
+
+  <g id="parity-matrix">
+    <rect x="40" y="284" width="1720" height="460" rx="10" fill="#f7f9fc" stroke="#c9d4e3" stroke-width="1.5"/>
+    <rect x="42" y="286" width="1716" height="72" rx="10" fill="#eef3fa"/>
+    <g id="matrix-header">
+      <g><text x="64" y="321" class="section">Logical page</text></g>
+      <g>
+        <text x="244" y="314" class="section">Streamlit app</text>
+        <text x="244" y="340" class="mono muted">dashboard/streamlit_app.py</text>
+      </g>
+      <g>
+        <text x="524" y="314" class="section">Static export</text>
+        <text x="524" y="340" class="mono muted">dashboard/exporter.py</text>
+      </g>
+      <g>
+        <text x="784" y="314" class="section">Rendered by</text>
+        <text x="784" y="340" class="annotation muted">Streamlit / static + published file</text>
+      </g>
+      <g><text x="1444" y="321" class="section">Status</text></g>
+    </g>
+
+    <rect x="42" y="426" width="1716" height="60" rx="10" fill="#eef3fa"/>
+    <rect x="42" y="554" width="1716" height="60" rx="10" fill="#eef3fa"/>
+    <rect x="42" y="618" width="1716" height="60" rx="10" fill="#eef3fa"/>
+    <rect x="42" y="682" width="1716" height="60" rx="10" fill="#eef3fa"/>
+    <path d="M 40,360 H 1760 M 40,424 H 1760 M 40,488 H 1760 M 40,552 H 1760 M 40,616 H 1760 M 40,680 H 1760" class="rule" fill="none"/>
+    <path d="M 220,284 V 744 M 500,284 V 744 M 760,284 V 744 M 1420,284 V 744" class="rule" fill="none"/>
+    <path d="M 44,438 V 474 M 44,566 V 602" stroke="#9a6700" stroke-width="1.5" fill="none"/>
+    <path d="M 44,630 V 666" stroke="#b42318" stroke-width="1.5" fill="none"/>
+    <path d="M 44,694 V 730" stroke="#6b7280" stroke-width="1.5" fill="none"/>
+
+    <g class="matrix-row" id="row-overview">
+      <g><text x="64" y="397" class="strong">Overview</text></g>
+      <g><text x="244" y="397">"Overview"</text></g>
+      <g><text x="524" y="397">"Overview"</text></g>
+      <g><text x="784" y="397" class="mono">render_overview / _render_overview + index.html</text></g>
+      <g>
+        <g class="status-chip">
+          <rect x="1444" y="377" width="98" height="30" rx="10" fill="#ffffff" stroke="#1a7f37" stroke-width="1.5"/>
+          <text x="1493" y="396" class="annotation strong green" text-anchor="middle">in parity</text>
+        </g>
+      </g>
+    </g>
+    <g class="matrix-row" id="row-datasets">
+      <g><text x="64" y="461" class="strong">Datasets</text></g>
+      <g><text x="244" y="461" class="strong amber">"Dataset Explorer"</text></g>
+      <g><text x="524" y="461" class="strong amber">"Datasets"</text></g>
+      <g><text x="784" y="461" class="mono">render_dataset_detail / _render_datasets + datasets.html</text></g>
+      <g>
+        <g class="status-chip">
+          <rect x="1444" y="441" width="188" height="30" rx="10" fill="#ffffff" stroke="#9a6700" stroke-width="1.5"/>
+          <text x="1538" y="460" class="annotation strong amber" text-anchor="middle">LABEL DIVERGENCE</text>
+        </g>
+      </g>
+    </g>
+    <g class="matrix-row" id="row-health">
+      <g><text x="64" y="525" class="strong">Health</text></g>
+      <g><text x="244" y="525">"Health"</text></g>
+      <g><text x="524" y="525">"Health"</text></g>
+      <g><text x="784" y="525" class="mono">render_health_page / _render_health + health.html</text></g>
+      <g>
+        <g class="status-chip">
+          <rect x="1444" y="505" width="98" height="30" rx="10" fill="#ffffff" stroke="#1a7f37" stroke-width="1.5"/>
+          <text x="1493" y="524" class="annotation strong green" text-anchor="middle">in parity</text>
+        </g>
+      </g>
+    </g>
+    <g class="matrix-row" id="row-updates">
+      <g><text x="64" y="589" class="strong">Updates</text></g>
+      <g><text x="244" y="589" class="strong amber">"Update History"</text></g>
+      <g><text x="524" y="589" class="strong amber">"Updates"</text></g>
+      <g><text x="784" y="589" class="mono">render_update_history / _render_updates + updates.html</text></g>
+      <g>
+        <g class="status-chip">
+          <rect x="1444" y="569" width="188" height="30" rx="10" fill="#ffffff" stroke="#9a6700" stroke-width="1.5"/>
+          <text x="1538" y="588" class="annotation strong amber" text-anchor="middle">LABEL DIVERGENCE</text>
+        </g>
+      </g>
+    </g>
+    <g class="matrix-row" id="row-config">
+      <g><text x="64" y="653" class="strong">Config</text></g>
+      <g><text x="244" y="653" class="muted">(absent)</text></g>
+      <g><text x="524" y="653" class="strong red">"Config"</text></g>
+      <g><text x="784" y="653" class="mono">_render_config + config.html</text></g>
+      <g>
+        <g class="status-chip">
+          <rect x="1444" y="633" width="128" height="30" rx="10" fill="#ffffff" stroke="#b42318" stroke-width="1.5"/>
+          <text x="1508" y="652" class="annotation strong red" text-anchor="middle">STATIC ONLY</text>
+        </g>
+      </g>
+    </g>
+    <g class="matrix-row" id="row-private-tracking">
+      <g><text x="64" y="717" class="strong">Private tracking</text></g>
+      <g><text x="244" y="717" class="strong gated">"Private Tracking Preview"</text></g>
+      <g><text x="524" y="717" class="muted">(absent)</text></g>
+      <g><text x="784" y="717" class="mono">render_private_tracking_preview</text></g>
+      <g>
+        <g class="status-chip">
+          <rect x="1444" y="697" width="290" height="30" rx="10" fill="#ffffff" stroke="#6b7280" stroke-width="1.5"/>
+          <text x="1589" y="716" class="annotation strong gated" text-anchor="middle">STREAMLIT ONLY · GATED</text>
+        </g>
+      </g>
+    </g>
+  </g>
+  <text x="784" y="765" class="annotation gated">Private tracking: loopback-gated preview.</text>
+
+  <g id="consequences">
+    <rect x="40" y="784" width="1060" height="214" rx="10" fill="#f7f9fc" stroke="#c9d4e3" stroke-width="1.5"/>
+    <text x="64" y="815" class="section">What this means</text>
+    <text x="64" y="850" class="amber">•</text>
+    <text x="84" y="850">The published site and the local app describe the same lake with different words; a reader cannot tell</text>
+    <text x="84" y="872">whether "Datasets" and "Dataset Explorer" are the same page.</text>
+    <text x="64" y="904" class="amber">•</text>
+    <text x="84" y="904">Each renderer also carries a page the other lacks (Config is static-only; the private tracking preview</text>
+    <text x="84" y="926">exists only in the app).</text>
+    <text x="64" y="958" class="amber">•</text>
+    <text x="84" y="958">Nothing in CI compares them, so drift accumulates silently.</text>
+  </g>
+  <g id="mechanism">
+    <rect x="1124" y="784" width="636" height="214" rx="10" fill="#eef3fa" stroke="#c9d4e3" stroke-width="1.5"/>
+    <text x="1148" y="815" class="section">Why it happens</text>
+    <text x="1148" y="850">Two renderers, two label literals, no shared page registry.</text>
+    <text x="1148" y="889" class="mono">dashboard/_common.py</text>
+    <text x="1148" y="913">holds data loading only, not a UI vocabulary.</text>
+    <path d="M 1148,940 H 1736" class="rule" fill="none"/>
+    <text x="1148" y="970" class="annotation muted">Shared data loading does not imply shared navigation labels.</text>
+  </g>
+
+  <g id="decision-status">
+    <rect x="40" y="1020" width="1720" height="70" rx="10" fill="#f7f9fc" stroke="#9a6700" stroke-width="1.5"/>
+    <text x="64" y="1061" class="section amber">Status</text>
+    <text x="174" y="1061"><tspan class="strong amber">Open decision (owner):</tspan><tspan> standardise the labels in both renderers, or keep the two voices deliberately. No fix is proposed by this diagram.</tspan></text>
+  </g>
+  <g id="artifact-footer">
+    <text x="40" y="1127" class="footer">2026-11-07 · equity_lake · sources: src/equity_lake/dashboard/streamlit_app.py, src/equity_lake/dashboard/exporter.py · design artifact, not a contract</text>
+  </g>
+</svg>
