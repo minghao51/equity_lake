@@ -1,21 +1,22 @@
-"""Dashboard information-architecture parity guard (A1).
+"""Dashboard IA parity: one registry, two renderers (A1 + A2).
 
-The dashboard renders one information architecture through **two** renderers: the
-interactive Streamlit app (`dashboard/streamlit_app.py`) and the published static
-HTML exporter (`dashboard/exporter.py`). Nothing compared them, and they had
-drifted: two logical pages carry different labels, and each renderer owns one page
-the other lacks (Config is static-only; the private tracking preview is
-app-only).
+The dashboard presents one information architecture through two renderers — the
+Streamlit app and the static HTML exporter. They used to spell the pages
+independently and drifted ("Dataset Explorer" vs "Datasets", "Update History" vs
+"Updates", plus a page each renderer owned alone).
 
-This module pins that state instead of pretending it is consistent. It does **not**
-decide the naming question — whether the two voices should be standardised is an
-open owner decision. What it guarantees is that any *unplanned* change (a page
-added to one renderer, a page renamed, a page dropped) fails here and must be
-recorded deliberately in :data:`IA_LEDGER`.
+The owner standardised the vocabulary on 2026-11-07, so
+:mod:`equity_lake.dashboard.pages` is now the **only** place a page label, file or
+renderer flag lives. This module enforces that:
 
-No lake, network or filesystem write is involved: the Streamlit page list is read
-from source with :mod:`ast` (deliberately, so a refactor to a shared constant
-also updates this guard), and the static pages are the real ``NAV_LINKS``.
+* neither renderer may hardcode a page label (checked by reading the sources);
+* the retired spellings must not come back;
+* every registry page must have a renderer on the side that claims it;
+* the navigation stays complete, unique and self-marking on every static page.
+
+The deliberate page-set asymmetry survives: ``Config`` is static-only and the
+private tracking preview is app-only (loopback-gated). It is recorded in the
+registry, not hidden.
 """
 
 from __future__ import annotations
@@ -26,27 +27,30 @@ from pathlib import Path
 import pytest
 
 import equity_lake  # type: ignore[import-untyped]
-from equity_lake.dashboard.exporter import NAV_LINKS, DashboardExporter  # type: ignore[import-untyped]
+from equity_lake.dashboard.exporter import _STATIC_RENDERERS, NAV_LINKS, DashboardExporter  # type: ignore[import-untyped]
+from equity_lake.dashboard.pages import (  # type: ignore[import-untyped]
+    PAGE_LABELS,
+    PAGE_SPECS,
+    STATIC_PAGES,
+    STREAMLIT_PAGES,
+    page_spec,
+)
 
-STREAMLIT_SOURCE = Path(equity_lake.__file__).parent / "dashboard" / "streamlit_app.py"
+DASHBOARD_DIR = Path(equity_lake.__file__).parent / "dashboard"
+STREAMLIT_SOURCE = DASHBOARD_DIR / "streamlit_app.py"
+EXPORTER_SOURCE = DASHBOARD_DIR / "exporter.py"
 
-#: One row per logical page. ``None`` means that renderer does not expose the page.
-#: The label split is TODAY'S state, not an endorsement: it is the open naming
-#: decision recorded in the design artifacts under ``assets/svg/``.
-IA_LEDGER: dict[str, dict[str, str | None]] = {
-    "overview": {"streamlit": "Overview", "static": "Overview"},
-    "datasets": {"streamlit": "Dataset Explorer", "static": "Datasets"},
-    "health": {"streamlit": "Health", "static": "Health"},
-    "updates": {"streamlit": "Update History", "static": "Updates"},
-    "config": {"streamlit": None, "static": "Config"},
-    "private_tracking": {"streamlit": "Private Tracking Preview", "static": None},
-}
+#: Spellings retired by the 2026-11-07 naming decision.
+RETIRED_LABELS = ("Dataset Explorer", "Update History")
 
 
-def _streamlit_pages() -> list[str]:
-    """The labels in ``st.sidebar.selectbox("Page", [...])``, read without importing streamlit."""
-    tree = ast.parse(STREAMLIT_SOURCE.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
+def _streamlit_tree() -> ast.Module:
+    return ast.parse(STREAMLIT_SOURCE.read_text(encoding="utf-8"))
+
+
+def _selectbox_page_argument() -> ast.expr:
+    """The second argument of ``selectbox("Page", ...)`` — must be the registry tuple."""
+    for node in ast.walk(_streamlit_tree()):
         if not isinstance(node, ast.Call):
             continue
         function = node.func
@@ -54,113 +58,119 @@ def _streamlit_pages() -> list[str]:
             continue
         if not node.args or not isinstance(node.args[0], ast.Constant) or node.args[0].value != "Page":
             continue
-        if len(node.args) < 2 or not isinstance(node.args[1], ast.List):
-            pytest.fail(
-                "the Streamlit page selector is no longer a literal list; update the parity guard "
-                "(tests/unit/test_dashboard_ia_parity.py) deliberately with the new page source"
+        if len(node.args) < 2:  # pragma: no cover - malformed call, reported below
+            break
+        return node.args[1]
+    pytest.fail('could not find st.sidebar.selectbox("Page", ...) in dashboard/streamlit_app.py')
+
+
+def _streamlit_dispatch_keys() -> set[str]:
+    """Page keys compared in the app's dispatch chain (``page == "<key>"``)."""
+    keys: set[str] = set()
+    for node in ast.walk(_streamlit_tree()):
+        if not isinstance(node, ast.Compare) or len(node.ops) != 1 or not isinstance(node.ops[0], ast.Eq):
+            continue
+        left, right = node.left, node.comparators[0]
+        if isinstance(left, ast.Name) and left.id == "page" and isinstance(right, ast.Constant) and isinstance(right.value, str):
+            keys.add(right.value)
+    return keys
+
+
+class TestRegistryIsTheSingleSource:
+    def test_streamlit_navigation_comes_from_the_registry(self) -> None:
+        argument = _selectbox_page_argument()
+
+        assert isinstance(argument, ast.Name) and argument.id == "PAGE_LABELS", (
+            f"the Streamlit page selector must be PAGE_LABELS from dashboard/pages.py, not a literal list: found {ast.dump(argument)[:120]}"
+        )
+
+    @pytest.mark.parametrize("source", [STREAMLIT_SOURCE, EXPORTER_SOURCE], ids=["streamlit", "exporter"])
+    def test_renderers_do_not_hardcode_page_labels(self, source: Path) -> None:
+        text = source.read_text(encoding="utf-8")
+
+        for label in (*RETIRED_LABELS, "Overview", "Datasets", "Health", "Updates", "Config"):
+            assert f'"{label}"' not in text and f"'{label}'" not in text, (
+                f"{source.name} still spells the page label {label!r} as a literal; it must come from "
+                "dashboard/pages.py so the two renderers cannot drift again"
             )
-        return [element.value for element in node.args[1].elts if isinstance(element, ast.Constant) and isinstance(element.value, str)]
-    pytest.fail(
-        'could not find st.sidebar.selectbox("Page", [...]) in dashboard/streamlit_app.py; '
-        "if the navigation changed shape, update the parity guard deliberately"
-    )
+
+    def test_retired_labels_are_gone_from_the_renderers(self) -> None:
+        for source in (STREAMLIT_SOURCE, EXPORTER_SOURCE):
+            text = source.read_text(encoding="utf-8")
+            for retired in RETIRED_LABELS:
+                assert retired not in text, f"{source.name} still contains the retired label {retired!r}"
+
+    def test_registry_internals_are_consistent(self) -> None:
+        keys = [spec.key for spec in PAGE_SPECS]
+        labels = [spec.label for spec in PAGE_SPECS]
+        files = [spec.static_file for spec in STATIC_PAGES]
+
+        assert len(set(keys)) == len(keys), f"duplicate page keys: {keys}"
+        assert len(set(labels)) == len(labels), f"duplicate page labels: {labels}"
+        assert len(set(files)) == len(files), f"duplicate static files: {files}"
+        assert all(str(name).endswith(".html") for name in files), f"static pages must be .html: {files}"
+        assert set(STATIC_PAGES).issubset(PAGE_SPECS)
+        assert set(STREAMLIT_PAGES).issubset(PAGE_SPECS)
+        assert page_spec("datasets").label == "Datasets"
+        with pytest.raises(KeyError):
+            page_spec("no-such-page")
 
 
-def _static_pages() -> list[str]:
-    return [label for label, _href in NAV_LINKS]
+class TestRenderersCoverTheRegistry:
+    def test_every_page_is_rendered_somewhere(self) -> None:
+        orphans = [spec.key for spec in PAGE_SPECS if spec.static_file is None and not spec.streamlit]
 
+        assert orphans == [], f"registry pages with no renderer: {orphans}"
 
-def _ledger_labels(renderer: str) -> set[str]:
-    labels: set[str] = set()
-    for row in IA_LEDGER.values():
-        label = row[renderer]
-        if label is not None:
-            labels.add(label)
-    return labels
-
-
-def test_ledger_matches_the_streamlit_pages() -> None:
-    actual = set(_streamlit_pages())
-
-    assert actual == _ledger_labels("streamlit"), (
-        "the Streamlit page set changed: added {added}, removed {removed}. Record the change in IA_LEDGER "
-        "(and the design artifacts) deliberately instead of silently diverging from the static site.".format(
-            added=sorted(actual - _ledger_labels("streamlit")),
-            removed=sorted(_ledger_labels("streamlit") - actual),
+    def test_every_static_page_has_a_renderer(self) -> None:
+        assert set(_STATIC_RENDERERS) == {spec.key for spec in STATIC_PAGES}, (
+            "the static renderer map and the registry's static pages disagree: "
+            f"renderers={sorted(_STATIC_RENDERERS)}, pages={sorted(spec.key for spec in STATIC_PAGES)}"
         )
-    )
 
+    def test_streamlit_dispatch_covers_exactly_the_registry_pages(self) -> None:
+        expected = {spec.key for spec in STREAMLIT_PAGES}
 
-def test_ledger_matches_the_static_pages() -> None:
-    actual = set(_static_pages())
-
-    assert actual == _ledger_labels("static"), (
-        "the static export page set changed: added {added}, removed {removed}. Record the change in IA_LEDGER deliberately.".format(
-            added=sorted(actual - _ledger_labels("static")),
-            removed=sorted(_ledger_labels("static") - actual),
+        assert _streamlit_dispatch_keys() == expected, (
+            "the Streamlit dispatch chain does not match the registry: "
+            f"missing={sorted(expected - _streamlit_dispatch_keys())}, "
+            f"extra={sorted(_streamlit_dispatch_keys() - expected)}"
         )
-    )
+
+    def test_navigation_labels_match_the_app_labels(self) -> None:
+        nav = dict(NAV_LINKS)
+
+        for spec in PAGE_SPECS:
+            if spec.static_file is not None and spec.streamlit:
+                assert spec.label in nav, f"{spec.key} is exported but missing from the navigation"
+                assert spec.label in PAGE_LABELS, f"{spec.key} is in the app but missing from PAGE_LABELS"
+
+    def test_renderer_only_pages_are_recorded_deliberately(self) -> None:
+        streamlit_only = sorted(spec.key for spec in PAGE_SPECS if spec.streamlit and spec.static_file is None)
+        static_only = sorted(spec.key for spec in PAGE_SPECS if not spec.streamlit and spec.static_file is not None)
+        gated = sorted(spec.key for spec in PAGE_SPECS if spec.gated)
+
+        assert (streamlit_only, static_only) == (["private_tracking"], ["config"])
+        assert gated == ["private_tracking"], "the private tracking preview must stay marked gated"
 
 
-def test_every_logical_page_is_rendered_somewhere() -> None:
-    orphans = [page for page, row in IA_LEDGER.items() if row["streamlit"] is None and row["static"] is None]
+class TestStaticNavigationRendering:
+    def test_navigation_targets_are_unique_and_page_like(self) -> None:
+        labels = [label for label, _href in NAV_LINKS]
+        hrefs = [href for _label, href in NAV_LINKS]
 
-    assert orphans == [], f"logical pages with no renderer: {orphans}"
+        assert len(set(labels)) == len(labels), f"duplicate nav labels: {labels}"
+        assert len(set(hrefs)) == len(hrefs), f"duplicate nav targets: {hrefs}"
+        assert len(set(Path(href).stem for href in hrefs)) == len(hrefs), f"nav targets share a stem: {hrefs}"
 
+    @pytest.mark.parametrize(("label", "href"), NAV_LINKS)
+    def test_every_static_page_renders_the_whole_navigation(self, label: str, href: str) -> None:
+        exporter = object.__new__(DashboardExporter)
 
-def test_known_label_divergences_are_exactly_the_recorded_ones() -> None:
-    """A rename on either side must fail here, so drift cannot grow silently."""
-    divergent = {
-        page: (row["streamlit"], row["static"])
-        for page, row in IA_LEDGER.items()
-        if row["streamlit"] is not None and row["static"] is not None and row["streamlit"] != row["static"]
-    }
+        html = exporter._render_page(title=label, active_href=href, body="<p>body</p>")
 
-    assert divergent == {
-        "datasets": ("Dataset Explorer", "Datasets"),
-        "updates": ("Update History", "Updates"),
-    }, (
-        "the set of cross-renderer label divergences changed. If the naming decision was taken, shrink "
-        "IA_LEDGER and this expectation together; do not add a new divergence without recording it."
-    )
-
-
-def test_renderer_only_pages_are_exactly_the_recorded_ones() -> None:
-    streamlit_only = sorted(page for page, row in IA_LEDGER.items() if row["streamlit"] is not None and row["static"] is None)
-    static_only = sorted(page for page, row in IA_LEDGER.items() if row["streamlit"] is None and row["static"] is not None)
-
-    assert (streamlit_only, static_only) == (["private_tracking"], ["config"]), (
-        f"the renderer-only page sets changed: app-only {streamlit_only}, static-only {static_only}. Add the missing page to the "
-        "other renderer or record the asymmetry deliberately."
-    )
-
-
-def test_static_navigation_targets_are_unique_and_page_like() -> None:
-    labels = [label for label, _href in NAV_LINKS]
-    hrefs = [href for _label, href in NAV_LINKS]
-
-    assert len(set(labels)) == len(labels), f"duplicate nav labels: {labels}"
-    assert len(set(hrefs)) == len(hrefs), f"duplicate nav targets: {hrefs}"
-    assert all(href.endswith(".html") for href in hrefs), f"nav targets must be static pages: {hrefs}"
-    assert len(set(Path(href).stem for href in hrefs)) == len(hrefs), f"nav targets share a stem: {hrefs}"
-
-
-@pytest.mark.parametrize(("label", "href"), NAV_LINKS)
-def test_every_static_page_renders_the_whole_navigation(label: str, href: str) -> None:
-    """Each exported page must link every other page, with itself marked active."""
-    exporter = object.__new__(DashboardExporter)
-
-    html = exporter._render_page(title=label, active_href=href, body="<p>body</p>")
-
-    for nav_label, nav_href in NAV_LINKS:
-        assert f'href="{nav_href}"' in html, f"{href} does not link {nav_href}"
-        assert f">{nav_label}</a>" in html, f"{href} drops the {nav_label!r} label"
-    assert f'class="nav-link active" href="{href}"' in html, f"{href} does not mark itself active"
-    assert html.count('class="nav-link active"') == 1, f"{href} marks more than one page active"
-
-
-def test_streamlit_labels_are_unique() -> None:
-    pages = _streamlit_pages()
-
-    assert len(set(pages)) == len(pages), f"duplicate Streamlit page labels: {pages}"
-    assert all(page.strip() == page and page for page in pages), f"blank or padded Streamlit label: {pages}"
+        for nav_label, nav_href in NAV_LINKS:
+            assert f'href="{nav_href}"' in html, f"{href} does not link {nav_href}"
+            assert f">{nav_label}</a>" in html, f"{href} drops the {nav_label!r} label"
+        assert f'class="nav-link active" href="{href}"' in html, f"{href} does not mark itself active"
+        assert html.count('class="nav-link active"') == 1, f"{href} marks more than one page active"

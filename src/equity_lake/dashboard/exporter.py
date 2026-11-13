@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,17 +15,24 @@ from equity_lake.core.config import get_settings
 from equity_lake.core.logging import redact_secrets as _redact_secrets
 from equity_lake.core.paths import LOGS_DIR, PIPELINE_RESULTS_GLOB
 from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, load_update_history, summarize_dataset
+from equity_lake.dashboard.components import Notice, notice_class
+from equity_lake.dashboard.pages import NAV_LINKS, STATIC_PAGES, page_spec
 
 # Update-history rows rendered on the static Updates page.
 _EXPORT_HISTORY_LIMIT = 20
 
-NAV_LINKS = [
-    ("Overview", "index.html"),
-    ("Datasets", "datasets.html"),
-    ("Health", "health.html"),
-    ("Updates", "updates.html"),
-    ("Config", "config.html"),
-]
+
+def _alerts_html(entries: list[str], empty_text: str) -> str:
+    """Render alert entries through the shared state vocabulary.
+
+    An alert is a warning; an empty alert list is a *check that passed*, so it is a
+    success notice rather than a warning-coloured "nothing here". State meaning comes
+    from :mod:`equity_lake.dashboard.components`, so the static site and the app
+    cannot drift into different colour semantics.
+    """
+    if not entries:
+        return f'<li class="{notice_class(Notice.SUCCESS)}">{_escape(empty_text)}</li>'
+    return "".join(f'<li class="{notice_class(Notice.WARNING)}">{_escape(entry)}</li>' for entry in entries)
 
 
 def _escape(value: Any) -> str:
@@ -81,13 +89,12 @@ class DashboardExporter:
             encoding="utf-8",
         )
 
-        pages = {
-            "index.html": self._render_overview(payload),
-            "datasets.html": self._render_datasets(payload),
-            "health.html": self._render_health(payload),
-            "updates.html": self._render_updates(payload),
-            "config.html": self._render_config(payload),
-        }
+        pages: dict[str, str] = {}
+        for spec in STATIC_PAGES:
+            filename = spec.static_file
+            if filename is None:  # pragma: no cover - STATIC_PAGES already excludes these
+                continue
+            pages[filename] = _STATIC_RENDERERS[spec.key](self, payload)
         for filename, content in pages.items():
             (self.output_dir / filename).write_text(content, encoding="utf-8")
 
@@ -148,6 +155,8 @@ class DashboardExporter:
         --accent: #116466;
         --accent-soft: #d9eeea;
         --warn: #b55d07;
+        --ok: #1a7f37;
+        --error: #b42318;
       }}
       * {{ box-sizing: border-box; }}
       body {{
@@ -226,7 +235,15 @@ class DashboardExporter:
         font-size: 0.84rem;
       }}
       .muted {{ color: var(--muted); }}
-      .alerts li {{ margin: 0 0 10px; color: var(--warn); }}
+      .alerts li {{ margin: 0 0 10px; color: var(--warn); overflow-wrap: anywhere; }}
+      /* State modifiers come from dashboard/components.py: one rule per Notice, so a
+         state can never be rendered unstyled. */
+      .alerts li.alert--info {{ color: var(--accent); }}
+      .alerts li.alert--ok {{ color: var(--ok); }}
+      .alerts li.alert--error {{ color: var(--error); }}
+      .alerts li.alert--unavailable,
+      .alerts li.alert--partial {{ color: var(--warn); }}
+      .alerts li.alert--gated {{ color: var(--muted); }}
     </style>
   </head>
   <body>
@@ -265,7 +282,7 @@ class DashboardExporter:
             for dataset in payload["datasets"]
         )
         alerts = payload.get("health", {}).get("alerts", []) if payload.get("health") else []
-        alerts_html = "".join(f"<li>{_escape(alert)}</li>" for alert in alerts) or "<li>No health alerts were exported.</li>"
+        alerts_html = _alerts_html(list(alerts), "No health alerts were exported.")
         body = f"""
       <section class="grid">{cards_html}</section>
       <section class="card">
@@ -332,7 +349,7 @@ class DashboardExporter:
       </section>
 """
         return self._render_page(
-            title="Datasets",
+            title=page_spec("datasets").label,
             active_href="datasets.html",
             intro="Storage-backed dataset summaries from the current local lake.",
             body=body,
@@ -340,7 +357,7 @@ class DashboardExporter:
 
     def _render_health(self, payload: dict[str, Any]) -> str:
         health = payload.get("health") or {"alerts": [], "metrics": {}}
-        alerts_html = "".join(f"<li>{_escape(alert)}</li>" for alert in health.get("alerts", [])) or "<li>No health alerts were exported.</li>"
+        alerts_html = _alerts_html(list(health.get("alerts", [])), "No health alerts were exported.")
         metrics_html = _escape(json.dumps(health.get("metrics", {}), indent=2, default=str))
         body = f"""
       <section class="grid">
@@ -355,7 +372,7 @@ class DashboardExporter:
       </section>
 """
         return self._render_page(
-            title="Health",
+            title=page_spec("health").label,
             active_href="health.html",
             intro=("Freshness, quality, and pipeline health snapshots exported for static hosting."),
             body=body,
@@ -402,7 +419,7 @@ class DashboardExporter:
       <section class="grid" style="margin-top: 16px;">{pipeline_html}</section>
 """
         return self._render_page(
-            title="Updates",
+            title=page_spec("updates").label,
             active_href="updates.html",
             intro="Recent update history and saved pipeline result artifacts.",
             body=body,
@@ -417,11 +434,23 @@ class DashboardExporter:
       </section>
 """
         return self._render_page(
-            title="Config",
+            title=page_spec("config").label,
             active_href="config.html",
             intro="Rendered application settings used for the current export.",
             body=body,
         )
+
+
+#: Which renderer produces each static page. The page set itself comes from the
+#: registry (``dashboard/pages.py``), so a page cannot be exported without a renderer
+#: or a renderer silently outlive its page.
+_STATIC_RENDERERS: dict[str, Callable[[DashboardExporter, dict[str, Any]], str]] = {
+    "overview": DashboardExporter._render_overview,
+    "datasets": DashboardExporter._render_datasets,
+    "health": DashboardExporter._render_health,
+    "updates": DashboardExporter._render_updates,
+    "config": DashboardExporter._render_config,
+}
 
 
 def build_dashboard(output_dir: Path | None = None) -> Path:

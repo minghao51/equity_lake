@@ -25,6 +25,8 @@ except ModuleNotFoundError:
     st = None
 
 from equity_lake.dashboard._common import MARKET_DATASETS, load_health_report, load_update_history, summarize_dataset
+from equity_lake.dashboard.components import Notice, render_notice
+from equity_lake.dashboard.pages import PAGE_LABELS, page_spec, streamlit_key_for_label
 from equity_lake.storage.lake_reader import duckdb_scan_for
 
 # Update-history rows rendered on the Streamlit page.
@@ -85,12 +87,12 @@ def render_overview(datasets: list[dict[str, Any]], health: dict[str, Any] | Non
 
 def render_dataset_detail(datasets: list[dict[str, Any]]) -> None:
     """Render dataset detail page with per-dataset exploration."""
-    st.title("Dataset Explorer")
+    st.title(page_spec("datasets").label)
 
     # Dataset selector
     dataset_names = [d["name"] for d in datasets if d["available"]]
     if not dataset_names:
-        st.info("No datasets available. Run the pipeline to generate data.")
+        render_notice(st, Notice.INFO, "No datasets available. Run the pipeline to generate data.")
         return
 
     selected = st.selectbox("Select Dataset", dataset_names)
@@ -128,7 +130,7 @@ def render_health_page(health: dict[str, Any] | None) -> None:
     st.title("Pipeline Health")
 
     if not health:
-        st.info("No health report available. Run `equity monitor` to generate one.")
+        render_notice(st, Notice.UNAVAILABLE, "No health report available. Run `equity monitor` to generate one.")
         return
 
     # Alerts
@@ -150,7 +152,7 @@ def render_health_page(health: dict[str, Any] | None) -> None:
 
 def render_update_history(updates: list[dict[str, Any]]) -> None:
     """Render the update history page."""
-    st.title("Update History")
+    st.title(page_spec("updates").label)
 
     if not updates:
         st.info("No update history found. Run the pipeline to generate updates.")
@@ -188,7 +190,14 @@ def render_private_tracking_preview() -> None:
     except Exception:
         bind_address = None
     if not is_loopback_bind_address(bind_address):
-        st.error("Private tracking is disabled unless Streamlit is explicitly bound to a loopback address (127.0.0.1).")
+        # A refused private read, not a neutral "not built" state: this guard exists to
+        # keep private data from being served over a non-loopback bind, so it must stay
+        # as loud as before (Notice.REFUSED renders as st.error).
+        render_notice(
+            st,
+            Notice.REFUSED,
+            "Private tracking is disabled unless Streamlit is explicitly bound to a loopback address (127.0.0.1).",
+        )
         return
 
     # Import and load private state only after the fail-closed bind check.
@@ -343,21 +352,23 @@ def main() -> None:
     updates = _load_update_history()
 
     # Navigation
-    page = st.sidebar.selectbox(
-        "Page",
-        ["Overview", "Dataset Explorer", "Health", "Update History", "Private Tracking Preview"],
-    )
+    # Navigation comes from the single page registry (dashboard/pages.py): the label
+    # is the selection, and the key drives dispatch, so the two renderers cannot drift.
+    page_label = st.sidebar.selectbox("Page", PAGE_LABELS)
+    page = streamlit_key_for_label(page_label)
 
-    if page == "Overview":
+    if page == "overview":
         render_overview(datasets, health)
-    elif page == "Dataset Explorer":
+    elif page == "datasets":
         render_dataset_detail(datasets)
-    elif page == "Health":
+    elif page == "health":
         render_health_page(health)
-    elif page == "Update History":
+    elif page == "updates":
         render_update_history(updates)
-    elif page == "Private Tracking Preview":
+    elif page == "private_tracking":
         render_private_tracking_preview()
+    else:  # pragma: no cover - a new registry page needs an explicit renderer here
+        raise RuntimeError(f"no Streamlit renderer registered for dashboard page {page!r}")
 
     # Footer
     st.sidebar.divider()
