@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1300" width="1800" height="1300" role="img">
+  <title>P02 — private portfolio read reports (as built)</title>
+  <desc>Three light terminal panels show the exact successful positions, summary and reconcile reports for the supplied P02 fixture, with read-only options, completeness rules and an exit-code matrix. The reports reconstruct effective dates, do not certify historical knowledge or tax treatment, and perform no writes or network access.</desc>
+  <style>
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .title { font-size: 26px; font-weight: 700; }
+    .subtitle { font-size: 14.5px; fill: #5b6b82; }
+    .command { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; font-weight: 600; }
+    .terminal { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 19px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .note { font-size: 11.5px; fill: #5b6b82; }
+    .label { font-size: 11.5px; font-weight: 600; }
+    .section { font-size: 15px; font-weight: 600; }
+    .cell { font-size: 11.5px; }
+    .footer { font-size: 11px; fill: #5b6b82; }
+    .panel { fill: #f2f5fa; stroke: #c9d4e3; stroke-width: 1.5; }
+    .chip { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1; }
+    .rule { stroke: #c9d4e3; stroke-width: 1; }
+    .ok { fill: #1a7f37; }
+    .warn { fill: #9a6700; }
+    .danger { fill: #b42318; }
+    .accent { fill: #1f6feb; }
+  </style>
+  <rect width="1800" height="1300" fill="#ffffff"/>
+
+  <text class="title" x="32" y="43">P02 — private portfolio read reports (as built)</text>
+  <text class="subtitle" x="32" y="69">equity portfolio positions · summary · reconcile — read-only, no writes, no network, exit 0 only for a complete result</text>
+
+  <g id="common-options" aria-label="Common command options">
+    <rect class="chip" x="32" y="90" width="329" height="34" rx="7"/>
+    <text class="note" x="44" y="111"><tspan class="mono accent">--as-of</tspan><tspan>  required, timezone-aware UTC</tspan></text>
+    <rect class="chip" x="371" y="90" width="320" height="34" rx="7"/>
+    <text class="note" x="383" y="111"><tspan class="mono accent">--marks</tspan><tspan>  positions/summary, required</tspan></text>
+    <rect class="chip" x="701" y="90" width="299" height="34" rx="7"/>
+    <text class="note" x="713" y="111"><tspan class="mono accent">--statement</tspan><tspan>  reconcile, required</tspan></text>
+    <rect class="chip" x="1010" y="90" width="293" height="34" rx="7"/>
+    <text class="note" x="1022" y="111"><tspan class="mono accent">--account</tspan><tspan>  default </tspan><tspan class="mono">main</tspan><tspan>, neutral label</tspan></text>
+    <rect class="chip" x="1313" y="90" width="455" height="34" rx="7"/>
+    <text class="note" x="1325" y="111"><tspan class="mono accent">--max-stale-sessions</tspan><tspan>  0 or 1 only, never above 1</tspan></text>
+  </g>
+
+  <g id="positions-panel" aria-label="Positions command, exit 0, complete">
+    <rect class="panel" x="32" y="142" width="1736" height="314" rx="10"/>
+    <text class="command" x="50" y="175">equity portfolio positions --as-of 2024-01-05T21:00:00Z --marks marks.json</text>
+    <line class="rule" x1="32" y1="185" x2="1768" y2="185"/>
+    <line class="rule" x1="1244" y1="203" x2="1244" y2="438"/>
+    <g id="positions-transcript" class="terminal" xml:space="preserve">
+      <text class="terminal" x="50" y="207">portfolio positions as of 2024-01-05T21:00:00+00:00 (account main)</text>
+      <text class="terminal" x="50" y="226">  4 replayed event(s); effective-date reconstruction, not a historical-knowledge proof</text>
+      <text class="terminal" x="50" y="245">  XNAS:AAA  quantity 11</text>
+      <text class="terminal" x="50" y="264">    basis 1177.00  average cost 107.00  realized gain 90.00</text>
+      <text class="terminal" x="50" y="283">    mark 125 (fixture, provenance synthetic)  session 2024-01-05  as of 2024-01-05 21:00:00+00:00  age 0 session(s), bound 1</text>
+      <text class="terminal" x="50" y="302">    value 1375.00  unrealized gain 198.00  status valued</text>
+      <text class="terminal" x="50" y="321">  cash 924.00</text>
+      <text class="terminal" x="50" y="340">  marked position value 1375.00 (valid marks only)</text>
+      <text class="terminal" x="50" y="359">  NAV 2299.00</text>
+      <text class="terminal" x="50" y="378">  unrealized gain 198.00</text>
+      <text class="terminal" x="50" y="397">  total gain 299.00</text>
+      <text class="terminal" x="50" y="416">  staleness bound: 1 completed session(s); money is displayed in cents, half-even; quantities are shown exactly.</text>
+      <text class="terminal" x="50" y="435">  upstream provenance of these book marks is not a research price-source certification.</text>
+    </g>
+    <g id="positions-notes">
+      <rect x="1262" y="203" width="488" height="235" rx="7" fill="#eef3fa"/>
+      <rect x="1280" y="221" width="156" height="26" rx="6" fill="#ffffff" stroke="#1a7f37"/>
+      <text class="label ok" x="1292" y="238">exit 0 — complete</text>
+      <circle cx="1283" cy="275" r="3" fill="#1f6feb"/>
+      <text class="note" x="1296" y="279">identities appear only in this requested local report</text>
+      <circle cx="1283" cy="320" r="3" fill="#1f6feb"/>
+      <text class="note" x="1296" y="324">money in cents, half-even; quantities exact</text>
+      <circle cx="1283" cy="365" r="3" fill="#1f6feb"/>
+      <text class="note" x="1296" y="369"><tspan x="1296" y="369">effective-date reconstruction, not a </tspan><tspan x="1296" y="387">historical-knowledge claim</tspan></text>
+    </g>
+  </g>
+
+  <g id="summary-panel" aria-label="Summary command, exit 0, complete">
+    <rect class="panel" x="32" y="470" width="1736" height="334" rx="10"/>
+    <text class="command" x="50" y="503">equity portfolio summary --as-of 2024-01-05T21:00:00Z --marks marks.json</text>
+    <line class="rule" x1="32" y1="513" x2="1768" y2="513"/>
+    <line class="rule" x1="1244" y1="531" x2="1244" y2="786"/>
+    <g id="summary-transcript" class="terminal" xml:space="preserve">
+      <text class="terminal" x="50" y="535">portfolio summary as of 2024-01-05T21:00:00+00:00 (account main)</text>
+      <text class="terminal" x="50" y="554">  cash 924.00</text>
+      <text class="terminal" x="50" y="573">  external flows: deposits 0.00, withdrawals 0.00, net 0.00 (external flows, never profit)</text>
+      <text class="terminal" x="50" y="592">  fees counted once: embedded 7.00, standalone 0.00 (embedded purchase/sale fees are already inside realized and unrealized gain)</text>
+      <text class="terminal" x="50" y="611">  net dividend income 11.00</text>
+      <text class="terminal" x="50" y="630"><tspan x="50" y="630">  gross dividend income and withholding unavailable: ledger schema v1 records net dividend cash only, so gross amount and </tspan><tspan x="65" y="649">withholding cannot be established and are never assumed to be zero</tspan></text>
+      <text class="terminal" x="50" y="668">  realized gain 90.00</text>
+      <text class="terminal" x="50" y="687">  marked position value 1375.00 (valid marks only)</text>
+      <text class="terminal" x="50" y="706">  NAV 2299.00</text>
+      <text class="terminal" x="50" y="725">  unrealized gain 198.00</text>
+      <text class="terminal" x="50" y="744">  total gain 299.00</text>
+      <text class="terminal" x="50" y="763">  allocation of NAV: XNAS:AAA 0.598086, cash 0.401914</text>
+      <text class="terminal" x="50" y="782">  staleness bound: 1 completed session(s); money is displayed in cents, half-even; quantities are shown exactly.</text>
+    </g>
+    <g id="summary-notes">
+      <rect x="1262" y="531" width="488" height="255" rx="7" fill="#eef3fa"/>
+      <rect x="1280" y="549" width="156" height="26" rx="6" fill="#ffffff" stroke="#1a7f37"/>
+      <text class="label ok" x="1292" y="566">exit 0 — complete</text>
+      <circle cx="1283" cy="608" r="3" fill="#9a6700"/>
+      <text class="note warn" x="1296" y="612"><tspan x="1296" y="612">gross/withholding are UNAVAILABLE, </tspan><tspan x="1296" y="630">never zero (schema v1)</tspan></text>
+      <circle cx="1283" cy="690" r="3" fill="#1f6feb"/>
+      <text class="note" x="1296" y="694"><tspan x="1296" y="694">allocation includes cash; unavailable when </tspan><tspan x="1296" y="712">NAV is 0 or the book is incomplete</tspan></text>
+    </g>
+  </g>
+
+  <g id="reconcile-panel" aria-label="Reconcile command, exit 0, complete">
+    <rect class="panel" x="32" y="818" width="1736" height="200" rx="10"/>
+    <text class="command" x="50" y="851">equity portfolio reconcile --as-of 2024-01-05T21:00:00Z --statement statement.csv</text>
+    <line class="rule" x1="32" y1="861" x2="1768" y2="861"/>
+    <line class="rule" x1="1244" y1="879" x2="1244" y2="1000"/>
+    <g id="reconcile-transcript" class="terminal" xml:space="preserve">
+      <text class="terminal" x="50" y="883">portfolio reconcile at 2024-01-05T21:00:00+00:00 (account main)</text>
+      <text class="terminal" x="50" y="902">  statement snapshot 2024-01-05T21:00:00+00:00</text>
+      <text class="terminal" x="50" y="921">  cash: statement 924.00, ledger 924.00, delta 0.00, tolerance 0.01, matched (cash difference is within the inclusive tolerance)</text>
+      <text class="terminal" x="50" y="940">  quantity XNAS:AAA: statement 11, ledger 11, delta 0, tolerance 0.00000001, matched (quantity difference is within the inclusive tolerance)</text>
+      <text class="terminal" x="50" y="959">  reconciliations are comparisons, not tax certification; money is displayed in cents, half-even; quantities are shown exactly.</text>
+      <text class="terminal" x="50" y="978">  overall: matched</text>
+    </g>
+    <g id="reconcile-notes">
+      <rect x="1262" y="879" width="488" height="121" rx="7" fill="#eef3fa"/>
+      <rect x="1280" y="886" width="156" height="24" rx="6" fill="#ffffff" stroke="#1a7f37"/>
+      <text class="label ok" x="1292" y="902">exit 0 — complete</text>
+      <text class="note" x="1280" y="933"><tspan x="1280" y="933">inclusive tolerances: 0.00000001 share · 0.01 USD, </tspan><tspan x="1280" y="950">on unrounded differences</tspan></text>
+      <text class="note" x="1280" y="973"><tspan x="1280" y="973">never mutates the ledger, never inserts a balancing event, </tspan><tspan x="1280" y="990">never widens a tolerance</tspan></text>
+    </g>
+  </g>
+
+  <text class="section" x="32" y="1040">EXIT-CODE / STATE MATRIX</text>
+  <g id="exit-matrix" aria-label="Result, exit code and report behavior">
+    <rect x="32" y="1050" width="1736" height="174" rx="8" fill="#ffffff" stroke="#c9d4e3" stroke-width="1.5"/>
+    <path d="M40 1050 H1760 Q1768 1050 1768 1058 V1076 H32 V1058 Q32 1050 40 1050 Z" fill="#eef3fa"/>
+    <rect x="33" y="1106" width="1734" height="48" fill="#f7f9fc"/>
+    <path d="M33 1194 H1767 V1216 Q1767 1223 1760 1223 H40 Q33 1223 33 1216 Z" fill="#f7f9fc"/>
+    <line class="rule" x1="940" y1="1050" x2="940" y2="1224"/>
+    <line class="rule" x1="1036" y1="1050" x2="1036" y2="1224"/>
+    <line class="rule" x1="32" y1="1076" x2="1768" y2="1076"/>
+    <line class="rule" x1="32" y1="1106" x2="1768" y2="1106"/>
+    <line class="rule" x1="32" y1="1154" x2="1768" y2="1154"/>
+    <line class="rule" x1="32" y1="1194" x2="1768" y2="1194"/>
+    <text class="label" x="50" y="1068">Result</text>
+    <text class="label" x="958" y="1068">Exit</text>
+    <text class="label" x="1054" y="1068">Report</text>
+
+    <text class="cell" x="50" y="1095">complete (every position valued, all reconcile lines matched)</text>
+    <rect x="958" y="1081" width="42" height="20" rx="5" fill="#1a7f37"/>
+    <text class="label" x="979" y="1095" text-anchor="middle" fill="#ffffff" style="fill: #ffffff">0</text>
+    <text class="cell" x="1054" y="1095">full report</text>
+
+    <text class="cell" x="50" y="1126"><tspan x="50" y="1126">required unavailability (missing/stale/conflicting mark, quantity-uncertain, missing cash line, </tspan><tspan x="50" y="1143">omitted holding, snapshot-time disagreement)</tspan></text>
+    <rect x="958" y="1120" width="42" height="20" rx="5" fill="#9a6700"/>
+    <text class="label" x="979" y="1134" text-anchor="middle" fill="#ffffff" style="fill: #ffffff">1</text>
+    <text class="cell" x="1054" y="1126"><tspan x="1054" y="1126">partial report printed, then a value-free stderr tally such as </tspan><tspan class="mono" x="1054" y="1143">missing_mark 1 / stale_mark 1</tspan></text>
+
+    <text class="cell" x="50" y="1179">mismatch (reconcile)</text>
+    <rect x="958" y="1164" width="42" height="20" rx="5" fill="#b42318"/>
+    <text class="label" x="979" y="1178" text-anchor="middle" fill="#ffffff" style="fill: #ffffff">1</text>
+    <text class="cell" x="1054" y="1171"><tspan x="1054" y="1171">all line outcomes printed; "the ledger was not adjusted and </tspan><tspan x="1054" y="1188">no balancing event was inserted"</tspan></text>
+
+    <text class="cell" x="50" y="1214">invalid input or refused ledger/mark/statement file</text>
+    <rect x="958" y="1199" width="42" height="20" rx="5" fill="#b42318"/>
+    <text class="label" x="979" y="1213" text-anchor="middle" fill="#ffffff" style="fill: #ffffff">1</text>
+    <text class="cell" x="1054" y="1214">value-free error; no files written</text>
+  </g>
+  <text class="note" x="32" y="1248">A nonzero exit never means the report was complete. stderr is value-free: identities appear only in the report above, never in error text, logs or telemetry.</text>
+  <line class="rule" x1="32" y1="1265" x2="1768" y2="1265"/>
+  <text class="footer" x="32" y="1284">As built at P02 (commit 43a6c0a) · 2026-11-07 · equity_lake · docs/user-guide/20261103-private-portfolio-ledger.md</text>
+</svg>

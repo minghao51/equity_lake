@@ -1,0 +1,208 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1150" width="1800" height="1150" role="img">
+  <title>Equity Lake: as-built read API and gated P03 private console</title>
+  <desc>Two distinct surfaces: the shipped loopback read-only API on the left and an unbuilt, unauthorized P03 private console schematic on the right. The API does not expose the CLI-only P02 private portfolio. Four proposed console panels and their authorization rules are shown, not implemented. P02 acceptance authorizes CLI reports only.</desc>
+  <defs>
+    <style type="text/css"><![CDATA[
+      text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 12.5px; fill: #0f172a; }
+      .title { font-size: 26px; font-weight: 700; }
+      .subtitle { font-size: 14.5px; fill: #5b6b82; }
+      .heading { font-size: 15.5px; font-weight: 600; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+      .annotation { font-size: 11.5px; fill: #5b6b82; }
+      .footer { font-size: 11px; fill: #5b6b82; }
+      .muted { fill: #5b6b82; }
+      .white { fill: #ffffff; }
+      .strong { font-weight: 600; }
+      .green { fill: #1a7f37; }
+      .grey { fill: #6b7280; }
+      .amber { fill: #9a6700; }
+      .red { fill: #b42318; }
+    ]]></style>
+  </defs>
+
+  <rect width="1800" height="1150" fill="#ffffff"/>
+  <text x="60" y="54" class="title">Read facts. Keep the private book private.</text>
+  <text x="60" y="82" class="subtitle">equity_lake · Left: shipped API surface. Right: a gated schematic only — no console is built or approved.</text>
+
+  <!-- A: the as-built API. -->
+  <g id="as-built-api">
+    <rect x="60" y="110" width="820" height="860" rx="12" fill="#f7f9fc" stroke="#c9d4e3" stroke-width="1.5"/>
+    <path d="M72 110 H868 Q880 110 880 122 V170 H60 V122 Q60 110 72 110Z" fill="#eef3fa"/>
+    <path d="M60 170 H880" stroke="#c9d4e3"/>
+    <text x="80" y="146" class="heading">A · Read API (as built)</text>
+    <rect x="744" y="128" width="116" height="27" rx="13.5" fill="#1a7f37"/>
+    <text x="802" y="146" text-anchor="middle" class="annotation white strong">AS BUILT</text>
+
+    <rect x="80" y="186" width="780" height="34" rx="6" fill="#ffffff" stroke="#c9d4e3"/>
+    <circle cx="96" cy="203" r="4" fill="#1a7f37"/>
+    <text x="110" y="207" class="mono">http://127.0.0.1:8000</text>
+    <text x="80" y="239" class="annotation">loopback by default; serving on a non-loopback host requires explicit consent</text>
+
+    <rect x="80" y="254" width="452" height="571" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+    <path d="M80 290 H532" stroke="#c9d4e3"/>
+    <text x="96" y="277" class="heading">Shipped GET routes</text>
+    <text x="516" y="277" text-anchor="end" class="annotation">read-only</text>
+    <g fill="#f2f5fa">
+      <rect x="88" y="300" width="436" height="34" rx="4"/>
+      <rect x="88" y="396" width="436" height="34" rx="4"/>
+      <rect x="88" y="492" width="436" height="34" rx="4"/>
+      <rect x="88" y="588" width="436" height="79" rx="4"/>
+    </g>
+    <text x="96" y="322" class="mono">GET /health</text>
+    <text x="516" y="322" text-anchor="end" class="annotation">read-only</text>
+    <text x="96" y="370" class="mono">GET /findings</text>
+    <text x="516" y="370" text-anchor="end" class="annotation">FindingCard display objects</text>
+    <text x="96" y="418" class="mono">GET /findings/{card_id}</text>
+    <text x="516" y="418" text-anchor="end" class="annotation">FindingCard display objects</text>
+    <text x="96" y="466" class="mono">GET /signals</text>
+    <text x="516" y="466" text-anchor="end" class="annotation">read-only</text>
+    <text x="96" y="514" class="mono">GET /models</text>
+    <text x="516" y="514" text-anchor="end" class="annotation">read-only</text>
+    <text x="96" y="562" class="mono">GET /predictions</text>
+    <text x="516" y="562" text-anchor="end" class="annotation">read-only</text>
+    <text x="96" y="610" class="mono">GET /backtests</text>
+    <text x="516" y="610" text-anchor="end" class="annotation">additive row fields</text>
+    <text x="96" y="633" class="mono">last_success / last_attempt</text>
+    <text x="96" y="653" class="annotation">Response shape otherwise unchanged.</text>
+    <text x="96" y="696" class="mono">GET /tracking/private</text>
+    <text x="516" y="696" text-anchor="end" class="annotation">private watchlist/outbox</text>
+    <text x="96" y="722" class="mono">+ /watchlist · /readiness</text>
+    <text x="96" y="743" class="mono">+ /inbox · /history</text>
+    <text x="96" y="776" class="annotation">Explicit loopback-only dependency;</text>
+    <text x="96" y="795" class="annotation">also rejects forwarded/proxy headers.</text>
+
+    <!-- Small factual notes, right of the route inventory. -->
+    <g id="api-notes">
+      <rect x="548" y="254" width="312" height="91" rx="8" fill="#eef3fa" stroke="#c9d4e3"/>
+      <text x="564" y="279" class="heading">Read-only boundary</text>
+      <text x="564" y="302">No route mutates lake, ledger</text>
+      <text x="564" y="321">or private state.</text>
+
+      <rect x="548" y="357" width="312" height="233" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+      <text x="564" y="383" class="heading">Provenance today</text>
+      <rect x="560" y="395" width="288" height="29" rx="4" fill="#f2f5fa"/>
+      <text x="570" y="414" class="mono">data_provenance = <tspan font-weight="700">unknown</tspan></text>
+      <text x="564" y="447">On every shipped path today.</text>
+      <text x="564" y="468" class="green strong">CORRECT — not a bug.</text>
+      <text x="564" y="499" class="strong">E01-6 (planned) · additive only</text>
+      <text x="564" y="522">Per-snapshot price-origin summaries</text>
+      <text x="564" y="541">and a v4 manifest aggregate add fields.</text>
+      <text x="564" y="568">Nothing existing is reshaped.</text>
+
+      <rect x="548" y="602" width="312" height="121" rx="8" fill="#eef3fa" stroke="#c9d4e3"/>
+      <text x="564" y="628" class="heading">Private book ≠ API</text>
+      <text x="564" y="652">Private portfolio data is NOT exposed</text>
+      <text x="564" y="671">by the API. P02 book: CLI-only.</text>
+      <text x="564" y="700" class="mono">positions / summary / reconcile</text>
+
+      <rect x="548" y="735" width="312" height="90" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+      <text x="564" y="761" class="heading">No public projection</text>
+      <text x="564" y="785">No static export, no Pages,</text>
+      <text x="564" y="804">no public projection of private state.</text>
+    </g>
+
+    <path d="M80 851 H860" stroke="#c9d4e3"/>
+    <rect x="80" y="873" width="4" height="60" rx="2" fill="#1a7f37"/>
+    <text x="98" y="891" class="heading green">EXISTS TODAY · loopback read surface</text>
+    <text x="98" y="915">Lake-derived facts and guarded private tracking — not the private portfolio book.</text>
+    <text x="98" y="936" class="annotation">The separate P02 positions / summary / reconcile reports remain CLI-only.</text>
+  </g>
+
+  <!-- B: a deliberately gated, non-running console schematic. -->
+  <g id="gated-console">
+    <rect x="920" y="110" width="820" height="860" rx="12" fill="#f7f9fc" stroke="#6b7280" stroke-width="1.5"/>
+    <path d="M932 110 H1728 Q1740 110 1740 122 V170 H920 V122 Q920 110 932 110Z" fill="#6b7280"/>
+    <text x="940" y="146" class="heading white">B · P03 private console (gated)</text>
+    <rect x="1458" y="128" width="262" height="27" rx="13.5" fill="#ffffff"/>
+    <text x="1589" y="146" text-anchor="middle" class="annotation grey strong">GATED — NOT AUTHORIZED</text>
+
+    <rect x="940" y="186" width="780" height="34" rx="6" fill="#eef3fa" stroke="#c9d4e3"/>
+    <circle cx="956" cy="203" r="4" fill="#6b7280"/>
+    <text x="970" y="207" class="annotation">Streamlit-style schematic only · no running interface · labels and unavailable states only</text>
+
+    <!-- Sidebar: the diagonal ribbon occupies reserved empty space. -->
+    <rect x="940" y="236" width="144" height="532" rx="8" fill="#eef3fa" stroke="#c9d4e3"/>
+    <text x="954" y="263" class="annotation grey strong">PROPOSED P03</text>
+    <rect x="948" y="281" width="128" height="33" rx="4" fill="#ffffff" stroke="#c9d4e3"/>
+    <text x="958" y="302">Portfolio</text>
+    <text x="958" y="342">Data readiness</text>
+    <text x="958" y="382">Research runs</text>
+    <text x="958" y="422">Signals</text>
+    <text x="954" y="465" class="annotation grey">NOT BUILT</text>
+    <text x="954" y="484" class="annotation grey">NOT APPROVED</text>
+    <g transform="translate(987 731) rotate(-74)">
+      <rect x="-10" y="-21" width="220" height="31" rx="4" fill="#6b7280"/>
+      <text x="100" y="-1" text-anchor="middle" class="annotation white strong">GATED — NOT AUTHORIZED</text>
+    </g>
+
+    <!-- Four, and only four, proposed main-area panels. -->
+    <g id="portfolio-panel">
+      <rect x="1100" y="236" width="620" height="222" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+      <text x="1116" y="261" class="heading">Portfolio</text>
+      <text x="1704" y="261" text-anchor="end" class="annotation grey">proposed · display-only</text>
+      <text x="1116" y="286">As-of selector</text>
+      <rect x="1212" y="269" width="86" height="25" rx="4" fill="#f2f5fa" stroke="#c9d4e3"/>
+      <text x="1225" y="286" class="muted">—</text>
+      <path d="M1280 280 l4 4 l4 -4" fill="none" stroke="#5b6b82" stroke-width="1.5"/>
+      <text x="1314" y="286">As-of NAV: unavailable</text>
+      <text x="1116" y="312">Cash: —</text>
+      <text x="1314" y="312">Book P&amp;L: —</text>
+      <path d="M1116 326 H1704" stroke="#c9d4e3"/>
+      <text x="1116" y="347" class="strong">Positions: —</text>
+      <text x="1116" y="369" class="annotation">quantity — · basis status — · mark age — · provenance synthetic|unknown</text>
+      <text x="1116" y="396">Allocation/concentration: —</text>
+      <text x="1410" y="396">Reconciliation differences: —</text>
+      <rect x="1112" y="412" width="596" height="31" rx="4" fill="#eef3fa"/>
+      <text x="1122" y="432" class="annotation">Held/watch-only context is visually distinct from ledger positions.</text>
+    </g>
+
+    <g id="data-readiness-panel">
+      <rect x="1100" y="468" width="620" height="86" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+      <text x="1116" y="493" class="heading">Data readiness</text>
+      <text x="1116" y="516">Per-market/table readiness: —</text>
+      <text x="1480" y="516">Freshness: —</text>
+      <text x="1116" y="539" class="annotation amber">market union ≠ per-instrument coverage</text>
+    </g>
+
+    <g id="research-runs-panel">
+      <rect x="1100" y="564" width="620" height="90" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+      <text x="1116" y="589" class="heading">Research runs</text>
+      <text x="1704" y="589" text-anchor="end" class="annotation grey">rendered only after E01</text>
+      <text x="1116" y="613">Immutable run cards · manifest/attempt: — · read-only</text>
+      <text x="1116" y="637" class="annotation">Protocol v3 today · v4 planned</text>
+    </g>
+
+    <g id="signals-panel">
+      <rect x="1100" y="664" width="620" height="104" rx="8" fill="#ffffff" stroke="#c9d4e3"/>
+      <text x="1116" y="689" class="heading">Signals</text>
+      <text x="1116" y="712">Candidates: unavailable · reasons: unavailable · timestamps: unavailable</text>
+      <rect x="1116" y="726" width="588" height="27" rx="13.5" fill="#f7f9fc" stroke="#9a6700"/>
+      <circle cx="1131" cy="739.5" r="4" fill="#b42318"/>
+      <text x="1143" y="743" class="annotation"><tspan class="red strong">candidate — never an order,</tspan><tspan class="amber strong"> never a calibrated profit probability</tspan></text>
+    </g>
+
+    <g id="gating-rules">
+      <rect x="940" y="780" width="780" height="172" rx="8" fill="#eef3fa" stroke="#6b7280"/>
+      <text x="956" y="804" class="heading grey">Authorization gates · all remain in force</text>
+      <text x="956" y="827">• Effective loopback binding REQUIRED before any private read.</text>
+      <text x="956" y="851" class="annotation">• ADR-0018 forwarded/proxy rejection stays in force; multi-user or remote access not authorized.</text>
+      <text x="956" y="875" class="annotation">• Display-only pages never import/write ledger events, never backfill, never run inference.</text>
+      <text x="956" y="899" class="annotation">• No private account contents in static exports, Pages, public API, error logs or W&amp;B.</text>
+      <text x="956" y="931" class="strong">• P03 is NOT authorized by P02 acceptance; it needs its own approved UI plan.</text>
+    </g>
+  </g>
+
+  <!-- Shared boundary, outside both surfaces. -->
+  <g id="shared-boundary">
+    <rect x="60" y="990" width="1680" height="106" rx="12" fill="#eef3fa" stroke="#c9d4e3" stroke-width="1.5"/>
+    <text x="80" y="1015" class="heading">Boundary between the two</text>
+    <rect x="80" y="1028" width="480" height="28" rx="14" fill="#ffffff" stroke="#1f6feb"/>
+    <text x="96" y="1047">API = read-only lake-derived facts, loopback</text>
+    <rect x="576" y="1028" width="410" height="28" rx="14" fill="#ffffff" stroke="#1a7f37"/>
+    <text x="592" y="1047">CLI = private book (P02, shipped)</text>
+    <rect x="1002" y="1028" width="718" height="28" rx="14" fill="#ffffff" stroke="#6b7280"/>
+    <text x="1018" y="1047" class="grey strong">Console = would surface the private book, GATED</text>
+    <text x="80" y="1080" class="strong">P02 acceptance authorizes the CLI reports only. Nothing in the gated column is built or approved.</text>
+  </g>
+  <text x="60" y="1126" class="footer">2026-11-07 · equity_lake · as-built surface: src/equity_lake/api/main.py · gated: spec §5.4 (P03) · ADR-0018, ADR-0025</text>
+</svg>

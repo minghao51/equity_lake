@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1250" width="1800" height="1250" role="img">
+  <title>E01-6 — Row-bound price-origin evidence flow</title>
+  <desc>Approved plan v1, fixture-only slice under ADR-0027; implementation not started. Five stages connect the synthetic generator, two audited write routes, the nullable Bronze price envelope, the snapshot-bound read seam, and a revalidated manifest aggregate. Unknown dominates mixed. Cross-cutting encoding and compatibility rules apply throughout. Backfill, real-provider claims, forecast changes and legacy mutation are not authorized.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M 0,0 L 8,4 L 0,8 Z" fill="#1f6feb"/>
+    </marker>
+  </defs>
+  <style>
+    svg { background: #ffffff; }
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 13px; fill: #0f172a; }
+    .title { font-size: 26px; font-weight: 700; }
+    .subtitle { font-size: 14.5px; fill: #5b6b82; }
+    .section { font-size: 16px; font-weight: 600; }
+    .strong { font-weight: 600; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .annotation { font-size: 11.5px; fill: #5b6b82; }
+    .footer { font-size: 11px; fill: #5b6b82; }
+    .muted { fill: #5b6b82; }
+    .accent { fill: #1f6feb; }
+    .ok { fill: #1a7f37; }
+    .warn { fill: #9a6700; }
+    .danger { fill: #b42318; }
+    .gated { fill: #6b7280; }
+    .panel { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1.5; }
+    .inset { fill: #eef3fa; stroke: #c9d4e3; stroke-width: 1.5; }
+    .rule { stroke: #c9d4e3; stroke-width: 1.5; }
+    .flow { fill: none; stroke: #1f6feb; stroke-width: 1.5; marker-end: url(#arrow); }
+  </style>
+  <rect width="1800" height="1250" fill="#ffffff"/>
+  <g data-box="40 24 1720 70">
+    <text x="40" y="54" class="title">E01-6 — Row-bound price-origin evidence flow</text>
+    <text x="40" y="83" class="subtitle">Approved plan v1 · fixture-only slice · no backfill, no source access · ADR-0027</text>
+  </g>
+
+  <!-- Five stages; 28 px gutters, 24 px panel padding. -->
+  <g id="producer" data-box="40 118 260 690">
+    <rect x="40" y="118" width="260" height="690" rx="10" class="panel"/>
+    <text x="64" y="160" class="section accent">01</text>
+    <text x="102" y="160" class="section">Producer</text>
+    <text x="64" y="204"><tspan x="64" y="204">Slice 1: synthetic</tspan><tspan x="64" y="224">generator only</tspan></text>
+    <text x="64" y="264" class="mono">devtools/seed_demo.py</text>
+    <text x="64" y="284" class="annotation">Generator branch</text>
+    <text x="64" y="326"><tspan x="64" y="326">Supplies the envelope</tspan><tspan x="64" y="346" class="strong">BEFORE persistence.</tspan></text>
+    <g data-box="64 378 212 136">
+      <rect x="64" y="378" width="212" height="136" rx="10" class="inset"/>
+      <text x="88" y="407" class="strong warn">Current gap</text>
+      <text x="88" y="431"><tspan x="88" y="431">Producer knows origin</tspan><tspan x="88" y="451">today, but only logs it;</tspan><tspan x="88" y="471">writes prices</tspan><tspan x="88" y="491">without it.</tspan></text>
+    </g>
+    <g data-box="64 542 212 236">
+      <rect x="64" y="542" width="212" height="236" rx="10" class="inset"/>
+      <text x="88" y="572" class="strong">Slice-1 claim</text>
+      <text x="88" y="599" class="mono ok">synthetic only</text>
+      <text x="88" y="637" class="mono">--real</text>
+      <text x="88" y="661"><tspan x="88" y="661">leaves rows ABSENT</tspan><tspan x="88" y="686" class="strong warn">→ unknown</tspan></text>
+      <text x="88" y="724"><tspan x="88" y="724">Honest absence;</tspan><tspan x="88" y="744">D01 closed.</tspan></text>
+    </g>
+  </g>
+
+  <g id="write-boundary" data-box="328 118 326 690">
+    <rect x="328" y="118" width="326" height="690" rx="10" class="panel"/>
+    <text x="352" y="160" class="section accent">02</text>
+    <text x="390" y="160" class="section">Write boundary</text>
+    <text x="352" y="204" class="strong">Two routes · both audited</text>
+    <text x="352" y="242" class="mono"><tspan x="352" y="242">ingestion/writers.py::</tspan><tspan x="352" y="260">upsert_dataset</tspan></text>
+    <text x="352" y="282" class="annotation">Canonical route</text>
+    <text x="352" y="320" class="mono"><tspan x="352" y="320">storage/delta.py::</tspan><tspan x="352" y="338">write_delta</tspan></text>
+    <text x="352" y="360" class="annotation">Direct seeder route</text>
+    <line x1="352" y1="382" x2="630" y2="382" class="rule"/>
+    <text x="352" y="413" class="strong">Values + marker</text>
+    <text x="352" y="435">Written in one operation.</text>
+    <text x="352" y="474" class="strong">Replacement</text>
+    <text x="352" y="496"><tspan x="352" y="496">Never preserve a prior row’s marker</tspan><tspan x="352" y="516">when replacing values.</tspan></text>
+    <text x="352" y="555" class="strong">New rows</text>
+    <text x="352" y="577"><tspan x="352" y="577">Never backfill a new row</tspan><tspan x="352" y="597">from an existing row.</tspan></text>
+    <text x="352" y="636" class="strong danger">REFUSE claims</text>
+    <text x="352" y="658"><tspan x="352" y="658">Partial / malformed /</tspan><tspan x="352" y="678">unsupported-version claims.</tspan></text>
+    <text x="352" y="725" class="strong">Dry-run</text>
+    <text x="352" y="747">Persists nothing.</text>
+  </g>
+
+  <g id="bronze-row" data-box="682 118 348 690">
+    <rect x="682" y="118" width="348" height="690" rx="10" class="panel"/>
+    <text x="706" y="160" class="section accent">03</text>
+    <text x="744" y="160" class="section">Bronze price row</text>
+    <text x="706" y="194" class="strong">Persisted envelope</text>
+    <text x="706" y="214">4 new nullable columns</text>
+    <g data-box="706 226 300 320">
+      <rect x="706" y="226" width="300" height="320" rx="10" class="inset"/>
+      <line x1="706" y1="306" x2="1006" y2="306" class="rule"/>
+      <line x1="706" y1="386" x2="1006" y2="386" class="rule"/>
+      <line x1="706" y1="466" x2="1006" y2="466" class="rule"/>
+      <text x="730" y="257" class="mono strong">price_provenance_version</text>
+      <text x="730" y="282" class="mono">nullable Int16 · v1</text>
+      <text x="730" y="337" class="mono strong">price_provenance</text>
+      <text x="730" y="362" class="mono">synthetic | real | unknown</text>
+      <text x="730" y="417" class="mono strong">price_source</text>
+      <text x="730" y="442" class="mono">generator:synthetic_demo_seed@1</text>
+      <text x="730" y="497" class="mono strong">price_source_sha256</text>
+      <text x="730" y="522" class="mono">lowercase hex sha256</text>
+    </g>
+    <text x="706" y="584" class="strong">Plus existing columns</text>
+    <text x="706" y="609" class="mono"><tspan x="706" y="609">market, mic, symbol, date,</tspan><tspan x="706" y="631">OHLCV, adj_close</tspan></text>
+    <g data-box="706 660 300 118">
+      <rect x="706" y="660" width="300" height="118" rx="10" class="inset"/>
+      <text x="730" y="690" class="strong">Legacy: all four null</text>
+      <text x="730" y="717" class="mono warn">⇒ unknown forever</text>
+      <text x="730" y="750">No relabel.</text>
+    </g>
+  </g>
+
+  <g id="read-seam" data-box="1058 118 300 690">
+    <rect x="1058" y="118" width="300" height="690" rx="10" class="panel"/>
+    <text x="1082" y="160" class="section accent">04</text>
+    <text x="1120" y="160" class="section">Read seam</text>
+    <text x="1082" y="204" class="mono"><tspan x="1082" y="204">backtesting/</tspan><tspan x="1082" y="224">data_loader.py</tspan></text>
+    <g data-box="1082 264 252 182">
+      <rect x="1082" y="264" width="252" height="182" rx="10" class="inset"/>
+      <text x="1106" y="295" class="strong">Bind evidence to prices</text>
+      <text x="1106" y="323"><tspan x="1106" y="323">Marker fields captured from</tspan><tspan x="1106" y="345" class="strong accent">the SAME pinned Delta</tspan><tspan x="1106" y="367" class="mono">(path, version)</tspan><tspan x="1106" y="389">that produced the prices.</tspan></text>
+    </g>
+    <text x="1082" y="484"><tspan x="1082" y="484">Non-Delta: hash the exact</tspan><tspan x="1082" y="506">scanned file set.</tspan></text>
+    <text x="1082" y="551"><tspan x="1082" y="551" class="strong">Aggregate BEFORE</tspan><tspan x="1082" y="573">column projection / cleanup;</tspan><tspan x="1082" y="595">reset between loader invocations.</tspan></text>
+    <g data-box="1082 646 252 132">
+      <rect x="1082" y="646" width="252" height="132" rx="10" class="inset"/>
+      <text x="1106" y="677"><tspan x="1106" y="677">In-memory / shared frame</tspan><tspan x="1106" y="699">with no seam, or an</tspan><tspan x="1106" y="721">empty scope</tspan><tspan x="1106" y="750" class="mono warn">⇒ unknown</tspan></text>
+    </g>
+  </g>
+
+  <g id="manifest" data-box="1386 118 374 690">
+    <rect x="1386" y="118" width="374" height="690" rx="10" class="panel"/>
+    <text x="1410" y="160" class="section accent">05</text>
+    <text x="1448" y="160" class="section">Manifest</text>
+    <text x="1410" y="204" class="mono">equity-run-manifest/4</text>
+    <text x="1410" y="239" class="strong">Per price snapshot</text>
+    <text x="1410" y="267" class="mono"><tspan x="1410" y="267">PriceOriginSummary v1 = {</tspan><tspan x="1424" y="286">snapshot{name, source,</tspan><tspan x="1438" y="305">version, sha256},</tspan><tspan x="1424" y="324">consumed_rows,</tspan><tspan x="1424" y="343">counts{synthetic, real,</tspan><tspan x="1438" y="362">unknown, unknown_reasons{}},</tspan><tspan x="1424" y="381">sources[], envelope_sha256</tspan><tspan x="1410" y="400">}</tspan></text>
+    <text x="1410" y="435" class="strong">Validator RE-DERIVES the aggregate</text>
+    <text x="1410" y="459"><tspan x="1410" y="459">A non-unknown claim requires complete,</tspan><tspan x="1410" y="478">snapshot-bound summaries; counts must</tspan><tspan x="1410" y="497">cover the consumed scope exactly.</tspan></text>
+    <g data-box="1410 520 326 222">
+      <rect x="1410" y="520" width="326" height="222" rx="10" fill="#eef3fa" stroke="#1f6feb" stroke-width="1.5"/>
+      <text x="1434" y="549" class="strong accent">Aggregation rule</text>
+      <line x1="1410" y1="563" x2="1736" y2="563" class="rule"/>
+      <text x="1434" y="584"><tspan x="1434" y="584">All synthetic + complete binding</tspan><tspan x="1434" y="603" class="mono ok">→ synthetic</tspan></text>
+      <text x="1434" y="626">All real → real</text>
+      <text x="1434" y="650">Synthetic + real → mixed</text>
+      <text x="1434" y="668" class="annotation">Aggregate only; never a row kind.</text>
+      <text x="1434" y="690" class="annotation warn"><tspan x="1434" y="690">Any missing / null / unknown / unsupported /</tspan><tspan x="1434" y="708">incomplete / untracked / empty</tspan><tspan x="1434" y="729" class="mono strong">→ unknown</tspan></text>
+    </g>
+    <text x="1410" y="760" class="annotation strong warn">unknown dominates mixed:</text>
+    <text x="1410" y="779" class="annotation"><tspan x="1410" y="779">real + synthetic + one unproved row</tspan><tspan x="1410" y="797" class="warn">⇒ unknown</tspan></text>
+  </g>
+
+  <path d="M 302,463 H 324" class="flow"/>
+  <path d="M 656,463 H 678" class="flow"/>
+  <path d="M 1032,463 H 1054" class="flow"/>
+  <path d="M 1360,463 H 1382" class="flow"/>
+
+  <g data-box="40 824 1720 26">
+    <text x="40" y="841" class="section">CROSS-CUTTING RULES</text>
+  </g>
+  <g id="frozen-encodings" data-box="40 858 420 177">
+    <rect x="40" y="858" width="420" height="177" rx="10" class="panel"/>
+    <text x="64" y="891" class="strong">Frozen byte encodings + golden digests</text>
+    <text x="64" y="917" class="mono">price_batch  ba8ca8a7…736283</text>
+    <text x="64" y="941" class="mono">generator evidence  1f1a4315…804959</text>
+    <text x="64" y="965" class="mono"><tspan x="64" y="965">envelope projection</tspan><tspan x="64" y="989">341fc14b…3e5d9d</tspan></text>
+  </g>
+  <g id="reader-first" data-box="488 858 300 177">
+    <rect x="488" y="858" width="300" height="177" rx="10" class="panel"/>
+    <text x="512" y="891" class="strong">Reader-first</text>
+    <text x="512" y="917"><tspan x="512" y="917">v3 evidence parsed under v3 rules,</tspan><tspan x="512" y="939">byte-identical.</tspan><tspan x="512" y="963">No old manifest gains a summary</tspan><tspan x="512" y="985">or protocol bump.</tspan></text>
+  </g>
+  <g id="run-id" data-box="816 858 250 177">
+    <rect x="816" y="858" width="250" height="177" rx="10" class="panel"/>
+    <text x="840" y="891" class="strong">Run-ID preimage</text>
+    <text x="840" y="919" class="mono strong accent">SCOPE-ONLY</text>
+    <text x="840" y="952"><tspan x="840" y="952">v4 intentionally yields</tspan><tspan x="840" y="974">new scope IDs.</tspan></text>
+  </g>
+  <g id="source-id" data-box="1094 858 430 177">
+    <rect x="1094" y="858" width="430" height="177" rx="10" class="panel"/>
+    <text x="1118" y="891" class="strong">Source-ID grammar</text>
+    <text x="1118" y="919" class="mono"><tspan x="1118" y="919">^(generator|provider):</tspan><tspan x="1118" y="943">[a-z0-9][a-z0-9_]{2,31}</tspan><tspan x="1118" y="967">@[1-9][0-9]{0,3}$</tspan></text>
+  </g>
+  <g id="encoding-exclusions" data-box="1552 858 208 177">
+    <rect x="1552" y="858" width="208" height="177" rx="10" class="panel"/>
+    <text x="1576" y="891" class="strong">Encoding exclusions</text>
+    <text x="1576" y="917"><tspan x="1576" y="917">No path / env /</tspan><tspan x="1576" y="939">timestamp /</tspan><tspan x="1576" y="961">credential inside</tspan><tspan x="1576" y="983">any evidence</tspan><tspan x="1576" y="1005">encoding.</tspan></text>
+  </g>
+
+  <g data-box="40 1051 1720 28">
+    <text x="40" y="1070" class="section gated">GATED — NOT IN THIS SLICE / NOT AUTHORIZED</text>
+  </g>
+  <g id="gate-backfill" data-box="40 1089 292 108">
+    <rect x="40" y="1089" width="292" height="108" rx="10" fill="#eef3fa" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="64" y="1120"><tspan x="64" y="1120">No retrospective backfill or</tspan><tspan x="64" y="1142">relabeling of existing rows</tspan><tspan x="64" y="1164">or runs.</tspan></text>
+  </g>
+  <g id="gate-provider" data-box="360 1089 330 108">
+    <rect x="360" y="1089" width="330" height="108" rx="10" fill="#eef3fa" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="384" y="1120"><tspan x="384" y="1120">No real-provider real claims.</tspan><tspan x="384" y="1142">D01: licensing, retention and</tspan><tspan x="384" y="1164">source access remain closed.</tspan></text>
+  </g>
+  <g id="gate-forecast" data-box="718 1089 366 108">
+    <rect x="718" y="1089" width="366" height="108" rx="10" fill="#eef3fa" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="742" y="1117"><tspan x="742" y="1117">No change to</tspan><tspan x="742" y="1137" class="mono">FORECAST_PROVENANCE_VERSION,</tspan><tspan x="742" y="1157">forecast envelopes, or Gold</tspan><tspan x="742" y="1177">availability proofs.</tspan></text>
+  </g>
+  <g id="gate-p02" data-box="1112 1089 424 108">
+    <rect x="1112" y="1089" width="424" height="108" rx="10" fill="#eef3fa" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="1136" y="1117"><tspan x="1136" y="1117">P02 portfolio book marks (synthetic|unknown):</tspan><tspan x="1136" y="1137">a private separate flag; can never</tspan><tspan x="1136" y="1157">satisfy this envelope.</tspan></text>
+  </g>
+  <g id="gate-legacy" data-box="1564 1089 196 108">
+    <rect x="1564" y="1089" width="196" height="108" rx="10" fill="#eef3fa" stroke="#6b7280" stroke-width="1.5"/>
+    <text x="1588" y="1120"><tspan x="1588" y="1120">Legacy artefacts</tspan><tspan x="1588" y="1142">stay read-only.</tspan></text>
+  </g>
+  <g data-box="40 1206 1720 28">
+    <text x="40" y="1225" class="footer">Plan v1 · 2026-11-07 · equity_lake · policy: docs/decisions/0027-row-bound-price-source-provenance.md · implementation: not started</text>
+  </g>
+</svg>

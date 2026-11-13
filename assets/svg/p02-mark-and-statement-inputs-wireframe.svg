@@ -1,0 +1,191 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 1250" width="1800" height="1250" role="img" version="1.1" aria-labelledby="title description">
+  <title id="title">P02 — private book inputs: stored marks and canonical statement</title>
+  <desc id="description">Two explicit local input artifacts: a version-1 marks.json envelope and a canonical statement.csv, with file validation and reconciliation rules. A five-box, left-to-right path checks exact instrument identity, point-in-time eligibility, latest-mark conflicts, completed venue sessions, and value or withholding. Reads never create, fetch or repair inputs. Withholding preserves cash, recorded quantities and the valid marked subtotal, but not complete valuation; unknown opening basis does not prevent a correctly marked NAV.</desc>
+  <style type="text/css">
+    text { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; fill: #0f172a; }
+    .title { font-size: 26px; font-weight: 700; }
+    .subtitle { font-size: 14.5px; fill: #5b6b82; }
+    .header { font-size: 15px; font-weight: 600; }
+    .code, .code text { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
+    .rule { font-size: 12.5px; }
+    .annotation { font-size: 11.5px; fill: #5b6b82; }
+    .footer { font-size: 11px; fill: #5b6b82; }
+    .key { fill: #1f6feb; }
+    .string { fill: #1a7f37; }
+    .reject { fill: #b42318; }
+    .ok { fill: #1a7f37; }
+    .warn { fill: #9a6700; }
+    .gated { fill: #6b7280; }
+    .strong { font-weight: 600; }
+    .panel { fill: #f7f9fc; stroke: #c9d4e3; stroke-width: 1.5; }
+    .code-panel { fill: #f2f5fa; stroke: #c9d4e3; stroke-width: 1.5; }
+    .decision { fill: #eef3fa; stroke: #c9d4e3; stroke-width: 1.5; }
+  </style>
+  <rect width="1800" height="1250" fill="#ffffff"/>
+
+  <text x="32" y="45" class="title">P02 — private book inputs: stored marks and canonical statement</text>
+  <text x="32" y="74" class="subtitle">Both files are EXPLICIT LOCAL INPUTS. A read never creates, fetches or repairs them; there is no mark producer and no quote service.</text>
+
+  <g id="marks-input" aria-label="marks.json and validation rules" data-bounds="32 103 856 741">
+    <rect x="32" y="103" width="856" height="741" rx="10" class="panel"/>
+    <text x="52" y="131" class="header">marks.json (version-1 envelope)</text>
+    <g id="marks-code" data-bounds="52 150 816 408" data-padding="16">
+      <rect x="52" y="150" width="816" height="408" rx="10" class="code-panel"/>
+      <g class="code" xml:space="preserve">
+        <text x="68" y="178">{</text>
+        <text x="68" y="196">  <tspan class="key">"schema_version"</tspan>: 1,</text>
+        <text x="68" y="214">  <tspan class="key">"marks"</tspan>: [</text>
+        <text x="68" y="232">    {</text>
+        <text x="68" y="250">      <tspan class="key">"market"</tspan>: <tspan class="string">"us_equity"</tspan>,</text>
+        <text x="68" y="268">      <tspan class="key">"mic"</tspan>: <tspan class="string">"XNAS"</tspan>,</text>
+        <text x="68" y="286">      <tspan class="key">"symbol"</tspan>: <tspan class="string">"AAA"</tspan>,</text>
+        <text x="68" y="304">      <tspan class="key">"currency"</tspan>: <tspan class="string">"USD"</tspan>,</text>
+        <text x="68" y="322">      <tspan class="key">"price"</tspan>: <tspan class="string">"125"</tspan>,</text>
+        <text x="68" y="340">      <tspan class="key">"session"</tspan>: <tspan class="string">"2024-01-05"</tspan>,</text>
+        <text x="68" y="358">      <tspan class="key">"as_of"</tspan>: <tspan class="string">"2024-01-05T21:00:00+00:00"</tspan>,</text>
+        <text x="68" y="376">      <tspan class="key">"source"</tspan>: <tspan class="string">"fixture"</tspan>,</text>
+        <text x="68" y="394">      <tspan class="key">"price_basis"</tspan>: <tspan class="string">"unadjusted"</tspan>,</text>
+        <text x="68" y="412">      <tspan class="key">"provenance"</tspan>: <tspan class="string">"synthetic"</tspan></text>
+        <text x="68" y="430">    }</text>
+        <text x="68" y="448">  ],</text>
+        <text x="68" y="466">  <tspan class="key">"valuation_blocks"</tspan>: [</text>
+        <text x="68" y="484">    {<tspan class="key">"market"</tspan>: <tspan class="string">"us_equity"</tspan>, <tspan class="key">"mic"</tspan>: <tspan class="string">"XNYS"</tspan>, <tspan class="key">"symbol"</tspan>: <tspan class="string">"BBB"</tspan>,</text>
+        <text x="68" y="502">     <tspan class="key">"reason"</tspan>: <tspan class="string">"unsupported_quantity_adjustment"</tspan>}</text>
+        <text x="68" y="520">  ]</text>
+        <text x="68" y="538">}</text>
+      </g>
+    </g>
+    <g class="rule">
+      <text x="52" y="585">• schema_version exactly 1; unknown version, extra or missing field ⇒ file <tspan class="reject strong">REJECTED</tspan></text>
+      <text x="65" y="603">(no partial acceptance).</text>
+      <text x="52" y="627">• price is decimal TEXT, <tspan class="reject">never a JSON number/float.</tspan></text>
+      <text x="52" y="651">• currency = USD; price_basis = unadjusted (research-adjusted prices are not book marks).</text>
+      <text x="52" y="675">• price positive and exactly representable.</text>
+      <text x="52" y="699">• provenance explicitly synthetic or unknown — never inferred from a path or filename.</text>
+      <text x="52" y="723">• as_of must equal the EXACT MIC’s scheduled close for session, early closes and holidays included;</text>
+      <text x="65" y="741" class="reject">a weekend, a holiday, a wrong close time or a naive timestamp ⇒ REJECTED.</text>
+      <text x="52" y="765">• valuation_blocks: at most one per instrument; only reason unsupported_quantity_adjustment</text>
+      <text x="65" y="783">(knowledge supplied by the file — the app never discovers splits).</text>
+      <text x="52" y="809">• Identity is the exact (market, MIC, symbol) triple; ticker text is never guessed.</text>
+    </g>
+  </g>
+
+  <g id="statement-input" aria-label="statement.csv and reconciliation rules" data-bounds="912 103 856 741">
+    <rect x="912" y="103" width="856" height="741" rx="10" class="panel"/>
+    <text x="932" y="131" class="header">statement.csv (canonical reconciliation)</text>
+    <g id="statement-code" data-bounds="932 150 816 84" data-padding="16">
+      <rect x="932" y="150" width="816" height="84" rx="10" class="code-panel"/>
+      <g class="code" xml:space="preserve">
+        <text x="948" y="178">account,as_of,line_type,market,mic,symbol,currency,quantity,cash</text>
+        <text x="948" y="196">main,2024-01-05T21:00:00Z,CASH,,,,USD,,924</text>
+        <text x="948" y="214">main,2024-01-05T21:00:00Z,POSITION,us_equity,XNAS,AAA,USD,11,</text>
+      </g>
+    </g>
+    <text x="932" y="274" class="header">Row &amp; snapshot contract</text>
+    <g class="rule">
+      <text x="932" y="304">• Exactly one CASH row (identity + quantity blank, cash stated);</text>
+      <text x="945" y="322">any number of POSITION rows (exact identity + quantity, cash blank).</text>
+      <text x="932" y="358">• USD throughout; one neutral account label; one common aware snapshot instant equal to --as-of.</text>
+      <text x="932" y="394">• Values are non-negative exact decimals; zero is explicit; a BLANK cell is not zero.</text>
+      <text x="932" y="430" class="reject">• REJECTED: duplicate position identity, duplicate CASH row, mixed accounts, mixed instants,</text>
+      <text x="945" y="448" class="reject">malformed values, unsupported currency, repeated header column name.</text>
+      <text x="932" y="484">• A statement with NO cash row is accepted but reconciles as <tspan class="gated strong">unavailable</tspan> (never zero).</text>
+    </g>
+    <line x1="932" y1="514" x2="1748" y2="514" stroke="#c9d4e3" stroke-width="1.5"/>
+    <text x="932" y="542" class="header">Reconciliation (no marks needed)</text>
+    <g class="rule">
+      <text x="932" y="574">• Tolerances (inclusive, on unrounded differences):</text>
+      <text x="945" y="592">abs(statement - ledger) &lt;= 0.00000001 share, &lt;= 0.01 USD. Delta is signed statement - ledger.</text>
+      <text x="932" y="628">• A statement-only position compares with ledger quantity 0;</text>
+      <text x="945" y="646">a ledger holding the statement omits is <tspan class="gated strong">UNAVAILABLE</tspan>, not zero.</text>
+      <text x="932" y="682">• Snapshot-time disagreement makes every line <tspan class="gated strong">unavailable</tspan></text>
+      <text x="945" y="700">with NO delta.</text>
+      <text x="932" y="736">• Overall state: <tspan class="gated strong">unavailable</tspan> &gt; <tspan class="warn strong">mismatched</tspan> &gt; <tspan class="ok strong">matched</tspan>.</text>
+      <text x="932" y="783">• Never mutates the ledger, never balances to agree. No marks needed for reconciliation.</text>
+    </g>
+  </g>
+
+  <g id="mark-eligibility" aria-label="Five-box mark eligibility decision path">
+    <text x="32" y="881" class="header">Mark eligibility at --as-of T</text>
+    <text x="1768" y="881" text-anchor="end" class="annotation">Exact venue · point-in-time selection · exact arithmetic</text>
+
+    <g id="decision-1" data-bounds="32 906 262 203">
+      <rect x="32" y="906" width="262" height="203" rx="10" class="decision"/>
+      <text x="48" y="934" class="header">1  Exact identity</text>
+      <g class="rule">
+        <text x="48" y="960">Exact (market, MIC, symbol) only.</text>
+        <text x="48" y="978">Never another venue or symbol,</text>
+        <text x="48" y="996">an adjusted price, or a</text>
+        <text x="48" y="1014">network fallback.</text>
+      </g>
+    </g>
+    <path d="M 297 1008 H 307 M 303 1004 L 307 1008 L 303 1012" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+
+    <g id="decision-2" data-bounds="312 906 220 203">
+      <rect x="312" y="906" width="220" height="203" rx="10" class="decision"/>
+      <text x="328" y="934" class="header">2  At or before T</text>
+      <g class="rule">
+        <text x="328" y="960">Keep marks with as_of ≤ T.</text>
+        <text x="328" y="978">A future mark is simply</text>
+        <text x="328" y="996">not eligible.</text>
+      </g>
+    </g>
+    <path d="M 535 1008 H 545 M 541 1004 L 545 1008 L 541 1012" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+
+    <g id="decision-3" data-bounds="550 906 336 203">
+      <rect x="550" y="906" width="336" height="203" rx="10" class="decision"/>
+      <text x="566" y="934" class="header">3  Latest mark; conflict gate</text>
+      <g class="rule">
+        <text x="566" y="960">Take the LATEST as_of.</text>
+        <text x="566" y="978">Two same-instant marks with different</text>
+        <text x="566" y="996">content ⇒ <tspan class="reject strong">conflicting_marks</tspan>.</text>
+        <text x="566" y="1014" class="reject">BLOCKS the instrument; never falls</text>
+        <text x="566" y="1032" class="reject">back to an older quote.</text>
+        <text x="566" y="1056">Identical duplicates collapse.</text>
+      </g>
+    </g>
+    <path d="M 889 1008 H 899 M 895 1004 L 899 1008 L 895 1012" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+
+    <g id="decision-4" data-bounds="904 906 462 203">
+      <rect x="904" y="906" width="462" height="203" rx="10" class="decision"/>
+      <text x="920" y="934" class="header">4  Completed venue sessions</text>
+      <g class="rule">
+        <text x="920" y="960">age = COMPLETED sessions of that exact venue</text>
+        <text x="920" y="978">after the mark’s session through T.</text>
+        <text x="920" y="996">Friday close seen Sunday = 0; Monday at/after</text>
+        <text x="920" y="1014">its close = 1; Tuesday after close = 2.</text>
+        <text x="920" y="1032">Holiday does not count; early close counts</text>
+        <text x="920" y="1050">only once passed.</text>
+        <text x="920" y="1068">Bound: default 1; only a stricter 0 allowed.</text>
+        <text x="920" y="1086" class="reject">A larger bound is refused.</text>
+      </g>
+    </g>
+    <path d="M 1369 1008 H 1379 M 1375 1004 L 1379 1008 L 1375 1012" fill="none" stroke="#1f6feb" stroke-width="1.5"/>
+
+    <g id="decision-5" data-bounds="1384 906 384 203">
+      <rect x="1384" y="906" width="384" height="203" rx="10" class="decision"/>
+      <text x="1400" y="934" class="header">5  Value or withhold</text>
+      <g class="rule">
+        <text x="1400" y="960" class="ok"><tspan class="strong">VALUED</tspan> ⇒ value = quantity × price (exact)</text>
+        <text x="1400" y="978" class="ok">unrealized = value − basis</text>
+      </g>
+      <line x1="1400" y1="994" x2="1752" y2="994" stroke="#c9d4e3" stroke-width="1.5"/>
+      <g class="rule warn">
+        <text x="1400" y="1016" class="warn">missing_mark / stale_mark /</text>
+        <text x="1400" y="1034" class="warn">conflicting_marks / quantity_uncertain</text>
+        <text x="1400" y="1056" class="gated strong">⇒ value withheld</text>
+      </g>
+    </g>
+
+    <g id="withholding-rules" data-bounds="32 1124 1736 84">
+      <rect x="32" y="1124" width="1736" height="84" rx="10" fill="#f7f9fc" stroke="#c9d4e3" stroke-width="1.5"/>
+      <g class="rule">
+        <text x="48" y="1149"><tspan class="strong">On any withheld position:</tspan> cash, recorded quantities and the VALID marked subtotal stay visible; complete NAV, allocation and valuation-dependent P&amp;L are withheld.</text>
+        <text x="48" y="1167">Affected instruments are named in the report; a marked-only subtotal is never a total.</text>
+        <text x="48" y="1189">Unknown opening basis ⇒ basis and basis-dependent gains <tspan class="gated strong">UNAVAILABLE</tspan> (never zero), while a correctly marked NAV is still allowed.</text>
+      </g>
+    </g>
+  </g>
+
+  <text x="32" y="1231" class="footer">As built at P02 (commit 43a6c0a) · 2026-11-07 · equity_lake · docs/user-guide/20261103-private-portfolio-ledger.md · ADR-0026</text>
+</svg>
