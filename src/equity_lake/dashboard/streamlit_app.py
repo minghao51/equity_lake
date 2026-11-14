@@ -356,6 +356,33 @@ def render_p03_portfolio() -> None:
     panels.render_portfolio(st, private_dir=panels.portfolio_private_dir(), as_of_text=st.session_state.get("p03_as_of"))
 
 
+def render_p03_readiness(datasets: list[dict[str, Any]], health: dict[str, Any] | None) -> None:
+    """Render the P03 Data Readiness page after the loopback gate (stage 2)."""
+    if not require_loopback(page_spec("readiness").label):
+        return
+    from equity_lake.dashboard import panels
+
+    panels.render_readiness(st, datasets=datasets, health=health)
+
+
+def render_p03_research() -> None:
+    """Render the P03 Research Runs page after the loopback gate (stage 3)."""
+    if not require_loopback(page_spec("research").label):
+        return
+    from equity_lake.dashboard import panels
+
+    panels.render_research(st)
+
+
+def render_p03_signals() -> None:
+    """Render the P03 Signals page after the loopback gate (stage 3)."""
+    if not require_loopback(page_spec("signals").label):
+        return
+    from equity_lake.dashboard import panels
+
+    panels.render_signals(st, private_dir=panels.portfolio_private_dir())
+
+
 def render_p03_pending(page: str) -> None:
     """Render a registered-but-unauthorized P03 page as ``gated`` after the gate."""
     if not require_loopback(page_spec(page).label):
@@ -404,11 +431,11 @@ def main() -> None:
     elif page == "portfolio":
         render_p03_portfolio()
     elif page == "readiness":
-        render_p03_pending("readiness")
+        render_p03_readiness(datasets, health)
     elif page == "research":
-        render_p03_pending("research")
+        render_p03_research()
     elif page == "signals":
-        render_p03_pending("signals")
+        render_p03_signals()
     else:  # pragma: no cover - a new registry page needs an explicit renderer here
         raise RuntimeError(f"no Streamlit renderer registered for dashboard page {page!r}")
 

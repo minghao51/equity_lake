@@ -171,13 +171,18 @@ def test_every_private_page_refuses_on_a_non_loopback_bind(monkeypatch: pytest.M
     loopback check.
     """
     calls = _mock_streamlit(monkeypatch, address="0.0.0.0")
-    monkeypatch.setattr(panels, "portfolio_panel", lambda *_a, **_k: pytest.fail("private read before the gate"))
-    monkeypatch.setattr(panels, "render_pending_panel", lambda *_a, **_k: pytest.fail("private panel rendered before the gate"))
+    for name in ("portfolio_panel", "readiness_panel", "research_panel", "signals_panel"):
+        monkeypatch.setattr(panels, name, lambda *_a, **_k: pytest.fail("private read before the gate"))
 
+    # The shipped wrappers, not the placeholder: each must gate before its own read.
     if page == "portfolio":
         streamlit_app.render_p03_portfolio()
+    elif page == "readiness":
+        streamlit_app.render_p03_readiness([], None)
+    elif page == "research":
+        streamlit_app.render_p03_research()
     else:
-        streamlit_app.render_p03_pending(page)
+        streamlit_app.render_p03_signals()
 
     assert any(name == "error" for name, _args in calls)
 
@@ -198,11 +203,10 @@ def test_a_loopback_bind_allows_the_panel(monkeypatch: pytest.MonkeyPatch) -> No
     assert rendered == ["panel"]
 
 
-@pytest.mark.parametrize("page", ["readiness", "research", "signals"])
-def test_registered_but_unauthorized_pages_render_gated(monkeypatch: pytest.MonkeyPatch, page: str) -> None:
-    """Stage 1 ships Portfolio only; the other panels are visibly ``gated``, not blank."""
+def test_a_page_without_a_renderer_is_visibly_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A registered page with no renderer renders the shared ``gated`` state, not a blank page."""
     calls = _mock_streamlit(monkeypatch, address="127.0.0.1")
-    streamlit_app.render_p03_pending(page)
+    streamlit_app.render_p03_pending("readiness")
     assert ("info",) in {(name,) for name, _args in calls}  # Notice.GATED renders as info
     assert any("not authorized" in str(args[0]) for name, args in calls if name == "info")
 
@@ -395,3 +399,308 @@ def test_rendering_a_panel_never_modifies_the_private_directory(monkeypatch: pyt
     _mock_streamlit(monkeypatch, address="127.0.0.1")
     panels.render_portfolio(streamlit_app.st, private_dir=unreadable, as_of_text="2024-01-05T21:00:00Z")
     assert list(unreadable.rglob("*")) == []
+
+
+# ---------------------------------------------------------------------------
+# 6. Data readiness (stage 2)
+# ---------------------------------------------------------------------------
+
+
+def test_readiness_reports_market_coverage_without_claiming_per_instrument_coverage() -> None:
+    """Readiness shows per-market availability and *disclaims* per-instrument coverage.
+
+    Falsified by: presenting a market-level union as instrument coverage, or treating an
+    absent market as an empty one.
+    """
+    datasets = [
+        {"name": "us_equity", "available": True, "rows": 10, "symbols": 2, "latest_date": "2024-01-04"},
+        {"name": "cn_ashare", "available": False, "rows": 0, "symbols": 0, "latest_date": None},
+        {"name": "features", "available": True, "rows": 99, "symbols": 3, "latest_date": "2024-01-04"},
+    ]
+    healthy = {"alerts": [], "healthy": True, "metrics": {"us_equity": {"max_age_days": 2, "latest_session": "2024-01-04"}}}
+    panel = panels.readiness_panel(datasets, healthy)
+
+    assert panel.notice is components.Notice.SUCCESS
+    assert any("never proves per-instrument coverage" in detail for detail in panel.details)
+    assert [(row["dataset"], row["kind"]) for row in panel.rows] == [
+        ("us_equity", "market"),
+        ("cn_ashare", "market"),
+        ("features", "table"),  # listed, but never counted as a market
+    ]
+    assert panel.rows[1]["available"] == "no"
+    assert panel.rows[1]["latest session"] == "unknown"  # absent is not a zero-date
+
+
+def test_readiness_without_freshness_evidence_is_partial() -> None:
+    """Datasets without a health report are ``partial``: freshness is unknown, not fine."""
+    panel = panels.readiness_panel([{"name": "us_equity", "available": True, "rows": 1, "symbols": 1, "latest_date": "2024-01-04"}], None)
+    assert panel.notice is components.Notice.PARTIAL
+    assert "freshness evidence unavailable" in panel.headline
+
+
+def test_a_feature_table_is_not_a_price_market() -> None:
+    """A medallion table is listed as a ``table`` and never counts as an available market.
+
+    Falsified by: counting `features` (which `MARKET_DATASETS` includes) as a price market,
+    which would let an empty lake report availability.
+    """
+    only_features = [{"name": "features", "available": True, "rows": 5, "symbols": 2, "latest_date": "2024-01-04"}]
+    assert panels.readiness_panel(only_features, {"metrics": {"x": 1}}).notice is components.Notice.UNAVAILABLE
+
+
+def test_a_report_that_says_unhealthy_is_not_success() -> None:
+    """The health report's own `healthy: false` wins over "metrics exist".
+
+    Falsified by: asserting success whenever metrics are present but no alert is listed.
+    """
+    datasets = [{"name": "us_equity", "available": True, "rows": 1, "symbols": 1, "latest_date": "2024-01-04"}]
+    panel = panels.readiness_panel(datasets, {"alerts": [], "healthy": False, "metrics": {"x": 1}})
+    assert panel.notice is components.Notice.WARNING
+    assert "not healthy" in panel.headline
+
+
+def test_every_private_wrapper_gates_before_it_imports_the_panel_module() -> None:
+    """The gate call must precede the panel import in each wrapper's source.
+
+    Falsified by: importing ``equity_lake.dashboard.panels`` (or reading private state)
+    before ``require_loopback`` returns, which the runtime stubs cannot observe once the
+    import has happened at module scope.
+    """
+    import inspect
+
+    for wrapper in (
+        streamlit_app.render_p03_portfolio,
+        streamlit_app.render_p03_readiness,
+        streamlit_app.render_p03_research,
+        streamlit_app.render_p03_signals,
+        streamlit_app.render_p03_pending,
+    ):
+        source = inspect.getsource(wrapper)
+        assert source.count("require_loopback") >= 1, wrapper.__name__
+        assert source.index("require_loopback") < source.index("from equity_lake.dashboard import panels"), wrapper.__name__
+
+
+def test_an_empty_health_report_is_not_a_healthy_result() -> None:
+    """A report with neither alerts nor metrics proves nothing about freshness.
+
+    Falsified by: treating ``{}`` (or ``{"alerts": []}``) as "all healthy", which would
+    present missing evidence as a passing check.
+    """
+    datasets = [{"name": "us_equity", "available": True, "rows": 1, "symbols": 1, "latest_date": "2024-01-04"}]
+    for empty in ({}, {"alerts": []}, {"metrics": {}}):
+        panel = panels.readiness_panel(datasets, empty)
+        assert panel.notice is components.Notice.PARTIAL
+        assert "freshness evidence is empty" in panel.headline
+
+
+def test_readiness_with_no_available_market_is_unavailable_not_empty() -> None:
+    """No market at all renders ``unavailable`` with guidance."""
+    panel = panels.readiness_panel([{"name": "us_equity", "available": False, "rows": 0, "symbols": 0, "latest_date": None}], {"alerts": []})
+    assert panel.notice is components.Notice.UNAVAILABLE
+    assert "absent market is not an empty market" in " ".join(panel.details)
+
+
+# ---------------------------------------------------------------------------
+# 7. Research runs (stage 3)
+# ---------------------------------------------------------------------------
+
+
+def _research_lake(tmp_path: Path) -> Any:
+    """A finalized run written by the real writer (immutable evidence, not a stub)."""
+    import polars as pl
+
+    from equity_lake.backtesting.evidence import CodeIdentity, CostApplication, RunScope, finalise_run
+    from equity_lake.backtesting.result import BacktestResult
+
+    result = BacktestResult(
+        strategy_name="stub",
+        tickers=["AAA"],
+        start_date=date(2024, 1, 2),
+        end_date=date(2024, 1, 4),
+        initial_cash=100.0,
+        final_cash=100.0,
+        equity_curve=pl.Series("equity", [100.0, 110.0, 100.0], dtype=pl.Float64),
+        trades=[],
+        metrics={"total_return": 0.0},
+        equity_dates=[date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)],
+    )
+    scope = RunScope(
+        universe=["us_equity/XNYS/AAA"],
+        start_date=date(2024, 1, 2),
+        end_date=date(2024, 1, 4),
+        strategies=["stub"],
+        costs=[CostApplication(regime="zero", fee_ratio=0.0, tax_ratio=0.0)],
+        initial_cash=100.0,
+    )
+    return finalise_run(result, scope=scope, code=CodeIdentity(commit="a" * 40), root=tmp_path)
+
+
+def test_research_panel_shows_immutable_runs_with_their_recorded_provenance(tmp_path: Path) -> None:
+    """Validated runs are listed with the manifest's own derived provenance.
+
+    Falsified by: re-deriving or upgrading a label here, or presenting an unvalidated
+    directory as a run.
+    """
+    run = _research_lake(tmp_path)
+    (tmp_path / "runs" / "not-a-run").mkdir()
+    panel = panels.research_panel(tmp_path)
+
+    assert panel.notice is components.Notice.PARTIAL  # one directory is not evidence
+    assert "not valid evidence" in panel.headline
+    assert panel.rows[0]["run"] == run.directory.name
+    assert panel.rows[0]["protocol"] == "equity-run-manifest/4"
+    assert panel.rows[0]["data provenance"] == "unknown"  # as recorded, never upgraded
+    assert any("Price origin only" in detail for detail in panel.details)
+
+
+def test_research_panel_displays_a_recorded_claim_verbatim(tmp_path: Path) -> None:
+    """A stored non-unknown label is shown as recorded — the panel never re-derives it.
+
+    The run below is a v3 manifest carrying a self-asserted claim (legal under v3 rules),
+    so a panel that re-derived provenance from lake evidence would show `unknown` here.
+
+    Falsified by: recomputing or upgrading the label in the view.
+    """
+    import polars as pl
+
+    from equity_lake.backtesting.evidence import (
+        RUN_PROTOCOL_V3,
+        CodeIdentity,
+        CostApplication,
+        InputSnapshot,
+        RunScope,
+        finalise_run,
+    )
+    from equity_lake.backtesting.result import BacktestResult
+
+    result = BacktestResult(
+        strategy_name="stub",
+        tickers=["AAA"],
+        start_date=date(2024, 1, 2),
+        end_date=date(2024, 1, 4),
+        initial_cash=100.0,
+        final_cash=100.0,
+        equity_curve=pl.Series("equity", [100.0, 110.0, 100.0], dtype=pl.Float64),
+        trades=[],
+        metrics={"total_return": 0.0},
+        equity_dates=[date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)],
+    )
+    scope = RunScope(
+        protocol=RUN_PROTOCOL_V3,
+        universe=["us_equity/XNYS/AAA"],
+        start_date=date(2024, 1, 2),
+        end_date=date(2024, 1, 4),
+        strategies=["stub"],
+        costs=[CostApplication(regime="zero", fee_ratio=0.0, tax_ratio=0.0)],
+        initial_cash=100.0,
+    )
+    snapshot = InputSnapshot(name="price_marks:us_equity", sha256="a" * 64, source="lake:delta", version="3")
+    finalise_run(
+        result,
+        scope=scope,
+        input_snapshots=[snapshot],
+        data_provenance="synthetic",
+        code=CodeIdentity(commit="a" * 40),
+        root=tmp_path,
+    )
+
+    panel = panels.research_panel(tmp_path)
+    assert panel.rows[0]["data provenance"] == "synthetic"  # recorded, not re-derived
+    assert any("legacy protocol-v3" in detail for detail in panel.details)
+
+
+def test_research_panel_is_unavailable_without_evidence(tmp_path: Path) -> None:
+    """No run means unavailable with guidance, not an empty table."""
+    panel = panels.research_panel(tmp_path)
+    assert panel.notice is components.Notice.UNAVAILABLE
+    assert "not a run" in " ".join(panel.details)
+
+
+# ---------------------------------------------------------------------------
+# 8. Signals (stage 3): candidates only, bound to the configured path
+# ---------------------------------------------------------------------------
+
+
+def test_signals_lists_candidates_with_reasons_and_never_an_order(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Candidates carry their reason/session and the panel says they are not orders."""
+    tracking = import_module("equity_lake.signals.tracking")
+    instrument = import_module("equity_lake.core.instruments").InstrumentKey(market="us_equity", mic="XNAS", symbol="AAA")
+    candidate = SimpleNamespace(
+        instrument=instrument,
+        action="BUY",
+        session=date(2024, 12, 2),
+        source="price_sma20",
+        reasoning="deviation +2% over SMA20",
+        price=102.0,
+        deviation=0.02,
+        threshold=0.02,
+    )
+    report = SimpleNamespace(
+        evaluations=[SimpleNamespace(rules=[SimpleNamespace(candidate=candidate), SimpleNamespace(candidate=None)])],
+    )
+    snapshot = SimpleNamespace(recent_reports=[report], last_successful_scan_at=datetime(2024, 12, 2, 22, 0, tzinfo=UTC))
+    monkeypatch.setattr(tracking, "private_tracking_snapshot", lambda **_kwargs: snapshot)
+    monkeypatch.setattr(panels, "_instrument_label", lambda _instrument: "us_equity/XNAS/AAA")
+
+    panel = panels.signals_panel(tmp_path)
+
+    assert panel.notice is components.Notice.INFO
+    assert panel.rows[0]["action"] == "BUY"
+    assert panel.rows[0]["reason"] == "deviation +2% over SMA20"
+    assert panel.rows[0]["session"] == "2024-12-02"
+    assert any("never an order" in detail for detail in panel.details)
+    assert len(panel.rows) == 1  # a non-signal rule contributes no row
+
+
+def test_signals_surfaces_a_corrupt_history_and_a_stale_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Corrupt history is unavailable and a stale run is a warning, never fresh candidates.
+
+    Falsified by: listing candidates without consulting ``history_status`` or
+    ``stale_run_warning``, which would present stale state as current.
+    """
+    tracking = import_module("equity_lake.signals.tracking")
+    candidate = SimpleNamespace(
+        instrument=import_module("equity_lake.core.instruments").InstrumentKey(market="us_equity", mic="XNAS", symbol="AAA"),
+        action="BUY",
+        session=date(2024, 12, 2),
+        source="price_sma20",
+        reasoning="deviation",
+        price=1.0,
+        deviation=0.02,
+        threshold=0.02,
+    )
+    report = SimpleNamespace(evaluations=[SimpleNamespace(rules=[SimpleNamespace(candidate=candidate)])])
+    monkeypatch.setattr(panels, "_instrument_label", lambda _instrument: "us_equity/XNAS/AAA")
+
+    corrupt = SimpleNamespace(
+        recent_reports=[report],
+        history_status="corrupt",
+        stale_run_warning=None,
+        last_successful_scan_at=None,
+    )
+    monkeypatch.setattr(tracking, "private_tracking_snapshot", lambda **_kwargs: corrupt)
+    corrupt_panel = panels.signals_panel(tmp_path)
+    assert corrupt_panel.notice is components.Notice.UNAVAILABLE
+    assert corrupt_panel.rows == ()
+
+    stale = SimpleNamespace(
+        recent_reports=[report],
+        history_status="available",
+        stale_run_warning="last run is 9 days old",
+        last_successful_scan_at=datetime(2024, 12, 2, 22, 0, tzinfo=UTC),
+    )
+    monkeypatch.setattr(tracking, "private_tracking_snapshot", lambda **_kwargs: stale)
+    stale_panel = panels.signals_panel(tmp_path)
+    assert stale_panel.notice is components.Notice.WARNING
+    assert "stale run" in stale_panel.headline
+    assert any("9 days old" in detail for detail in stale_panel.details)
+
+
+def test_signals_without_private_evidence_is_unavailable_not_neutral(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unreadable or unconfigured private state is ``unavailable``, never "no signal"."""
+    assert panels.signals_panel(None).notice is components.Notice.UNAVAILABLE
+    tracking = import_module("equity_lake.signals.tracking")
+    monkeypatch.setattr(tracking, "private_tracking_snapshot", lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    panel = panels.signals_panel(Path("/nonexistent"))
+    assert panel.notice is components.Notice.UNAVAILABLE
+    assert "No candidate is inferred from missing evidence" in " ".join(panel.details)

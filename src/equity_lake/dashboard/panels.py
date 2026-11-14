@@ -231,14 +231,19 @@ def _watchlist_held(private_dir: Path) -> set[str]:
     private location than the one it was configured with.
     """
     try:
+        from equity_lake.core.paths import LAKE_DIR
         from equity_lake.signals import tracking
 
         # Both the tracking database *and* the watchlist file are bound explicitly: the
         # default watchlist path is process-global, so passing only ``data_dir`` would let
         # one read escape the configured directory.
+
         snapshot = tracking.private_tracking_snapshot(
             data_dir=private_dir,
             watchlist_file=private_dir / PORTFOLIO_WATCHLIST_FILENAME,
+            # The lake is public market data, not private state; passing it explicitly
+            # keeps the only non-private read visible instead of an implicit default.
+            lake_dir=LAKE_DIR,
         )
     except Exception:  # noqa: BLE001 - a watchlist that cannot be read must not break valuation
         return set()
@@ -332,3 +337,306 @@ __all__ = [
     "render_pending_panel",
     "render_portfolio",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Data readiness (stage 2)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ReadinessPanel:
+    """Per-dataset readiness plus the freshness evidence available for it."""
+
+    notice: Notice
+    headline: str
+    details: tuple[str, ...] = ()
+    rows: tuple[dict[str, str], ...] = ()
+
+
+def readiness_panel(datasets: list[dict[str, Any]], health: dict[str, Any] | None) -> ReadinessPanel:
+    """Build the Data Readiness panel from already-loaded summaries and health.
+
+    ``datasets`` is the per-market summary the app already computes (rows, symbols,
+    latest session) and ``health`` the pipeline health report. This function only reads
+    those mappings: it performs no lake scan, no write and no inference.
+
+    A **market-level union is not per-instrument coverage**, so the panel says so
+    explicitly: it can show that a market table is fresh, never that each instrument in
+    it is complete.
+    """
+    from equity_lake.core.paths import PRICE_MARKETS
+
+    # ``datasets`` mixes price markets with medallion tables (e.g. ``features``): only a
+    # price market can answer "is a market available", so the two are counted separately
+    # and each row says which it is. Counting a feature table as a market would let an
+    # empty lake look available.
+    markets = [row for row in datasets if str(row.get("name", "")) in PRICE_MARKETS]
+    tables = [row for row in datasets if str(row.get("name", "")) not in PRICE_MARKETS]
+    available = [row for row in markets if row.get("available")]
+    if not markets:
+        return ReadinessPanel(Notice.UNAVAILABLE, "No price market is registered in this lake.")
+    if not available:
+        return ReadinessPanel(
+            Notice.UNAVAILABLE,
+            "No price market is available.",
+            ("Ingest a market first (`equity ingest`); an absent market is not an empty market.",),
+        )
+
+    rows = tuple(
+        {
+            "dataset": str(row.get("name", "")),
+            "kind": "market" if str(row.get("name", "")) in PRICE_MARKETS else "table",
+            "available": "yes" if row.get("available") else "no",
+            "rows": str(row.get("rows", 0)),
+            "symbols": str(row.get("symbols", 0)),
+            "latest session": str(row.get("latest_date") or "unknown"),
+        }
+        for row in (*markets, *tables)
+    )
+    market_count = len(markets)
+    details = [
+        "A market-level summary is a union over the table: it never proves per-instrument coverage.",
+        "Each price row's origin is recorded separately (see the run manifests); a fresh table is not evidence of where its values came from.",
+    ]
+    if health is None:
+        return ReadinessPanel(
+            Notice.PARTIAL,
+            f"{len(available)} of {market_count} price market(s) available; freshness evidence unavailable.",
+            (*details, "No health report exists: run `equity monitor` to record per-table freshness."),
+            rows,
+        )
+    alerts = health.get("alerts", [])
+    metrics = health.get("metrics") or {}
+    if alerts:
+        return ReadinessPanel(
+            Notice.WARNING,
+            f"{len(available)} of {market_count} price market(s) available; {len(alerts)} health alert(s).",
+            (*details, *(str(alert) for alert in alerts)),
+            rows,
+        )
+    if not metrics:
+        # A report that carries neither alerts nor metrics says nothing about freshness:
+        # that is missing evidence, never a healthy result.
+        return ReadinessPanel(
+            Notice.PARTIAL,
+            f"{len(available)} of {market_count} price market(s) available; freshness evidence is empty.",
+            (*details, "The health report has no metrics: rerun `equity monitor` to record per-table freshness."),
+            rows,
+        )
+    if health.get("healthy") is False:
+        # The report's own verdict wins: metrics without a healthy flag are not health.
+        return ReadinessPanel(
+            Notice.WARNING,
+            f"{len(available)} of {market_count} price market(s) available; the health report is not healthy.",
+            (*details, "The report records `healthy: false`; inspect `equity monitor` for the failing checks."),
+            rows,
+        )
+    return ReadinessPanel(Notice.SUCCESS, f"{len(available)} of {market_count} price market(s) available and healthy.", tuple(details), rows)
+
+
+def render_readiness(st: Any, *, datasets: list[dict[str, Any]], health: dict[str, Any] | None) -> None:
+    """Render the Data Readiness page (display-only)."""
+    st.title(page_spec("readiness").label)
+    st.caption("Read-only readiness and freshness. Nothing here ingests, backfills or repairs a table.")
+    panel = readiness_panel(datasets, health)
+    render_notice(st, panel.notice, panel.headline)
+    for line in panel.details:
+        st.caption(line)
+    if panel.rows:
+        st.dataframe(list(panel.rows), hide_index=True, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# Research runs (stage 3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ResearchPanel:
+    """Immutable research evidence: validated runs and the last attempt."""
+
+    notice: Notice
+    headline: str
+    details: tuple[str, ...] = ()
+    rows: tuple[dict[str, str], ...] = ()
+
+
+def research_panel(root: Path | None = None) -> ResearchPanel:
+    """Build the Research Runs panel from validated run evidence (read-only).
+
+    Only runs that pass :func:`validate_run_directory` are shown; a directory without a
+    valid manifest is not evidence. The manifest's own derived ``data_provenance`` is
+    displayed as recorded — never re-derived or upgraded here — with its scope limit, and
+    legacy v3 runs are labelled as such.
+    """
+    from equity_lake.backtesting.evidence import RUN_PROTOCOL_V4, iter_run_directories
+    from equity_lake.backtesting.evidence_view import latest_attempt, validated_runs
+
+    try:
+        verdicts = validated_runs(root)
+        # ``iter_run_directories`` takes the *findings* root (it appends ``runs/``).
+        candidates = len(list(iter_run_directories(root)))
+        attempt = latest_attempt(root)
+    except OSError:
+        return ResearchPanel(Notice.UNAVAILABLE, "Research evidence cannot be read.")
+
+    if not verdicts:
+        return ResearchPanel(
+            Notice.UNAVAILABLE,
+            "No finalized research run exists.",
+            ("A directory without a validated manifest is not a run; run `equity arena run` or `equity report backtest` first.",),
+        )
+
+    now = datetime.now(UTC)
+    rows = []
+    for verdict in verdicts:
+        manifest = verdict.manifest
+        if manifest is None:  # pragma: no cover - a validated run always carries one
+            continue
+        age_days = max((now - manifest.finalized_at.astimezone(UTC)).days, 0)
+        rows.append(
+            {
+                "run": str(Path(verdict.directory).name),
+                "protocol": manifest.protocol,
+                "data provenance": manifest.data_provenance,
+                "finalized": manifest.finalized_at.astimezone(UTC).isoformat(),
+                "age (days)": str(age_days),
+                "universe": str(len(manifest.universe)),
+                "strategies": ", ".join(manifest.strategies),
+            }
+        )
+
+    details = [
+        "Price origin only: data_provenance classifies the consumed price inputs, not corporate-action, feature or prediction inputs.",
+        "Runs are immutable evidence: nothing here re-derives, relabels or rewrites a manifest.",
+    ]
+    uninspectable = candidates - len(verdicts)
+    notice = Notice.SUCCESS
+    headline = f"{len(verdicts)} finalized run(s)."
+    if uninspectable > 0:
+        notice = Notice.PARTIAL
+        headline = f"{len(verdicts)} finalized run(s); {uninspectable} directory(ies) are not valid evidence."
+        details.append("A directory that does not validate is skipped, never counted as a run.")
+    legacy = sum(1 for verdict in verdicts if verdict.manifest is not None and verdict.manifest.protocol != RUN_PROTOCOL_V4)
+    if legacy:
+        details.append(f"{legacy} legacy protocol-v3 run(s): readable under their own rules, with no price-origin summaries.")
+    if attempt is not None:
+        finalized = attempt.record.finalized_at.astimezone(UTC).isoformat()
+        details.append(f"Last attempt: {attempt.record.status} at {finalized} (kept distinct from the last success).")
+    return ResearchPanel(notice, headline, tuple(details), tuple(rows))
+
+
+def render_research(st: Any, *, root: Path | None = None) -> None:
+    """Render the Research Runs page (display-only, immutable evidence)."""
+    st.title(page_spec("research").label)
+    st.caption("Read-only immutable run evidence. Nothing here runs a backtest, refits a model or writes a manifest.")
+    panel = research_panel(root)
+    render_notice(st, panel.notice, panel.headline)
+    for line in panel.details:
+        st.caption(line)
+    if panel.rows:
+        st.dataframe(list(panel.rows), hide_index=True, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
+# Signals (stage 3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SignalsPanel:
+    """Established candidates only — never orders, never probabilities."""
+
+    notice: Notice
+    headline: str
+    details: tuple[str, ...] = ()
+    rows: tuple[dict[str, str], ...] = ()
+
+
+def signals_panel(private_dir: Path | None) -> SignalsPanel:
+    """Build the Signals panel from the configured private tracking evidence.
+
+    Only ``signal`` outcomes are listed: a rule that did not evaluate, or whose data was
+    stale, contributes no candidate and is reported as ``unavailable`` rather than as
+    "no signal". Candidates are never orders and never calibrated probabilities.
+    """
+    if private_dir is None:
+        return SignalsPanel(
+            Notice.UNAVAILABLE,
+            "The private console path is not configured.",
+            ("Set EQUITY_CONSOLE__PRIVATE_DIR to the directory holding the watchlist and tracking state.",),
+        )
+    try:
+        from equity_lake.core.paths import LAKE_DIR
+        from equity_lake.signals import tracking
+
+        snapshot = tracking.private_tracking_snapshot(
+            data_dir=private_dir,
+            watchlist_file=private_dir / PORTFOLIO_WATCHLIST_FILENAME,
+            # The lake is public market data, not private state: it is passed explicitly
+            # so the one non-private read is visible rather than an implicit default.
+            lake_dir=LAKE_DIR,
+        )
+    except Exception:  # noqa: BLE001 - unreadable private state is unavailable, never "no signal"
+        return SignalsPanel(Notice.UNAVAILABLE, "Private tracking state cannot be read.", ("No candidate is inferred from missing evidence.",))
+
+    rows: list[dict[str, str]] = []
+    for report in snapshot.recent_reports:
+        for evaluation in report.evaluations:
+            for outcome in evaluation.rules:
+                candidate = outcome.candidate
+                if candidate is None:
+                    continue
+                rows.append(
+                    {
+                        "instrument": _instrument_label(candidate.instrument),
+                        "action": candidate.action,
+                        "session": candidate.session.isoformat(),
+                        "source": candidate.source,
+                        "reason": candidate.reasoning,
+                        "price": "unavailable" if candidate.price is None else str(candidate.price),
+                        "deviation": "unavailable" if candidate.deviation is None else str(candidate.deviation),
+                        "threshold": "unavailable" if candidate.threshold is None else str(candidate.threshold),
+                    }
+                )
+
+    history_status = str(getattr(snapshot, "history_status", "missing"))
+    if history_status == "corrupt":
+        return SignalsPanel(
+            Notice.UNAVAILABLE,
+            "Private tracking history is corrupt, so no candidate is current.",
+            ("A corrupt history is not evidence of a fresh scan; repair or re-run the local scan.",),
+        )
+
+    details = [
+        "Candidates only: never an order, never a calibrated profit probability.",
+        "A rule that could not evaluate (stale or missing session) reports unavailable; it is not a neutral signal.",
+        f"History: {history_status}.",
+    ]
+    if snapshot.last_successful_scan_at is not None:
+        details.append(f"Last successful scan: {snapshot.last_successful_scan_at.astimezone(UTC).isoformat()}.")
+    stale_warning = getattr(snapshot, "stale_run_warning", None)
+    if stale_warning:
+        # A stale run is never presented as a current one: the warning is part of the state.
+        return SignalsPanel(
+            Notice.WARNING if rows else Notice.UNAVAILABLE,
+            f"{len(rows)} candidate(s) recorded from a stale run." if rows else "No current candidate: the last run is stale.",
+            (*details, str(stale_warning)),
+            tuple(rows),
+        )
+    if not rows:
+        return SignalsPanel(Notice.UNAVAILABLE, "No established candidate is recorded.", tuple(details))
+    return SignalsPanel(Notice.INFO, f"{len(rows)} candidate(s) recorded.", tuple(details), tuple(rows))
+
+
+def render_signals(st: Any, *, private_dir: Path | None) -> None:
+    """Render the Signals page (display-only, candidates only)."""
+    st.title(page_spec("signals").label)
+    st.caption("Read-only candidate view. Nothing here scans, scans again, or places an order.")
+    panel = signals_panel(private_dir)
+    render_notice(st, panel.notice, panel.headline)
+    for line in panel.details:
+        st.caption(line)
+    if panel.rows:
+        st.dataframe(list(panel.rows), hide_index=True, use_container_width=True)
