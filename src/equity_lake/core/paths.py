@@ -209,6 +209,33 @@ def market_dir(market: str) -> Path:
     return cast(Path, getattr(sys.modules[__name__], entry.dir_attr))
 
 
+#: Lake-relative dataset path of each price market (``01_bronze/market_data/<market>``).
+#: Fixed at import time from the directory constants, so a dataset route resolves to a
+#: market even when a test has patched those constants to a temporary lake.
+PRICE_DATASET_PATHS: dict[str, str] = {
+    entry.market: getattr(sys.modules[__name__], entry.dir_attr).relative_to(LAKE_DIR).as_posix() for entry in PRICE_MARKETS.values()
+}
+
+
+def price_dataset_market(dataset: str) -> str | None:
+    """Resolve a dataset route to its price market, or ``None`` for a non-price table.
+
+    Accepts the canonical long key, the deprecated short alias and the lake-relative
+    medallion path. Returning ``None`` rather than raising keeps the callers (which
+    route many dataset kinds through one writer) free of try/except around a normal
+    case, while a genuine typo still surfaces from :func:`canonical_market` wherever a
+    price market is actually required.
+    """
+    if dataset in PRICE_MARKETS:
+        return dataset
+    if dataset in SHORT_TO_LONG:
+        return SHORT_TO_LONG[dataset]
+    for market, path in PRICE_DATASET_PATHS.items():
+        if dataset == path:
+            return market
+    return None
+
+
 def ensure_dirs() -> None:
     """Create all required runtime directories.
 
@@ -248,6 +275,7 @@ __all__ = [
     "PORTFOLIO_DB_PATH",
     "PORTFOLIO_DIR",
     "PRIVATE_WATCHLIST_PATH",
+    "PRICE_DATASET_PATHS",
     "PRICE_MARKETS",
     "PriceMarket",
     "PROJECT_ROOT",
@@ -272,4 +300,5 @@ __all__ = [
     "canonical_market",
     "ensure_dirs",
     "market_dir",
+    "price_dataset_market",
 ]

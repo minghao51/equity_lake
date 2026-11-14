@@ -25,6 +25,13 @@ import structlog
 
 from equity_lake.core.calendar import is_trading_day
 from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey
+from equity_lake.core.price_provenance import (
+    PriceProvenanceError,
+    generator_evidence_digest,
+    generator_evidence_payload,
+    price_batch_digest,
+)
+from equity_lake.core.schemas import PRICE_PROVENANCE_VERSION
 from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, configured_identities, synthetic_ohlcv, trailing_business_days
 
 logger = structlog.get_logger(__name__)
@@ -34,9 +41,19 @@ logger = structlog.get_logger(__name__)
 
 US_EQUITY_MARKET = "01_bronze/market_data/us_equity"
 US_EQUITY_SOURCE_MARKET = "us_equity"
-# Provenance label for demo coverage proofs. Free-form in ``ActionCoverageProof``
-# (unlike price ``identity_provenance``, which has a closed vocabulary).
+#: Provenance label for demo coverage proofs. Free-form in ``ActionCoverageProof``
+#: (unlike price ``identity_provenance``, which has a closed vocabulary). It describes
+#: action coverage only — it is never price-origin evidence (ADR-0027 §1).
 COVERAGE_SOURCE = "synthetic_demo_seed"
+
+# Price-origin claim for rows this generator produced (ADR-0027 D1/D2). The generator
+# is the component that knows it generated the values, so it — and only it — asserts
+# the envelope; a real fetch that falls back to synthetic is still ``synthetic``, and a
+# successful real fetch keeps an absent envelope because D01 source access is closed.
+DEMO_GENERATOR = "synthetic_demo_seed"
+DEMO_GENERATOR_REVISION = "1"
+DEMO_PROFILE_ID = "demo_v1"
+DEMO_PRICE_SOURCE = f"generator:{DEMO_GENERATOR}@{DEMO_GENERATOR_REVISION}"
 
 # Demo-lake synthetic tuning; the random walk itself is shared.
 DEMO_PROFILE = OhlcvProfile(
@@ -144,6 +161,42 @@ def stamp_identity(df: pl.DataFrame, identities: dict[str, InstrumentKey]) -> pl
     )
 
 
+def stamp_synthetic_claim(df: pl.DataFrame, identities: dict[str, InstrumentKey], *, days: int, seed: int) -> pl.DataFrame:
+    """Assert the version-1 ``synthetic`` envelope for rows this generator produced.
+
+    ADR-0027 §3: the component that generates the values is the only one that may claim
+    them, and the claim is bound to the batch it actually produced — the generator's own
+    revision, seed, tuning parameters and identity/session scope, plus the digest of the
+    exact price batch (D1/D2). Nothing here is inferred from a path, a ticker or the
+    fetch mode, and a real fetch that fell back to synthetic is still ``synthetic``.
+
+    Returns:
+        ``df`` with the four envelope columns set on every row.
+
+    Raises:
+        PriceProvenanceError: when the batch cannot be described canonically.
+    """
+    if df.is_empty():
+        raise PriceProvenanceError("refusing to claim an empty price batch")
+    identity_keys = sorted({f"{key.market}|{key.mic}|{key.symbol}" for key in identities.values()})
+    payload = generator_evidence_payload(
+        generator=DEMO_GENERATOR,
+        generator_revision=DEMO_GENERATOR_REVISION,
+        identities=identity_keys,
+        parameters={"days": days, "profile": DEMO_PROFILE_ID, "seed": seed},
+        price_batch_sha256=price_batch_digest(df),
+        sessions_start=cast(date, df["date"].min()),
+        sessions_end=cast(date, df["date"].max()),
+    )
+    digest = generator_evidence_digest(payload)
+    return df.with_columns(
+        pl.lit(PRICE_PROVENANCE_VERSION, dtype=pl.Int16).alias("price_provenance_version"),
+        pl.lit("synthetic", dtype=pl.String).alias("price_provenance"),
+        pl.lit(DEMO_PRICE_SOURCE, dtype=pl.String).alias("price_source"),
+        pl.lit(digest, dtype=pl.String).alias("price_source_sha256"),
+    )
+
+
 def coverage_proofs(df: pl.DataFrame, identities: dict[str, InstrumentKey]) -> pl.DataFrame:
     """Build the source-scoped coverage proof the point-in-time gate requires.
 
@@ -247,6 +300,10 @@ def seed_demo(
     # the real ingestion path writes, resolved from the source config.
     identities = configured_identities(sorted(df["ticker"].unique().to_list()))
     df = stamp_identity(df, identities)
+    if source == "synthetic":
+        # Only the generator branch carries an envelope. A successful real fetch keeps an
+        # absent marker: D01 source access, and with it any `real` claim, stays closed.
+        df = stamp_synthetic_claim(df, identities, days=df["date"].n_unique(), seed=seed)
     proofs = coverage_proofs(df, identities)
 
     if dry_run:
@@ -291,4 +348,13 @@ def seed_demo(
     return summary
 
 
-__all__ = ["COVERAGE_SOURCE", "DEMO_UNIVERSE", "coverage_proofs", "resolve_universe", "seed_demo", "stamp_identity"]
+__all__ = [
+    "COVERAGE_SOURCE",
+    "DEMO_PRICE_SOURCE",
+    "DEMO_UNIVERSE",
+    "coverage_proofs",
+    "resolve_universe",
+    "seed_demo",
+    "stamp_identity",
+    "stamp_synthetic_claim",
+]

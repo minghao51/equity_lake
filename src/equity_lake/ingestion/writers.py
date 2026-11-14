@@ -23,8 +23,9 @@ from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImpor
     normalize_identity_frame,
     prepare_source_identity_frame,
 )
-from equity_lake.core.paths import PRICE_MARKETS, canonical_market
+from equity_lake.core.paths import PRICE_MARKETS, price_dataset_market
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
+from equity_lake.core.price_provenance import PriceProvenanceError, prepare_price_provenance_frame
 from equity_lake.core.schemas import (
     CORPORATE_ACTION_COVERAGE_COLUMNS,
     CORPORATE_ACTION_REQUIRED_COLUMNS,
@@ -80,11 +81,7 @@ _MACRO_QUALITY_MARKETS = frozenset({"macro", "01_bronze/macro"})
 
 def _price_source_market(dataset: str) -> str | None:
     """Resolve a price dataset route; non-price auxiliary tables return None."""
-    route = dataset.removeprefix("01_bronze/market_data/")
-    try:
-        return canonical_market(route)
-    except ValueError:
-        return None
+    return price_dataset_market(dataset)
 
 
 def _is_price_market_route(market: str) -> bool:
@@ -205,6 +202,16 @@ def upsert_dataset(
             df_polars = prepare_source_identity_frame(df_polars, source_market)
         except (InstrumentIdentityError, ValueError, TypeError) as exc:
             logger.error("price_source_identity_invalid", market=source_market, error=str(exc))
+            return False
+
+    if source_market is not None:
+        # Origin evidence is a contract of the row, not of the route: a batch that
+        # carries none is stamped null (honest `unknown`), and a partial/malformed/
+        # unsupported claim is refused here rather than persisted (ADR-0027 §2).
+        try:
+            df_polars = prepare_price_provenance_frame(df_polars)
+        except PriceProvenanceError as exc:
+            logger.error("price_provenance_invalid", market=source_market, error=str(exc))
             return False
 
     if not skip_schema_validation and not validate_schema(df_polars, market):

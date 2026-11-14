@@ -41,6 +41,9 @@ _EMPTY_VIEW_COLUMN_TYPES: dict[str, str] = {
     "volume": "DOUBLE",
     "adj_close": "DOUBLE",
     "identity_schema_version": "BIGINT",
+    # ADR-0027 envelope version: SMALLINT (Int16) so a nullable version column does not
+    # silently become VARCHAR in the empty-lake view while the real tables read as ints.
+    "price_provenance_version": "SMALLINT",
 }
 
 # =============================================================================

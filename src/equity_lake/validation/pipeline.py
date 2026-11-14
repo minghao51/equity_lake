@@ -9,6 +9,7 @@ import polars as pl
 from pydantic import BaseModel, Field
 
 from equity_lake.core.polars_utils import FrameLike, ensure_polars
+from equity_lake.core.schemas import PRICE_PROVENANCE_COLUMNS
 from equity_lake.validation.profiling import DataProfiler, DriftReport
 from equity_lake.validation.schemas import SCHEMA_REGISTRY
 
@@ -125,6 +126,12 @@ class ValidationPipeline:
             "sentiment_label",
             "event_type",
             "impact_horizon",
+            # Row-bound price origin is null for every legacy row and for source rows that
+            # cannot establish their origin, so an all-null column is the honest state
+            # rather than a quality defect (ADR-0027 §2). The known-version semantic
+            # checks (core.price_provenance) reject malformed claims, so nothing is
+            # bypassed: a false supported claim still never passes the write boundary.
+            *PRICE_PROVENANCE_COLUMNS,
         }
         null_cols = [column for column, count in null_counts.items() if count == row_count and column not in optional_columns]
         if null_cols:

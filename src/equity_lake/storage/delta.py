@@ -22,8 +22,9 @@ from deltalake.exceptions import CommitFailedError
 from deltalake.schema import Schema
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_none
 
-from equity_lake.core.paths import LAKE_DIR
+from equity_lake.core.paths import LAKE_DIR, price_dataset_market
 from equity_lake.core.polars_utils import FrameLike, normalize_temporal_columns
+from equity_lake.core.price_provenance import PriceProvenanceError, prepare_price_provenance_frame
 
 logger = structlog.get_logger(__name__)
 
@@ -92,6 +93,16 @@ def write_delta(
     table_path = delta_table_path(table, lake_dir)
     partitions = partition_by or [_DATE_COL]
     df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
+
+    if price_dataset_market(table) is not None:
+        # The direct writer route (seeders, bootstrap, migration) is audited like the
+        # canonical one: absent evidence is stamped null and a malformed or unsupported
+        # claim is refused instead of persisted (ADR-0027 §2/§3). A non-price table is
+        # untouched.
+        try:
+            df_polars = prepare_price_provenance_frame(df_polars)
+        except PriceProvenanceError as exc:
+            raise DeltaWriteError(table, exc) from exc
 
     try:
         write_deltalake(
@@ -170,6 +181,16 @@ def merge_delta(
     table_path = delta_table_path(table, lake_dir)
     keys = key_columns or ["ticker", _DATE_COL]
     df_polars = normalize_temporal_columns(df, date_columns=(_DATE_COL,))
+
+    if price_dataset_market(table) is not None:
+        # Replacing a row's values replaces its origin envelope in the same row operation:
+        # a matched update must never inherit the previous marker, and a batch carrying
+        # no evidence must write null rather than keep the target's claim (ADR-0027 §2).
+        # A malformed claim is refused before any merge is attempted.
+        try:
+            df_polars = prepare_price_provenance_frame(df_polars)
+        except PriceProvenanceError as exc:
+            raise DeltaMergeError(table, exc) from exc
 
     missing_source_keys = [key for key in keys if key not in df_polars.columns]
     if missing_source_keys:

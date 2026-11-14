@@ -307,3 +307,40 @@ class TestRenameTableParam:
     def test_merge_delta_accepts_table_keyword(self, tmp_path: Path) -> None:
         df = pl.DataFrame({"ticker": ["AAPL"], "date": [date(2024, 1, 2)], "close": [150.0]})
         assert merge_delta(df, table="tbl", key_columns=["ticker", "date"], lake_dir=tmp_path) is True
+
+
+class TestPriceOriginEnvelopeEvolution:
+    """The row-bound origin envelope evolves additively on existing price tables."""
+
+    def test_legacy_rows_keep_null_markers_when_a_marked_batch_merges(self, tmp_path: Path) -> None:
+        """Old rows stay unmarked; only the merged rows carry the new claim (D6).
+
+        ADR-0027 §6 forbids backfilling legacy rows: adding the columns is not permission
+        to populate them, and an untouched legacy row must keep its null marker.
+
+        Falsified by: a migration-style update that fills old rows from the incoming
+        batch, or a merge that drops the columns from a table written before they existed.
+        """
+        legacy = pl.DataFrame({"ticker": ["AAPL"], "date": [date(2024, 1, 2)], "close": [150.0]})
+        _write_table(tmp_path / "01_bronze/market_data/us_equity", legacy)
+
+        marked = pl.DataFrame(
+            {
+                "ticker": ["AAPL", "AAPL"],
+                "market": ["us_equity", "us_equity"],
+                "mic": ["XNAS", "XNAS"],
+                "symbol": ["AAPL", "AAPL"],
+                "date": [date(2024, 1, 3), date(2024, 1, 4)],
+                "close": [151.0, 152.0],
+                "price_provenance_version": pl.Series([1, 1], dtype=pl.Int16),
+                "price_provenance": ["synthetic", "synthetic"],
+                "price_source": ["generator:synthetic_demo_seed@1"] * 2,
+                "price_source_sha256": ["a" * 64, "a" * 64],
+            }
+        )
+        assert merge_delta(marked, "01_bronze/market_data/us_equity", key_columns=["ticker", "date"], lake_dir=tmp_path) is True
+
+        out = read_delta("01_bronze/market_data/us_equity", lake_dir=tmp_path).sort("date")
+        assert out.height == 3
+        assert out["price_provenance"].to_list() == [None, "synthetic", "synthetic"]
+        assert out["price_provenance_version"].to_list()[0] is None

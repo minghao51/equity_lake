@@ -41,10 +41,28 @@ FORECAST_PROVENANCE_COLUMNS = [
 ]
 
 # Row-bound price-origin provenance (ADR-0027). The vocabulary below is shared by the
-# manifest reader/validator and the read seam; the storage stage adds the nullable
-# row-bound envelope these names describe to the existing Bronze price tables. A
-# supported row will carry its source id and the digest of its exact price batch;
-# legacy rows keep null fields and stay ``unknown`` forever (no backfill).
+# manifest reader/validator, the write boundary and the read seam. Version 1 is the
+# supported envelope: four nullable, additive columns on the existing Bronze price
+# tables (ADR-0017). A supported row carries its source id and the digest of its exact
+# price batch; a version-1 ``unknown`` row (and every legacy row) carries null source
+# and digest and stays ``unknown`` forever (no backfill).
+PRICE_PROVENANCE_VERSION = 1
+PRICE_PROVENANCE_COLUMNS = [
+    "price_provenance_version",
+    "price_provenance",
+    "price_source",
+    "price_source_sha256",
+]
+#: Row kinds. ``mixed`` exists only as a read-seam aggregate, never on a row.
+PRICE_PROVENANCE_KINDS = ("synthetic", "real", "unknown")
+#: Polars dtypes every writer materialises for a price batch, so an absent-evidence
+#: column is a typed null rather than an omitted column.
+PRICE_PROVENANCE_SCHEMA: dict[str, pl.DataType] = {
+    "price_provenance_version": pl.Int16(),
+    "price_provenance": pl.String(),
+    "price_source": pl.String(),
+    "price_source_sha256": pl.String(),
+}
 #: Non-secret producer identity grammar (ADR-0027 decision D2):
 #: ``generator|provider:<lowercase-id>@<positive-revision>``. The grammar is what
 #: keeps a credential, URL, query token or absolute path out of recorded evidence.
@@ -86,6 +104,9 @@ STANDARD_COLUMNS = [
     "exchange",
     "identity_schema_version",
     "identity_provenance",
+    # Row-bound price origin (ADR-0027). Nullable and additive: absent evidence is
+    # null/unknown, never inferred from the path, the source name or the identity.
+    *PRICE_PROVENANCE_COLUMNS,
 ]
 
 NEWS_COLUMNS = [
@@ -303,6 +324,10 @@ __all__ = [
     "PREDICTION_TARGET_CANDIDATE_EXECUTE",
     "PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE",
     "PRICE_ORIGIN_UNKNOWN_REASONS",
+    "PRICE_PROVENANCE_COLUMNS",
+    "PRICE_PROVENANCE_KINDS",
+    "PRICE_PROVENANCE_SCHEMA",
+    "PRICE_PROVENANCE_VERSION",
     "PRICE_SNAPSHOT_NAME_PREFIX",
     "PRICE_SOURCE_PATTERN",
     "SEC_EXTRACTION_COLUMNS",
