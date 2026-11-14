@@ -1,10 +1,10 @@
 # P03 — Private Console: Bounded Implementation Plan (not authorized)
 
-**Status:** **APPROVED 2026-11-07 — stage 1 only.** The owner approved this plan and
+**Status:** **IMPLEMENTED 2026-11-07 (stages 1-4), approved by the owner.** The owner approved this plan and
 answered the five blocking questions (§7): explicit UTC instant, **one configured
-private path**, one new module, reconciliation rendered, labels confirmed. Approval
-covers stage 1 (registry, loopback gate, Portfolio panel, configured path); stages 2-4
-still stop for review before they begin. P02 acceptance authorized the CLI reports
+private path**, one new module, reconciliation rendered, labels confirmed. Stage 1 was
+authorized first (registry, loopback gate, Portfolio panel, configured path); stages 2-4
+were approved by the owner after stage 1 and are implemented here. P02 acceptance authorized the CLI reports
 only and did not authorize P03; this plan is the authorization for stage 1.
 
 **Recorded:** 2026-11-07
@@ -135,6 +135,6 @@ or any change to the ledger, marks, readiness or evidence contracts.
 
 ## 8. Stop condition
 
-Approval of this plan authorizes **stage 1 only**; each later stage stops for review
-before the next begins. Nothing here authorizes D01, P00-2/P00-4, R00–R02, H00, a
-public projection, deployment, or any commit beyond the reviewed stage.
+All four stages are implemented and reviewed. Nothing here authorizes D01,
+P00-2/P00-4, R00–R02, H00, a public projection, deployment, or exposing the console
+beyond a loopback bind.

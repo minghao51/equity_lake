@@ -23,10 +23,12 @@ The pickup that produced this work is the
 spent, and the ledger is the
 [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md)
 (§10 records the three stage entries, reviewer verdicts and gate counts). The remote is
-at `231d603`; E01-6 stages 1–2 are committed on local `main` (not yet pushed) and stage
-3 is in the working tree pending its owner review. ADR-0024/0025/0026/0027 are
-accepted. Work order from here: **P03 UI plan** (it now has `dashboard/pages.py` +
-`dashboard/components.py` as its foundation, still unauthorized) → D01 → P00-2/P00-4
+at `231d603`; all E01-6 and P03 stages are committed on local `main` and **not yet
+pushed**. ADR-0024/0025/0026/0027 are accepted. Pick up remaining work from the
+[next-agent remaining-tasks handoff](handoffs/20261107-05-next-agent-remaining-tasks.md). **P03 (private console) is implemented** in four reviewed stages (Portfolio, Data
+Readiness, Research Runs, Signals; see the [private console guide](user-guide/20261107-private-console.md)),
+with one configured private path and display-only guarantees. Work order from here:
+D01 → P00-2/P00-4
 (each needs its own authorization or ADR) → R00/R01/R02 → H00. The queue table in the
 Nov07-01 pickup (§4) is **superseded**. D01, private-account/provider access, real
 ingestion, refits, migrations, deployment and any further commit remain gated.
@@ -65,6 +67,7 @@ rerun for this update and are not production-data-integrity proof.
 - Environment and credentials: [API Keys And Credentials](20260406-api-keys.md)
 - CLI operators: [CLI Reference](user-guide/20260406-cli-reference.md)
 - Private tracking: [Canonical watchlists, readiness, events, and delivery](user-guide/20261016-private-tracking-preview.md) — implementation/offline-contract review accepted; loopback-only API/UI and disabled-by-default delivery
+- Private console: [Loopback-only P03 console](user-guide/20261107-private-console.md) — Portfolio, Data Readiness, Research Runs and Signals; display-only, one configured private path, never exported
 - Private portfolio: [Canonical CSV import, projections and reconciliation](user-guide/20261103-private-portfolio-ledger.md) — `equity portfolio import|positions|summary|reconcile`: canonical CSV, idempotent atomic commits, dry-run that writes nothing, stored book-mark valuation with exact-venue staleness, and statement reconciliation; no mark producer or backup is implemented
 - Forecast provenance: [ML availability and provenance](user-guide/20261016-ml-availability-and-provenance.md) — point-in-time proof, refit cutoffs, and remaining source-availability gates
 - Read API: [Private/local API operation](user-guide/20260811-read-api.md) — exposure consent and limits
@@ -85,7 +88,7 @@ rerun for this update and are not production-data-integrity proof.
 - [developer/architecture/](developer/architecture/) for system design and subsystem docs
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
-- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261107-01](handoffs/20261107-01-portfolio-projections-and-open-items.md)** for the current queue, the uncommitted E01b/E01c state and the P02 pickup; [20261106-01](handoffs/20261106-01-research-readers-and-portfolio-pickup.md) is the spent E01b specification that E01b.1/b.2/E01c were implemented from; [20261102-01](handoffs/20261102-01-portfolio-and-research-pickup.md) preserves the initial approval/worker protocol; [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md) preserves accepted closure decisions, the R12 watch and the traps; [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register, [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records ADR-0021 implementation and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload work
+- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261107-05](handoffs/20261107-05-next-agent-remaining-tasks.md)** for the remaining gated queue; [20261107-01](handoffs/20261107-01-portfolio-projections-and-open-items.md) for the current queue, the uncommitted E01b/E01c state and the P02 pickup; [20261106-01](handoffs/20261106-01-research-readers-and-portfolio-pickup.md) is the spent E01b specification that E01b.1/b.2/E01c were implemented from; [20261102-01](handoffs/20261102-01-portfolio-and-research-pickup.md) preserves the initial approval/worker protocol; [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md) preserves accepted closure decisions, the R12 watch and the traps; [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register, [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records ADR-0021 implementation and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload work
 - [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
 - [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts

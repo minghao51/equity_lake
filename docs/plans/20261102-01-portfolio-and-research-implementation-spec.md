@@ -1458,3 +1458,47 @@ Residuals, explicit stop condition: claims are self-asserted local lineage — n
   spend) stays closed; `data_provenance` covers price origin only, never action, feature or
   prediction inputs. P03, D01, P00-2/P00-4, R00-R02 and H00 remain gated.
 ```
+
+### P03 — private console (implementation record)
+
+```text
+P03 / implemented, four sequential stages / 2026-11-07:
+Owner-approved scope and policy reference: spec §5.4, ADR-0018 §8-9, and the approved
+  bounded plan docs/plans/20261107-04-p03-private-console-plan.md (owner answers recorded
+  in §7: explicit UTC instant, one configured private path, one new module, reconciliation
+  rendered, labels confirmed). Stages 2-4 were approved by the owner after stage 1.
+Stage 1: `dashboard/panels.py` + four gated `PageSpec`s + one reusable fail-closed
+  `require_loopback()`; Portfolio panel (as-of NAV or explicit unavailable, cash,
+  positions with basis status/mark age/synthetic|unknown provenance, allocation only when
+  complete, reconciliation differences, held/watch-only distinct from ledger positions);
+  `Settings.console.private_dir` bound to `.env.example`.
+Stage 2: Data Readiness panel over the app's per-market summaries plus the pipeline health
+  report, with the explicit "a market-level union is not per-instrument coverage"
+  disclosure; partial when freshness evidence is missing, unavailable when no market is.
+Stage 3: Research Runs panel over validated immutable runs (protocol, the manifest's own
+  derived price origin, age, last attempt kept distinct, legacy v3 labelled) and Signals
+  panel (established candidates with reason/session/source, never an order or probability;
+  unavailable rather than "no signal" when evidence is missing).
+Stage 4: this entry, the private-console user guide, ARCHITECTURE, docs/README, and the
+  next-agent handoff.
+Independent reviewer: separate adversarial reviewer, formal verdict each round. Stage 1
+  took four rounds - plan status contradiction; the global default ledger instead of the
+  configured path; PARTIAL leaking P&L/allocation; the watchlist file escaping the
+  configured path via its process-global default - then PASS. Stages 2-3 reviewed as one
+  increment.
+Focused tests / final gates: `tests/unit/test_dashboard_p03_console.py` (registry, gate
+  before read for every private page, explicit-input states, partial-never-a-total,
+  withheld P&L/allocation, reconciliation, no-write and no-created-file proofs,
+  configured-path binding for ledger and watchlist, readiness/research/signals states);
+  plus the dashboard IA parity guard, which now records the five app-only gated pages.
+  Full serial and parallel suites, ruff, strict mypy, catalog byte identity and markdown /
+  whitespace checks are run at the stage boundary with logs retained under /tmp.
+Docs, schema/catalog, privacy, compatibility: user guide + ARCHITECTURE + this ledger +
+  docs/README; no lake schema, catalog row, Settings group beyond `console`, dependency or
+  ADR change. Private data stays out of static exports, Pages, the public API, logs and
+  W&B by construction and by test.
+Residuals, explicit stop condition: stage 1's populated-ledger render proof is deferred
+  (the current no-write proof covers tree byte-identity and the unreadable-ledger case);
+  the console is not an authenticated service and must not be exposed beyond loopback.
+  D01, P00-2/P00-4, R00-R02 and H00 remain gated.
+```

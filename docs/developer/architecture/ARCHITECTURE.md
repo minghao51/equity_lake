@@ -202,6 +202,15 @@ Wiring: `run_arena` sets additively on `ArenaOutcome.input_snapshots` and the ar
 writer converts them for `finalise_run`; `equity report backtest` reads
 `engine.data_loader.snapshots()`.
 
+The **private console** (P03, `dashboard/panels.py`, `dashboard/pages.py`) is a
+display-only Streamlit surface whose four pages — Portfolio, Data Readiness, Research
+Runs, Signals — are app-only and gated: the exporter iterates `STATIC_PAGES`, so no
+private panel can reach a published file. One configured private path
+(`Settings.console.private_dir`) governs every private read (ledger, marks, statement,
+watchlist, tracking state), the valuation instant is always an explicit UTC input, and
+`streamlit_app.require_loopback()` runs before any private import or read. Pages render
+exactly one shared `Notice` state and never write.
+
 Provenance is **derived, never asserted** (E01-6, ADR-0027). Each price row carries a
 nullable version-1 envelope (`price_provenance_version`, `price_provenance`,
 `price_source`, `price_source_sha256`); the read seam classifies the rows it actually
