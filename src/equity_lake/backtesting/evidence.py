@@ -14,12 +14,14 @@ and 2): the manifest records **how** its ``universe`` entries were obtained
 its read consumed. Both are facts the read seam supplies; neither is inferred from a
 path, a table name, or an identity column.
 
-**Provenance stays ``unknown``** on every shipped path, snapshots or not. No caller
-may upgrade it by inference (ADR-0021/0022), because nothing in the lake yet records
-*which price source produced the marks* — that is open item E01-6, which needs its
-own ADR and storage stage. Snapshots prove *which bytes/versions were read*; they do
-not prove the marks are real, so E01 is not complete and this module makes no such
-claim.
+**Provenance** is a derivation, not an assertion. Snapshots prove *which
+bytes/versions were read*; they never prove where the price values came from, so a
+run that cannot carry row-level price-origin evidence stays ``unknown``
+(ADR-0021/0022, ADR-0027). E01-6 reader support lives here first: protocol
+``equity-run-manifest/4`` adds one :class:`PriceOriginSummary` per price snapshot
+and this module re-derives ``data_provenance`` from those summaries. Writers still
+mint v3 manifests, which carry no summaries and therefore derive ``unknown`` on
+every shipped path — the correct current output, not a defect.
 
 Layout (ADR-0025 Decision 2)::
 
@@ -100,6 +102,11 @@ from equity_lake.backtesting.report import (
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.core.instruments import InstrumentKey  # noqa: TC001 - runtime validation, not typing only
 from equity_lake.core.paths import FINDINGS_DIR
+from equity_lake.core.schemas import (
+    PRICE_ORIGIN_UNKNOWN_REASONS,
+    PRICE_SNAPSHOT_NAME_PREFIX,
+    PRICE_SOURCE_PATTERN,
+)
 from equity_lake.findings import FindingCard, write_finding_card
 
 logger = structlog.get_logger(__name__)
@@ -115,6 +122,14 @@ logger = structlog.get_logger(__name__)
 #: with the basis by construction — ``universe_basis`` is deliberately not a scope
 #: field (it would be a redundant second spelling of the same fact).
 RUN_PROTOCOL = "equity-run-manifest/3"
+
+#: Protocol v4 (ADR-0027 §5): v3's read-seam snapshot binding plus one
+#: :class:`PriceOriginSummary` per price snapshot, from which ``data_provenance`` is
+#: re-derived. Reader support lands **before** any v4 writer (decision D4), so this
+#: constant exists while :data:`RUN_PROTOCOL` still mints v3 evidence. The protocol is
+#: a scope field, so v4 intentionally mints different scope IDs for the same scope;
+#: it is not a relabelling of any stored v3 run, whose evidence stays byte-identical.
+RUN_PROTOCOL_V4 = "equity-run-manifest/4"
 
 #: Subdirectory of the findings root that holds immutable run directories.
 RUNS_DIRNAME = "runs"
@@ -163,6 +178,10 @@ REPORTED_METRICS: tuple[str, ...] = (
 _MAX_PUBLISH_ATTEMPTS = 64
 
 _SHA256_PATTERN = r"^[0-9a-f]{64}$"
+#: Compiled ADR-0027 D2 source grammar (shared with the write boundary).
+_PRICE_SOURCE_RE = re.compile(PRICE_SOURCE_PATTERN)
+#: The only price-origin summary encoding this reader interprets (ADR-0027 §4.4).
+_PRICE_ORIGIN_SUMMARY_SCHEMA_VERSION = 1
 _TEMP_PREFIX = ".partial-"
 
 # Secret-named keys are dropped before a configuration digest is computed: no
@@ -174,6 +193,11 @@ _SECRET_KEY_PATTERN = re.compile(
 )
 
 Provenance = Literal["synthetic", "real", "mixed", "unknown"]
+#: Why a price-origin aggregate is ``unknown`` (ADR-0027 §4). The closed set is
+#: shared with the read seam as ``schemas.PRICE_ORIGIN_UNKNOWN_REASONS`` (pinned equal
+#: by ``test_unknown_reasons_are_the_shared_closed_set``); ``empty_scope`` is derived
+#: for a zero-row scope, the rest describe missing or unreadable row evidence.
+UnknownReason = Literal["missing_envelope", "unsupported_version", "incomplete_binding", "untracked_input", "empty_scope"]
 MetricStatus = Literal["measured", "missing", "non_finite"]
 #: How a manifest's ``universe`` entries were obtained (E01-1 / ADR-0016).
 #:
@@ -196,6 +220,7 @@ __all__ = [
     "REQUIRED_RUN_ARTIFACTS",
     "RUNS_DIRNAME",
     "RUN_PROTOCOL",
+    "RUN_PROTOCOL_V4",
     "SCOPE_FIELD_ORDER",
     "TRADES_ARTIFACT",
     "ArtifactRecord",
@@ -205,6 +230,8 @@ __all__ = [
     "FinalisedRun",
     "InputSnapshot",
     "MetricAvailability",
+    "PriceOriginCounts",
+    "PriceOriginSummary",
     "RunManifest",
     "RunScope",
     "RunValidation",
@@ -217,8 +244,10 @@ __all__ = [
     "finalise_run",
     "is_canonical_universe",
     "is_finalized_run",
+    "is_price_snapshot_name",
     "metric_availability_from_result",
     "parse_display_key",
+    "price_origin_aggregate",
     "probe_code_identity",
     "publish_evidence_directory",
     "read_json_artifact_strictly",
@@ -447,6 +476,218 @@ class InputSnapshot(BaseModel):
         return value
 
 
+def _snapshot_binding(snapshot: InputSnapshot) -> tuple[str, str, str, str | None]:
+    """The exact reference a summary must reproduce to bind a snapshot (name, digest, source, version)."""
+    return (snapshot.name, snapshot.sha256, snapshot.source, snapshot.version)
+
+
+def is_price_snapshot_name(name: str) -> bool:
+    """Whether a read-seam snapshot name is a price snapshot (``price_marks:<market>``).
+
+    The loader names the mark snapshot of each market this way
+    (``backtesting/data_loader.py``), and that name is the only thing a price-origin
+    summary is allowed to describe: action, coverage or fixture snapshots carry no
+    price rows, so they never bind an origin summary.
+    """
+    prefix, _, market = name.partition(PRICE_SNAPSHOT_NAME_PREFIX)
+    return prefix == "" and bool(market)
+
+
+class PriceOriginCounts(BaseModel):
+    """Row counts by origin inside one price snapshot (ADR-0027 §4.4).
+
+    ``synthetic + real + unknown`` must equal the owning summary's ``consumed_rows``,
+    so counts can never describe only a subset of what the summary claims to cover.
+    When ``unknown`` is non-zero the reason counts must add up to it exactly and their
+    keys are the closed set in :data:`UnknownReason`; when it is zero no reason may be
+    recorded. A zero-row reason is refused so "no reasons" and "reasons that cancel
+    out" can never look alike.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    synthetic: int = Field(..., ge=0, description="Rows asserted ``synthetic``")
+    real: int = Field(..., ge=0, description="Rows asserted ``real``")
+    unknown: int = Field(..., ge=0, description="Rows with no supported evidence")
+    unknown_reasons: dict[UnknownReason, int] = Field(
+        default_factory=dict,
+        description="Unknown rows per closed-set reason; empty when unknown is zero",
+    )
+
+    @field_validator("unknown_reasons", mode="before")
+    @classmethod
+    def _reasons_are_the_closed_set(cls, value: object) -> object:
+        """Refuse a reason outside the closed set, and the one reason that is derived.
+
+        ``empty_scope`` describes a zero-row *scope*, so it is derived by the aggregate
+        and can never be a per-row count: allowing it here would let a nonempty
+        snapshot label rows with a whole-scope condition.
+        """
+        if isinstance(value, Mapping):
+            unknown_keys = sorted(str(key) for key in value if key not in PRICE_ORIGIN_UNKNOWN_REASONS)
+            if unknown_keys:
+                raise ValueError(f"unknown_reasons keys must be one of {list(PRICE_ORIGIN_UNKNOWN_REASONS)}, got {unknown_keys}")
+            if "empty_scope" in value:
+                raise ValueError("unknown_reasons must not record 'empty_scope': it is derived from a zero-row scope, never counted per row")
+        return value
+
+    @field_validator("unknown_reasons")
+    @classmethod
+    def _reasons_are_positive_and_ordered(cls, value: dict[UnknownReason, int]) -> dict[UnknownReason, int]:
+        non_positive = sorted(reason for reason, count in value.items() if count <= 0)
+        if non_positive:
+            raise ValueError(f"unknown_reasons counts must be positive, got {non_positive}")
+        return dict(sorted(value.items()))
+
+    @model_validator(mode="after")
+    def _reasons_add_up_to_unknown(self) -> PriceOriginCounts:
+        """Every unknown row names exactly one reason (ADR-0027 §4.4)."""
+        if self.unknown == 0:
+            if self.unknown_reasons:
+                raise ValueError("a summary with no unknown rows must not record unknown_reasons")
+            return self
+        counted = sum(self.unknown_reasons.values())
+        if counted != self.unknown:
+            raise ValueError(f"unknown_reasons must add up to the unknown row count ({self.unknown}), got {counted}")
+        return self
+
+
+class PriceOriginSummary(BaseModel):
+    """One price snapshot's row-bound origin evidence, recorded in a v4 manifest.
+
+    ADR-0027 §4 asks for an explicit, per-snapshot summary rather than one table-wide
+    label: a lake can hold legacy, real and synthetic rows at once, so a flag derived
+    from a path, a table name or a terminal summary would mislabel mixed scopes. This
+    is a local, auditable assertion bound to the exact snapshot whose rows were
+    consumed — not authentication, not correctness, not a licence to read a provider.
+
+    ``schema_version`` is readable for a future encoding but only version 1 is
+    interpreted: a v1-shaped summary carrying a future ``schema_version`` makes the
+    aggregate ``unknown`` with its stored version visible instead of being read under
+    version-1 rules. A *structurally* different future encoding fails validation
+    outright (``extra="forbid"``) rather than being guessed at — the "readable as
+    unknown" rule of ADR-0027 §4.5 governs the row envelope, not this manifest record.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: int = Field(default=1, ge=1, description="Summary encoding version; only 1 is interpreted")
+    snapshot: InputSnapshot = Field(..., description="The read-seam price snapshot this summary describes, verbatim")
+    consumed_rows: int = Field(..., ge=0, description="Price rows the read consumed for this snapshot")
+    counts: PriceOriginCounts
+    sources: list[str] = Field(default_factory=list, description="price_source identifiers seen in this snapshot (D2 grammar)")
+    envelope_sha256: str = Field(..., description="SHA-256 of the canonical identity/date/envelope projection (D3)")
+
+    @field_validator("snapshot")
+    @classmethod
+    def _describes_a_price_snapshot(cls, value: InputSnapshot) -> InputSnapshot:
+        if not is_price_snapshot_name(value.name):
+            raise ValueError(f"a price-origin summary must describe a price snapshot ('{PRICE_SNAPSHOT_NAME_PREFIX}<market>'), not {value.name!r}")
+        return value
+
+    @field_validator("sources")
+    @classmethod
+    def _validate_sources(cls, value: list[str]) -> list[str]:
+        """Every named source matches the D2 grammar, once each, canonically ordered."""
+        if len(set(value)) != len(value):
+            raise ValueError("price_origin_summary sources must be unique")
+        malformed = sorted(entry for entry in value if _PRICE_SOURCE_RE.fullmatch(entry) is None)
+        if malformed:
+            raise ValueError(f"price_source identifiers must match {PRICE_SOURCE_PATTERN!r}, got {malformed}")
+        return sorted(value)
+
+    @field_validator("envelope_sha256")
+    @classmethod
+    def _validate_envelope_sha256(cls, value: str) -> str:
+        if re.fullmatch(_SHA256_PATTERN, value) is None:
+            raise ValueError("envelope_sha256 must be a lowercase hex sha256 digest")
+        return value
+
+    @model_validator(mode="after")
+    def _counts_cover_the_consumed_rows(self) -> PriceOriginSummary:
+        """Counts must cover the consumed scope exactly, and a supported row names a source.
+
+        The second check is what stops a supported label appearing without the
+        producer identity ADR-0027 §2 requires alongside it: no fallback label is ever
+        inferred from an incomplete envelope.
+        """
+        covered = self.counts.synthetic + self.counts.real + self.counts.unknown
+        if covered != self.consumed_rows:
+            raise ValueError(f"counts must cover exactly the consumed rows ({self.consumed_rows}), got {covered}")
+        if self.counts.synthetic + self.counts.real > 0 and not self.sources:
+            raise ValueError("a supported (synthetic/real) count must name at least one price_source")
+        return self
+
+
+def price_origin_aggregate(
+    summaries: Sequence[PriceOriginSummary],
+    snapshots: Sequence[InputSnapshot],
+) -> tuple[Provenance, tuple[str, ...]]:
+    """Re-derive ``data_provenance`` from summaries bound to recorded snapshots.
+
+    ADR-0027 §4.5: the aggregate describes **price** origin over the consumed price
+    inputs, and it is always re-derived rather than trusted, so a claim cannot be
+    upgraded by assertion.
+
+    Rules, in order: every price snapshot needs exactly one summary, and every summary
+    must bind (name, digest, source, version) to a recorded snapshot; a name that was
+    read more than once with different content is not covered by the one summary that
+    could match it; an unsupported summary version, a zero-row scope or any unknown
+    row makes the aggregate ``unknown``; otherwise all-synthetic is ``synthetic``,
+    all-real is ``real`` and a mix is ``mixed`` (an aggregate only — never a row
+    kind). Snapshots without summaries, and rows with no read seam at all, are
+    ``unknown``.
+
+    Returns:
+        The derived provenance and the reasons it is ``unknown`` (empty otherwise).
+        Reasons are informational for the refusal message; they are never stored as
+        a claim.
+    """
+    reasons: list[str] = []
+    price_snapshots = [snapshot for snapshot in snapshots if is_price_snapshot_name(snapshot.name)]
+    if not summaries:
+        return ("unknown", ("missing_envelope",) if price_snapshots else ("untracked_input",))
+
+    recorded = {_snapshot_binding(snapshot) for snapshot in snapshots}
+    described: dict[str, tuple[str, str, str, str | None]] = {}
+    for summary in summaries:
+        binding = _snapshot_binding(summary.snapshot)
+        if binding not in recorded:
+            reasons.append("incomplete_binding")
+        described[summary.snapshot.name] = binding
+    for snapshot in price_snapshots:
+        if snapshot.name not in described:
+            reasons.append("missing_envelope")
+        elif described[snapshot.name] != _snapshot_binding(snapshot):
+            # The same snapshot name was read twice with different bytes, and at most one
+            # reading can be the one the summary describes. Coverage is therefore by
+            # exact reference, not by name: picking the first would bind a claim to
+            # bytes it never described.
+            reasons.append("incomplete_binding")
+
+    for summary in summaries:
+        if summary.schema_version != _PRICE_ORIGIN_SUMMARY_SCHEMA_VERSION:
+            reasons.append("unsupported_version")
+        if summary.consumed_rows == 0:
+            reasons.append("empty_scope")
+        reasons.extend(sorted(summary.counts.unknown_reasons) if summary.counts.unknown else [])
+
+    if reasons:
+        return ("unknown", tuple(dict.fromkeys(reasons)))
+
+    has_synthetic = any(summary.counts.synthetic for summary in summaries)
+    has_real = any(summary.counts.real for summary in summaries)
+    if has_synthetic and has_real:
+        return ("mixed", ())
+    if has_real:
+        return ("real", ())
+    if has_synthetic:
+        return ("synthetic", ())
+    # Defensive: full coverage with no unknown rows cannot be empty, but an empty
+    # claim is unknown rather than synthetic (ADR-0027 §4.4).
+    return ("unknown", ("empty_scope",))
+
+
 class ArtifactRecord(BaseModel):
     """One finalized artifact: path relative to the run directory, digest, size."""
 
@@ -626,6 +867,10 @@ class RunManifest(BaseModel):
     config_digest: str | None = Field(default=None, description="Digest of non-secret configuration only")
     data_provenance: Provenance = "unknown"
     input_snapshots: list[InputSnapshot] = Field(default_factory=list)
+    #: One row-bound origin summary per price snapshot (protocol v4, ADR-0027 §4).
+    #: Empty on every v3 manifest and on a v4 manifest with no price evidence, and
+    #: then — and only then — ``data_provenance`` derives ``unknown``.
+    price_origin_summaries: list[PriceOriginSummary] = Field(default_factory=list)
     artifacts: list[ArtifactRecord] = Field(default_factory=list)
     metric_availability: list[MetricAvailability] = Field(default_factory=list)
 
@@ -686,12 +931,70 @@ class RunManifest(BaseModel):
         return self
 
     @model_validator(mode="after")
-    def _provenance_needs_evidence(self) -> RunManifest:
-        """Provenance stays ``unknown`` unless evidence is supplied (Decision 3)."""
-        if self.data_provenance != "unknown" and not self.input_snapshots:
+    def _summaries_are_v4_evidence_only(self) -> RunManifest:
+        """A summary only exists in a v4 manifest, once per price snapshot (D4/§4).
+
+        v3 evidence is parsed under its own rules and stays byte-identical, so it can
+        never acquire a summary or a stronger label. One summary per snapshot keeps
+        the aggregate unambiguous: two summaries for one snapshot could disagree and
+        there would be no rule to prefer either.
+        """
+        if not self.price_origin_summaries:
+            return self
+        if self.protocol != RUN_PROTOCOL_V4:
             raise ValueError(
-                "data_provenance other than 'unknown' requires input_snapshots evidence; "
-                "a path or a table name alone never proves where the marks came from"
+                f"price_origin_summaries require protocol {RUN_PROTOCOL_V4!r}; this manifest is {self.protocol!r}, "
+                "and stored v3 evidence never acquires v4 fields"
+            )
+        names = [summary.snapshot.name for summary in self.price_origin_summaries]
+        if len(names) != len(set(names)):
+            raise ValueError("price_origin_summaries must record at most one summary per price snapshot")
+        return self
+
+    @model_validator(mode="after")
+    def _provenance_matches_its_protocol_rules(self) -> RunManifest:
+        """Provenance is checked under the rules of *its own* protocol (ADR-0027 §5).
+
+        v4 re-derives the claim from its summaries and refuses any disagreement: a
+        claim that outruns — or understates — its evidence would publish a successful
+        run whose recorded label nobody can audit, and snapshots alone never prove
+        where the price values came from.
+
+        v3 keeps the rules it was written under (ADR-0025 Decision 3, as strengthened
+        for new evidence by ADR-0027): its claim stays self-asserted but must still be
+        backed by input snapshots, and it can never carry a summary. Stored v3
+        evidence therefore keeps parsing exactly as before — "retain explicit
+        parsing/validation of existing protocol-v3 evidence under its own rules" —
+        rather than being retro-invalidated by a later, stronger contract. Writing a
+        v3 claim remains possible only through the same pre-existing API, and no
+        shipped caller asserts one; from the next stage every new run is v4.
+
+        Any *other* protocol is refused rather than read as if it were v3: this reader
+        cannot interpret a format it was not written for, so a future manifest is not
+        evidence to it (the forward-compatible "readable as unknown" rule of
+        ADR-0027 §4.5 governs the row envelope, not the run protocol).
+        """
+        if self.protocol == RUN_PROTOCOL:
+            if self.data_provenance != "unknown" and not self.input_snapshots:
+                raise ValueError(
+                    "data_provenance other than 'unknown' requires input_snapshots evidence under protocol "
+                    f"{self.protocol!r}; a path or a table name alone never proves where the marks came from"
+                )
+            return self
+
+        if self.protocol != RUN_PROTOCOL_V4:
+            raise ValueError(
+                f"unsupported evidence protocol {self.protocol!r}: this reader interprets {RUN_PROTOCOL!r} and {RUN_PROTOCOL_V4!r} only, "
+                "and guessing at an unknown format would record a claim nobody validated"
+            )
+
+        derived, reasons = price_origin_aggregate(self.price_origin_summaries, self.input_snapshots)
+        if self.data_provenance != derived:
+            detail = ", ".join(reasons) if reasons else "none"
+            raise ValueError(
+                f"data_provenance {self.data_provenance!r} is refused: the recorded price-origin evidence derives {derived!r} "
+                f"(reasons: {detail}). Under protocol {RUN_PROTOCOL_V4!r} a non-'unknown' claim requires complete, "
+                "snapshot-bound price_origin_summaries; input snapshots and a path or table name never prove where the marks came from"
             )
         return self
 
@@ -1143,7 +1446,15 @@ def artifact_records(directory: Path, *, exclude: Sequence[str] = (MANIFEST_NAME
 
 
 def _write_manifest(directory: Path, manifest: RunManifest) -> None:
-    (directory / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+    """Write the manifest inside the directory the publisher just claimed.
+
+    A v3 manifest is written **exactly** as v3 readers already know it: the additive
+    ``price_origin_summaries`` key exists only on v4 evidence, so it is emitted only
+    when summaries are actually recorded. No stored v3 run gains a summary, a label
+    or a protocol bump (ADR-0027 §5).
+    """
+    exclude = {"price_origin_summaries"} if not manifest.price_origin_summaries else set()
+    (directory / MANIFEST_NAME).write_text(manifest.model_dump_json(indent=2, exclude=exclude), encoding="utf-8")
 
 
 def discard_directory(directory: Path) -> None:
@@ -1278,6 +1589,7 @@ def finalise_run(
     config_digest: str | None = None,
     data_provenance: Provenance = "unknown",
     input_snapshots: Sequence[InputSnapshot] = (),
+    price_origin_summaries: Sequence[PriceOriginSummary] = (),
     code: CodeIdentity | None = None,
     cards: Sequence[FindingCard] = (),
     metric_availability: Sequence[MetricAvailability] | None = None,
@@ -1313,9 +1625,15 @@ def finalise_run(
         seed: Seed actually used, or ``None`` when there is none.
         config: Non-secret configuration in force — digested, never stored.
         config_digest: Pre-computed non-secret config digest (alternative to ``config``).
-        data_provenance: ``synthetic | real | mixed | unknown``; anything but
-            ``unknown`` requires ``input_snapshots`` evidence.
+        data_provenance: ``synthetic | real | mixed | unknown``. A v4 scope must
+            support any non-``unknown`` value with complete ``price_origin_summaries``
+            bound to the recorded ``input_snapshots`` (ADR-0027 §4.5); a v3 scope keeps
+            ADR-0025 Decision 3's weaker rule, where snapshots alone suffice, so stored
+            v3 evidence is never retro-invalidated. Every new run is v4.
         input_snapshots: Input content hashes taken at the read seam (E01-4).
+        price_origin_summaries: One row-bound origin summary per price snapshot
+            (protocol v4). Omitted on every shipped path, which is why shipped runs
+            derive ``unknown``.
         code: Code identity; probed from git when omitted.
         cards: FindingCards to record inside the run directory.
         metric_availability: Measured/missing/non-finite metrics; derived when omitted.
@@ -1387,6 +1705,7 @@ def finalise_run(
             config_digest=digest,
             data_provenance=data_provenance,
             input_snapshots=list(input_snapshots),
+            price_origin_summaries=list(price_origin_summaries),
             artifacts=artifacts,
             metric_availability=availability,
         )

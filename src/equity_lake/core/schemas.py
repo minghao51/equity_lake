@@ -40,6 +40,30 @@ FORECAST_PROVENANCE_COLUMNS = [
     "prediction_semantics_version",
 ]
 
+# Row-bound price-origin provenance (ADR-0027). The vocabulary below is shared by the
+# manifest reader/validator and the read seam; the storage stage adds the nullable
+# row-bound envelope these names describe to the existing Bronze price tables. A
+# supported row will carry its source id and the digest of its exact price batch;
+# legacy rows keep null fields and stay ``unknown`` forever (no backfill).
+#: Non-secret producer identity grammar (ADR-0027 decision D2):
+#: ``generator|provider:<lowercase-id>@<positive-revision>``. The grammar is what
+#: keeps a credential, URL, query token or absolute path out of recorded evidence.
+PRICE_SOURCE_PATTERN = r"^(generator|provider):[a-z0-9][a-z0-9_]{2,31}@[1-9][0-9]{0,3}$"
+#: Closed set of reasons an aggregate is ``unknown`` (ADR-0027 §4). ``empty_scope``
+#: is derived from a zero-row scope; the others describe missing or unreadable row
+#: evidence. Shared with the read seam, which classifies rows before projection.
+PRICE_ORIGIN_UNKNOWN_REASONS = (
+    "missing_envelope",
+    "unsupported_version",
+    "incomplete_binding",
+    "untracked_input",
+    "empty_scope",
+)
+#: Read-seam name prefix of a price snapshot (``price_marks:<market>``), shared by the
+#: loader that records them and the manifest validator that requires one price-origin
+#: summary per price snapshot.
+PRICE_SNAPSHOT_NAME_PREFIX = "price_marks:"
+
 # Canonical shared-table identity (ADR-0016). Bronze OHLCV remains unchanged;
 # identity is added only when explicit source provenance is available.
 INSTRUMENT_IDENTITY_COLUMNS = ["market", "mic", "symbol"]
@@ -278,6 +302,9 @@ __all__ = [
     "PREDICTION_SEMANTICS_VERSION",
     "PREDICTION_TARGET_CANDIDATE_EXECUTE",
     "PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE",
+    "PRICE_ORIGIN_UNKNOWN_REASONS",
+    "PRICE_SNAPSHOT_NAME_PREFIX",
+    "PRICE_SOURCE_PATTERN",
     "SEC_EXTRACTION_COLUMNS",
     "SEC_FINANCIAL_COLUMNS",
     "SILVER_ARTICLE_COLUMNS",

@@ -17,8 +17,13 @@ the immutable ``runs/`` + ``attempts/`` evidence. Readers resolve:
   attempts that actually requested that slug.
 
 Provenance is *not* upgraded here: every reader surface reports what the manifest
-recorded, and an unprovenanced run stays ``unknown`` (E01c owns canonical universe
-identity, read-seam snapshot hashing and the provenance upgrade).
+recorded, and exactly one value is reported per run. Both protocols are read: a v3
+manifest carries no price-origin summaries, so it reports its recorded ``unknown``
+— or, for stored legacy evidence, the self-asserted claim v3 rules allowed — and is
+never re-derived or upgraded on read. A v4 manifest (ADR-0027) carries one summary
+per price snapshot and its claim was re-derived from them when it was written. Reader
+support for v4 landed before any v4 writer, so nothing in this view needs a protocol
+branch and no frozen payload shape changes.
 """
 
 from __future__ import annotations
