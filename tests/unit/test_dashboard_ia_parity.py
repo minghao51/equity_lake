@@ -150,8 +150,14 @@ class TestRenderersCoverTheRegistry:
         static_only = sorted(spec.key for spec in PAGE_SPECS if not spec.streamlit and spec.static_file is not None)
         gated = sorted(spec.key for spec in PAGE_SPECS if spec.gated)
 
-        assert (streamlit_only, static_only) == (["private_tracking"], ["config"])
-        assert gated == ["private_tracking"], "the private tracking preview must stay marked gated"
+        # Deliberate, reviewed asymmetry: Config is static-only; the private surfaces are
+        # app-only because they are loopback-gated (ADR-0018). P03's four panels are the
+        # private console (spec §5.4) and are never exported.
+        assert (streamlit_only, static_only) == (
+            ["portfolio", "private_tracking", "readiness", "research", "signals"],
+            ["config"],
+        )
+        assert gated == ["portfolio", "private_tracking", "readiness", "research", "signals"], "every private surface must stay marked gated"
 
 
 class TestStaticNavigationRendering:

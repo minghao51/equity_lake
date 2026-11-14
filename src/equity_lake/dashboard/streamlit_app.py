@@ -182,22 +182,32 @@ def is_loopback_bind_address(address: str | None) -> bool:
         return False
 
 
-def render_private_tracking_preview() -> None:
-    """Render private tracking observations only when Streamlit is loopback-bound."""
-    st.title("Private Tracking Preview")
+def require_loopback(surface: str) -> bool:
+    """Fail-closed loopback gate for every private surface (ADR-0018).
+
+    Returns ``True`` only when the running app is explicitly bound to a loopback
+    address. On refusal it renders ``Notice.REFUSED`` and returns ``False``, and the
+    caller must return **before** importing or reading any private module: a refusal is
+    a refused private read, not a neutral "not built" state.
+    """
     try:
         bind_address = st.get_option("server.address")
     except Exception:
         bind_address = None
-    if not is_loopback_bind_address(bind_address):
-        # A refused private read, not a neutral "not built" state: this guard exists to
-        # keep private data from being served over a non-loopback bind, so it must stay
-        # as loud as before (Notice.REFUSED renders as st.error).
-        render_notice(
-            st,
-            Notice.REFUSED,
-            "Private tracking is disabled unless Streamlit is explicitly bound to a loopback address (127.0.0.1).",
-        )
+    if is_loopback_bind_address(bind_address):
+        return True
+    render_notice(
+        st,
+        Notice.REFUSED,
+        f"{surface} is disabled unless Streamlit is explicitly bound to a loopback address (127.0.0.1).",
+    )
+    return False
+
+
+def render_private_tracking_preview() -> None:
+    """Render private tracking observations only when Streamlit is loopback-bound."""
+    st.title("Private Tracking Preview")
+    if not require_loopback("Private tracking"):
         return
 
     # Import and load private state only after the fail-closed bind check.
@@ -331,6 +341,30 @@ def render_private_tracking_preview() -> None:
     st.caption("Opportunity delivery is disabled unless explicitly enabled. Delivery state does not imply exactly-once receipt.")
 
 
+def render_p03_portfolio() -> None:
+    """Render the P03 Portfolio panel after the loopback gate (stage 1)."""
+    if not require_loopback(page_spec("portfolio").label):
+        return
+    from equity_lake.dashboard import panels
+
+    st.text_input(
+        "As-of instant (UTC, required)",
+        key="p03_as_of",
+        placeholder="2024-01-05T21:00:00Z",
+        help="The console never uses the clock as a valuation time: enter an explicit timezone-aware instant.",
+    )
+    panels.render_portfolio(st, private_dir=panels.portfolio_private_dir(), as_of_text=st.session_state.get("p03_as_of"))
+
+
+def render_p03_pending(page: str) -> None:
+    """Render a registered-but-unauthorized P03 page as ``gated`` after the gate."""
+    if not require_loopback(page_spec(page).label):
+        return
+    from equity_lake.dashboard import panels
+
+    panels.render_pending_panel(st, page)
+
+
 def main() -> None:
     if st is None:
         raise RuntimeError("Streamlit is optional; install the dashboard dependency group to run this application.")
@@ -367,6 +401,14 @@ def main() -> None:
         render_update_history(updates)
     elif page == "private_tracking":
         render_private_tracking_preview()
+    elif page == "portfolio":
+        render_p03_portfolio()
+    elif page == "readiness":
+        render_p03_pending("readiness")
+    elif page == "research":
+        render_p03_pending("research")
+    elif page == "signals":
+        render_p03_pending("signals")
     else:  # pragma: no cover - a new registry page needs an explicit renderer here
         raise RuntimeError(f"no Streamlit renderer registered for dashboard page {page!r}")
 

@@ -47,6 +47,13 @@ PAGE_SPECS: tuple[PageSpec, ...] = (
     PageSpec("updates", "Updates", "updates.html", streamlit=True),
     PageSpec("config", "Config", "config.html", streamlit=False),
     PageSpec("private_tracking", "Private Tracking Preview", None, streamlit=True, gated=True),
+    # P03 private console (spec §5.4). All four are app-only and gated: they render
+    # nothing until the app is loopback-bound, and they are never part of the static
+    # export, so no private panel can leak into published files.
+    PageSpec("portfolio", "Portfolio", None, streamlit=True, gated=True),
+    PageSpec("readiness", "Data Readiness", None, streamlit=True, gated=True),
+    PageSpec("research", "Research Runs", None, streamlit=True, gated=True),
+    PageSpec("signals", "Signals", None, streamlit=True, gated=True),
 )
 
 STREAMLIT_PAGES: tuple[PageSpec, ...] = tuple(spec for spec in PAGE_SPECS if spec.streamlit)

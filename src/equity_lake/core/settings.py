@@ -7,6 +7,7 @@ Reads from environment variables (``EQUITY_*``), ``.env``, and
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -147,6 +148,22 @@ class SourcesSettings(BaseModel):
     )
 
 
+class ConsoleSettings(BaseModel):
+    """The one configured private location the loopback P03 console reads (display-only).
+
+    Overridable via ``EQUITY_CONSOLE__*`` or ``config/settings.yaml``. P03 never
+    discovers files, never defaults the valuation instant to "now", and never writes:
+    the console reads the stored ledger, plus ``marks.json`` and ``statement.csv``
+    inside this directory when they exist. Unset means the private panels render
+    ``unavailable`` (they never guess a location), so no private read is attempted.
+    """
+
+    private_dir: Path | None = Field(
+        default=None,
+        description="Directory holding the console's marks.json / statement.csv; unset disables the private panels.",
+    )
+
+
 class Settings(BaseSettings):
     project: ProjectSettings = Field(default_factory=ProjectSettings)
     ingestion: IngestionSettings = Field(default_factory=IngestionSettings)
@@ -156,6 +173,7 @@ class Settings(BaseSettings):
     alerting: AlertingSettings = Field(default_factory=AlertingSettings)
     s3_sync: S3SyncSettings = Field(default_factory=S3SyncSettings)
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
+    console: ConsoleSettings = Field(default_factory=ConsoleSettings)
 
     model_config = SettingsConfigDict(
         env_prefix="EQUITY_",
