@@ -488,11 +488,7 @@ def test_manifest_records_input_snapshot_hashes_of_what_was_read(tmp_path: Path)
     other.write_text('{"actions": []}', encoding="utf-8")
     second = snapshot_from_file(other, source="synthetic:arena")
 
-    run = _finalise(
-        tmp_path,
-        data_provenance="synthetic",
-        input_snapshots=[snapshot, second],
-    )
+    run = _finalise(tmp_path, input_snapshots=[snapshot, second])
 
     recorded = {entry.name: entry for entry in run.manifest.input_snapshots}
     assert set(recorded) == {"fixture:ohlcv", "synthetic_context.json"}  # nothing invented, nothing dropped
@@ -500,11 +496,11 @@ def test_manifest_records_input_snapshot_hashes_of_what_was_read(tmp_path: Path)
     assert recorded["fixture:ohlcv"].source == "fixture:file"
     assert recorded["synthetic_context.json"].sha256 == second.sha256
     assert recorded["synthetic_context.json"].source == "synthetic:arena"
-    assert run.manifest.data_provenance == "synthetic"
+    assert run.manifest.data_provenance == "unknown"
 
-    # Claims without evidence are refused: provenance never upgrades by assertion.
-    with pytest.raises(ValueError, match="requires input_snapshots"):
-        _finalise(tmp_path, data_provenance="real")
+    # Claims are refused, not downgraded: snapshots alone are no longer sufficient.
+    with pytest.raises(ValueError, match="requires complete, snapshot-bound"):
+        _finalise(tmp_path, data_provenance="real", input_snapshots=[snapshot, second])
 
     # An empty snapshot list keeps the honest default.
     undated_claim = _finalise(tmp_path, input_snapshots=[])

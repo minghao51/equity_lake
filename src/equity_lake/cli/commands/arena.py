@@ -508,7 +508,7 @@ def report_backtest(
     """
     from equity_lake.backtesting.arena import evaluation_status
     from equity_lake.backtesting.attempts import PairOutcome, PairRequest, write_attempt_record
-    from equity_lake.backtesting.evidence import CostApplication, ExecutionTiming, InputSnapshot, RunScope, finalise_run
+    from equity_lake.backtesting.evidence import CostApplication, ExecutionTiming, InputSnapshot, PriceOriginSummary, RunScope, finalise_run
     from equity_lake.backtesting.factory import build_backtest_engine
     from equity_lake.core.paths import FINDINGS_DIR
 
@@ -590,11 +590,13 @@ def report_backtest(
             universe = [str(ticker) for ticker in result.tickers if str(ticker).strip()]
             notes.append("universe basis: ticker_only, because this engine recorded no loaded canonical identity")
         # Read-seam snapshots: whatever the engine's own loader read (empty when it
-        # had none, e.g. a preloaded frame). Provenance is deliberately not passed —
-        # it stays 'unknown' because no persisted price-source marker exists (E01-6).
+        # had none, e.g. a preloaded frame). Provenance is never passed: the writer
+        # derives it from the origin summaries below (ADR-0027 §4.5).
         engine_loader = getattr(engine, "data_loader", None)
         read_snapshots = getattr(engine_loader, "snapshots", None)
+        read_origin_summaries = getattr(engine_loader, "price_origin_summaries", None)
         loader_snapshots: list[dict[str, str | None]] = list(read_snapshots()) if read_snapshots is not None else []
+        loader_origin_summaries = list(read_origin_summaries()) if read_origin_summaries is not None else []
         input_snapshots = [
             InputSnapshot(name=str(snapshot["name"]), sha256=str(snapshot["sha256"]), source=str(snapshot["source"]), version=snapshot.get("version"))
             for snapshot in loader_snapshots
@@ -622,7 +624,9 @@ def report_backtest(
             # digested into the manifest and never stored (ADR-0025 Decision 3).
             config={"markets": list(engine.markets), "adjust": engine.adjust, "cost_regime": cost_regime},
             input_snapshots=input_snapshots,
-            data_provenance="unknown",
+            # One summary per price snapshot the engine's loader consumed; the writer
+            # re-derives `data_provenance` from them instead of taking a literal.
+            price_origin_summaries=[PriceOriginSummary.model_validate(entry) for entry in loader_origin_summaries],
             seed=None,
             cards=(),
             root=root,

@@ -13,7 +13,23 @@ architecture pages and guides.
 
 ## Current continuation — 2026-11-07
 
-Start with the [E01-6 row-bound price-origin implementation pickup](handoffs/20261107-03-e01-6-implementation-pickup.md) — it supersedes the P02 pickup for continuation — and the [current stage queue / implementation ledger](plans/20261102-01-portfolio-and-research-implementation-spec.md). **Everything is committed and pushed** as of `ab49b59`: B00, F01–F04, P01a/P01b, E01a, E01b.1/E01b.2/E01c (`104def0`), P02 (`43a6c0a`, owner-accepted), the import-header fix (`5d02f0f`), design artifacts (`1bd21a1`, `f2e34f4`), the dashboard IA parity guard (`b80b73b`), the single page registry + shared notice vocabulary (`460b940`), the E01-6 pickup (`90e29e8`) and the dashboard mock revisions (`ab49b59`). ADR-0024/0025/0026/0027 are accepted; the bounded P02 plan is delivered and the bounded **E01-6 plan is approved with decisions D1–D8 frozen** (handoff §2/§4) but **not implemented** — no schema, writer, loader or manifest change exists, so research provenance stays `unknown`, which is the correct current output. Work order from here: E01-6 (three sequential commits, owner review per commit) → P03 UI plan (now has `dashboard/pages.py` + `dashboard/components.py` as its foundation, still unauthorized) → D01, P00-2/P00-4 (each needs its own authorization or ADR) → R00/R01/R02 → H00. The queue table in the Nov07-01 pickup (§4) is **superseded** by handoff §5–§6. D01, private-account/provider access, real ingestion, refits, migrations, deployment and any new commit remain gated.
+**E01-6 (row-bound price origin) is implemented** in three sequential commits under
+accepted ADR-0027 and decisions D1–D8: reader-first protocol `equity-run-manifest/4`
+support, the nullable write-boundary envelope, and read-seam aggregation with derived
+`data_provenance`. Every shipped path that carries no row evidence still reports
+`unknown`, which remains the correct answer for legacy lakes and real-source adapters.
+The pickup that produced this work is the
+[E01-6 implementation handoff](handoffs/20261107-03-e01-6-implementation-pickup.md), now
+spent, and the ledger is the
+[implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md)
+(§10 records the three stage entries, reviewer verdicts and gate counts). The remote is
+at `231d603`; E01-6 stages 1–2 are committed on local `main` (not yet pushed) and stage
+3 is in the working tree pending its owner review. ADR-0024/0025/0026/0027 are
+accepted. Work order from here: **P03 UI plan** (it now has `dashboard/pages.py` +
+`dashboard/components.py` as its foundation, still unauthorized) → D01 → P00-2/P00-4
+(each needs its own authorization or ADR) → R00/R01/R02 → H00. The queue table in the
+Nov07-01 pickup (§4) is **superseded**. D01, private-account/provider access, real
+ingestion, refits, migrations, deployment and any further commit remain gated.
 
 ## Historical incident follow-up — 2026-10-22
 

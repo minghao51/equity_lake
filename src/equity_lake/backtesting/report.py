@@ -810,6 +810,7 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> _RunEv
         CostApplication,
         ExecutionTiming,
         InputSnapshot,
+        PriceOriginSummary,
         RunScope,
         digest_non_secret_config,
         finalise_run,
@@ -831,6 +832,11 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> _RunEv
         InputSnapshot(name=str(snapshot["name"]), sha256=str(snapshot["sha256"]), source=str(snapshot["source"]), version=snapshot.get("version"))
         for snapshot in outcome.input_snapshots
     ]
+    # The read seam's whole-load origin classification, validated here rather than trusted:
+    # each summary must bind to one of the snapshots above, and the manifest re-derives
+    # `data_provenance` from them (ADR-0027 §4.5). Empty for a preloaded frame, which then
+    # derives `unknown`.
+    price_origin_summaries = [PriceOriginSummary.model_validate(entry) for entry in outcome.price_origin_summaries]
 
     # The configuration actually in force in this path: the scoped markets and the
     # market-cost override the arena really used ({} when it used the defaults).
@@ -914,10 +920,11 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> _RunEv
                 ),
                 config_digest=config_digest,
                 code=code,
-                # Read-seam snapshots of the shared load. Provenance is deliberately
-                # NOT passed: it stays 'unknown' even here, because no persisted
-                # price-source marker exists yet (open item E01-6, ADR-0021/0022).
+                # Read-seam snapshots of the shared load, plus the row-bound origin
+                # summaries that load classified. `data_provenance` is not passed: the
+                # writer derives it from these summaries, never from a literal.
                 input_snapshots=input_snapshots,
+                price_origin_summaries=price_origin_summaries,
                 root=root,
             )
         except Exception as exc:  # noqa: BLE001 - one run's evidence failure must not stop the others

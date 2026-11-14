@@ -1413,3 +1413,48 @@ items"). Acceptance covers the delivered P02 implementation as reviewed and gate
 above. It does **not** authorize staging, a commit, or progression to E01-6, P03 or
 D01: the stage remains uncommitted, and any staging/commit needs a separate
 explicit owner instruction naming the files. Remaining gates are unchanged.
+
+### E01-6 — row-bound price origin (implementation record)
+
+```text
+E01-6 / implemented, three sequential commits / 2026-11-07:
+Owner-approved scope and policy reference: accepted ADR-0027 plus the bounded E01-6 plan
+  in docs/handoffs/20261107-03-e01-6-implementation-pickup.md, decisions D1-D8 frozen.
+Dependency and accepted-ADR evidence: ADR-0024/0025/0026/0027 accepted; stage 1 read
+  support, stage 2 write boundary, stage 3 read-seam aggregation — each landed before the
+  one that depends on it (decision D4).
+Stage 1 (reader-first): protocol equity-run-manifest/4 parsing, PriceOriginSummary and the
+  §4.4-§4.5 derivation, v3 evidence parsed under its own rules and never retro-invalidated;
+  writers still minted v3, so every shipped run still derived `unknown`.
+Stage 2 (storage + write boundary): nullable envelope (Int16 version, three strings) on the
+  Bronze price tables, stamped and validated at write_delta, merge_delta and upsert_dataset;
+  the demo generator — and only it — asserts `generator:synthetic_demo_seed@1`; malformed,
+  partial, contradictory and unsupported claims are refused; a merge replaces the marker
+  with the values instead of inheriting it; legacy rows stay null (D6); catalog regenerated.
+Stage 3 (read seam + writers): the loader classifies the rows it consumed, before the column
+  projection, from the same pinned Delta version it read; arena/report/`report backtest` pass
+  those summaries and the writer derives `data_provenance` from them. New runs are v4.
+Independent reviewer: separate adversarial reviewer per stage, formal verdict each time.
+  Stage 1: NEEDS-REVISION (v3 retro-invalidation), then NEEDS-REVISION (name-only coverage
+  and unsupported-protocol handling), then PASS. Stage 2: NEEDS-REVISION (dtype contract,
+  datetime narrowing, retry/evolution coverage), then PASS with one test-flakiness fix.
+  Stage 3: see the handoff-backed stage report in the commit.
+Named regressions and mutation evidence: each rule is pinned by a test that fails when the
+  rule is removed — verified with per-rule mutations restored from /tmp copies and compared
+  with diff -q (unknown-dominance, counts coverage, claim refusal, v3 byte shape, snapshot
+  binding, exact-reference coverage, protocol handling, empty_scope, merge replacement,
+  source grammar, decimal rendering, line ordering, generator revision, column stamping,
+  classification-before-projection, derivation-instead-of-literal).
+Focused tests / final gates: recorded per stage; the stage-3 boundary runs the full serial
+  and parallel suites plus ruff, strict mypy, catalog regeneration and markdown/whitespace
+  checks, with logs retained under /tmp.
+Docs, schema/catalog, privacy, compatibility: backtesting guide, ARCHITECTURE, this ledger
+  and docs/README updated; catalog regenerated from STANDARD_COLUMNS (never hand-edited);
+  no Settings key, dependency or ADR change; no private value, credential, path or hostname
+  enters evidence; v3 runs stay readable and byte-identical.
+Residuals, explicit stop condition: claims are self-asserted local lineage — not vendor
+  authentication, accuracy, licensing, retention permission, adjustment correctness or PIT
+  availability. No real-provider claim exists while D01 (licensing, retention, target root,
+  spend) stays closed; `data_provenance` covers price origin only, never action, feature or
+  prediction inputs. P03, D01, P00-2/P00-4, R00-R02 and H00 remain gated.
+```

@@ -32,6 +32,7 @@ from pydantic import ValidationError
 from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     MANIFEST_NAME,
     RUN_PROTOCOL,
+    RUN_PROTOCOL_V3,
     RUN_PROTOCOL_V4,
     CodeIdentity,
     CostApplication,
@@ -173,19 +174,19 @@ def _manifest_json(directory: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def test_v4_is_a_separate_protocol_and_readers_land_before_writers() -> None:
-    """v4 exists for reading while the writer still mints v3 (decision D4).
+def test_writers_mint_v4_and_v3_stays_readable() -> None:
+    """Reader support landed first (decision D4); the writer now mints v4.
 
-    Falsified by: flipping ``RUN_PROTOCOL`` to v4 before the write boundary can emit
-    summaries (every run would then be refused), or by reusing the v3 literal for the
-    strengthened derivation (different evidence formats would share an address).
+    Falsified by: emitting v4 evidence before its reader exists, dropping v3 from the
+    readable set, or reusing the v3 literal for the strengthened derivation (two
+    different evidence formats would share an address).
     """
-    assert RUN_PROTOCOL == "equity-run-manifest/3"
-    assert RUN_PROTOCOL_V4 == "equity-run-manifest/4"
-    assert RunScope.model_fields["protocol"].default == RUN_PROTOCOL  # the writer's default is still v3
+    assert RUN_PROTOCOL == RUN_PROTOCOL_V4 == "equity-run-manifest/4"
+    assert RUN_PROTOCOL_V3 == "equity-run-manifest/3"
+    assert RunScope.model_fields["protocol"].default == RUN_PROTOCOL  # new scopes are v4
 
-    # The protocol is a scope field, so v4 mints different scope IDs by design.
-    assert _scope().run_id() != _scope(protocol=RUN_PROTOCOL_V4).run_id()
+    # The protocol is a scope field, so the bump mints different scope IDs by design.
+    assert _scope().run_id() != _scope(protocol=RUN_PROTOCOL_V3).run_id()
 
 
 def test_unknown_reasons_are_the_shared_closed_set() -> None:
@@ -443,7 +444,7 @@ def test_a_v3_manifest_may_not_carry_summaries() -> None:
     retroactive relabelling ADR-0027 §6 forbids.
     """
     with pytest.raises(ValidationError, match="require protocol 'equity-run-manifest/4'"):
-        _manifest(_scope(), price_origin_summaries=[_summary()], input_snapshots=[_snapshot()])
+        _manifest(_scope(protocol=RUN_PROTOCOL_V3), price_origin_summaries=[_summary()], input_snapshots=[_snapshot()])
 
 
 def test_a_v4_manifest_derives_its_provenance_from_the_summaries() -> None:
@@ -503,13 +504,13 @@ def test_stored_v3_evidence_keeps_its_own_rules() -> None:
     runs from every reader projection — including runs whose recorded claim was legal
     when it was written.
     """
-    legacy = _manifest(_scope(), input_snapshots=[_snapshot()], data_provenance="synthetic")
+    legacy = _manifest(_scope(protocol=RUN_PROTOCOL_V3), input_snapshots=[_snapshot()], data_provenance="synthetic")
     assert legacy.data_provenance == "synthetic"  # parsed under v3 rules, not re-derived
     assert legacy.price_origin_summaries == []
 
     # v3 still refuses a claim with no snapshot evidence at all (ADR-0025 Decision 3).
     with pytest.raises(ValidationError, match="requires input_snapshots evidence under protocol"):
-        _manifest(_scope(), data_provenance="real")
+        _manifest(_scope(protocol=RUN_PROTOCOL_V3), data_provenance="real")
 
 
 @pytest.mark.parametrize(

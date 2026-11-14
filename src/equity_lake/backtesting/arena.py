@@ -242,6 +242,10 @@ class ArenaOutcome:
     #: conversion lives in the writer. A ``preloaded_data`` outcome carries ``[]`` —
     #: no read happened here, so there is no snapshot to bind.
     input_snapshots: list[dict[str, str | None]] = field(default_factory=list)
+    #: Row-bound origin evidence for the price snapshots the shared load consumed.
+    #: Plain mappings; the evidence writer converts them into validated summaries and
+    #: re-derives ``data_provenance`` from them (ADR-0027 §4.5).
+    price_origin_summaries: list[dict[str, object]] = field(default_factory=list)
 
 
 def _benchmark_identity_columns(data: pl.DataFrame) -> list[str]:
@@ -718,6 +722,9 @@ def run_arena(
         # Read-seam snapshots of the one shared load. A preloaded frame was not read
         # here, so ``loader`` never existed and this stays ``[]``.
         input_snapshots=list(loader.snapshots()) if loader is not None else [],
+        # The whole-read origin classification of that same load (never a per-strategy
+        # subset): the manifest discloses the consumed scope it describes.
+        price_origin_summaries=list(loader.price_origin_summaries()) if loader is not None else [],
     )
 
 

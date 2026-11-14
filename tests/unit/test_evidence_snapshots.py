@@ -55,6 +55,10 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
 from equity_lake.backtesting.report import write_arena_artifacts_with_evidence  # type: ignore[import-untyped]
 from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
 from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.core.price_provenance import (  # type: ignore[import-untyped]
+    PriceProvenanceError,
+    envelope_projection_digest,
+)
 from equity_lake.ingestion.corporate_actions import (  # type: ignore[import-untyped]
     corporate_action_coverage_table,
     corporate_actions_table,
@@ -162,6 +166,7 @@ def _arena_outcome(
     data: pl.DataFrame,
     *,
     input_snapshots: Sequence[dict[str, str | None]] = (),
+    price_origin_summaries: Sequence[dict[str, object]] = (),
 ) -> ArenaOutcome:
     """An in-memory outcome over ``data``, as ``run_arena`` builds it (preload seam)."""
     run = _arena_run()
@@ -173,6 +178,7 @@ def _arena_outcome(
         requested=[(run.strategy, run.cost_regime)],
         markets=(MARKET,),
         input_snapshots=list(input_snapshots),
+        price_origin_summaries=list(price_origin_summaries),
     )
 
 
@@ -192,15 +198,15 @@ def _delta_reference_digest(table_path: Path, version: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_run_protocol_is_v3_and_part_of_the_scope_preimage() -> None:
-    """``RUN_PROTOCOL`` is v3, appears in the payload, and moving it moves the ID.
+def test_run_protocol_is_v4_and_part_of_the_scope_preimage() -> None:
+    """``RUN_PROTOCOL`` is v4 (E01-6), appears in the payload, and moving it moves the ID.
 
     Falsified by: leaving the protocol at ``/2`` after the universe values became
     canonical display keys, omitting it from ``scope_payload``, or by a protocol bump
     that leaves the run ID unchanged (two different evidence formats would then share
     an address).
     """
-    assert RUN_PROTOCOL == "equity-run-manifest/3"
+    assert RUN_PROTOCOL == "equity-run-manifest/4"
 
     scope = _scope(["AAPL"])
     payload = scope.scope_payload()
@@ -213,7 +219,7 @@ def test_run_protocol_is_v3_and_part_of_the_scope_preimage() -> None:
     # version only while the bump holds.
     stem, version = RUN_PROTOCOL.rsplit("/", 1)
     previous_protocol = f"{stem}/{int(version) - 1}"
-    assert previous_protocol == "equity-run-manifest/" + "2"  # the actual pre-bump protocol
+    assert previous_protocol == "equity-run-manifest/" + "3"  # the actual pre-bump protocol
     assert previous_protocol != RUN_PROTOCOL
 
     previous = RunScope(
@@ -604,20 +610,21 @@ def test_provenance_cannot_be_upgraded_without_a_price_source_marker(tmp_path: P
     assert _manifest_of(tmp_path)["data_provenance"] == "unknown"
     assert summary.finalized[0].manifest.input_snapshots  # the evidence is recorded...
 
-    # ... and it still does not upgrade provenance, even when one is asserted by hand.
-    asserted = finalise_run(
-        _stub_result(),
-        scope=_scope(["AAA"]),
-        input_snapshots=[snapshot],
-        data_provenance="synthetic",
-        code=CodeIdentity(commit="a" * 40),
-        root=tmp_path / "asserted",
-    )
-    assert asserted.manifest.data_provenance == "synthetic"  # self-asserted, allowed by the model
-    assert asserted.manifest.input_snapshots == [snapshot]
+    # ... and a hand-asserted claim over those snapshots is refused outright: since
+    # E01-6 a v4 claim must be supported by a price-origin summary bound to them.
+    with pytest.raises(ValueError, match="requires complete, snapshot-bound"):
+        finalise_run(
+            _stub_result(),
+            scope=_scope(["AAA"]),
+            input_snapshots=[snapshot],
+            data_provenance="synthetic",
+            code=CodeIdentity(commit="a" * 40),
+            root=tmp_path / "asserted",
+        )
+    assert not (tmp_path / "asserted").exists() or list((tmp_path / "asserted").rglob("manifest.json")) == []
 
-    # A non-unknown claim with no snapshots is still refused outright.
-    with pytest.raises(ValueError, match="requires input_snapshots"):
+    # A claim with no evidence at all is refused by the same rule.
+    with pytest.raises(ValueError, match="requires complete, snapshot-bound"):
         finalise_run(
             _stub_result(),
             scope=_scope(["AAA"]),
@@ -821,3 +828,318 @@ def test_two_loads_of_an_unchanged_read_report_the_same_snapshot(tmp_path: Path)
 
     assert second == first  # same single entry: same version, same digest, no duplicate
     assert [snapshot["version"] for snapshot in second] == ["0"]
+
+
+# ---------------------------------------------------------------------------
+# 10. Read-seam price-origin classification (E01-6 stage 3)
+# ---------------------------------------------------------------------------
+
+_SYNTHETIC_SOURCE = "generator:synthetic_demo_seed@1"
+
+
+def _mark(frame: pl.DataFrame, *, kind: str = "synthetic", version: int = 1) -> pl.DataFrame:
+    """Stamp a complete version-1 origin claim on ``frame``."""
+    digest = hashlib.sha256(b"evidence").hexdigest()
+    return frame.with_columns(
+        pl.lit(version, dtype=pl.Int16).alias("price_provenance_version"),
+        pl.lit(kind).alias("price_provenance"),
+        pl.lit(_SYNTHETIC_SOURCE if kind != "unknown" else None).alias("price_source"),
+        pl.lit(digest if kind != "unknown" else None).alias("price_source_sha256"),
+    )
+
+
+def _loader(lake: Path) -> BacktestDataLoader:
+    return BacktestDataLoader(lake_dir=lake)
+
+
+def _snapshot_name(summary: dict[str, object]) -> str:
+    """The price snapshot name a summary describes."""
+    return str(cast("dict[str, object]", summary["snapshot"])["name"])
+
+
+def test_loader_classifies_consumed_rows_before_the_column_projection(tmp_path: Path) -> None:
+    """Classification happens on the read rows, so the projection cannot lose the markers.
+
+    The returned frame is projected to OHLCV/identity (no marker columns), yet the summary
+    still describes every consumed row — the evidence was taken at the seam, not after it.
+
+    Falsified by: classifying the projected frame (every row would look unmarked) or by
+    looking the table up again after the read.
+    """
+    lake = tmp_path / "lake"
+    frame = _mark(_price_frame())
+    _write_delta_price_table(lake, frames=[frame])
+
+    loader = _loader(lake)
+    loaded = loader.load(["AAA", "BBB"], D0, D2)
+    assert "price_provenance" not in loaded.columns  # projected away...
+
+    summaries = loader.price_origin_summaries()
+    assert len(summaries) == 1
+    summary = summaries[0]
+    assert cast("dict[str, str]", summary["snapshot"])["name"] == f"price_marks:{MARKET}"
+    assert summary["consumed_rows"] == frame.height == 6
+    counts = cast("dict[str, object]", summary["counts"])
+    assert counts["synthetic"] == 6
+    assert counts["unknown"] == 0
+    assert summary["sources"] == [_SYNTHETIC_SOURCE]
+
+    # ... and the recorded envelope digest is recomputable from the read rows.
+    assert summary["envelope_sha256"] == envelope_projection_digest(frame)
+
+
+def test_origin_counts_cover_exactly_the_rows_the_read_consumed(tmp_path: Path) -> None:
+    """``consumed_rows`` is the read's scope — not the trades, and not a wider table.
+
+    The read is ticker- and date-bounded, so those are the consumed rows; several
+    strategies then share that one frame, and a strategy that trades once must not shrink
+    or widen the classification. This is the scope disclosure ADR-0027 §4.5 asks for.
+
+    Falsified by: counting only rows that produced trades, or counting the whole table
+    (which would claim rows this load never read).
+    """
+    lake = tmp_path / "lake"
+    _write_delta_price_table(lake, frames=[_mark(_price_frame())])
+
+    one_symbol = _loader(lake)
+    loaded = one_symbol.load(["AAA"], D0, D2)
+    assert one_symbol.price_origin_summaries()[0]["consumed_rows"] == loaded.height == 3
+
+    both = _loader(lake)
+    loaded_both = both.load(["AAA", "BBB"], D0, D2)
+    assert both.price_origin_summaries()[0]["consumed_rows"] == loaded_both.height == 6
+
+
+def test_origin_evidence_is_bound_to_the_version_the_read_consumed(tmp_path: Path) -> None:
+    """A table that advances afterwards cannot change what the load claims it read.
+
+    Falsified by: re-opening the table (or reading ``version()``) after the computation.
+    """
+    table = PRICE_TABLE
+    lake = tmp_path / "lake"
+    _write_delta_price_table(lake, frames=[_mark(_price_frame())])
+    loader = _loader(lake)
+    loader.load(["AAA", "BBB"], D0, D2)
+    before = loader.price_origin_summaries()[0]
+
+    write_delta(_mark(_price_frame()[:2]), table, mode="append", lake_dir=lake, schema_mode="merge")
+    after_load = _loader(lake)
+    after_load.load(["AAA", "BBB"], D0, D2)
+    after = after_load.price_origin_summaries()[0]
+
+    assert before["snapshot"] != after["snapshot"]  # a new load reads a new version...
+    assert before["snapshot"] == loader.price_origin_summaries()[0]["snapshot"]  # ...but the old load is frozen
+    assert int(str(before["consumed_rows"])) == 6 and int(str(after["consumed_rows"])) > 6
+
+
+def test_loader_reuse_reports_only_the_latest_loads_origin(tmp_path: Path) -> None:
+    """Origin evidence is scoped to the load, like the snapshots beside it.
+
+    Two *different* markets are loaded in turn: an entry left over from the first load
+    would be neither overwritten by name nor visible in ``snapshots()``, so this is the
+    case that actually detects a missing reset.
+
+    Falsified by: clearing the snapshot map but not the origin summaries, which would
+    report the first load's market beside the second load's data.
+    """
+    lake = tmp_path / "lake"
+    _write_delta_price_table(lake, frames=[_mark(_price_frame())])
+    other_market = "cn_ashare"
+    write_delta(
+        _mark(_price_frame().with_columns(pl.lit(other_market).alias("market"), pl.lit("XSHG").alias("mic"))),
+        MARKET_DIR_MAP[other_market],
+        mode="overwrite",
+        lake_dir=lake,
+    )
+
+    loader = _loader(lake)
+    loader.load(["AAA"], D0, D2, markets=[MARKET])
+    assert [_snapshot_name(summary) for summary in loader.price_origin_summaries()] == [f"price_marks:{MARKET}"]
+
+    loader.load(["AAA"], D0, D2, markets=[other_market])
+    names = [_snapshot_name(summary) for summary in loader.price_origin_summaries()]
+    assert names == [f"price_marks:{other_market}"]  # no stale us_equity entry
+    assert [snapshot["name"] for snapshot in loader.snapshots()] == names  # same scope as the snapshots
+
+
+def test_an_unmarked_table_records_unknown_origin(tmp_path: Path) -> None:
+    """Legacy rows are classified ``unknown`` with a reason — never relabelled (D6)."""
+    lake = tmp_path / "lake"
+    _write_delta_price_table(lake, frames=[_price_frame()])
+    loader = _loader(lake)
+    loader.load(["AAA", "BBB"], D0, D2)
+    summary = loader.price_origin_summaries()[0]
+    counts = cast("dict[str, object]", summary["counts"])
+    assert counts["unknown"] == 6
+    assert counts["unknown_reasons"] == {"missing_envelope": 6}
+    assert summary["sources"] == []
+
+
+def test_a_malformed_claim_fails_the_load_instead_of_becoming_unknown(tmp_path: Path) -> None:
+    """A contradictory version-1 claim is an input validation failure (ADR-0027 §4.5).
+
+    Falsified by: swallowing the defect and publishing the run with a healthy ``unknown``.
+    """
+    lake = tmp_path / "lake"
+    bad = _mark(_price_frame()).with_columns(pl.lit("not-a-source").alias("price_source"))
+    # Written with deltalake directly: the write boundary would (correctly) refuse this,
+    # so the loader must catch it on the read side too — a lake can predate the rule.
+    from deltalake import write_deltalake
+
+    write_deltalake(str(lake / PRICE_TABLE), bad.to_arrow(), mode="overwrite", partition_by=["date"])
+    with pytest.raises(PriceProvenanceError, match="must match"):
+        _loader(lake).load(["AAA", "BBB"], D0, D2)
+
+
+def test_the_writer_publishes_v4_with_the_derived_classification(tmp_path: Path) -> None:
+    """A load that classified its rows publishes v4 evidence with that classification.
+
+    Falsified by: writing the manifest with the literal ``unknown``, omitting the
+    summaries, or publishing a v4 manifest whose claim the summaries do not support.
+    """
+    lake = tmp_path / "lake"
+    _write_delta_price_table(lake, frames=[_mark(_price_frame())])
+    loader = _loader(lake)
+    loader.load(["AAA", "BBB"], D0, D2)
+    snapshots = loader.snapshots()
+
+    _, summary = write_arena_artifacts_with_evidence(
+        _arena_outcome(
+            _price_frame(),
+            input_snapshots=snapshots,
+            price_origin_summaries=loader.price_origin_summaries(),
+        ),
+        base=tmp_path / "evidence",
+        run_date=D0,
+    )
+    assert len(summary.finalized) == 1
+    manifest = json.loads((summary.finalized[0].directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert manifest["protocol"] == RUN_PROTOCOL == "equity-run-manifest/4"
+    assert manifest["data_provenance"] == "synthetic"  # derived, not hardcoded
+    assert manifest["price_origin_summaries"][0]["counts"]["synthetic"] == 6
+    assert validate_run_directory(summary.finalized[0].directory).finalized
+
+
+def test_an_empty_read_stays_unknown(tmp_path: Path) -> None:
+    """No consumed rows cannot be an all-synthetic claim (ADR-0027 §4.4).
+
+    Falsified by: treating an empty scope as "no unknown rows, therefore synthetic".
+    """
+    lake = tmp_path / "lake"
+    lake.mkdir()
+    loader = _loader(lake)  # no market table exists, so the read consumes nothing
+    loader.load(["AAA"], D0, D2)
+    assert loader.price_origin_summaries() == []
+    _, summary = write_arena_artifacts_with_evidence(
+        _arena_outcome(_price_frame(), input_snapshots=loader.snapshots(), price_origin_summaries=[]),
+        base=tmp_path / "evidence",
+        run_date=D0,
+    )
+    manifest = json.loads((summary.finalized[0].directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert manifest["data_provenance"] == "unknown"
+
+
+def test_an_empty_date_window_records_an_empty_scope_summary(tmp_path: Path) -> None:
+    """A price snapshot with zero consumed rows is disclosed, not omitted.
+
+    ADR-0027 §4.4: ``consumed_rows == 0`` is ``unknown`` (``empty_scope``), never an
+    all-synthetic claim and never a missing summary — the snapshot exists, so the
+    manifest must say what it covered.
+
+    Falsified by: returning early after recording the snapshot, leaving the manifest
+    with no summary for a price snapshot it claims to have read.
+    """
+    lake = tmp_path / "lake"
+    _write_delta_price_table(lake, frames=[_mark(_price_frame())])
+    loader = _loader(lake)
+    # A window entirely outside the stored sessions.
+    loader.load(["AAA"], date(2025, 1, 1), date(2025, 1, 2))
+
+    summaries = loader.price_origin_summaries()
+    assert len(summaries) == 1  # one summary per recorded price snapshot
+    assert summaries[0]["consumed_rows"] == 0
+    counts = cast("dict[str, object]", summaries[0]["counts"])
+    assert counts["synthetic"] == counts["unknown"] == 0
+
+    _, summary = write_arena_artifacts_with_evidence(
+        _arena_outcome(_price_frame(), input_snapshots=loader.snapshots(), price_origin_summaries=summaries),
+        base=tmp_path / "evidence",
+        run_date=D0,
+    )
+    manifest = json.loads((summary.finalized[0].directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    assert manifest["data_provenance"] == "unknown"
+
+
+def test_a_non_delta_price_read_never_claims_an_origin(tmp_path: Path) -> None:
+    """A parquet price read reports ``unknown``: bytes cannot be frozen by a file-set digest.
+
+    ADR-0027 §4 requires freezing the actual scanned bytes or refusing the claim. The
+    enumeration digest cannot be bound to the bytes a later scan reads (a replacement
+    restored before any re-check defeats even a post-scan comparison), so this path
+    refuses outright while still disclosing the rows and the envelope digest.
+
+    Falsified by: trusting the pre-scan digest — the claim would then be a known origin
+    bound to bytes that were never digested.
+    """
+    lake = tmp_path / "lake"
+    root = lake / PRICE_TABLE
+    _write_parquet_price_table(root, {"part-0.parquet": _mark(_price_frame())})
+
+    loader = _loader(lake)
+    loaded = loader.load(["AAA", "BBB"], D0, D2)
+    summary = loader.price_origin_summaries()[0]
+    counts = cast("dict[str, object]", summary["counts"])
+    assert counts["synthetic"] == 0
+    assert counts["unknown"] == loaded.height
+    assert counts["unknown_reasons"] == {"incomplete_binding": loaded.height}
+    assert summary["sources"] == []
+
+
+def test_a_malformed_claim_still_fails_even_when_the_claim_is_refused(tmp_path: Path) -> None:
+    """Refusing a claim never suppresses validation of the rows behind it.
+
+    The rows are reported ``unknown`` because their bytes are unbound — but a malformed
+    version-1 claim is still an input validation failure (ADR-0027 §4.5), so the read
+    fails instead of hiding the defect behind the refusal.
+
+    Falsified by: skipping classification on the refusal path.
+    """
+    lake = tmp_path / "lake"
+    root = lake / PRICE_TABLE
+    bad = _mark(_price_frame()).with_columns(pl.lit("not-a-source").alias("price_source"))
+    _write_parquet_price_table(root, {"part-0.parquet": bad})
+
+    with pytest.raises(PriceProvenanceError, match="must match"):
+        _loader(lake).load(["AAA", "BBB"], D0, D2)
+
+
+def test_a_refused_snapshot_keeps_each_rows_own_unknown_reason(tmp_path: Path) -> None:
+    """Refusing a claim must not erase a row's own diagnostic (ADR-0027 §4.5).
+
+    A consistent *unsupported* future version stays readable as ``unknown`` with its
+    reason visible; only rows whose claim could not be bound to the read bytes are
+    reported as ``incomplete_binding``. The reasons must still add up to the consumed
+    rows exactly.
+
+    Falsified by: replacing every reason with the refusal reason, which would hide an
+    unsupported envelope version behind a binding defect.
+    """
+    lake = tmp_path / "lake"
+    frame = pl.concat(
+        [
+            _mark(_price_frame()[:3]),  # supported claims: unbound by the parquet read
+            _mark(_price_frame()[3:], version=9),  # unsupported future version
+        ]
+    )
+    _write_parquet_price_table(lake / PRICE_TABLE, {"part-0.parquet": frame})
+
+    loader = _loader(lake)
+    loaded = loader.load(["AAA", "BBB"], D0, D2)
+    summary = loader.price_origin_summaries()[0]
+    counts = cast("dict[str, object]", summary["counts"])
+    reasons = cast("dict[str, int]", counts["unknown_reasons"])
+
+    assert counts["unknown"] == loaded.height == 6
+    assert reasons["unsupported_version"] == 3  # visible, not hidden behind the refusal
+    assert reasons["incomplete_binding"] == 3  # the rows whose claim could not be bound
+    assert sum(reasons.values()) == counts["unknown"]

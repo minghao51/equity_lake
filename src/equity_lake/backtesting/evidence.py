@@ -111,25 +111,18 @@ from equity_lake.findings import FindingCard, write_finding_card
 
 logger = structlog.get_logger(__name__)
 
-#: Evidence-format protocol identifier. Part of the scope (E01-1): a protocol bump
-#: is a different scope and therefore a different run ID. Version 2 adds the applied
-#: fees/taxes to the cost-regime identity, so IDs minted under version 1 (whose
-#: preimage could not distinguish two differently-costed scopes) are not comparable
-#: with current IDs and must not be re-read as if they were. Version 3 (E01c) is the
-#: canonical-universe and read-seam-snapshot protocol: a run's universe may be
-#: canonical display keys instead of bare tickers, and its inputs are bound at the
-#: read seam. The universe *values* differ between the two bases, so the ID changes
-#: with the basis by construction — ``universe_basis`` is deliberately not a scope
-#: field (it would be a redundant second spelling of the same fact).
-RUN_PROTOCOL = "equity-run-manifest/3"
-
-#: Protocol v4 (ADR-0027 §5): v3's read-seam snapshot binding plus one
-#: :class:`PriceOriginSummary` per price snapshot, from which ``data_provenance`` is
-#: re-derived. Reader support lands **before** any v4 writer (decision D4), so this
-#: constant exists while :data:`RUN_PROTOCOL` still mints v3 evidence. The protocol is
-#: a scope field, so v4 intentionally mints different scope IDs for the same scope;
-#: it is not a relabelling of any stored v3 run, whose evidence stays byte-identical.
+#: Evidence-format protocol identifiers. The protocol is a scope field (E01-1), so a bump is
+#: a different scope and therefore a different run ID. Version 2 added the applied
+#: fees/taxes to the cost-regime identity; version 3 (E01c) added the canonical-universe
+#: basis and read-seam snapshot binding; version 4 (ADR-0027 §5) adds one row-bound
+#: price-origin summary per price snapshot and the provenance derivation that replaces the
+#: literal ``unknown``. v3 evidence is still parsed under its own rules and stays
+#: byte-identical: no stored manifest acquires a summary, a label or a bump.
+RUN_PROTOCOL_V3 = "equity-run-manifest/3"
 RUN_PROTOCOL_V4 = "equity-run-manifest/4"
+#: The protocol this writer mints. Stage 2 landed reader support first (decision D4); this
+#: stage is the first writer that emits v4, and it always emits the summaries.
+RUN_PROTOCOL = RUN_PROTOCOL_V4
 
 #: Subdirectory of the findings root that holds immutable run directories.
 RUNS_DIRNAME = "runs"
@@ -220,6 +213,7 @@ __all__ = [
     "REQUIRED_RUN_ARTIFACTS",
     "RUNS_DIRNAME",
     "RUN_PROTOCOL",
+    "RUN_PROTOCOL_V3",
     "RUN_PROTOCOL_V4",
     "SCOPE_FIELD_ORDER",
     "TRADES_ARTIFACT",
@@ -974,7 +968,7 @@ class RunManifest(BaseModel):
         evidence to it (the forward-compatible "readable as unknown" rule of
         ADR-0027 §4.5 governs the row envelope, not the run protocol).
         """
-        if self.protocol == RUN_PROTOCOL:
+        if self.protocol == RUN_PROTOCOL_V3:
             if self.data_provenance != "unknown" and not self.input_snapshots:
                 raise ValueError(
                     "data_provenance other than 'unknown' requires input_snapshots evidence under protocol "
@@ -984,7 +978,7 @@ class RunManifest(BaseModel):
 
         if self.protocol != RUN_PROTOCOL_V4:
             raise ValueError(
-                f"unsupported evidence protocol {self.protocol!r}: this reader interprets {RUN_PROTOCOL!r} and {RUN_PROTOCOL_V4!r} only, "
+                f"unsupported evidence protocol {self.protocol!r}: this reader interprets {RUN_PROTOCOL_V3!r} and {RUN_PROTOCOL_V4!r} only, "
                 "and guessing at an unknown format would record a claim nobody validated"
             )
 
@@ -1587,7 +1581,7 @@ def finalise_run(
     seed: int | None = None,
     config: Mapping[str, Any] | None = None,
     config_digest: str | None = None,
-    data_provenance: Provenance = "unknown",
+    data_provenance: Provenance | None = None,
     input_snapshots: Sequence[InputSnapshot] = (),
     price_origin_summaries: Sequence[PriceOriginSummary] = (),
     code: CodeIdentity | None = None,
@@ -1625,11 +1619,10 @@ def finalise_run(
         seed: Seed actually used, or ``None`` when there is none.
         config: Non-secret configuration in force — digested, never stored.
         config_digest: Pre-computed non-secret config digest (alternative to ``config``).
-        data_provenance: ``synthetic | real | mixed | unknown``. A v4 scope must
-            support any non-``unknown`` value with complete ``price_origin_summaries``
-            bound to the recorded ``input_snapshots`` (ADR-0027 §4.5); a v3 scope keeps
-            ADR-0025 Decision 3's weaker rule, where snapshots alone suffice, so stored
-            v3 evidence is never retro-invalidated. Every new run is v4.
+        data_provenance: Omit to let the writer **derive** the classification from
+            ``price_origin_summaries`` (ADR-0027 §4.5) — the shipped path, so no caller
+            can hardcode a label. An explicit value is only ever an assertion checked
+            against that derivation and refused when it disagrees.
         input_snapshots: Input content hashes taken at the read seam (E01-4).
         price_origin_summaries: One row-bound origin summary per price snapshot
             (protocol v4). Omitted on every shipped path, which is why shipped runs
@@ -1703,7 +1696,11 @@ def finalise_run(
             seed=seed,
             code=code_identity,
             config_digest=digest,
-            data_provenance=data_provenance,
+            # Never a literal: the classification is re-derived from the price-origin
+            # summaries, and an explicit claim is only an assertion checked against it.
+            data_provenance=(
+                data_provenance if data_provenance is not None else price_origin_aggregate(list(price_origin_summaries), list(input_snapshots))[0]
+            ),
             input_snapshots=list(input_snapshots),
             price_origin_summaries=list(price_origin_summaries),
             artifacts=artifacts,

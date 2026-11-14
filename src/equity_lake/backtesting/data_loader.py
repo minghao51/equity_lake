@@ -24,9 +24,11 @@ Digest conventions:
   ``<root>/**/*.parquet`` glob the scan uses, sorted and before the scan, streams
   each file to hash it, and records **one aggregate** snapshot per market,
   ``sha256(canonical JSON of sorted [(relative_path, bytes, file_sha256)])``. This
-  costs an extra read pass over the files. A file that appears, disappears or
-  changes *after* enumeration is a residual this digest does not detect — it binds
-  the file set as enumerated, and nothing more.
+  costs an extra read pass over the files. The digest is a **reproducibility
+  reference only**: it cannot be bound to the bytes a later scan reads (a
+  replacement restored before any re-check defeats even a post-scan comparison), so
+  a non-Delta price read never asserts a price origin — its rows are summarised with
+  ``incomplete_binding`` and the aggregate stays ``unknown`` (ADR-0027 §4).
 - **Corporate-action inputs** (``name="action_events:<market>"`` /
   ``name="action_coverage:<market>"``, ``source="lake:delta"``): one snapshot per
   table actually read, same ``(path, version)`` digest convention, from the version
@@ -67,6 +69,11 @@ from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImpor
     normalize_identity_frame,
 )
 from equity_lake.core.paths import PRICE_MARKETS, market_dir
+from equity_lake.core.price_provenance import (
+    PriceOriginClassification,
+    classify_price_origin,
+)
+from equity_lake.core.schemas import PRICE_PROVENANCE_VERSION
 from equity_lake.ingestion.types import MARKET_DIR_MAP
 from equity_lake.storage.delta import delta_table_path
 from equity_lake.storage.lake_reader import with_price_adjustment
@@ -147,6 +154,15 @@ class BacktestDataLoader:
         #: market's two action tables and one price table are each recorded once.
         #: Cleared at the start of every :meth:`load` (see the module docstring).
         self._snapshots: dict[str, dict[str, str | None]] = {}
+        #: Row-bound price-origin summaries of the current load, keyed by price snapshot
+        #: name. Plain mappings for the same reason as ``_snapshots``: the classification
+        #: happens here (before any projection drops the marker columns) and the evidence
+        #: writer turns it into a validated ``PriceOriginSummary``.
+        self._price_origin_summaries: dict[str, dict[str, object]] = {}
+        #: Snapshots whose claim must be refused for this load (a non-Delta file set that
+        #: changed between the pre-scan digest and the scan itself), keyed by snapshot name
+        #: with the closed-set reason it is recorded under.
+        self._origin_refusals: dict[str, str] = {}
         logger.info("BacktestDataLoader initialized", cache_enabled=cache_enabled, lake_dir=str(self.lake_dir) if self.lake_dir else None)
 
     def snapshots(self) -> list[dict[str, str | None]]:
@@ -165,6 +181,20 @@ class BacktestDataLoader:
         imports ``arena``, which imports this module).
         """
         return [dict(entry) for entry in sorted(self._snapshots.values(), key=lambda entry: str(entry["name"]))]
+
+    def price_origin_summaries(self) -> list[dict[str, object]]:
+        """Row-bound origin evidence for the price snapshots the latest load consumed.
+
+        One entry per price snapshot, describing **every row this read consumed** for that
+        market in the requested date window — including rows a strategy later filters out
+        — which is the conservative complete-input classification ADR-0027 §4.5 permits
+        (and which the manifest discloses through ``consumed_rows``). Scoped to the latest
+        load and empty when nothing was read (``preloaded_data``, an in-memory frame).
+
+        Plain mappings, not ``PriceOriginSummary`` models, keeping this module free of the
+        ``backtesting.evidence`` import (see :meth:`snapshots`).
+        """
+        return [dict(entry) for entry in sorted(self._price_origin_summaries.values(), key=lambda entry: str(entry.get("name")))]
 
     def _record_delta_snapshot(self, name: str, table_path: Path, version: int) -> None:
         """Record an immutable ``(path, version)`` reference digest for one table read.
@@ -224,6 +254,8 @@ class BacktestDataLoader:
         # Snapshot scope is the load, not the loader: reset before any read so a stale
         # entry can never be reported next to data this load fetched.
         self._snapshots.clear()
+        self._price_origin_summaries.clear()
+        self._origin_refusals.clear()
         self._action_input_cache.clear()
         selected_markets = list(PRICE_MARKETS) if markets is None else markets
         requested_columns = columns or ["ticker", "date", "open", "high", "low", "close", "volume"]
@@ -310,6 +342,9 @@ class BacktestDataLoader:
             self._record_delta_snapshot(snapshot_name, data_dir, int(table.version()))
             available = {field.name for field in table.schema().fields}
             if "date" not in available:
+                # Nothing was consumed, but the snapshot exists: record the empty scope so
+                # the manifest discloses it as `unknown`/`empty_scope` rather than omitting it.
+                self._record_price_origin(snapshot_name, pl.DataFrame())
                 return pl.DataFrame()
             filters: list[tuple[str, str, object]] = [("date", ">=", start_date), ("date", "<=", end_date)]
             raw = pl.DataFrame(table.to_pyarrow_table(filters=filters))
@@ -317,15 +352,26 @@ class BacktestDataLoader:
             # Enumerated and digested before the scan, with the scan's own glob.
             self._record_parquet_snapshot(snapshot_name, data_dir)
             raw = pl.scan_parquet(str(data_dir / "**" / "*.parquet"), hive_partitioning=True).collect()
+            # A non-Delta read cannot support an origin claim. The snapshot digest covers the
+            # file set as *enumerated*, while the scan reads the bytes later, so a concurrent
+            # replacement — including one that is restored before any re-check (an ABA) —
+            # could leave a known origin bound to different bytes. ADR-0027 §4 forbids that,
+            # and demands either a freeze of the scanned bytes or a refused claim: this path
+            # refuses, and keeps the row count plus the envelope digest visible instead.
+            self._origin_refusals[snapshot_name] = "incomplete_binding"
+            logger.info("price_origin_unbound_file_set", market=market, path=str(data_dir))
             if "date" not in raw.columns:
+                self._record_price_origin(snapshot_name, pl.DataFrame())
                 return pl.DataFrame()
             raw = raw.filter(pl.col("date").cast(pl.Date).is_between(start_date, end_date, closed="both"))
 
         ticker_column = "ticker" if "ticker" in raw.columns else "symbol" if "symbol" in raw.columns else None
         if ticker_column is None:
+            self._record_price_origin(snapshot_name, raw)
             return pl.DataFrame()
         raw = raw.filter(pl.col(ticker_column).cast(pl.String).is_in(symbols))
         if raw.is_empty():
+            self._record_price_origin(snapshot_name, raw)
             return raw
         if "market" in raw.columns:
             mismatched_market = raw.filter(pl.col("market").cast(pl.String) != market)
@@ -339,7 +385,54 @@ class BacktestDataLoader:
             raw = raw.with_columns(pl.col("symbol").alias("ticker"))
 
         keep = list(dict.fromkeys([*columns, *IDENTITY_COLUMNS, "ticker", "date", "mic", "symbol", "identity_schema_version"]))
+
+        # Origin evidence is classified here, on the rows this market contributed to the
+        # shared frame, and **before** the projection below can discard the marker columns.
+        # The snapshot it describes is the same one the read just recorded, so a table that
+        # advances afterwards cannot change what this load claims it consumed.
+        self._record_price_origin(snapshot_name, raw)
+
         return raw.select([column for column in keep if column in raw.columns])
+
+    def _record_price_origin(self, snapshot_name: str, frame: pl.DataFrame) -> None:
+        """Classify one market's consumed rows and bind the result to its snapshot.
+
+        A malformed version-1 claim raises out of the load: ADR-0027 §4.5 makes that an
+        input validation failure, so the pair fails instead of being published with a
+        defect classified as a healthy ``unknown``.
+        """
+        snapshot = self._snapshots.get(snapshot_name)
+        if snapshot is None:  # pragma: no cover - the read always records its snapshot first
+            return
+        # Always validate the consumed rows first: a malformed supported claim is an input
+        # validation failure (ADR-0027 §4.5), and refusing the *claim* must never suppress
+        # that check. The classification is then discarded for a refused snapshot.
+        classification = classify_price_origin(frame)
+        refusal = self._origin_refusals.get(snapshot_name)
+        if refusal is not None:
+            # A refused *claim* loses its label, but the rows keep their own diagnostics:
+            # a row that was already unproved for its own reason (a missing envelope, or an
+            # unsupported future version that must stay visible, ADR-0027 §4.5) is not
+            # relabelled as a binding defect. Only rows whose claim cannot be bound get the
+            # refusal reason, so the reasons still add up to the consumed rows.
+            carried = dict(classification.unknown_reasons)
+            unbound = frame.height - sum(carried.values())
+            if unbound > 0:
+                carried[refusal] = carried.get(refusal, 0) + unbound
+            classification = PriceOriginClassification(
+                consumed_rows=frame.height,
+                synthetic=0,
+                real=0,
+                unknown=frame.height,
+                unknown_reasons=dict(sorted(carried.items())),
+                sources=[],
+                envelope_sha256=classification.envelope_sha256,
+            )
+        self._price_origin_summaries[snapshot_name] = {
+            "schema_version": PRICE_PROVENANCE_VERSION,
+            "snapshot": dict(snapshot),
+            **classification.as_summary_fields(),
+        }
 
     def _action_inputs_for(self, instrument: InstrumentKey) -> tuple[pl.DataFrame, pl.DataFrame]:
         """One instrument's action inputs, recording the lake read's versions once.

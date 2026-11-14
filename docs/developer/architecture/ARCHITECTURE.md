@@ -143,10 +143,12 @@ run IDs — a materially different cost application can never look scope-identic
 Universe and strategies are sorted and de-duplicated, costs are ordered by regime
 name (one entry per regime), and parameter keys are ordered, so the same scope
 hashes identically regardless of input ordering. The protocol constant
-(`equity-run-manifest/3`) is part of the scope: adding the applied costs to the
-preimage was version 2, and version 3 is the canonical-universe/read-seam-snapshot
-protocol, so IDs minted under an earlier protocol are not comparable with current
-ones (no migration, no legacy reader branch). The code commit and the dirty-diff
+(`equity-run-manifest/4`) is part of the scope: adding the applied costs to the
+preimage was version 2, version 3 is the canonical-universe/read-seam-snapshot
+protocol, and version 4 (ADR-0027) adds one row-bound price-origin summary per price
+snapshot from which `data_provenance` is derived — so IDs minted under an earlier
+protocol are not comparable with current ones (no migration; v3 evidence stays
+readable under its own rules and is never rewritten). The code commit and the dirty-diff
 digest live in the manifest and never change a scope-identical run ID (frozen
 decision E01-1).
 
@@ -158,9 +160,12 @@ preimage also contains — `cost_regimes` must name exactly those regimes), and
 execution-timing assumptions — plus
 the seed (`null` allowed), code commit plus dirty-diff digest, a digest of
 non-secret configuration only, data provenance (`synthetic | real | mixed |
-unknown`), the **universe basis** (`canonical | ticker_only`), input snapshots
-(`name`, `sha256`, `source`, `version`), per-artifact `path`/`sha256`/`bytes`, and
-per-metric availability (`measured | missing | non_finite`). The manifest
+unknown`, derived from the summaries below), the **universe basis** (`canonical |
+ticker_only`), input snapshots (`name`, `sha256`, `source`, `version`), price-origin
+summaries (`schema_version`, the snapshot reference, `consumed_rows`, counts by kind
+with the closed-set unknown reasons, the named sources and an envelope-projection
+digest), per-artifact `path`/`sha256`/`bytes`, and per-metric availability
+(`measured | missing | non_finite`). The manifest
 **re-verifies its own run ID**: a file whose stated `run_id` is not reproduced by
 hashing its recorded scope (including the applied costs) is invalid, so a published
 run's cost application cannot be edited without invalidating the run.
@@ -197,13 +202,16 @@ Wiring: `run_arena` sets additively on `ArenaOutcome.input_snapshots` and the ar
 writer converts them for `finalise_run`; `equity report backtest` reads
 `engine.data_loader.snapshots()`.
 
-Provenance stays `unknown` on **every** shipped path, including when snapshots
-exist: a snapshot proves which bytes/versions were read, not which price source
-produced the marks, and no persisted price-source marker exists yet (open item
-E01-6). A path, a table name, a `01_bronze` location or a bronze identity column
-never proves real data, and nothing derives a provenance — so the model's
-"non-unknown requires snapshots" rule stays a necessary, not sufficient, condition.
-E01 is not complete until E01-6 lands.
+Provenance is **derived, never asserted** (E01-6, ADR-0027). Each price row carries a
+nullable version-1 envelope (`price_provenance_version`, `price_provenance`,
+`price_source`, `price_source_sha256`); the read seam classifies the rows it actually
+consumed, from the same pinned Delta version it read and before the column projection,
+into one summary per price snapshot, and the writer re-derives `data_provenance` from
+those summaries. Only the demo generator asserts `synthetic`; real adapters and every
+legacy row carry no claim and report `unknown`, which is the honest answer rather than
+a defect. A path, a table name, a `01_bronze` location or a bronze identity column
+still never proves origin, existing rows are never backfilled, and the classification
+covers **price** origin only — never action, feature or prediction inputs.
 Secrets are never read, hashed, or copied: only a digest of the non-secret
 configuration is stored, and secret-named keys are excluded before hashing.
 

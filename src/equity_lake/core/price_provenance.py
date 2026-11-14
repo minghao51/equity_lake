@@ -36,6 +36,7 @@ import hashlib
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Any
@@ -352,12 +353,113 @@ def _validate_claim(claim: Mapping[str, Any]) -> None:
         raise PriceProvenanceError(f"invalid envelope {described}: price_source_sha256 must be a lowercase hex sha256 digest")
 
 
+@dataclass(frozen=True, slots=True)
+class PriceOriginClassification:
+    """Row-origin counts for one consumed price snapshot (ADR-0027 §4.4 data).
+
+    Produced at the read seam from the rows a read actually consumed — before a column
+    projection can discard the markers — and converted into a
+    ``backtesting.evidence.PriceOriginSummary`` by the evidence writer. This module stays
+    free of the backtesting import so the loader can classify rows without a cycle.
+    """
+
+    consumed_rows: int
+    synthetic: int
+    real: int
+    unknown: int
+    unknown_reasons: dict[str, int]
+    sources: list[str]
+    envelope_sha256: str
+
+    def as_summary_fields(self) -> dict[str, object]:
+        """The summary body minus the snapshot reference and schema version."""
+        return {
+            "consumed_rows": self.consumed_rows,
+            "counts": {
+                "synthetic": self.synthetic,
+                "real": self.real,
+                "unknown": self.unknown,
+                "unknown_reasons": dict(self.unknown_reasons),
+            },
+            "sources": list(self.sources),
+            "envelope_sha256": self.envelope_sha256,
+        }
+
+
+def classify_price_origin(frame: pl.DataFrame) -> PriceOriginClassification:
+    """Classify every consumed price row by origin, at the read seam (ADR-0027 §4.5).
+
+    Each row contributes exactly one kind: a version-1 ``synthetic``/``real`` claim with
+    its source and digest, a version-1 ``unknown`` row, a row with no envelope
+    (``missing_envelope``) or a row whose envelope version this reader does not interpret
+    (``unsupported_version`` — readable as unknown, never read with version-1 rules).
+
+    A *malformed or contradictory* version-1 claim is an input validation failure, not a
+    downgrade: it raises, so a run cannot be published by dropping the row or by calling
+    the defect a healthy ``unknown`` (ADR-0027 §4.5). The digest covers the consumed rows'
+    identity/date/envelope projection, so it has to be taken before any projection drops
+    the marker columns.
+
+    Raises:
+        PriceProvenanceError: when the batch carries a malformed supported claim.
+    """
+    missing = [column for column in PRICE_PROVENANCE_COLUMNS if column not in frame.columns]
+    if missing:
+        # No persisted envelope at all (a legacy table, an in-memory fixture, or a read
+        # that projected the markers away): every consumed row is unknown, and the digest
+        # is still taken over the identity/date projection it does have.
+        return PriceOriginClassification(
+            consumed_rows=frame.height,
+            synthetic=0,
+            real=0,
+            unknown=frame.height,
+            unknown_reasons={"missing_envelope": frame.height} if frame.height else {},
+            sources=[],
+            envelope_sha256=envelope_projection_digest(frame),
+        )
+
+    unknown_reasons: dict[str, int] = {}
+    counts = {"synthetic": 0, "real": 0, "unknown": 0}
+    sources: set[str] = set()
+    for row in frame.select(list(PRICE_PROVENANCE_COLUMNS)).iter_rows(named=True):
+        version = row["price_provenance_version"]
+        kind = row["price_provenance"]
+        if version is None:
+            counts["unknown"] += 1
+            unknown_reasons["missing_envelope"] = unknown_reasons.get("missing_envelope", 0) + 1
+            continue
+        if version != PRICE_PROVENANCE_VERSION:
+            counts["unknown"] += 1
+            unknown_reasons["unsupported_version"] = unknown_reasons.get("unsupported_version", 0) + 1
+            continue
+        # Version 1 is interpreted strictly: a malformed claim is a defect, not an unknown.
+        _validate_claim(row)
+        if kind == "unknown":
+            counts["unknown"] += 1
+            unknown_reasons["missing_envelope"] = unknown_reasons.get("missing_envelope", 0) + 1
+            continue
+        counts[str(kind)] += 1
+        sources.add(str(row["price_source"]))
+
+    return PriceOriginClassification(
+        consumed_rows=frame.height,
+        synthetic=counts["synthetic"],
+        real=counts["real"],
+        unknown=counts["unknown"],
+        unknown_reasons=dict(sorted(unknown_reasons.items())),
+        sources=sorted(sources),
+        envelope_sha256=envelope_projection_digest(frame),
+    )
+
+
 __all__ = [
     "ENVELOPE_PROJECTION_FIELDS",
     "PRICE_BATCH_FIELDS",
     "PRICE_SOURCE_EVIDENCE_SCHEMA",
+    "PriceOriginClassification",
     "PriceProvenanceError",
     "canonical_decimal",
+    "classify_price_origin",
     "envelope_projection_digest",
     "generator_evidence_digest",
     "generator_evidence_payload",

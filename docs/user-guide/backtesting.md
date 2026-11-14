@@ -54,12 +54,26 @@ dotenvx run -- uv run equity report backtest --strategy trend_following \
 
 The manifest records the **universe basis** — `canonical` when every universe entry
 is a canonical `market/MIC/percent-quoted-symbol` identity display key parsed back
-through the identity model, `ticker_only` when it is not — and the **read-seam input
+through the identity model, `ticker_only` when it is not — the **read-seam input
 snapshots** the engine's own loader captured (a Delta `version` per read, or one
-aggregate file-set digest for a non-Delta lake). Neither upgrades
-`data_provenance`, which stays `unknown` until a persisted price-source marker exists
-(open item E01-6). See
+aggregate file-set digest for a non-Delta lake), and one **price-origin summary per
+price snapshot**. See
 [Arena and findings](20260829-arena-and-findings.md#read-seam-input-snapshots).
+
+`data_provenance` is **derived, never asserted**: the writer re-derives it from those
+summaries, so `synthetic` means every consumed price row carried a supported
+`synthetic` envelope, `real` means every row carried a supported `real` one, `mixed`
+means both (an aggregate only), and `unknown` covers anything unproved. A lake written
+before the envelope existed, a real-source adapter, or an in-memory frame produces no
+claims and therefore still reports `unknown` — the honest answer, not a defect. Claims
+are per row, so a table holding both kinds can never be relabelled wholesale, and
+existing rows are never backfilled. Note that `data_provenance` describes **price**
+origin only; it says nothing about corporate-action, feature or prediction inputs.
+
+Run manifests are now protocol `equity-run-manifest/4`; version-3 manifests stay
+readable under their own rules and are never rewritten. An unsupported envelope
+version inside a price table is reported as `unknown` with its stored version visible,
+while a malformed or contradictory claim fails the read rather than being downgraded.
 
 ### `equity arena run`
 
