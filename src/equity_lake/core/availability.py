@@ -27,6 +27,13 @@ COVERAGE_BASES: tuple[CoverageBasis, ...] = ("source_clock", "vendor_events_no_c
 #: Availability versions whose rows imply the strict basis (decision 7: v4 rows are
 #: read as ``source_clock`` exactly as before the basis column existed).
 IMPLICIT_STRICT_AVAILABILITY_SCHEMA_VERSION = 4
+#: The fixed disclosure every weak-basis research artifact must carry verbatim
+#: (ADR-0034 decision 3). A single machine-checkable home so a report, a metrics file
+#: and a prediction row cannot drift into different wording.
+VENDOR_EVENTS_NO_CLOCK_DISCLOSURE = (
+    "Computed on a vendor-event-completeness basis with no source clock (ADR-0032/0034). "
+    "Not point-in-time evidence, not indicative of any real strategy's live performance, and not a promotion."
+)
 FEATURE_ACTION_COVERAGE_PROOF_COLUMNS = (
     "action_coverage_market",
     "action_coverage_mic",
@@ -400,6 +407,7 @@ __all__ = [
     "IMPLICIT_STRICT_AVAILABILITY_SCHEMA_VERSION",
     "AVAILABILITY_SCHEMA_VERSION",
     "PRICE_ADJUSTMENT_VERSION",
+    "VENDOR_EVENTS_NO_CLOCK_DISCLOSURE",
     "ActionCoverageProof",
     "AvailabilityContractError",
     "CoverageBasis",

@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import date
+from pathlib import Path
 
 import polars as pl
 import structlog
 
 from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     AVAILABILITY_SCHEMA_VERSION,
+    COVERAGE_BASES,
     FEATURE_ACTION_COVERAGE_PROOF_COLUMNS,
     PRICE_ADJUSTMENT_VERSION,
     AvailabilityContractError,
+    CoverageBasis,
     validate_feature_action_coverage,
+    validate_weak_feature_action_coverage,
 )
 from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_COLUMNS,
@@ -20,15 +24,38 @@ from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImpor
     InstrumentKey,
     normalize_identity_frame,
 )
-from equity_lake.core.paths import GOLD_FEATURES_DIR
+from equity_lake.core.paths import GOLD_DIR, GOLD_FEATURES_DIR, LAKE_DIR
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
 
 logger = structlog.get_logger(__name__)
 
 
 class FeatureLoader:
-    def __init__(self) -> None:
-        """Stateless reader; each request reads only the requested local Delta scope."""
+    def __init__(self, lake_dir: Path | str | None = None, coverage_basis: CoverageBasis = "source_clock") -> None:
+        """Stateless reader; each request reads only the requested local Delta scope.
+
+        ``lake_dir`` selects the lake root the reader reads (``None`` is the canonical
+        lake). A root is never mixed with another root inside one read, and an
+        alternate root (ADR-0030, e.g. ``data/lake_real``) is only ever selected
+        explicitly.
+
+        ``coverage_basis`` selects the ADR-0032 action-coverage basis this read
+        admits, one per read (ADR-0034 decision 1): ``source_clock`` is the strict
+        point-in-time default and every existing call site keeps it.
+        ``vendor_events_no_clock`` is an explicit research-only opt-in that admits
+        the weak vendor-event-completeness rows and is never inferred, defaulted or
+        selected by an environment switch.
+        """
+        if coverage_basis not in COVERAGE_BASES:
+            raise ValueError(f"Unknown coverage basis: {coverage_basis!r} (expected one of {COVERAGE_BASES})")
+        self.lake_dir = Path(lake_dir) if lake_dir is not None else None
+        self.coverage_basis: CoverageBasis = coverage_basis
+
+    def features_dir(self) -> Path:
+        """The Gold feature table this reader is scoped to (one root, resolved lazily)."""
+        if self.lake_dir is None:
+            return GOLD_FEATURES_DIR
+        return self.lake_dir / GOLD_DIR.relative_to(LAKE_DIR) / "features"
 
     def load_features(
         self,
@@ -45,15 +72,22 @@ class FeatureLoader:
         must already carry identity and resolve to exactly one instrument. A
         ticker-only legacy row requires a caller-supplied trusted historical
         provenance map. Current ticker configuration is never consulted.
+
+        The read admits exactly the basis selected at construction (ADR-0034
+        decision 1): a row stamped with a different basis refuses, so a mixed-basis
+        frame is never reinterpreted. Under the default strict ``source_clock``
+        basis the weak validator below is unreachable and weak rows refuse exactly
+        as before (ADR-0034 decision 2).
         """
         symbol = ticker if isinstance(ticker, str) else ticker.symbol
-        if not GOLD_FEATURES_DIR.exists():
+        features_dir = self.features_dir()
+        if not features_dir.exists():
             return pl.DataFrame()
 
         from deltalake import DeltaTable
 
-        if DeltaTable.is_deltatable(str(GOLD_FEATURES_DIR)):
-            table = DeltaTable(str(GOLD_FEATURES_DIR))
+        if DeltaTable.is_deltatable(str(features_dir)):
+            table = DeltaTable(str(features_dir))
             columns = {field.name for field in table.schema().fields}
             symbol_column = "ticker" if "ticker" in columns else "symbol"
             # Push down only the date range. Label finalization rewrites matched
@@ -69,7 +103,7 @@ class FeatureLoader:
             if symbol_column in raw.columns:
                 raw = raw.filter(pl.col(symbol_column) == symbol)
         else:
-            parquet = pl.scan_parquet(str(GOLD_FEATURES_DIR / "**" / "*.parquet"), hive_partitioning=True)
+            parquet = pl.scan_parquet(str(features_dir / "**" / "*.parquet"), hive_partitioning=True)
             columns = set(parquet.collect_schema().names())
             symbol_column = "ticker" if "ticker" in columns else "symbol"
             raw = parquet.filter(
@@ -134,9 +168,23 @@ class FeatureLoader:
             or any(value != 1 for value in frame["action_coverage"].to_list())
         ):
             raise InstrumentIdentityError("Gold feature rows have unknown or incompatible adjustment/availability semantics")
+        # One read admits one basis (ADR-0032 decision 4, ADR-0034 decision 1): rows
+        # stamped with any other basis refuse here, so a weak row can never be
+        # reinterpreted as point-in-time evidence or the reverse.
+        recorded_bases = sorted({str(value) for value in frame["action_coverage_basis"].to_list() if value is not None})
+        mismatched = [basis for basis in recorded_bases if basis != self.coverage_basis]
+        if mismatched:
+            raise AvailabilityContractError(
+                f"Gold feature rows carry action-coverage basis {mismatched} but this read requested {self.coverage_basis!r}; "
+                "one read admits one basis, so a mixed or mismatched basis is refused (ADR-0032 decision 4)"
+            )
         try:
-            for row in frame.to_dicts():
-                validate_feature_action_coverage(row)
+            if self.coverage_basis == "vendor_events_no_clock":
+                for row in frame.to_dicts():
+                    validate_weak_feature_action_coverage(row)
+            else:
+                for row in frame.to_dicts():
+                    validate_feature_action_coverage(row)
         except AvailabilityContractError as exc:
             raise AvailabilityContractError(f"Gold feature rows have unavailable action-coverage provenance: {exc}") from exc
 
