@@ -14,6 +14,7 @@ import requests
 import structlog
 import yfinance as yf
 
+from equity_lake.core.availability import VendorEventCoverageProof
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_SCHEMA_VERSION,
@@ -167,6 +168,9 @@ class MarketDataFetcher:
         self.retry_delay = retry_delay
         self.ticker_config = ticker_config
         self.stock_limit = stock_limit
+        #: Weak, clockless coverage proofs for the event lists the last action fetch
+        #: returned (ADR-0032 decision 6). Empty unless a clockless source issued them.
+        self.action_coverage_proofs: tuple[VendorEventCoverageProof, ...] = ()
         self._retry_decorator = build_retry_decorator(
             attempts=retry_attempts,
             wait_multiplier=retry_delay,
@@ -245,15 +249,7 @@ class MarketDataFetcher:
             if provider_mic and exchange_mic and provider_mic != exchange_mic:
                 raise InstrumentIdentityError(f"Provider MIC {provider_mic!r} conflicts with exchange {provider_exchange!r}")
 
-            configured_mics: set[str] = set()
-            if self.ticker_config is not None:
-                config_markets = {LONG_TO_SHORT[canonical], canonical}
-                if canonical == "hk_sg_equity":
-                    config_markets.update({"hk", "sg"})
-                for config_market in config_markets:
-                    configured = self.ticker_config.get_ticker_metadata(symbol, market=config_market)
-                    if configured is not None:
-                        configured_mics.add(configured.instrument_key(canonical).mic)
+            configured_mics = self._configured_mic_candidates(symbol)
             configured_mic = next(iter(configured_mics)) if len(configured_mics) == 1 else None
             resolved_mic = provider_mic or exchange_mic or configured_mic
             if resolved_mic is None:
@@ -272,6 +268,26 @@ class MarketDataFetcher:
                 "provider_mic" if provider_mic else "provider_exchange" if exchange_mic else "current_ticker_config"
             )
         return pl.DataFrame(rows, infer_schema_length=None)
+
+    def _configured_mic_candidates(self, symbol: str) -> set[str]:
+        """MICs the exact current ticker config asserts for ``symbol``.
+
+        yfinance supplies no MIC/exchange, so a vendor-independent identity can come
+        only from the exact current :class:`TickerConfig` — never from ticker spelling.
+        More than one configured MIC is ambiguous, so the caller resolves nothing.
+        """
+        if self.ticker_config is None:
+            return set()
+        canonical = canonical_market(self.market)
+        config_markets = {LONG_TO_SHORT[canonical], canonical}
+        if canonical == "hk_sg_equity":
+            config_markets.update({"hk", "sg"})
+        configured_mics: set[str] = set()
+        for config_market in config_markets:
+            configured = self.ticker_config.get_ticker_metadata(symbol, market=config_market)
+            if configured is not None:
+                configured_mics.add(configured.instrument_key(canonical).mic)
+        return configured_mics
 
     def load_tickers_from_config(
         self,
@@ -519,20 +535,20 @@ class YFinanceBaseFetcher(MarketDataFetcher):
             throttle(self.rate_limit_source)
             now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
             rows: list[pl.DataFrame] = []
+            # Vendor list window per ticker, recorded **before** the watermark filter:
+            # the fetch returns the vendor's complete event list, so the proof window is
+            # what the vendor published, not the slice this run happened to write.
+            vendor_windows: dict[str, tuple[date, date]] = {}
             for ticker in self.tickers:
-                throttle(self.rate_limit_source)
                 try:
-                    actions = yf.Ticker(ticker).actions
+                    events = self.fetch_vendor_action_list(ticker)
                 except Exception as exc:  # one bad ticker must not sink the run
                     logger.warning("corporate_actions_fetch_failed", ticker=ticker, error=str(exc))
                     continue
-                if actions is None or (hasattr(actions, "empty") and actions.empty):
+                if events is None:
                     continue
-                frame = pl.from_pandas(actions.reset_index())
-                date_col = frame.columns[0]
-                frame = frame.with_columns(pl.col(date_col).cast(pl.Date).alias("ex_date"))
-
-                events = self._expand_action_events(frame, ticker)
+                ex_dates = events["ex_date"].to_list()
+                vendor_windows[ticker] = (min(ex_dates), max(ex_dates))
                 bound = since_by_ticker.get(ticker) if since_by_ticker is not None else since
                 if bound is not None:
                     events = events.filter(pl.col("ex_date") > bound)
@@ -545,11 +561,55 @@ class YFinanceBaseFetcher(MarketDataFetcher):
                         pl.lit(None, dtype=CORPORATE_ACTION_SCHEMA["source_available_at"]).alias("source_available_at"),
                     ).select("ticker", "ex_date", "action", "value", "source", "ingested_at", "source_available_at")
                 )
+            self.action_coverage_proofs = self._vendor_event_proofs(vendor_windows)
             if not rows:
                 return pl.DataFrame(schema=CORPORATE_ACTION_SCHEMA)
             return pl.concat(rows, how="vertical")
 
         return cast(pl.DataFrame, self._retry_on_failure(_fetch))
+
+    def _vendor_event_proofs(self, windows: Mapping[str, tuple[date, date]]) -> tuple[VendorEventCoverageProof, ...]:
+        """Weak, clockless proofs for the vendor event lists just fetched (ADR-0032 d6).
+
+        The proof records the vendor list's own date window and carries no clock at
+        all, so ingestion time cannot become source time. A ticker whose exact current
+        config identity is unavailable yields no proof: the adjusted read then refuses
+        rather than inheriting a guessed instrument (the identity rule is unchanged).
+        """
+        proofs: list[VendorEventCoverageProof] = []
+        for ticker, (window_start, window_end) in sorted(windows.items()):
+            configured_mics = self._configured_mic_candidates(ticker)
+            if len(configured_mics) != 1:
+                logger.warning("coverage_proof_identity_unavailable", ticker=ticker, market=self.market)
+                continue
+            proof = VendorEventCoverageProof(
+                market=canonical_market(self.market),
+                mic=next(iter(configured_mics)),
+                symbol=ticker,
+                source="yahoo",
+                coverage_start=window_start,
+                coverage_end=window_end,
+            )
+            proofs.append(proof)
+        return tuple(proofs)
+
+    def fetch_vendor_action_list(self, ticker: str) -> pl.DataFrame | None:
+        """Full vendor action list for one ticker, or ``None`` when the vendor lists none.
+
+        Deliberately raises on any provider failure instead of swallowing it: an empty
+        result is evidence that the vendor published no actions for this instrument only
+        when the fetch itself succeeded (ADR-0033 decision 1). The batch path isolates
+        that exception per ticker; the proven-empty path must not.
+        """
+        throttle(self.rate_limit_source)
+        actions = yf.Ticker(ticker).actions
+        if actions is None or (hasattr(actions, "empty") and actions.empty):
+            return None
+        frame = pl.from_pandas(actions.reset_index())
+        date_col = frame.columns[0]
+        frame = frame.with_columns(pl.col(date_col).cast(pl.Date).alias("ex_date"))
+        events = self._expand_action_events(frame, ticker)
+        return None if events.is_empty() else events
 
     @staticmethod
     def _expand_action_events(frame: pl.DataFrame, ticker: str) -> pl.DataFrame:

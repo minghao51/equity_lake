@@ -31,7 +31,7 @@ from equity_lake.core.price_provenance import (
     generator_evidence_payload,
     price_batch_digest,
 )
-from equity_lake.core.schemas import PRICE_PROVENANCE_VERSION
+from equity_lake.core.schemas import PRICE_PROVENANCE_VERSION, SYNTHETIC_COVERAGE_SOURCE
 from equity_lake.devtools.seeding import DEMO_UNIVERSE, OhlcvProfile, configured_identities, synthetic_ohlcv, trailing_business_days
 
 logger = structlog.get_logger(__name__)
@@ -44,7 +44,7 @@ US_EQUITY_SOURCE_MARKET = "us_equity"
 #: Provenance label for demo coverage proofs. Free-form in ``ActionCoverageProof``
 #: (unlike price ``identity_provenance``, which has a closed vocabulary). It describes
 #: action coverage only — it is never price-origin evidence (ADR-0027 §1).
-COVERAGE_SOURCE = "synthetic_demo_seed"
+COVERAGE_SOURCE = SYNTHETIC_COVERAGE_SOURCE
 
 # Price-origin claim for rows this generator produced (ADR-0027 D1/D2). The generator
 # is the component that knows it generated the values, so it — and only it — asserts

@@ -27,6 +27,9 @@ IDENTITY_DATE_COLUMNS: tuple[str, ...] = (*IDENTITY_COLUMNS, "date")
 EXCHANGE_TO_MIC: dict[str, str] = {
     "NYSE": "XNYS",
     "NEW YORK STOCK EXCHANGE": "XNYS",
+    "NYSE ARCA": "ARCX",
+    "ARCA": "ARCX",
+    "ARCX": "ARCX",
     "NASDAQ": "XNAS",
     "NASDAQ GS": "XNAS",
     "NASDAQ GLOBAL SELECT": "XNAS",
@@ -54,7 +57,7 @@ EXCHANGE_TO_MIC: dict[str, str] = {
 }
 
 MARKET_MICS: dict[str, frozenset[str]] = {
-    "us_equity": frozenset({"XNYS", "XNAS"}),
+    "us_equity": frozenset({"XNYS", "XNAS", "ARCX"}),
     "cn_ashare": frozenset({"XSHG", "XSHE"}),
     "hk_sg_equity": frozenset({"XHKG", "XSES"}),
     "jpx_equity": frozenset({"XTKS"}),

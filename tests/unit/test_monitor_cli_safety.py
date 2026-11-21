@@ -48,6 +48,10 @@ def monitor_cli(monkeypatch: pytest.MonkeyPatch) -> MonitorInvoker:
         results = check_results if check_results is not None else {"Data Freshness": healthy, "Data Quality": healthy}
         monitor_inst = MagicMock()
         monitor_inst.check_results = results
+        # The real monitor always exposes these; an empty map is the canonical-root
+        # shape (no check is not-applicable), so the renderer falls back to pass/fail.
+        monitor_inst.check_status = {}
+        monitor_inst.check_notes = {}
         if run_error is not None:
             monitor_inst.run_health_check.side_effect = run_error
         else:
@@ -59,6 +63,10 @@ def monitor_cli(monkeypatch: pytest.MonkeyPatch) -> MonitorInvoker:
                 alerts=[] if healthy else ["synthetic failure"],
                 metrics={"synthetic": {"checked": True}},
                 check_results=results,
+                check_status={},
+                check_notes={},
+                real_source_root=False,
+                price_markets=("us_equity",),
             ),
         )
         monitor_inst.save_report.side_effect = lambda path: HealthPipelineMonitor.save_report(report_state, path)

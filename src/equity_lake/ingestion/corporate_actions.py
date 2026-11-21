@@ -20,7 +20,7 @@ direct calls to :func:`ingest_corporate_actions`.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
 from typing import Any, cast
@@ -28,7 +28,12 @@ from typing import Any, cast
 import polars as pl
 import structlog
 
-from equity_lake.core.availability import ActionCoverageProof  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    ActionCoverageProof,
+    CoverageProof,
+    VendorEventCoverageProof,
+    parse_coverage_proof,
+)
 from equity_lake.core.paths import canonical_market
 from equity_lake.core.schemas import CORPORATE_ACTION_COVERAGE_SCHEMA, CORPORATE_ACTION_SCHEMA
 
@@ -46,6 +51,22 @@ def corporate_actions_table(market: str, layer: str = "bronze") -> str:
 
     root = cast(Path, getattr(paths, f"{layer.upper()}_CORPORATE_ACTIONS_DIR"))
     return f"{root.parent.name}/{root.name}/{canonical_market(market)}"
+
+
+def coverage_frame_for_write(proofs: Sequence[CoverageProof]) -> pl.DataFrame:
+    """Materialise coverage rows with the table's full schema.
+
+    A weak proof model carries no clock field at all (ADR-0032 decision 6), so the
+    persisted row gets an explicit typed null rather than an omitted column — the
+    table contract stays one shape and no clock value can appear by accident.
+    """
+    if not proofs:
+        return pl.DataFrame()
+    frame = pl.DataFrame([proof.as_row() for proof in proofs])
+    for column, dtype in CORPORATE_ACTION_COVERAGE_SCHEMA.items():
+        if column not in frame.columns:
+            frame = frame.with_columns(pl.lit(None, dtype=dtype).alias(column))
+    return frame.select(list(CORPORATE_ACTION_COVERAGE_SCHEMA))
 
 
 def corporate_action_coverage_table(market: str) -> str:
@@ -110,7 +131,7 @@ def load_corporate_action_inputs(market: str, *, lake_dir: Path | None = None) -
     return actions, coverage
 
 
-def max_stored_ex_dates(market: str) -> dict[str, date]:
+def max_stored_ex_dates(market: str, *, lake_dir: Path | None = None) -> dict[str, date]:
     """Per-ticker watermarks: max stored ``ex_date`` for each ticker (silver).
 
     A ticker's incremental fetch window is ``(watermark, ∞)`` — events at or
@@ -122,7 +143,7 @@ def max_stored_ex_dates(market: str) -> dict[str, date]:
     from equity_lake.storage.delta import DeltaReadError, read_delta
 
     try:
-        df = read_delta(corporate_actions_table(market, "silver"))
+        df = read_delta(corporate_actions_table(market, "silver"), lake_dir=lake_dir)
     except DeltaReadError:
         return {}
     if df.is_empty():
@@ -131,13 +152,13 @@ def max_stored_ex_dates(market: str) -> dict[str, date]:
     return dict(zip(grouped["ticker"].to_list(), grouped["ex_date"].to_list(), strict=True))
 
 
-def max_stored_ex_date(market: str) -> date | None:
+def max_stored_ex_date(market: str, *, lake_dir: Path | None = None) -> date | None:
     """Market-wide max stored ``ex_date`` (silver) — summary/compat value.
 
     The fetch path no longer bounds fetches by this market-global value
     (W03 PR4/F14); per-ticker windows come from :func:`max_stored_ex_dates`.
     """
-    watermarks = max_stored_ex_dates(market)
+    watermarks = max_stored_ex_dates(market, lake_dir=lake_dir)
     return max(watermarks.values()) if watermarks else None
 
 
@@ -147,7 +168,8 @@ def ingest_corporate_actions(
     tickers: list[str] | None = None,
     dry_run: bool = False,
     fetcher: Any = None,
-    coverage_proofs: Sequence[ActionCoverageProof] | None = None,
+    coverage_proofs: Sequence[CoverageProof | Mapping[str, object]] | None = None,
+    lake_dir: Path | None = None,
 ) -> dict[str, Any]:
     """Fetch corporate actions for *market* and write bronze + silver.
 
@@ -173,7 +195,7 @@ def ingest_corporate_actions(
         exclusive watermarks that bounded the fetch; ``None`` per ticker =
         full history), ``market``.
     """
-    from equity_lake.core.config import get_settings
+    from equity_lake.core.config import TickerConfig, get_settings
     from equity_lake.ingestion.router import MARKET_REGISTRY
     from equity_lake.ingestion.writers import upsert_dataset
 
@@ -187,10 +209,14 @@ def ingest_corporate_actions(
             logger.error("corporate_actions_unknown_market", market=market)
             return {"ok": False, "fetched": 0, "since": None, "market": market}
         ingestion = get_settings().ingestion
+        # The clockless fetch seam derives each weak coverage proof's identity from
+        # the exact current ticker config (yfinance has no MIC), so the config must
+        # be wired here; without it the fetch succeeds but no proof can be issued.
+        ticker_config = TickerConfig(config_path=Path(ingestion.ticker_config_path))
         fetcher = factory(
             retry_attempts=ingestion.retry_attempts,
             retry_delay=ingestion.retry_delay,
-            ticker_config=None,
+            ticker_config=ticker_config,
             filters=None,
             explicit_tickers=tickers,
         )
@@ -201,7 +227,7 @@ def ingest_corporate_actions(
     # event above a ticker's own watermark is picked up. Events at or below
     # a ticker's watermark are not re-detected (exclusive bound); the edges
     # are logged and returned so ops can see the window.
-    watermarks = max_stored_ex_dates(market)
+    watermarks = max_stored_ex_dates(market, lake_dir=lake_dir)
     effective_tickers = list(getattr(fetcher, "tickers", None) or [])
     since_by_ticker: dict[str, date | None] = {t: watermarks.get(t) for t in effective_tickers}
     since = max(watermarks.values()) if watermarks else None
@@ -215,11 +241,19 @@ def ingest_corporate_actions(
 
     df = fetcher.fetch_corporate_actions(since_by_ticker=since_by_ticker)
     proof_values = coverage_proofs if coverage_proofs is not None else getattr(fetcher, "action_coverage_proofs", ())
-    proofs = [proof if isinstance(proof, ActionCoverageProof) else ActionCoverageProof.model_validate(proof) for proof in proof_values]
+    proofs = [
+        parse_coverage_proof(proof.model_dump())
+        if isinstance(proof, (ActionCoverageProof, VendorEventCoverageProof))
+        else parse_coverage_proof(proof)
+        for proof in proof_values
+    ]
     for proof in proofs:
         if proof.market != canonical_market(market):
             raise ValueError(f"Coverage proof market {proof.market!r} does not match ingest route {market!r}")
-    coverage_frame = pl.DataFrame([proof.as_row() for proof in proofs]) if proofs else pl.DataFrame()
+    bases = {proof.coverage_basis for proof in proofs}
+    if len(bases) > 1:
+        raise ValueError(f"Coverage proofs mix bases {sorted(bases)}; one write admits one basis (ADR-0032 decision 4)")
+    coverage_frame = coverage_frame_for_write(proofs)
 
     if df.is_empty() and not proofs:
         logger.info("corporate_actions_no_new_events_unverified_coverage", market=market, since=since)
@@ -235,6 +269,7 @@ def ingest_corporate_actions(
             trading_date,
             dry_run=dry_run,
             partition_by=["ex_date"],
+            lake_dir=lake_dir,
         )
         silver_ok = upsert_dataset(
             df,
@@ -242,6 +277,7 @@ def ingest_corporate_actions(
             trading_date,
             dry_run=dry_run,
             partition_by=["ex_date"],
+            lake_dir=lake_dir,
         )
     coverage_ok = True
     if not coverage_frame.is_empty():
@@ -251,6 +287,7 @@ def ingest_corporate_actions(
             trading_date,
             dry_run=dry_run,
             partition_by=["coverage_end"],
+            lake_dir=lake_dir,
         )
 
     if dry_run:
@@ -281,6 +318,7 @@ def ingest_corporate_actions(
 
 __all__ = [
     "corporate_action_coverage_table",
+    "coverage_frame_for_write",
     "corporate_actions_table",
     "ingest_corporate_actions",
     "load_corporate_action_inputs",

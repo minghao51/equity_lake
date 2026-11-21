@@ -81,13 +81,17 @@ Execution is two-phase:
    enrichment nodes are enabled upstream.
 
 Every output frame is stamped with `feature_schema_version`. The current value
-is `FEATURE_SCHEMA_VERSION = 7`. The shared point-in-time contract uses
-`availability_schema_version = 4`; source-scoped corporate-action coverage
-proofs use schema version 2. Gold rows persist that proof in
+is `FEATURE_SCHEMA_VERSION = 8`. The shared point-in-time contract uses
+`availability_schema_version = 5`; source-scoped corporate-action coverage
+proofs use schema version 3. Gold rows persist that proof in
 `action_coverage_market`, `action_coverage_mic`, `action_coverage_symbol`,
 `action_coverage_source`, `action_coverage_start`, `action_coverage_end`,
 `action_source_available_at`, `action_source_valid_until`,
-`action_coverage_status`, and `action_coverage_schema_version`. Its identity
+`action_coverage_status`, `action_coverage_schema_version`, and
+`action_coverage_basis`. The basis is `source_clock` for the strict
+point-in-time contract; `vendor_events_no_clock` is an explicitly weaker,
+opt-in basis for vendor-sourced slices (ADR-0032) whose rows carry null clocks
+and `vendor_events_complete`, and which no point-in-time consumer accepts. Its identity
 must match the feature row's own `(market, MIC, symbol)`. The timezone-aware
 source clock maps to the first observable venue session, and the source-issued
 expiry must cover the decision-session close. This verified proof is mandatory
@@ -183,15 +187,52 @@ enabled by the pipeline driver; `include_macro` rides on its default.)
 
 ## Running features and recovering history
 
-The feature stage runs as part of the pipeline; there is no standalone feature
-command:
+The daily feature stage runs as part of the pipeline:
 
 ```bash
+# Ingest → features → ML (canonical lake)
 dotenvx run -- uv run equity pipeline --markets us
 dotenvx run -- uv run equity pipeline --skip-ingestion   # features + ML only
 dotenvx run -- uv run equity pipeline --skip-ingestion --skip-ml   # features only
 dotenvx run -- uv run equity pipeline --dry-run --verbose
 ```
+
+### Scoped feature run over one explicit lake root
+
+`equity features` is the standalone, explicitly scoped feature (Gold) build. It
+is the only command that reads an action store for a *subset* of tickers and the
+only one that writes Gold rows under a second lake root (`--lake-dir`, ADR-0030):
+
+```bash
+# Canonical lake, explicit tickers and window
+dotenvx run -- uv run equity features --tickers AAPL,MSFT --start 2024-01-02 --end 2024-12-31
+
+# Real-source root, weak (clockless) basis, dry run first — writes nothing
+dotenvx run -- uv run equity features --lake-dir data/lake_real \
+    --tickers AAPL,MSFT,NVDA --start 2020-01-02 --end 2026-08-20 \
+    --coverage-basis vendor_events_no_clock --dry-run
+```
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--tickers`, `-t` | required | Explicit scope only; never widened to the configured universe |
+| `--start` / `--end` | required | Output window `YYYY-MM-DD` (a 120-day warm-up is read before `--start`) |
+| `--coverage-basis` | `source_clock` | `source_clock` is the strict point-in-time basis; `vendor_events_no_clock` is the explicit weak opt-in (ADR-0032) |
+| `--lake-dir` | canonical lake | Explicit root (e.g. `data/lake_real`); the price markets and the corporate-action store are read from that root only — no fallback, no mixing |
+| `--dry-run` | off | Computes and validates the run, then writes nothing (no Gold rows, no label finalization) |
+
+Action inputs are scoped per instrument: the action store may hold many tickers,
+and a ticker-only event is resolved against its own coverage proof. A subset run
+never widens that resolver, so the run refuses instead of guessing:
+
+- `point-in-time source_clock coverage is unavailable; only vendor_events_no_clock evidence exists`
+  — the strict default refuses weak-only evidence (and the reverse refuses too).
+- `requested window ends …, beyond the action coverage bound …` — a window past
+  the instrument's action watermark refuses; it is never clamped.
+- `no corporate-action coverage proof is recorded` — an instrument with action
+  rows but no proof cannot establish coverage.
+- `corporate action identity is unverified` — only reachable through a
+  market-wide (unscoped) read, i.e. the pipeline path; scope the run instead.
 
 When `NoFeatureHistoryError` fires, the stage fails with a pointer to the
 recovery flag — it never auto-backfills:

@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from equity_lake.core.availability import (
+    ACTION_COVERAGE_SCHEMA_VERSION,  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+)
 from equity_lake.devtools.seed_demo import DEMO_UNIVERSE, resolve_universe, seed_demo  # type: ignore[import-untyped]
 
 pytestmark = pytest.mark.slow
@@ -83,7 +86,7 @@ def test_seed_demo_writes_action_coverage_proofs(tmp_path) -> None:  # type: ign
     assert coverage.height == 2
     assert set(coverage["source"].to_list()) == {"synthetic_demo_seed"}
     assert set(coverage["coverage_status"].to_list()) == {"complete"}
-    assert set(coverage["coverage_schema_version"].to_list()) == {2}
+    assert set(coverage["coverage_schema_version"].to_list()) == {ACTION_COVERAGE_SCHEMA_VERSION}
     assert (tmp_path / corporate_action_coverage_table("us_equity")).exists()
 
 

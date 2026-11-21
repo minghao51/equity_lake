@@ -339,6 +339,7 @@ def test_synthetic_normal_pipeline_preserves_provider_identity_through_ml(monkey
     from deltalake import write_deltalake
 
     from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        ACTION_COVERAGE_SCHEMA_VERSION,
         ActionCoverageProof,
     )
     from equity_lake.core.schemas import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
@@ -413,6 +414,7 @@ def test_synthetic_normal_pipeline_preserves_provider_identity_through_ml(monkey
         "action_source_valid_until",
         "action_coverage_status",
         "action_coverage_schema_version",
+        "action_coverage_basis",
     }.issubset(gold.columns)
     assert gold["action_coverage_source"].unique().to_list() == ["synthetic-complete-window"]
     assert gold["action_source_available_at"].unique().to_list() == [source_time]
@@ -420,7 +422,8 @@ def test_synthetic_normal_pipeline_preserves_provider_identity_through_ml(monkey
     assert gold["action_coverage_start"].unique().to_list() == [days[0]]
     assert gold["action_coverage_end"].unique().to_list() == [target]
     assert gold["action_coverage_status"].unique().to_list() == ["complete"]
-    assert gold["action_coverage_schema_version"].unique().to_list() == [2]
+    assert gold["action_coverage_schema_version"].unique().to_list() == [ACTION_COVERAGE_SCHEMA_VERSION]
+    assert gold["action_coverage_basis"].unique().to_list() == ["source_clock"]
     assert min(cast(list[int], gold["action_source_age_days"].to_list())) > 7
     assert {instrument.tuple for instrument in ml_calls[0]["tickers"]} == expected
 

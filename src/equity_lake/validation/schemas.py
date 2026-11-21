@@ -10,6 +10,7 @@ import polars as pl
 from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ACTION_COVERAGE_SCHEMA_VERSION,
     ActionCoverageProof,
+    parse_coverage_proof,
 )
 from equity_lake.core.instruments import InstrumentIdentityError, normalize_identity_frame
 from equity_lake.core.polars_utils import ensure_polars
@@ -186,9 +187,13 @@ class CorporateActionCoverageSchema(PointblankSchema):
     @classmethod
     def validate(cls, df: Any) -> pl.DataFrame:
         frame = ensure_polars(df)
-        proofs = [ActionCoverageProof.model_validate(row) for row in frame.to_dicts()]
-        for index, proof in enumerate(proofs):
-            for other in proofs[index + 1 :]:
+        proofs = [parse_coverage_proof(row) for row in frame.to_dicts()]
+        bases = {proof.coverage_basis for proof in proofs}
+        if len(bases) > 1:
+            raise ValueError(f"Coverage frame mixes bases {sorted(bases)}; one write admits one basis (ADR-0032 decision 4)")
+        strict = [proof for proof in proofs if isinstance(proof, ActionCoverageProof)]
+        for index, proof in enumerate(strict):
+            for other in strict[index + 1 :]:
                 same_source = proof.identity == other.identity and proof.source == other.source
                 overlaps = proof.coverage_start <= other.coverage_end and other.coverage_start <= proof.coverage_end
                 conflicting_vintage = (proof.source_available_at, proof.source_valid_until) != (other.source_available_at, other.source_valid_until)
@@ -197,6 +202,27 @@ class CorporateActionCoverageSchema(PointblankSchema):
         return super().validate(frame)
 
     def _build_validation(self, df: pl.DataFrame) -> Any:
+        bases = set(df["coverage_basis"].drop_nulls().unique().to_list()) if "coverage_basis" in df.columns else set()
+        if bases == {"vendor_events_no_clock"}:
+            return (
+                pb.Validate(data=df, label="Corporate-action coverage schema (vendor events, no clock)")
+                .col_vals_not_null(columns="market")
+                .col_vals_not_null(columns="mic")
+                .col_vals_not_null(columns="symbol")
+                .col_vals_not_null(columns="source")
+                .col_vals_not_null(columns="coverage_start")
+                .col_vals_not_null(columns="coverage_end")
+                .col_vals_null(columns="source_available_at")
+                .col_vals_null(columns="source_valid_until")
+                .col_vals_in_set(columns="coverage_status", set=["vendor_events_complete"])
+                .col_vals_eq(columns="coverage_schema_version", value=ACTION_COVERAGE_SCHEMA_VERSION)
+                .col_vals_eq(columns="coverage_basis", value="vendor_events_no_clock")
+                .col_vals_expr(
+                    expr=pl.col("coverage_end") >= pl.col("coverage_start"),
+                    brief="coverage_end must be on or after coverage_start",
+                )
+                .rows_distinct(columns_subset=["market", "mic", "symbol", "source", "coverage_start", "coverage_end"])
+            )
         return (
             pb.Validate(data=df, label="Corporate-action coverage schema")
             .col_vals_not_null(columns="market")
@@ -208,7 +234,7 @@ class CorporateActionCoverageSchema(PointblankSchema):
             .col_vals_not_null(columns="source_available_at")
             .col_vals_not_null(columns="source_valid_until")
             .col_vals_in_set(columns="coverage_status", set=["complete"])
-            .col_vals_eq(columns="coverage_schema_version", value=ACTION_COVERAGE_SCHEMA_VERSION)
+            .col_vals_in_set(columns="coverage_schema_version", set=[2, ACTION_COVERAGE_SCHEMA_VERSION])
             .col_vals_expr(
                 expr=pl.col("coverage_end") >= pl.col("coverage_start"),
                 brief="coverage_end must be on or after coverage_start",

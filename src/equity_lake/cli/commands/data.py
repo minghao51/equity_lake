@@ -9,7 +9,15 @@ from typing import Annotated
 
 import typer
 
-from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, _resolve_run_date, app
+from equity_lake.cli._app import (
+    _init_logging,
+    _parse_comma_list,
+    _parse_markets,
+    _require_real_root_scope,
+    _resolve_lake_dir,
+    _resolve_run_date,
+    app,
+)
 from equity_lake.core.paths import LAKE_DIR
 
 
@@ -79,15 +87,22 @@ def ingest(
         str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (omit for all configured; an explicit empty value is rejected)")
     ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Simulate without writes (default: off)")] = False,
+    lake_dir: Annotated[
+        str | None,
+        typer.Option("--lake-dir", help="Explicit lake root inside data/ (default: canonical data/lake). Never mixed with the demo root"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Ingest daily equity market data."""
-    from equity_lake.core.config import get_settings
+    from equity_lake.core.config import TickerConfig, get_settings
     from equity_lake.ingestion.orchestrator import run_daily_ingestion
     from equity_lake.ingestion.types import REQUIRED_PRICE_MARKETS, SourceOutcome, SourceStatus
 
     _init_logging(verbose)
-    market_list = _parse_markets(markets) or list(get_settings().ingestion.default_markets)
+    selected_lake = _resolve_lake_dir(lake_dir)
+    settings = get_settings()
+    market_list = _parse_markets(markets) or list(settings.ingestion.default_markets)
+    _require_real_root_scope(market_list, selected_lake)
     trading_date = _resolve_run_date(date_str, 1, market_list)
     ticker_list = _parse_comma_list(tickers)
     # D02: an explicitly provided but empty ticker scope is rejected, never
@@ -107,7 +122,9 @@ def ingest(
         markets=market_list,
         dry_run=dry_run,
         parallel=True,
+        ticker_config=TickerConfig(config_path=Path(settings.ingestion.ticker_config_path)),
         explicit_tickers=ticker_list,
+        lake_dir=selected_lake,
     )
 
     # Surface per-market outcomes; mirror the pipeline command's failure contract:
@@ -136,7 +153,14 @@ def backfill(
         str,
         typer.Option("--markets", "-m", help="Comma-separated markets (long keys like us_equity; short aliases like us accepted)"),
     ] = "us_equity,cn_ashare,hk_sg_equity",
+    tickers: Annotated[
+        str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (omit for all configured; an explicit empty value is rejected)")
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="No writes (default: off)")] = False,
+    lake_dir: Annotated[
+        str | None,
+        typer.Option("--lake-dir", help="Explicit lake root inside data/ (default: canonical data/lake). Never mixed with the demo root"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Backfill historical data."""
@@ -146,6 +170,7 @@ def backfill(
     from equity_lake.ingestion.backfill import backfill_date_range
 
     _init_logging(verbose)
+    selected_lake = _resolve_lake_dir(lake_dir)
     yesterday = date.today() - timedelta(days=1)
     end_date = date.fromisoformat(end) if end else yesterday
     if days_back:
@@ -161,6 +186,19 @@ def backfill(
     ticker_config = TickerConfig(config_path=config_path)
 
     market_list = _parse_markets(markets) or []
+    _require_real_root_scope(market_list, selected_lake)
+    ticker_list = _parse_comma_list(tickers)
+    # A scoped landing must stay scoped: an explicitly provided but empty ticker
+    # value is rejected, never silently broadened into the configured universe.
+    if tickers is not None and not ticker_list:
+        typer.secho(
+            "--tickers was provided but resolved to an empty scope; omit --tickers to use the configured "
+            "scope (an explicit empty scope is never broadened).",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
+    if ticker_list:
+        ticker_list = list(dict.fromkeys(ticker_list))
     result = backfill_date_range(
         start_date=start_date,
         end_date=end_date,
@@ -168,6 +206,8 @@ def backfill(
         ticker_config=ticker_config,
         dry_run=dry_run,
         authorized=True,
+        explicit_tickers=ticker_list or None,
+        lake_dir=selected_lake,
     )
 
     typer.echo(
@@ -175,6 +215,68 @@ def backfill(
         f"({result.succeeded}/{result.market_date_attempts} attempts over {result.trading_dates} date(s), "
         f"{result.dates_recovered} date(s) fully recovered, {result.failed} failed) across {market_list}"
     )
+
+
+@app.command("widen")
+def widen(
+    start: Annotated[str, typer.Option("--start", help="Earliest date YYYY-MM-DD; clamped to each ticker's action coverage")],
+    end: Annotated[str | None, typer.Option("--end", help="Latest date YYYY-MM-DD (default: yesterday)")] = None,
+    markets: Annotated[str, typer.Option("--markets", "-m", help="One price market (long keys like us_equity)")] = "us_equity",
+    tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (default: configured)")] = None,
+    lake_dir: Annotated[
+        str | None,
+        typer.Option("--lake-dir", help="Explicit lake root inside data/ (default: canonical data/lake). Never mixed with the demo root"),
+    ] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Fetch and reconstruct but write nothing")] = False,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+) -> None:
+    """Widen history with one range fetch per ticker (decades in minutes).
+
+    Unlike ``backfill`` (one request per trading day), this requests each ticker's
+    whole window once, clamps it to the target root's own action coverage, reconstructs
+    raw prices once, and writes through the same validation boundary. A ticker with no
+    coverage in that root is reported, never guessed.
+    """
+    from datetime import timedelta
+
+    from equity_lake.ingestion.backfill import widen_history_range
+
+    _init_logging(verbose)
+    selected_lake = _resolve_lake_dir(lake_dir)
+    market_list = _parse_markets(markets) or []
+    if len(market_list) != 1:
+        typer.secho("--markets must name exactly one price market for a range widening", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    _require_real_root_scope(market_list, selected_lake)
+    ticker_list = _parse_comma_list(tickers)
+    if tickers is not None and not ticker_list:
+        typer.secho("An explicit empty --tickers scope is never broadened; omit --tickers to use the configured scope", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    start_date = date.fromisoformat(start)
+    end_date = date.fromisoformat(end) if end else date.today() - timedelta(days=1)
+    if end_date < start_date:
+        typer.secho("--end must not precede --start", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    outcome = widen_history_range(
+        market=market_list[0],
+        tickers=ticker_list or None,
+        start_date=start_date,
+        end_date=end_date,
+        lake_dir=selected_lake,
+        dry_run=dry_run,
+    )
+    for ticker, detail in sorted(outcome["tickers"].items()):
+        scope = f"{detail.get('start')}..{detail.get('end')}" if detail.get("start") else "-"
+        status = "ok" if detail["ok"] else f"FAILED: {detail['reason']}"
+        typer.echo(f"{ticker}: {detail['rows']} rows {scope} {status}")
+    suffix = " [DRY RUN - nothing written]" if dry_run else ""
+    typer.secho(
+        f"Widen complete: {outcome['rows']} rows across {len(outcome['tickers'])} ticker(s){suffix}",
+        fg=typer.colors.GREEN if outcome["ok"] else typer.colors.RED,
+    )
+    if not outcome["ok"]:
+        raise typer.Exit(1)
 
 
 @app.command("auto-backfill")

@@ -129,6 +129,7 @@ def with_synthetic_feature_proof(
         "action_source_valid_until": pl.Datetime("us", "UTC"),
         "action_coverage_status": pl.String,
         "action_coverage_schema_version": pl.Int8,
+        "action_coverage_basis": pl.String,
     }
     return frame.with_columns([pl.Series(name, values, dtype=dtypes[name]) for name, values in columns.items()])
 

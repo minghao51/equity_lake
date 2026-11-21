@@ -207,7 +207,7 @@ class TestOutcomeTruthfulness:
         """W02/F09: a write exception in one market must not erase the run; the
         other market writes, the failing market is FAILED with its root cause."""
 
-        def fake_write(df: pl.DataFrame, market: str, trading_date: date, dry_run: bool) -> bool:
+        def fake_write(df: pl.DataFrame, market: str, trading_date: date, dry_run: bool, lake_dir: Path | None = None) -> bool:
             if market == "us_equity":
                 raise ValueError("disk full")
             return True
@@ -229,7 +229,7 @@ class TestOutcomeTruthfulness:
         """W02/F09: the serial path isolates write exceptions with the same
         statuses and retained cause as the parallel path."""
 
-        def fake_write(df: pl.DataFrame, market: str, trading_date: date, dry_run: bool) -> bool:
+        def fake_write(df: pl.DataFrame, market: str, trading_date: date, dry_run: bool, lake_dir: Path | None = None) -> bool:
             if market == "us_equity":
                 raise ValueError("disk full")
             return True
@@ -332,7 +332,7 @@ class TestPipelineIntegration:
 
         us_tickers = set(TickerConfig().get_tickers_for_market("us", active_only=True))
 
-        def coverage(market: str, market_dir: Path, trading_date: date, con: Any) -> tuple[bool, set[str]]:
+        def coverage(market: str, market_dir: Path, trading_date: date, con: Any, lake_dir: Path | None = None) -> tuple[bool, set[str]]:
             return (True, us_tickers) if market == "us_equity" else (False, set())
 
         with (

@@ -80,6 +80,14 @@ direction prediction.
 
 ## Storage Layout
 
+`data/lake/` is the canonical root. A real-source slice may instead live under the sibling
+root `data/lake_real/`, which mirrors this layout exactly and is selected only by
+`--lake-dir` (ADR-0030): it is not cataloged, never mixed with the demo root and never
+created implicitly. The slice a root may hold is one definition
+(`core/paths.REAL_ROOT_PRICE_MARKETS`), shared by the `--lake-dir` write guard and the health
+monitor: against a real root `equity monitor` judges `us_equity` alone and reports the checks
+it cannot evaluate there (Feature Store, Unstructured Freshness) as `not_applicable` — never
+as `PASS` — while an absent price table still fails the root.
 ```
 data/lake/
 ├── 01_bronze/                      # Immutable raw data (Delta, date-partitioned)
@@ -105,6 +113,18 @@ data/lake/
 └── 04_platinum/                    # ML predictions and signals (Delta)
     └── predictions/
 ```
+
+**Price basis at the real-root write boundary (ADR-0029 Part I).** The yfinance basis is
+*split-back-adjusted*, while the adjusted read (`with_price_adjustment`, ADR-0015) assumes
+stored prices are unadjusted. A `us_equity` write into a real-source root therefore
+reconstructs raw prices before persistence (`ingestion/price_reconstruction.py`): OHLC is
+divided, and volume multiplied, by the cumulative product of the stored split ratios whose
+`ex_date` is after each row's date — the exact reciprocal of the read's factor. The
+canonical root is never re-inflated (demo rows, decision 8). The transform fails closed
+before any write when the same root's Silver action store is absent, a ticker has no stored
+action, a split ratio cannot be inverted, or the store's watermark predates the price rows;
+`adj_close` stays as fetched, the origin envelope stays `unknown`, and no schema, catalog,
+reader or `price_adjustment_version` changes.
 
 All cataloged tables are date-partitioned Delta tables whose data files are
 Parquet (ADR-0001). Path constants live in `core/paths.py`; market-data
@@ -420,7 +440,7 @@ repair, backfill, retraining, live sends, or deployment.
 - `src/equity_lake/ml/feature_loader.py`: DuckDB-backed feature loading (`FeatureLoader`)
 - `src/equity_lake/ml/trainer.py`: extracted training utilities (`compute_class_weights`, `compute_shap_importance`, `optimize_threshold`)
 - `src/equity_lake/ml/candidates.py`, `labeling.py`, `validation.py`: ML helper modules
-- `src/equity_lake/portfolio/`: private portfolio ledger (ADR-0024, ADR-0026) — versioned events (`models.py`), private SQLite store at `data/portfolio/portfolio.sqlite3` (`store.py`), the canonical CSV importer with its no-write dry-run preview (`csv_import.py`), deterministic effective-date replay into quantity/cash/average-cost basis/realized gain (`projections.py`), stored raw as-of book marks with exact-venue session age and as-of valuation (`marks.py`), and canonical statement reconciliation (`reconcile.py`). Auxiliary, never under `data/lake/` or the catalog. Read commands (`positions`, `summary`, `reconcile`) open the store read-only and create nothing; there is no operational mark producer, no split accounting, no FX, no backup/migration and no dependency on `cli/`, `dashboard/`, `sources/`, `ml/` or `signals/`.
+- `src/equity_lake/portfolio/`: private portfolio ledger (ADR-0024, ADR-0026) — versioned events (`models.py`), private SQLite store at `data/portfolio/portfolio.sqlite3` (`store.py`, schema v2 with an explicit verified v1→v2 migration — `equity portfolio migrate`; ADR-0031), the canonical CSV importer with its no-write dry-run preview (`csv_import.py`), deterministic effective-date replay into quantity/cash/average-cost basis/realized gain (`projections.py`), stored raw as-of book marks with exact-venue session age and as-of valuation (`marks.py`), and canonical statement reconciliation (`reconcile.py`). Auxiliary, never under `data/lake/` or the catalog. Read commands (`positions`, `summary`, `reconcile`) open the store read-only and create nothing; split events are the one quantity-adjusting kind (a `SPLIT` carries the share ratio in `quantity`, total basis is unchanged, a restated split is a reversal plus a corrected split, and a mark that predates a split is refused at valuation — ADR-0029 Part II); there is no operational mark producer, no split *discovery*, no FX, no backup/migration and no dependency on `cli/`, `dashboard/`, `sources/`, `ml/` or `signals/`.
 - `src/equity_lake/dashboard/`: the static export (`exporter.py`), the interactive Streamlit app (`streamlit_app.py`) and two shared contracts they both consume — `pages.py` (the single page registry: key, label, output file, renderer flags; page labels are defined once and standardised across both renderers, enforced by `tests/unit/test_dashboard_ia_parity.py`) and `components.py` (the `Notice` state vocabulary plus per-renderer presentation maps, enforced by `tests/unit/test_dashboard_components.py`). Data loading stays in `_common.py`; page sets deliberately still differ (Config is static-only, the private tracking preview is app-only and loopback-gated).
 
 Unsupported after the June 2026 refactor:

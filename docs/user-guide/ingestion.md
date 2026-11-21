@@ -31,6 +31,45 @@ Ingestion writes date-partitioned Delta tables with Parquet data files beneath
 enrichments. `data/lake/03_gold/features/` and
 `data/lake/04_platinum/predictions/` contain derived outputs.
 
+### A second root for real-source rows (ADR-0030)
+
+A real-source slice may live under **`data/lake_real/`** with the same numbered medallion
+layout instead of sharing tables with the synthetic demo lake. The root is **only ever
+selected explicitly** and never defaulted, discovered or mixed:
+
+```bash
+uv run equity corporate-actions --lake-dir data/lake_real --market us_equity --tickers AAPL,MSFT
+uv run equity backfill --lake-dir data/lake_real --start 2024-01-02 --end 2024-12-31 --markets us_equity --tickers AAPL,MSFT
+uv run equity ingest --lake-dir data/lake_real --date 2026-07-10 --markets us_equity
+uv run equity monitor --lake-dir data/lake_real
+```
+
+- **Corporate actions come first.** A real-root price write reconstructs raw prices from
+  that root's own Silver split actions (ADR-0029 Part I), because the vendor basis is
+  split-back-adjusted while the adjusted read assumes unadjusted prices. If the action
+  store is absent, a ticker has no stored action, a stored ratio cannot be inverted, or
+  the store's newest `ex_date` predates the price rows, the write **refuses** with
+  `action_store_missing` / `action_scope_incomplete` / `action_invalid` /
+  `action_window_uncovered` and exits non-zero — nothing is written and no root is created.
+  The transform is invisible in the schema: `adj_close` stays as fetched, the origin stays
+  `unknown`, and no `price_adjustment_version` is stamped.
+- `--tickers` scopes a backfill to an explicit list (the landing vehicle for a window); it
+  is refused when empty rather than broadened to the configured universe.
+- `--lake-dir` must resolve inside `data/`, must not be `data/` itself, must not sit inside
+  the canonical lake and must not alias it (a symlink or `..` path that lands on `data/lake/`);
+  anything else exits non-zero before any fetch or write.
+- A real root carries the **`us_equity` slice only**, so `--markets` must name `us_equity`
+  alone (or be omitted on `corporate-actions`, whose default is already `us_equity`). Any
+  other price market — and every enrichment dataset `--markets` also accepts (`macro`,
+  `us_news`, …) — is refused with `--lake-dir carries the us_equity slice only` and a
+  non-zero exit. `ingest` otherwise defaults to the configured market list, which includes
+  those enrichments, so name `us_equity` explicitly.
+- Omitting it keeps the canonical `data/lake/` — no command reads or writes both roots, and
+  there is no fallback when a requested root is absent.
+- The real root is **not cataloged** (`data/catalog.jsonl` describes `data/lake/` only) and
+  is never merged, copied or promoted into the demo root automatically. Health and
+  readiness are reported per root, never summed.
+
 ```bash
 dotenvx run -- uv run equity ingest --date 2026-07-10 --markets us_equity,cn_ashare
 dotenvx run -- uv run equity ingest --dry-run --markets us_equity --tickers AAPL
@@ -62,6 +101,33 @@ failures are reported as partial success (`optional_failures` plus
 and missing required ticker coverage return a non-zero CLI status. Omitting
 `--tickers` processes every configured active ticker in the requested markets,
 and an explicitly empty `--tickers` value is rejected rather than broadened.
+
+### Widening history with one range fetch (ADR-0033)
+
+`equity backfill` re-fetches **one trading day per request**, which is right for gap
+recovery and wrong for decades: forty years is roughly ten thousand requests. `equity
+widen` fetches each ticker's whole window once, reconstructs raw prices once and writes
+through the same validation boundary:
+
+```bash
+uv run equity widen --lake-dir data/lake_real --markets us_equity \
+  --tickers AAPL,MSFT,GOOGL,NVDA,ADBE,BABA,QQQ,SPY,GLD --start 1980-01-01 --end 2026-11-18
+```
+
+Each ticker is **clamped to its own evidence** in the target root — the coverage table's
+`coverage_start`..`coverage_end` (ADR-0032), or the stored actions' first/last `ex_date`.
+A request wider than that is not silently honoured: the per-ticker window shrinks, and a
+ticker with no evidence is reported (`no_action_coverage`, `empty_window`,
+`actions_not_ingested`). Real windows are therefore data, not dates you choose: ADBE's
+last action is 2005, so its price window ends there under ADR-0029 Part I.
+
+An instrument with **no corporate actions at all** (for example `GLD`, a gold trust) is
+landable only through the proven-empty path (ADR-0033): `widen` performs a vendor action
+fetch that must **succeed**, and only a successful empty list is recorded as a weak
+`vendor_events_no_clock` proof over the price window. A failed fetch never proves
+emptiness and never writes a proof. The split factor for such an instrument is 1, so its
+prices are written unchanged, and the weak basis makes it unusable for point-in-time
+consumers exactly like any other vendor-stamped row.
 
 ## Ingesting News and Structured Content
 

@@ -349,6 +349,38 @@ markets:
         active: true
         priority: 8
 
+      - symbol: BABA
+        name: Alibaba Group Holding Limited (ADR)
+        exchange: NYSE
+        sector: Consumer Discretionary
+        tags: [e-commerce, china ADR, growth]
+        active: true
+        priority: 8
+
+      - symbol: QQQ
+        name: Invesco QQQ Trust (Nasdaq-100 ETF)
+        exchange: NASDAQ
+        sector: ETF
+        tags: [ETF, index-tracker, nasdaq-100]
+        active: true
+        priority: 8
+
+      - symbol: SPY
+        name: SPDR S&P 500 ETF Trust
+        exchange: NYSE Arca
+        sector: ETF
+        tags: [ETF, index-tracker, sp-500]
+        active: true
+        priority: 8
+
+      - symbol: GLD
+        name: SPDR Gold Shares
+        exchange: NYSE Arca
+        sector: ETF
+        tags: [ETF, commodity, gold]
+        active: true
+        priority: 8
+
       - symbol: CRM
         name: Salesforce Inc.
         exchange: NYSE

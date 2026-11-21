@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 import typer
 
-from equity_lake.cli._app import _init_logging, _parse_comma_list, app
+from equity_lake.cli._app import _init_logging, _parse_comma_list, _require_real_root_scope, _resolve_lake_dir, app
 
 
 def _require_finnhub_api_key() -> str:
@@ -232,6 +232,10 @@ def corporate_actions(
     market: Annotated[str, typer.Option("--market", help="Price market (ADR-0010 long key, yfinance-backed)")] = "us_equity",
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (default: config)")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run/--no-dry-run", help="Fetch but skip writes")] = False,
+    lake_dir: Annotated[
+        str | None,
+        typer.Option("--lake-dir", help="Explicit lake root inside data/ (default: canonical data/lake). Never mixed with the demo root"),
+    ] = None,
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
 ) -> None:
     """Fetch dividends/splits (yfinance) into bronze+silver corporate actions (ADR-0011).
@@ -244,7 +248,9 @@ def corporate_actions(
     from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
 
     ticker_list = _parse_comma_list(tickers)
-    outcome = ingest_corporate_actions(market, tickers=ticker_list, dry_run=dry_run)
+    selected_lake = _resolve_lake_dir(lake_dir)
+    _require_real_root_scope([market], selected_lake)
+    outcome = ingest_corporate_actions(market, tickers=ticker_list, dry_run=dry_run, lake_dir=selected_lake)
 
     if not outcome["ok"]:
         typer.secho(f"Corporate-actions ingestion failed for {market}", fg=typer.colors.RED)

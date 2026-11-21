@@ -36,6 +36,10 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 
 DATA_DIR = PROJECT_ROOT / "data"
 LAKE_DIR = PROJECT_ROOT / "data" / "lake"
+#: Authorized second lake root for real-source rows (ADR-0030). It mirrors the
+#: canonical numbered layout, is never cataloged, is never mixed with ``LAKE_DIR``
+#: and is only ever selected explicitly (``--lake-dir``). Nothing defaults to it.
+REAL_LAKE_DIR = PROJECT_ROOT / "data" / "lake_real"
 LOGS_DIR = PROJECT_ROOT / "logs"
 
 # Operator-artifact path contracts shared by writers and readers (the CLI
@@ -160,6 +164,11 @@ PRICE_MARKETS: dict[str, PriceMarket] = {
 LONG_TO_SHORT: dict[str, str] = {entry.market: entry.alias for entry in PRICE_MARKETS.values()}
 SHORT_TO_LONG: dict[str, str] = {entry.alias: entry.market for entry in PRICE_MARKETS.values()}
 
+#: The only price market a real-source root may carry (ADR-0030 decision 5).
+#: Single definition: the ``--lake-dir`` scope guard and the health monitor both
+#: read it, so a real root can never be judged against a market it may not hold.
+REAL_ROOT_PRICE_MARKETS: tuple[str, ...] = ("us_equity",)
+
 # The ten single-form dataset identifiers that share the ingestion market
 # vocabulary (VALID_MARKETS) but have no price-market duality (ADR-0010:
 # out of scope for aliasing). ``ingestion.types`` re-exports this as
@@ -239,10 +248,69 @@ def price_dataset_market(dataset: str) -> str | None:
 def ensure_dirs() -> None:
     """Create all required runtime directories.
 
-    Safe to call multiple times. Intended for CLI entry-points only.
+    Safe to call multiple times. Intended for CLI entry-points only. The
+    real-source root (``REAL_LAKE_DIR``) is deliberately not created here: it is
+    created only by a write that was explicitly pointed at it (ADR-0030).
     """
     for d in (LAKE_DIR, LOGS_DIR, MODELS_DIR):
         d.mkdir(parents=True, exist_ok=True)
+
+
+def resolve_lake_root(explicit: Path | str | None) -> Path | None:
+    """Validate an explicitly selected lake root (ADR-0030).
+
+    ``None`` means "use the canonical ``LAKE_DIR``" and is returned unchanged, so
+    every existing caller keeps its behaviour. An explicit root must resolve inside
+    ``DATA_DIR`` (``resolve()`` follows symlinks, so an escape is caught), must not
+    be ``data/`` itself and must not sit inside the canonical lake; anything else
+    raises instead of writing somewhere unexpected. Containment lives at this seam,
+    never inside ``delta_table_path``, so storage cannot silently redirect a write.
+    """
+    if explicit is None:
+        return None
+    requested = Path(explicit).expanduser()
+    root = requested.resolve()
+    data_root = DATA_DIR.resolve()
+    canonical = LAKE_DIR.resolve()
+    if root == data_root:
+        raise ValueError("lake root must be a directory inside data/, not data/ itself")
+    if not root.is_relative_to(data_root):
+        raise ValueError(f"lake root must resolve under {data_root.as_posix()}")
+    if root == canonical and requested.absolute() != LAKE_DIR:
+        # A symlink (or a `..` path) that lands on the canonical lake would let an
+        # explicit second-root write reach the demo root. Only the canonical path
+        # itself may name the canonical root.
+        raise ValueError("lake root resolves to the canonical lake; a second root must not alias it")
+    if root != canonical and root.is_relative_to(canonical):
+        # A root nested inside the demo root (`data/lake/01_bronze`) is not a second
+        # root: its writes land under `data/lake/` (at `01_bronze/01_bronze/…`), which
+        # ADR-0030 decision 10 forbids under any circumstance. Equality is handled
+        # above, so only a strict descendant is refused here.
+        raise ValueError("lake root resolves inside the canonical lake; the demo root is never written by a second root")
+    return root
+
+
+def is_real_source_root(lake_dir: Path | str | None) -> bool:
+    """True when ``lake_dir`` selects a second, real-source root (ADR-0030).
+
+    ``None`` — and the canonical path itself — is the demo root. Used by the price
+    write boundary to decide whether vendor-basis rows are being stored (ADR-0029
+    Part I only reconstructs there; the demo root's rows are never re-inflated).
+    """
+    if lake_dir is None:
+        return False
+    return Path(lake_dir).expanduser().resolve() != LAKE_DIR.resolve()
+
+
+def price_markets_for_root(lake_dir: Path | str | None) -> tuple[str, ...]:
+    """Price markets a selected root can legitimately hold (ADR-0030 decision 5).
+
+    A real-source root carries the :data:`REAL_ROOT_PRICE_MARKETS` slice only, so a
+    reader that iterates price markets — monitoring in particular — must scope to it
+    instead of reporting four markets that may never exist there. The canonical root
+    keeps the full registry.
+    """
+    return REAL_ROOT_PRICE_MARKETS if is_real_source_root(lake_dir) else tuple(PRICE_MARKETS)
 
 
 __all__ = [
@@ -280,6 +348,8 @@ __all__ = [
     "PriceMarket",
     "PROJECT_ROOT",
     "PROFILES_DIR",
+    "REAL_LAKE_DIR",
+    "resolve_lake_root",
     "SEC_EXTRACTIONS_DIR",
     "SHORT_TO_LONG",
     "SIGNALS_DIR",
@@ -299,6 +369,8 @@ __all__ = [
     "US_SOCIAL_SENTIMENT_DIR",
     "canonical_market",
     "ensure_dirs",
+    "is_real_source_root",
     "market_dir",
     "price_dataset_market",
+    "price_markets_for_root",
 ]

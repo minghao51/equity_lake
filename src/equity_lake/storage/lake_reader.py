@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -11,13 +11,19 @@ import structlog
 
 from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     AVAILABILITY_SCHEMA_VERSION,
+    COVERAGE_BASES,
     PRICE_ADJUSTMENT_VERSION,
     ActionCoverageProof,
     AvailabilityContractError,
+    CoverageBasis,
+    CoverageProof,
+    VendorEventCoverageProof,
+    parse_coverage_proof,
     source_observable_session,
     validate_action_coverage_for_decision,
 )
 from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey, normalize_identity_frame
+from equity_lake.core.schemas import SYNTHETIC_COVERAGE_SOURCE
 
 logger = structlog.get_logger(__name__)
 
@@ -138,15 +144,38 @@ def _factor_on_expr() -> pl.Expr:
     return pl.col("factor_step").reverse().cum_prod().reverse().over("__adjust_key").fill_null(1.0).alias("factor_on")
 
 
+def _refuse_mixed_roots(prices: pl.DataFrame, proofs: Sequence[CoverageProof]) -> None:
+    """Refuse pairing synthetic demo rows with vendor evidence in one read.
+
+    ADR-0032 decision 4 keeps the D00/ADR-0025 failure mode closed: the canonical
+    root's ``synthetic_demo_seed`` proof and a real root's vendor proof are never
+    interchangeable. Classification comes from the row-bound provenance envelope
+    (ADR-0027), never from a path or a ticker; a frame without the envelope is left
+    to the basis checks alone.
+    """
+    if "price_provenance" not in prices.columns:
+        return
+    provenance = set(prices["price_provenance"].drop_nulls().unique().to_list())
+    if not provenance:
+        return
+    synthetic = provenance == {"synthetic"}
+    if "synthetic" in provenance and not synthetic:
+        raise AvailabilityContractError("price rows mix synthetic and non-synthetic provenance in one read")
+    proof_is_demo = all(proof.source == SYNTHETIC_COVERAGE_SOURCE for proof in proofs)
+    if synthetic != proof_is_demo:
+        raise AvailabilityContractError("synthetic demo rows and vendor coverage proofs cannot be mixed in one read; one read admits one root")
+
+
 def with_price_adjustment(
     prices: pl.DataFrame,
     actions: pl.DataFrame,
     *,
-    coverage: pl.DataFrame | Sequence[ActionCoverageProof] | None = None,
+    coverage: pl.DataFrame | Sequence[ActionCoverageProof | VendorEventCoverageProof | Mapping[str, object]] | None = None,
     method: AdjustmentMethod = "split_only",
     as_of: date | None = None,
+    coverage_basis: CoverageBasis = "source_clock",
 ) -> pl.DataFrame:
-    """Apply the shared point-in-time split-only transform (ADR-0015).
+    """Apply the shared point-in-time split-only transform (ADR-0015, ADR-0032).
 
     Coverage is mandatory, including when ``actions`` is empty: only a
     source-scoped, complete proof can establish that an instrument had no
@@ -155,12 +184,22 @@ def with_price_adjustment(
     and vendor ``adj_close`` are excluded. Event source clocks are mapped to
     the exact MIC session; ingestion time and ex-date are not availability.
 
+    ``coverage_basis`` selects the admitted proof. The default ``source_clock`` is
+    the strict, point-in-time basis and is unchanged. ``vendor_events_no_clock`` is
+    an explicit opt-in (ADR-0032 decision 1) that admits the weaker vendor-event
+    completeness proof: no clock is synthesized, output rows carry null clocks and
+    ``action_coverage_status = "vendor_events_complete"``, and one read admits one
+    basis. Consumers that need point-in-time availability must never opt in.
+
     Legacy ticker-only price/action frames, unknown clocks, incomplete or
     source-expired coverage, invalid/conflicting events, and unproven empty
     action data raise :class:`AvailabilityContractError` rather than returning
     raw prices. ``coverage_end`` bounds event dates; freshness is established
-    only by the source-issued ``source_valid_until`` timestamp.
+    only by the source-issued ``source_valid_until`` timestamp. On the weak basis
+    freshness ends at the action store's watermark and is reported, not promised.
     """
+    if coverage_basis not in COVERAGE_BASES:
+        raise ValueError(f"Unknown coverage basis: {coverage_basis!r} (expected one of {COVERAGE_BASES})")
     if method not in _METHODS:
         raise ValueError(f"Unknown adjustment method: {method!r} (expected one of {_METHODS})")
     if method == "total_return":
@@ -195,19 +234,33 @@ def with_price_adjustment(
     if any(price_day > decision_date for price_day in price_dates):
         raise AvailabilityContractError("adjustment cutoff precedes a price row")
 
-    raw_proofs: list[ActionCoverageProof]
+    raw_proofs: list[CoverageProof]
     try:
         if isinstance(coverage, pl.DataFrame):
-            raw_proofs = [ActionCoverageProof.model_validate(row) for row in coverage.to_dicts()]
+            raw_proofs = [parse_coverage_proof(row) for row in coverage.to_dicts()]
         else:
-            raw_proofs = [proof if isinstance(proof, ActionCoverageProof) else ActionCoverageProof.model_validate(proof) for proof in coverage]
+            raw_proofs = [
+                parse_coverage_proof(proof.model_dump())
+                if isinstance(proof, (ActionCoverageProof, VendorEventCoverageProof))
+                else parse_coverage_proof(proof)
+                for proof in coverage
+            ]
     except (TypeError, ValueError) as exc:
         raise AvailabilityContractError(f"corporate-action coverage proof is invalid or lacks source validity: {exc}") from exc
     if not raw_proofs:
         raise AvailabilityContractError("corporate-action coverage is empty and unverified")
+    # One read admits one basis (ADR-0032 decision 4): a mixed frame refuses under
+    # either requested basis, so neither side can silently reinterpret the other.
+    mismatched = [proof for proof in raw_proofs if proof.coverage_basis != coverage_basis]
+    if mismatched:
+        found = sorted({proof.coverage_basis for proof in mismatched})
+        raise AvailabilityContractError(
+            f"coverage proof basis {found} does not match the requested {coverage_basis!r} read; one read admits one basis"
+        )
     # Exact duplicate source rows are one proof, not competing identity evidence.
     raw_proofs = list({proof.model_dump_json(): proof for proof in raw_proofs}.values())
-    proofs: dict[tuple[str, str, str], ActionCoverageProof] = {}
+    _refuse_mixed_roots(identified, raw_proofs)
+    proofs: dict[tuple[str, str, str], CoverageProof] = {}
     for identity_row in identified.select(*IDENTITY_COLUMNS).unique().to_dicts():
         key = InstrumentKey(**identity_row)
         matches = [proof for proof in raw_proofs if proof.identity == key.tuple]
@@ -216,12 +269,15 @@ def with_price_adjustment(
         ].to_list()
         instrument_start = min(instrument_dates)
         covering = [proof for proof in matches if proof.coverage_start <= instrument_start and proof.coverage_end >= decision_date]
-        observable: list[ActionCoverageProof] = []
+        observable: list[CoverageProof] = []
         for proof in covering:
-            try:
-                validate_action_coverage_for_decision(proof, key, decision_date)
-            except AvailabilityContractError:
-                continue
+            if coverage_basis == "source_clock":
+                if not isinstance(proof, ActionCoverageProof):
+                    continue
+                try:
+                    validate_action_coverage_for_decision(proof, key, decision_date)
+                except AvailabilityContractError:
+                    continue
             observable.append(proof)
         if len(observable) != 1:
             detail = (
@@ -299,10 +355,14 @@ def with_price_adjustment(
         if event_source is not None and event_source.strip() != selected_proof.source:
             raise AvailabilityContractError(f"{key.display_key}: action source does not match its coverage proof on {ex_date}")
         source_time = row.get("source_available_at")
-        if not isinstance(source_time, datetime) or source_time.tzinfo is None or source_time.utcoffset() is None:
-            raise AvailabilityContractError(f"{key.display_key}: action source clock is unknown on {ex_date}")
-        if source_observable_session(key, source_time) > decision_date:
-            raise AvailabilityContractError(f"{key.display_key}: action was unavailable at cutoff on {ex_date}")
+        if coverage_basis == "source_clock":
+            if not isinstance(source_time, datetime) or source_time.tzinfo is None or source_time.utcoffset() is None:
+                raise AvailabilityContractError(f"{key.display_key}: action source clock is unknown on {ex_date}")
+            if source_observable_session(key, source_time) > decision_date:
+                raise AvailabilityContractError(f"{key.display_key}: action was unavailable at cutoff on {ex_date}")
+        else:
+            # The basis names the absence: no clock is validated, and none is invented.
+            source_time = None
         normalized_events.append(
             {
                 "market": key.market,
@@ -381,14 +441,20 @@ def with_price_adjustment(
         adjusted = indexed.with_columns(pl.lit(1.0).alias("factor_on"))
     drop_columns = [column for column in ("_adjust_row_idx", "__adjust_key", "_asof_key", "factor_on", "ex_date") if column in adjusted.columns]
     ordered = adjusted.sort("_adjust_row_idx").drop(drop_columns)
-    source_ages: list[int] = []
-    row_proofs: list[ActionCoverageProof] = []
+    row_proofs: list[CoverageProof] = []
     for row in ordered.select(*IDENTITY_COLUMNS, "date").to_dicts():
         instrument = InstrumentKey(**{column: row[column] for column in IDENTITY_COLUMNS})
         proof = proofs[(row["market"], row["mic"], row["symbol"])]
-        source_session = source_observable_session(instrument, proof.source_available_at)
-        source_ages.append((decision_date - source_session).days)
         row_proofs.append(proof)
+    if coverage_basis == "source_clock":
+        source_ages: list[int | None] = []
+        for instrument_row, proof in zip(ordered.select(*IDENTITY_COLUMNS, "date").to_dicts(), row_proofs, strict=True):
+            if not isinstance(proof, ActionCoverageProof):
+                raise AvailabilityContractError("strict read resolved a weak coverage proof")
+            instrument = InstrumentKey(**{column: instrument_row[column] for column in IDENTITY_COLUMNS})
+            source_ages.append((decision_date - source_observable_session(instrument, proof.source_available_at)).days)
+    else:
+        source_ages = [None] * ordered.height
     return ordered.with_columns(
         pl.lit(PRICE_ADJUSTMENT_VERSION).alias("price_adjustment_version"),
         pl.lit(AVAILABILITY_SCHEMA_VERSION, dtype=pl.Int8).alias("availability_schema_version"),
@@ -397,10 +463,19 @@ def with_price_adjustment(
         pl.Series("action_coverage_source", [proof.source for proof in row_proofs], dtype=pl.String),
         pl.Series("action_coverage_start", [proof.coverage_start for proof in row_proofs], dtype=pl.Date),
         pl.Series("action_coverage_end", [proof.coverage_end for proof in row_proofs], dtype=pl.Date),
-        pl.Series("action_source_available_at", [proof.source_available_at for proof in row_proofs], dtype=pl.Datetime("us", "UTC")),
-        pl.Series("action_source_valid_until", [proof.source_valid_until for proof in row_proofs], dtype=pl.Datetime("us", "UTC")),
+        pl.Series(
+            "action_source_available_at",
+            [getattr(proof, "source_available_at", None) for proof in row_proofs],
+            dtype=pl.Datetime("us", "UTC"),
+        ),
+        pl.Series(
+            "action_source_valid_until",
+            [getattr(proof, "source_valid_until", None) for proof in row_proofs],
+            dtype=pl.Datetime("us", "UTC"),
+        ),
         pl.Series("action_coverage_status", [proof.coverage_status for proof in row_proofs], dtype=pl.String),
         pl.Series("action_coverage_schema_version", [proof.coverage_schema_version for proof in row_proofs], dtype=pl.Int8),
+        pl.Series("action_coverage_basis", [proof.coverage_basis for proof in row_proofs], dtype=pl.String),
     )
 
 

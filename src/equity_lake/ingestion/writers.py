@@ -5,6 +5,7 @@ merge/upsert, time-travel). The canonical writer is ``upsert_dataset``.
 """
 
 from datetime import date
+from pathlib import Path
 
 import polars as pl
 import structlog
@@ -15,6 +16,7 @@ from equity_lake.core.availability import (  # pyright: ignore[reportMissingImpo
     PRICE_ADJUSTMENT_VERSION,
     AvailabilityContractError,
     validate_feature_action_coverage,
+    validate_weak_feature_action_coverage,
 )
 from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_DATE_COLUMNS,
@@ -153,6 +155,7 @@ def upsert_dataset(
     validate_quality: bool = True,
     skip_schema_validation: bool = False,
     partition_by: list[str] | None = None,
+    lake_dir: Path | None = None,
 ) -> bool:
     """Upsert a DataFrame into a date-partitioned Delta table.
 
@@ -169,6 +172,8 @@ def upsert_dataset(
         partition_by: Optional partition columns for tables that are not
             date-partitioned (e.g. ``["ex_date"]`` for corporate actions).
             None keeps the default ``["date"]`` layout.
+        lake_dir: Explicit lake root (ADR-0030). ``None`` is the canonical lake;
+            no implicit fallback between roots.
     """
     df_polars = ensure_polars(df)
 
@@ -240,7 +245,7 @@ def upsert_dataset(
     if _is_corporate_action_coverage(market):
         key_columns = ["market", "mic", "symbol", "source", "coverage_start", "coverage_end"]
     try:
-        return merge_delta(df_polars, market, key_columns=key_columns, partition_by=partition_by)
+        return merge_delta(df_polars, market, key_columns=key_columns, partition_by=partition_by, lake_dir=lake_dir)
     except DeltaError:
         return False
 
@@ -304,6 +309,7 @@ def validate_schema(df: FrameLike, market: str) -> bool:
                 df_pl["availability_schema_version"].drop_nulls().unique().to_list() if "availability_schema_version" in df_pl.columns else []
             )
             coverage_values = df_pl["action_coverage"].drop_nulls().unique().to_list() if "action_coverage" in df_pl.columns else []
+            basis_values = df_pl["action_coverage_basis"].drop_nulls().unique().to_list() if "action_coverage_basis" in df_pl.columns else []
             if feature_versions != [FEATURE_SCHEMA_VERSION] or adjustment_versions != [PRICE_ADJUSTMENT_VERSION]:
                 logger.error("%s: unsupported feature/price adjustment contract", market)
                 return False
@@ -312,14 +318,27 @@ def validate_schema(df: FrameLike, market: str) -> bool:
                 or "action_coverage" not in df_pl.columns
                 or df_pl["action_coverage"].null_count() > 0
                 or coverage_values != [1]
-                or "action_source_age_days" not in df_pl.columns
-                or df_pl["action_source_age_days"].null_count() > 0
             ):
                 logger.error("%s: unsupported feature availability contract", market)
                 return False
+            # One write admits one basis (ADR-0032 decision 8): a weak row passes the
+            # weak contract only, and a strict row the strict one; a mixed or unstamped
+            # frame refuses before any row is written.
+            if len(basis_values) != 1:
+                logger.error("%s: action coverage basis is missing or mixed: %s", market, basis_values)
+                return False
+            basis = basis_values[0]
             try:
-                for row in df_pl.to_dicts():
-                    validate_feature_action_coverage(row)
+                if basis == "source_clock":
+                    if "action_source_age_days" not in df_pl.columns or df_pl["action_source_age_days"].null_count() > 0:
+                        raise AvailabilityContractError("strict feature rows require a non-null action source age")
+                    for row in df_pl.to_dicts():
+                        validate_feature_action_coverage(row)
+                elif basis == "vendor_events_no_clock":
+                    for row in df_pl.to_dicts():
+                        validate_weak_feature_action_coverage(row)
+                else:
+                    raise AvailabilityContractError(f"unknown action coverage basis {basis!r}")
             except AvailabilityContractError as exc:
                 logger.error("%s: invalid source action-coverage proof: %s", market, exc)
                 return False
@@ -330,7 +349,21 @@ def validate_schema(df: FrameLike, market: str) -> bool:
         return False
 
     null_counts = df_pl.null_count().row(0, named=True)
+    # A weak coverage proof's clock columns are legitimately all null: the basis names
+    # that absence (ADR-0032 decisions 5-6), so they are not treated as missing data.
+    weak_coverage_clocks: set[str] = set()
+    if _is_corporate_action_coverage(market) and "coverage_basis" in df_pl.columns:
+        bases = df_pl["coverage_basis"].drop_nulls().unique().to_list()
+        if bases == ["vendor_events_no_clock"]:
+            weak_coverage_clocks = {"source_available_at", "source_valid_until"}
+    weak_feature_clocks: set[str] = set()
+    if market == "03_gold/features" and "action_coverage_basis" in df_pl.columns:
+        feature_bases = df_pl["action_coverage_basis"].drop_nulls().unique().to_list()
+        if feature_bases == ["vendor_events_no_clock"]:
+            weak_feature_clocks = {"action_source_age_days", "action_source_available_at", "action_source_valid_until"}
     for col in required_cols:
+        if col in weak_coverage_clocks or col in weak_feature_clocks:
+            continue
         if col in df_pl.columns and col in null_counts and null_counts[col] == df_pl.height:
             logger.error("%s: Required column '%s' is all null", market, col)
             return False

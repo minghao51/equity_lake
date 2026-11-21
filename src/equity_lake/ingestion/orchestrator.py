@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import duckdb
@@ -16,7 +17,7 @@ import structlog
 from equity_lake.core.calendar import classify_market_sessions
 from equity_lake.core.config import TickerConfig
 from equity_lake.core.logging import correlation_context, timer
-from equity_lake.core.paths import LAKE_DIR
+from equity_lake.core.paths import LAKE_DIR, is_real_source_root
 from equity_lake.core.polars_utils import frame_is_empty
 from equity_lake.ingestion.parallel import (
     fetch_markets_parallel,
@@ -49,7 +50,7 @@ __all__ = [
 logger = structlog.get_logger()
 
 
-def _finalize_market(market: str, trading_date: date, dry_run: bool, df: Any) -> SourceOutcome:
+def _finalize_market(market: str, trading_date: date, dry_run: bool, df: Any, lake_dir: Path | None = None) -> SourceOutcome:
     """Map one fetched frame to its truthful terminal outcome.
 
     Shared by the serial and parallel branches so both get identical isolation
@@ -67,7 +68,7 @@ def _finalize_market(market: str, trading_date: date, dry_run: bool, df: Any) ->
         if frame_is_empty(df):
             logger.warning("no_data_fetched", market=market)
             return SourceOutcome(SourceStatus.NO_DATA)
-        if _write_market(df, market, trading_date, dry_run):
+        if _write_market(df, market, trading_date, dry_run, lake_dir):
             return SourceOutcome(SourceStatus.DRY_RUN) if dry_run else SourceOutcome(SourceStatus.WRITTEN)
         return SourceOutcome(SourceStatus.FAILED, error="write_returned_false")
     except Exception as exc:
@@ -98,6 +99,7 @@ def _read_partition_coverage(
     market_dir: str,
     trading_date: date,
     con: duckdb.DuckDBPyConnection,
+    lake_dir: Path | None = None,
 ) -> tuple[bool, set[str]]:
     """One bounded scoped read of the date partition: ``(schema_valid, present_tickers)``.
 
@@ -110,7 +112,7 @@ def _read_partition_coverage(
     """
     from equity_lake.ingestion.writers import validate_schema
 
-    market_path = LAKE_DIR / market_dir
+    market_path = (lake_dir or LAKE_DIR) / market_dir
     if not market_path.exists():
         return False, set()
     scan_expr = duckdb_scan_for(market_path)
@@ -134,6 +136,7 @@ def _filter_markets_with_gaps(
     trading_date: date,
     scope: dict[str, list[str] | None],
     ticker_config: TickerConfig | None,
+    lake_dir: Path | None = None,
 ) -> tuple[dict[str, list[str] | None], set[str]]:
     """Split *markets* into fetch work and already-complete markets.
 
@@ -175,7 +178,7 @@ def _filter_markets_with_gaps(
                 # filters/fallback behavior is unchanged from before W03.
                 to_fetch[market] = list(requested) if explicit is not None else None
                 continue
-            valid, present = _read_partition_coverage(market, market_dir, trading_date, shared_con)
+            valid, present = _read_partition_coverage(market, market_dir, trading_date, shared_con, lake_dir)
             missing = [ticker for ticker in requested if ticker not in present]
             if valid and not missing:
                 logger.debug("market_data_exists", market=market, date=str(trading_date))
@@ -190,10 +193,18 @@ def _filter_markets_with_gaps(
     return to_fetch, already_present
 
 
-def _write_market(df: Any, market: str, trading_date: date, dry_run: bool) -> bool:
+def _write_market(df: Any, market: str, trading_date: date, dry_run: bool, lake_dir: Path | None = None) -> bool:
     market_dir = MARKET_DIR_MAP.get(market, market)
+    if market == "us_equity" and is_real_source_root(lake_dir):
+        # ADR-0029 Part I: the yfinance basis is split-back-adjusted while the lake's
+        # adjusted read assumes raw prices, so a real-root price row is reconstructed
+        # before persistence. Fail closed (SplitReconstructionError) rather than write
+        # a vendor basis unlabelled; a dry run exercises the transform and writes nothing.
+        from equity_lake.ingestion.price_reconstruction import reconstruct_vendor_prices
+
+        df = reconstruct_vendor_prices(df, market=market, lake_dir=lake_dir)
     with timer(f"write_{market}_parquet", market=market):
-        return upsert_dataset(df, market_dir, trading_date, dry_run=dry_run)
+        return upsert_dataset(df, market_dir, trading_date, dry_run=dry_run, lake_dir=lake_dir)
 
 
 def run_daily_ingestion(
@@ -206,6 +217,7 @@ def run_daily_ingestion(
     parallel: bool = False,
     max_workers: int | None = None,
     skip_existing: bool = True,
+    lake_dir: Path | None = None,
 ) -> dict[str, SourceOutcome]:
     results: dict[str, SourceOutcome] = {}
 
@@ -247,7 +259,7 @@ def run_daily_ingestion(
         coverage_config = ticker_config
         if coverage_config is None and any(market in REQUIRED_PRICE_MARKETS and scope.get(market) is None for market in active_markets):
             coverage_config = TickerConfig()
-        fetch_scope, already_present = _filter_markets_with_gaps(active_markets, trading_date, scope, coverage_config)
+        fetch_scope, already_present = _filter_markets_with_gaps(active_markets, trading_date, scope, coverage_config, lake_dir)
         if already_present:
             # Idempotent reruns must surface already-written partitions as success
             # so downstream feature/ML stages are not blocked by a missing result key.
@@ -310,7 +322,7 @@ def run_daily_ingestion(
                 # F09: conversion/validation/write exceptions are isolated per
                 # market inside _finalize_market — the same contract as the
                 # serial branch; other markets' outcomes always survive.
-                results[market] = _finalize_market(market, trading_date, dry_run, fetch_result.data)
+                results[market] = _finalize_market(market, trading_date, dry_run, fetch_result.data, lake_dir)
 
             summary = summarize_results(fetch_results)
             logger.info("parallel_ingestion_summary", **summary)
@@ -335,6 +347,6 @@ def run_daily_ingestion(
                 results[market] = SourceOutcome(SourceStatus.FAILED, error=str(e))
                 continue
 
-            results[market] = _finalize_market(market, trading_date, dry_run, df)
+            results[market] = _finalize_market(market, trading_date, dry_run, df, lake_dir)
 
     return results

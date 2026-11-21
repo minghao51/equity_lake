@@ -121,6 +121,10 @@ class ValidationPipeline:
             "source_metadata",
             "source_url",
             "source_available_at",
+            # Both clock columns are structurally null for a weak
+            # ``vendor_events_no_clock`` proof: the basis names the absence
+            # (ADR-0032 decision 5), so it is not a quality defect.
+            "source_valid_until",
             "author",
             "category",
             "sentiment_label",

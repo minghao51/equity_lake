@@ -7,6 +7,7 @@ Sends alerts on issues. Driven via the ``equity monitor`` Typer command.
 """
 
 import json
+from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -21,10 +22,13 @@ from equity_lake.core.calendar import is_trading_day, market_now
 from equity_lake.core.paths import (
     BRONZE_RAW_ARTICLES_DIR,
     GOLD_FEATURES_DIR,
+    LAKE_DIR,
     PRICE_MARKETS,
     SILVER_PROCESSED_ARTICLES_DIR,
     SILVER_SEC_EXTRACTIONS_DIR,
+    is_real_source_root,
     market_dir,
+    price_markets_for_root,
 )
 from equity_lake.monitoring.alerting import Alerter, build_alerter
 from equity_lake.storage.lake_reader import duckdb_scan_for, ensure_delta_extension
@@ -53,16 +57,31 @@ _MARKET_DISPLAY = {
 # freshness and quality checks, so every market classified as a required price
 # market is monitored automatically (ADR-0010).
 
+#: Check outcome vocabulary. A check that cannot be evaluated against a root is
+#: ``not_applicable`` — never a pass (that would claim verified health) and never a
+#: failure of data the root is not allowed to hold (ADR-0030 decision 5).
+CHECK_PASS = "pass"
+CHECK_FAIL = "fail"
+CHECK_NOT_APPLICABLE = "not_applicable"
 
-def _price_market_paths() -> dict[str, Path]:
+
+def _price_market_paths(lake_dir: Path | None = None, markets: Sequence[str] | None = None) -> dict[str, Path]:
     """Resolve price-market -> bronze parquet path at call time.
 
     Reads the registry and resolves each entry's directory via
     ``core.paths.market_dir`` (which looks up the module-level ``*_DIR``
     constants via ``getattr``) fresh on each call, so runtime patches of those
-    constants — e.g. tests pointing them at tmp dirs — are honoured.
+    constants — e.g. tests pointing them at tmp dirs — are honoured. ``lake_dir``
+    rebases the paths under an explicit root (ADR-0030); ``None`` keeps the
+    canonical lake and is byte-compatible with the previous behaviour.
+    ``markets`` narrows the sweep to the slice a root may hold; ``None`` keeps the
+    full registry, so the canonical report is unchanged.
     """
-    return {market: market_dir(market) for market in PRICE_MARKETS}
+    selected = tuple(markets) if markets is not None else tuple(PRICE_MARKETS)
+    paths = {market: market_dir(market) for market in selected}
+    if lake_dir is None:
+        return paths
+    return {market: lake_dir / path.relative_to(LAKE_DIR) for market, path in paths.items()}
 
 
 def _date_scalar(value: object) -> date | None:
@@ -86,6 +105,7 @@ class PipelineMonitor:
         table_max_age_days: dict[str, int] | None = None,
         verbose: bool = False,
         alerter: Alerter | None = None,
+        lake_dir: Path | None = None,
     ):
         """
         Initialize pipeline monitor.
@@ -101,6 +121,8 @@ class PipelineMonitor:
                 falls back to *max_age_days* for unlisted tables.
             verbose: Enable verbose logging
             alerter: Alert dispatcher (defaults to console)
+            lake_dir: Explicit lake root to report on (ADR-0030). ``None`` is the
+                canonical lake; roots are never combined into one report.
         """
         self.max_age_days = max_age_days
         self.null_threshold_pct = null_threshold_pct
@@ -108,6 +130,11 @@ class PipelineMonitor:
         self.table_max_age_days = table_max_age_days if table_max_age_days is not None else dict(DEFAULT_TABLE_MAX_AGE_DAYS)
         self.verbose = verbose
         self.alerter = alerter or build_alerter()
+        self.lake_dir = Path(lake_dir) if lake_dir is not None else None
+        # A real-source root carries the us_equity slice only, so the price-market
+        # sweeps scope to it instead of failing on four absent tables (ADR-0030).
+        self.price_markets: tuple[str, ...] = price_markets_for_root(self.lake_dir)
+        self.real_source_root: bool = is_real_source_root(self.lake_dir)
 
         self.conn = duckdb.connect(":memory:")
         ensure_delta_extension(self.conn)
@@ -115,6 +142,18 @@ class PipelineMonitor:
         self._alert_keys: set[tuple[str, str]] = set()
         self.metrics: dict = {}
         self.check_results: dict[str, bool] = {}
+        self.check_status: dict[str, str] = {}
+        self.check_notes: dict[str, str] = {}
+
+    def _lake_path(self, constant: Path) -> Path:
+        """Resolve a lake constant under this monitor's root (ADR-0030).
+
+        With no explicit root the constant is returned unchanged, so runtime
+        patches of the module-level ``*_DIR`` constants keep working.
+        """
+        if self.lake_dir is None:
+            return constant
+        return self.lake_dir / constant.relative_to(LAKE_DIR)
 
     def close(self) -> None:
         """Close the monitor's DuckDB connection (idempotent)."""
@@ -176,7 +215,7 @@ class PipelineMonitor:
                 COUNT(DISTINCT date) as date_count
             FROM {duckdb_scan_for(path)}
             """
-            for market, path in _price_market_paths().items()
+            for market, path in _price_market_paths(self.lake_dir, self.price_markets).items()
         )
 
         query = f"SELECT market, latest_date, date_count FROM ({market_arms})"
@@ -245,7 +284,8 @@ class PipelineMonitor:
         logger.info("Checking data quality...")
 
         market_selects = " UNION ALL ".join(
-            f"SELECT '{market}' as market, * FROM {duckdb_scan_for(path)}" for market, path in _price_market_paths().items()
+            f"SELECT '{market}' as market, * FROM {duckdb_scan_for(path)}"
+            for market, path in _price_market_paths(self.lake_dir, self.price_markets).items()
         )
 
         query = f"""
@@ -266,6 +306,23 @@ class PipelineMonitor:
             df = self.conn.execute(query).pl()
 
             quality_issues = []
+
+            if df.is_empty() and self.real_source_root:
+                # The slice is closed (its newest session is outside the 7-day
+                # window), so nothing can be measured here. Recency is the
+                # freshness check's verdict; reporting a quality PASS would claim a
+                # verification that never happened.
+                self.check_status["Data Quality"] = CHECK_NOT_APPLICABLE
+                self.check_notes["Data Quality"] = (
+                    "no rows inside the 7-day window for this real-source slice; staleness is reported by Data Freshness"
+                )
+                self.metrics["data_quality"] = {
+                    "issues_found": 0,
+                    "markets_with_issues": [],
+                    "status": CHECK_NOT_APPLICABLE,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                }
+                return True
 
             for row in df.iter_rows(named=True):
                 market = row["market"]
@@ -333,7 +390,15 @@ class PipelineMonitor:
         """
         logger.info("Checking feature store...")
 
-        feature_dir = GOLD_FEATURES_DIR
+        if self.real_source_root:
+            # A real-source root holds Bronze/Silver vendor rows only: Gold is absent
+            # by design (ADR-0028, ADR-0030), so absence is not a health defect here.
+            self.check_status["Feature Store"] = CHECK_NOT_APPLICABLE
+            self.check_notes["Feature Store"] = "a real-source root holds no Gold: features are produced for the demo lake only (ADR-0028, ADR-0030)"
+            self.metrics["feature_store"] = {"status": CHECK_NOT_APPLICABLE, "timestamp": datetime.now(tz=UTC).isoformat()}
+            return True
+
+        feature_dir = self._lake_path(GOLD_FEATURES_DIR)
 
         if not feature_dir.exists():
             self._add_alert("feature_store", "feature_store", "⚠️  Feature store does not exist")
@@ -396,10 +461,24 @@ class PipelineMonitor:
         """
         logger.info("Checking unstructured data freshness...")
 
+        if self.real_source_root:
+            # The enrichment tables are written by markets a real root refuses
+            # (ADR-0030 decision 5), so they can never be present there. Reporting a
+            # vacuous PASS would claim freshness nobody verified.
+            enrichment_tables = ("bronze/raw_articles", "silver/processed_articles", "silver/sec_extractions")
+            self.check_status["Unstructured Freshness"] = CHECK_NOT_APPLICABLE
+            self.check_notes["Unstructured Freshness"] = "enrichment tables are never written to a real-source root (ADR-0030 decision 5)"
+            self.metrics["unstructured_freshness"] = {
+                **{table: {"status": CHECK_NOT_APPLICABLE} for table in enrichment_tables},
+                "missing_tables": list(enrichment_tables),
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+            }
+            return True
+
         tables = [
-            ("bronze/raw_articles", BRONZE_RAW_ARTICLES_DIR),
-            ("silver/processed_articles", SILVER_PROCESSED_ARTICLES_DIR),
-            ("silver/sec_extractions", SILVER_SEC_EXTRACTIONS_DIR),
+            ("bronze/raw_articles", self._lake_path(BRONZE_RAW_ARTICLES_DIR)),
+            ("silver/processed_articles", self._lake_path(SILVER_PROCESSED_ARTICLES_DIR)),
+            ("silver/sec_extractions", self._lake_path(SILVER_SEC_EXTRACTIONS_DIR)),
         ]
 
         all_fresh = True
@@ -488,14 +567,20 @@ class PipelineMonitor:
         Returns:
             True if all checks pass, False otherwise
         """
-        self.check_results = {
+        outcomes = {
             "Data Freshness": self.check_data_freshness(),
             "Data Quality": self.check_data_quality(),
             "Feature Store": self.check_feature_store(),
             "Unstructured Freshness": self.check_unstructured_freshness(),
         }
+        self.check_results = dict(outcomes)
+        for name, healthy in outcomes.items():
+            # A check that is not applicable to this root keeps its own status; every
+            # other check is pass/fail from its boolean, so the report can never show
+            # a check whose status arrived from nowhere.
+            self.check_status.setdefault(name, CHECK_PASS if healthy else CHECK_FAIL)
 
-        all_healthy = all(self.check_results.values())
+        all_healthy = all(outcomes.values())
 
         if self.alerts:
             self.alerter.send_alert(self.alerts, severity="warning" if all_healthy else "error", metrics=self.metrics)
@@ -510,6 +595,15 @@ class PipelineMonitor:
             "timestamp": datetime.now(tz=UTC).isoformat(),
             "healthy": bool(self.check_results) and all(self.check_results.values()),
             "check_results": self.check_results,
+            # Additive: the boolean map above keeps its shape for consumers that only
+            # read pass/fail, while a not-applicable check is distinguishable from a
+            # verified pass and carries the reason it could not be evaluated.
+            "check_status": self.check_status,
+            "check_notes": self.check_notes,
+            "scope": {
+                "lake_root": "real_source" if self.real_source_root else "canonical",
+                "price_markets": list(self.price_markets),
+            },
         }
 
         try:

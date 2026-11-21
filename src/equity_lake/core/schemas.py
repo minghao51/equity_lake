@@ -5,7 +5,7 @@ from __future__ import annotations
 import polars as pl
 
 # Shared Gold feature contract versions (ADR-0015).
-FEATURE_SCHEMA_VERSION = 7
+FEATURE_SCHEMA_VERSION = 8
 
 # Row-bound forecast provenance (ADR-0021). The envelope version gates the
 # proof rules: a version-1 row carries the E1-E4 evidence below and is checked
@@ -81,6 +81,11 @@ PRICE_ORIGIN_UNKNOWN_REASONS = (
 #: loader that records them and the manifest validator that requires one price-origin
 #: summary per price snapshot.
 PRICE_SNAPSHOT_NAME_PREFIX = "price_marks:"
+#: Read-seam name prefix of a corporate-action coverage snapshot
+#: (``action_coverage:<market>``). Only these snapshots record the ADR-0032 coverage
+#: basis they were read under (see ``backtesting/data_loader.py`` and
+#: ``backtesting/evidence.py``).
+ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX = "action_coverage:"
 
 # Canonical shared-table identity (ADR-0016). Bronze OHLCV remains unchanged;
 # identity is added only when explicit source provenance is available.
@@ -171,7 +176,13 @@ CORPORATE_ACTION_COVERAGE_COLUMNS = [
     "source_valid_until",
     "coverage_status",
     "coverage_schema_version",
+    # Named coverage basis (ADR-0032 decision 5): ``source_clock`` or
+    # ``vendor_events_no_clock``. A row without the column predates it and is strict.
+    "coverage_basis",
 ]
+#: Coverage source label of the canonical demo seed. Shared by the demo generator and
+#: the read seam, which refuses to pair synthetic rows with a vendor proof or vice versa.
+SYNTHETIC_COVERAGE_SOURCE = "synthetic_demo_seed"
 
 # The legacy ingestion timestamp remains naive UTC. A source clock is stored as
 # timezone-aware UTC and is never synthesized from ingestion time.
@@ -196,6 +207,7 @@ CORPORATE_ACTION_COVERAGE_SCHEMA: dict[str, pl.DataType] = {
     "source_valid_until": pl.Datetime("us", "UTC"),
     "coverage_status": pl.String(),
     "coverage_schema_version": pl.Int8(),
+    "coverage_basis": pl.String(),
 }
 
 MACRO_INDICATOR_CONFIG = {
@@ -304,6 +316,7 @@ SEC_FINANCIAL_COLUMNS = [
 ]
 
 __all__ = [
+    "ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX",
     "ANALYST_RATING_COLUMNS",
     "BRONZE_ARTICLE_COLUMNS",
     "CORPORATE_ACTION_COLUMNS",
@@ -312,6 +325,7 @@ __all__ = [
     "CORPORATE_ACTION_REQUIRED_COLUMNS",
     "CORPORATE_ACTION_SCHEMA",
     "CORPORATE_ACTION_TYPES",
+    "SYNTHETIC_COVERAGE_SOURCE",
     "FEATURE_SCHEMA_VERSION",
     "FORECAST_PROVENANCE_COLUMNS",
     "FORECAST_PROVENANCE_VERSION",
