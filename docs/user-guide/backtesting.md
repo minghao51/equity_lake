@@ -36,6 +36,42 @@ coverage/expiry proof, so adjusted decisions affected by that limitation are
 excluded. See [ML availability and provenance](20261016-ml-availability-and-provenance.md)
 for the shared feature/model availability contract.
 
+#### One lake root and one coverage basis per run
+
+`equity backtest` also takes `--lake-dir` and `--coverage-basis`, so the same
+engine can evaluate a second real-source root (ADR-0030) under the explicit weak
+basis (ADR-0032):
+
+```bash
+dotenvx run -- uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
+  --start-date 2020-01-02 --end-date 2026-08-20 \
+  --lake-dir data/lake_real --coverage-basis vendor_events_no_clock
+```
+
+The defaults are unchanged: no `--lake-dir` keeps the canonical lake and no
+`--coverage-basis` keeps the strict, point-in-time `source_clock` basis.
+
+- **One root.** The price marks and the corporate-action store are both read
+  from the one selected root. A root is validated at the CLI seam (it must
+  resolve inside `data/`, must not be `data/` itself, and must not alias or nest
+  inside the canonical lake), and one run never mixes two roots.
+- **One basis.** `source_clock` (default) admits only source-issued coverage
+  proofs whose clock maps to the exact venue session and whose expiry covers the
+  decision close. `vendor_events_no_clock` is an explicit opt-in that admits only
+  the weak vendor-event completeness proof: no clock is synthesized, output
+  clocks/ages are null, and the run is a research series, never a point-in-time
+  claim. A basis is never inferred from the data, and an unknown basis is
+  rejected before any read.
+- **Refusals.** Strict requested against weak-only evidence refuses, weak
+  requested against strict-only evidence refuses, and a read whose proofs mix
+  bases refuses — each names the basis it found instead of excluding every
+  session silently. A preloaded point-in-time frame records the basis it was read
+  under; an engine requesting another basis refuses it rather than adopting it.
+- **Evidence.** The basis a read admitted is stamped on the
+  `action_coverage:<market>` read-seam snapshot, so `equity report backtest`'s
+  run manifest records it. A manifest scope whose snapshots record two different
+  bases refuses (ADR-0032 decision 9).
+
 ### `equity report backtest`
 
 Runs a single backtest under one cost regime and publishes its immutable evidence:

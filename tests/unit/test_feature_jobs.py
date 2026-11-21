@@ -35,6 +35,9 @@ def _patch_engineer(monkeypatch: pytest.MonkeyPatch, frame: pl.DataFrame) -> Non
     """Stub ``_load_feature_engineer`` to return an engineer yielding *frame*."""
 
     class _FakeEngineer:
+        def __init__(self, *_: object, **__: object) -> None:
+            """Model the real constructor: ``FeatureEngineer(lake_dir=...)``."""
+
         def generate_features(self, *_: object, **__: object) -> pl.DataFrame:
             return frame
 

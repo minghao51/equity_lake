@@ -88,21 +88,23 @@ import tempfile
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import unquote
 
 import polars as pl
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler, field_validator, model_serializer, model_validator
 
 from equity_lake.backtesting.report import (
     drawdown_series,
     write_dated_backtest_report,
 )
 from equity_lake.backtesting.result import BacktestResult
+from equity_lake.core.availability import COVERAGE_BASES, CoverageBasis  # noqa: TC001 - runtime validation, not typing only
 from equity_lake.core.instruments import InstrumentKey  # noqa: TC001 - runtime validation, not typing only
 from equity_lake.core.paths import FINDINGS_DIR
 from equity_lake.core.schemas import (
+    ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX,
     PRICE_ORIGIN_UNKNOWN_REASONS,
     PRICE_SNAPSHOT_NAME_PREFIX,
     PRICE_SOURCE_PATTERN,
@@ -451,6 +453,41 @@ class InputSnapshot(BaseModel):
         default=None,
         description="Delta version consumed by the read (as text), or None for a content digest of an enumerated file set",
     )
+    #: The ADR-0032 coverage basis an ``action_coverage:<market>`` read admitted, so the
+    #: manifest binds the basis it read (decision 9). Absent on every other snapshot and
+    #: on snapshots written before the basis existed; it is a read parameter, never part
+    #: of the ``(path, version)`` digest. It is omitted from the serialized manifest when
+    #: absent, so existing evidence keeps its exact bytes.
+    coverage_basis: CoverageBasis | None = Field(
+        default=None,
+        description="Coverage basis an action_coverage:<market> read admitted (ADR-0032); absent on every other snapshot",
+    )
+
+    @model_serializer(mode="wrap")
+    def _omit_an_absent_basis(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        """Serialize ``coverage_basis`` only when one was recorded."""
+        serialized = cast("dict[str, Any]", handler(self))
+        if serialized.get("coverage_basis") is None:
+            serialized.pop("coverage_basis", None)
+        return serialized
+
+    @model_validator(mode="after")
+    def _a_basis_describes_a_coverage_read(self) -> InputSnapshot:
+        """A recorded basis belongs to ``action_coverage:<market>`` and nothing else.
+
+        The basis is stamped by the reader that admitted the proofs, so attaching one to
+        a price, event or fixture snapshot would bind a coverage claim to an input that
+        carries no proofs at all (ADR-0032 decision 9).
+        """
+        if self.coverage_basis is None:
+            return self
+        if not self.name.startswith(ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX) or len(self.name) == len(ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX):
+            raise ValueError(
+                f"a coverage_basis may only be recorded on an '{ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX}<market>' snapshot, not {self.name!r}"
+            )
+        if self.coverage_basis not in COVERAGE_BASES:  # pragma: no cover - pydantic literal check runs first
+            raise ValueError(f"unknown coverage basis {self.coverage_basis!r}")
+        return self
 
     @field_validator("sha256")
     @classmethod
@@ -943,6 +980,25 @@ class RunManifest(BaseModel):
         names = [summary.snapshot.name for summary in self.price_origin_summaries]
         if len(names) != len(set(names)):
             raise ValueError("price_origin_summaries must record at most one summary per price snapshot")
+        return self
+
+    @model_validator(mode="after")
+    def _one_coverage_basis_per_scope(self) -> RunManifest:
+        """A manifest scope mixing coverage bases refuses (ADR-0032 decision 9).
+
+        Each ``action_coverage:<market>`` snapshot records the basis its proofs were
+        admitted under. One run admits one basis, so a manifest whose snapshots record
+        two different bases is internally contradictory evidence: either the run mixed
+        bases (forbidden) or the stamps disagree about what was read. It refuses rather
+        than having a reader pick a side. Manifests written before the basis stamp
+        existed carry none and are unaffected.
+        """
+        recorded = sorted({snapshot.coverage_basis for snapshot in self.input_snapshots if snapshot.coverage_basis is not None})
+        if len(recorded) > 1:
+            raise ValueError(
+                f"input_snapshots record coverage bases {recorded}: a manifest scope mixing bases refuses, "
+                "because one run admits one basis (ADR-0032)"
+            )
         return self
 
     @model_validator(mode="after")

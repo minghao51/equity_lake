@@ -70,6 +70,13 @@ degrade with a warning (mirrors `equity pipeline`).
 | `--markets`, `-m` | str | from settings | Comma-separated markets |
 | `--tickers`, `-t` | str | all configured | Comma-separated tickers |
 | `--dry-run` | flag | off | Simulate without writes |
+| `--lake-dir` | str | canonical `data/lake` | Explicit lake root inside `data/` (e.g. `data/lake_real`); never mixed, never defaulted. A non-canonical root accepts `us_equity` only, so name it in `--markets` — the configured defaults contain enrichment datasets, which are refused (ADR-0030) |
+
+Identity comes from the exact current ticker config (`identity_provenance=current_ticker_config`)
+because the vendor supplies no MIC/exchange; a ticker absent from `config/tickers.yaml` still
+fails closed rather than guessing a venue. Against a real root, the write also reconstructs raw
+prices from that root's own split actions and refuses when they cannot be proven (ADR-0029
+Part I; see [ingestion](ingestion.md)).
 
 ```bash
 dotenvx run -- uv run equity ingest --date 2026-07-10 --markets us_equity,cn_ashare
@@ -88,10 +95,13 @@ time.
 | `--end` | str | yesterday | End date `YYYY-MM-DD` |
 | `--days-back` | int | — | Calendar days back from `--end` |
 | `--markets`, `-m` | str | `us,cn,hk_sg` | Comma-separated markets |
+| `--tickers`, `-t` | str | all configured | Comma-separated tickers; the scoped-landing flag. An explicitly empty value is refused, never broadened |
 | `--dry-run` | flag | off | No writes |
+| `--lake-dir` | str | canonical `data/lake` | Explicit lake root inside `data/` (e.g. `data/lake_real`); never mixed, never defaulted. A non-canonical root accepts `us_equity` only, so pass `--markets us_equity` (ADR-0030) |
 
 ```bash
 dotenvx run -- uv run equity backfill --days-back 30 --markets us_equity
+dotenvx run -- uv run equity backfill --start 2024-01-02 --end 2024-12-31 --markets us_equity --tickers AAPL,NVDA
 ```
 
 ### `equity auto-backfill`
@@ -194,6 +204,30 @@ dotenvx run -- uv run equity pipeline --markets us_equity --tickers AAPL --allow
 
 Without `--allow-history-backfill`, missing warm-up history fails the feature
 stage instead of starting a backfill.
+
+### `equity features`
+
+Run a scoped feature (Gold) build for explicit tickers and one window.
+
+| Flag | Type | Default | Notes |
+|---|---|---|---|
+| `--tickers`, `-t` | str | required | Comma-separated tickers; an explicit scope is required |
+| `--start` | str | required | First output session `YYYY-MM-DD` |
+| `--end` | str | required | Last output session `YYYY-MM-DD` |
+| `--coverage-basis` | str | `source_clock` | `source_clock` (strict) or `vendor_events_no_clock` (weak opt-in, ADR-0032) |
+| `--lake-dir` | str | canonical lake | Explicit lake root (e.g. `data/lake_real`, ADR-0030) |
+| `--dry-run` | flag | off | Compute and validate the run without writing Gold rows |
+
+```bash
+dotenvx run -- uv run equity features --tickers AAPL,MSFT --start 2024-01-02 --end 2024-12-31
+dotenvx run -- uv run equity features --lake-dir data/lake_real --tickers AAPL,MSFT \
+    --start 2020-01-02 --end 2026-08-20 --coverage-basis vendor_events_no_clock --dry-run
+```
+
+The run exits non-zero when the requested basis has no matching action coverage
+evidence, when the window passes the instrument's action coverage bound, or when
+the instrument has no coverage proof at all. See the feature guide for the
+refusal wording.
 
 ## Unstructured & news
 
@@ -319,6 +353,7 @@ payload (`since_by_ticker`).
 | `--market` | str | `us_equity` | Price market (ADR-0010 long key); yfinance-backed markets only |
 | `--tickers`, `-t` | str | all configured | Comma-separated tickers |
 | `--dry-run` | flag | off | Fetch but skip writes |
+| `--lake-dir` | str | canonical `data/lake` | Explicit lake root inside `data/`; a non-canonical root accepts `us_equity` only (ADR-0030) |
 
 ```bash
 dotenvx run -- uv run equity corporate-actions            # incremental, configured tickers
@@ -451,6 +486,20 @@ explicitly passed; the opportunity webhook is distinct from health webhooks.
 only (no broker-export mapping, no plugin) and `--dry-run` validates fully and
 writes nothing.
 
+`equity portfolio migrate` upgrades the ledger schema (v1 -> v2, which adds the
+`SPLIT` event kind). It is report-only by default: it verifies the file and prints
+its schema version, row count and record digest without writing anything. `--apply`
+first writes a verified `<ledger>.<utc>.v1.bak` copy beside the ledger, then rebuilds
+the table in one transaction, proves the record is unchanged and re-verifies the
+result (ADR-0031). No command upgrades implicitly, a v1 ledger refuses reads and
+writes with a message naming this one, and there is no down-migration — the verified
+backup is the reversal.
+
+```bash
+uv run equity portfolio migrate            # report only: writes nothing
+uv run equity portfolio migrate --apply    # verified backup, then the v1 -> v2 rebuild
+```
+
 `equity portfolio positions|summary|reconcile` are read-only reports over the same
 private ledger. Each needs an explicit timezone-aware `--as-of` plus `--marks`
 (valuation) or `--statement` (reconciliation), and each takes the neutral
@@ -497,6 +546,8 @@ Backtest trading strategies (shares the strategy registry with
 | `--end-date` | str | **required** | `YYYY-MM-DD` |
 | `--initial-cash` | float | `100000` | Initial capital |
 | `--adjust` | str | `splits` | Point-in-time split-only adjustment. Legacy `none` is an alias for split-only, never a raw-price bypass. Verified action proof is required; missing proof makes adjusted evaluation unavailable, with no raw fallback. Dividend-inclusive total-return adjustment is unsupported. |
+| `--coverage-basis` | str | `source_clock` | ADR-0032 action-coverage basis for adjusted reads: `source_clock` (strict, point-in-time; the only basis a historical decision may use) or `vendor_events_no_clock` (explicit weak opt-in for vendor-sourced roots; null clocks, weak stamp). One basis per run; a frame already read on another basis is refused, not reinterpreted. |
+| `--lake-dir` | str | canonical `data/lake` | Explicit lake root such as `data/lake_real` (ADR-0030); one root per run, no discovery, fallback or cross-root mixing. |
 | `--output`, `-o` | str | stdout only | Output JSON |
 
 ```bash
@@ -504,6 +555,8 @@ uv run equity backtest --strategy momentum --tickers AAPL,MSFT \
   --start-date 2025-01-01 --end-date 2025-12-31
 # A normal source fetch is a separate, explicitly authorized operation.
 # Adjusted backtests need verified source proof; the native yfinance path does not currently provide it.
+# On the real root the vendor evidence is the weak, explicitly opted-in basis:
+#   uv run equity backtest ... --lake-dir data/lake_real --coverage-basis vendor_events_no_clock
 ```
 
 ### `equity arena run`
@@ -616,9 +669,21 @@ is still written).
 | `--max-age-days` | int | from settings | Max data age |
 | `--null-threshold` | float | from settings | Null % threshold |
 | `--output-json` | str | `logs/health-report.json` | Save full report |
+| `--lake-dir` | str | canonical `data/lake` | Report on one explicit root; roots are never combined (ADR-0030) |
+
+A **real-source root** carries the `us_equity` slice only, so the report scopes to it: the
+freshness/quality sweeps judge `us_equity` alone instead of erroring on four markets the root
+may not hold, and checks that cannot be evaluated there (Feature Store, Unstructured
+Freshness — no Gold or enrichment tables are written to a real root) are reported `N/A` with
+their reason rather than `PASS`. `check_results` keeps its boolean shape for dashboards; the
+additions are `check_status`, `check_notes` and a `scope` block. An *absent* price table is
+still a failure — scoping is not leniency. The canonical root's verdicts are unchanged. A
+closed historical slice legitimately fails freshness; state the expectation with
+`--max-age-days` (e.g. `--max-age-days 800` for a 2024 window).
 
 ```bash
 dotenvx run -- uv run equity monitor --output-json site/health-report.json
+dotenvx run -- uv run equity monitor --lake-dir data/lake_real --max-age-days 800
 ```
 
 ### `equity delta-vacuum`

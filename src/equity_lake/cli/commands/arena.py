@@ -16,11 +16,19 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import typer
 
-from equity_lake.cli._app import _init_logging, _parse_comma_list, _parse_markets, arena_app, report_app
+from equity_lake.cli._app import (
+    _init_logging,
+    _parse_comma_list,
+    _parse_markets,
+    _require_real_root_scope,
+    _resolve_lake_dir,
+    arena_app,
+    report_app,
+)
 from equity_lake.cli._display import print_finding_cards
 
 _DEFAULT_TICKERS = "AAPL,MSFT,GOOGL,AMZN,NVDA"
@@ -477,6 +485,32 @@ def report_backtest(
     ] = "us_equity",
     cost_regime: Annotated[str, typer.Option("--cost-regime", help="Cost regime: zero|realistic|high")] = "realistic",
     initial_cash: Annotated[float, typer.Option("--initial-cash", help="Initial capital")] = 100_000,
+    coverage_basis: Annotated[
+        str,
+        typer.Option(
+            "--coverage-basis",
+            help="Action-coverage basis: source_clock (strict point-in-time default) or vendor_events_no_clock (opt-in weak basis, ADR-0032)",
+        ),
+    ] = "source_clock",
+    lake_dir: Annotated[
+        str | None,
+        typer.Option("--lake-dir", help="Explicit lake root such as data/lake_real (ADR-0030); default is the canonical lake"),
+    ] = None,
+    protocol_experiment: Annotated[
+        str | None,
+        typer.Option(
+            "--protocol-experiment",
+            help="Bind this run to a frozen R00 protocol: the experiment whose frozen manifest must admit the run (R01)",
+        ),
+    ] = None,
+    protocol_digest: Annotated[
+        str | None,
+        typer.Option("--protocol-digest", help="Protocol digest this run expects; refused unless a frozen manifest carries it"),
+    ] = None,
+    protocol_root: Annotated[
+        str | None,
+        typer.Option("--protocol-root", help="Directory holding frozen protocol manifests (default: data/research/protocols)"),
+    ] = None,
     output_dir: Annotated[
         str | None,
         typer.Option("--output-dir", "-o", help="Findings root for the run and attempt evidence (default: data/findings)"),
@@ -502,14 +536,36 @@ def report_backtest(
     An undated result (``BacktestResult.equity_dates is None``) is refused:
     no calendar is invented, nothing is written, and the exit code is 1.
 
+    The run reads one lake root at one action-coverage basis: ``--lake-dir`` selects
+    the root (ADR-0030) and ``--coverage-basis`` the ADR-0032 basis; the defaults keep
+    the canonical root and the strict ``source_clock`` basis, so a pre-existing
+    invocation is unchanged. A basis is never inferred from the data, and two bases are
+    never mixed in one run.
+
+    ``--protocol-experiment`` binds the run to a frozen R00 protocol under
+    ``--protocol-root``: the freeze must exist (absent refuses), ``--protocol-digest``
+    must match a frozen record when given, the freeze must be unambiguous, and the
+    run's own recorded universe, window, holdout and cost regimes must conform before
+    anything is written. The frozen digest and experiment are recorded in the run
+    scope ``parameters``, so the binding is in the run ID. No protocol flag keeps the
+    run unbound, exactly as before.
+
     Exit codes: 0 when the run and its attempt record are published; 1 when
-    the backtest raises, the result carries no dated evidence, or the evidence
-    cannot be written.
+    the backtest raises, the result carries no dated evidence, the frozen
+    protocol refuses the run, or the evidence cannot be written.
     """
     from equity_lake.backtesting.arena import evaluation_status
     from equity_lake.backtesting.attempts import PairOutcome, PairRequest, write_attempt_record
     from equity_lake.backtesting.evidence import CostApplication, ExecutionTiming, InputSnapshot, PriceOriginSummary, RunScope, finalise_run
     from equity_lake.backtesting.factory import build_backtest_engine
+    from equity_lake.backtesting.protocol import (
+        ProtocolError,
+        cost_disclosures,
+        protocol_binding,
+        require_run_conformance,
+        select_frozen_protocol,
+    )
+    from equity_lake.core.availability import COVERAGE_BASES, CoverageBasis
     from equity_lake.core.paths import FINDINGS_DIR
 
     _init_logging(verbose)
@@ -518,6 +574,37 @@ def report_backtest(
     root = Path(output_dir) if output_dir else FINDINGS_DIR
     started_at = datetime.now(UTC)
 
+    # One lake root, at exactly one action-coverage basis (ADR-0030 / ADR-0032). The
+    # defaults keep the canonical root and the strict basis, so every pre-existing
+    # invocation behaves exactly as before; a basis is never inferred from the data.
+    if coverage_basis not in COVERAGE_BASES:
+        typer.secho(f"Unknown --coverage-basis {coverage_basis!r}; expected one of {', '.join(COVERAGE_BASES)}.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    basis = cast("CoverageBasis", coverage_basis)
+    market_list = _parse_markets(markets) or ["us_equity"]
+    selected_lake = _resolve_lake_dir(lake_dir)
+    _require_real_root_scope(market_list, selected_lake)
+
+    # R01: a protocol-bound run selects its frozen manifest **before** the engine is
+    # built, so an absent freeze, an unmatched digest claim or an ambiguous freeze
+    # refuses the run before it spends anything. No protocol flag keeps the run
+    # unbound, exactly as before.
+    frozen = None
+    if protocol_digest is not None and protocol_experiment is None:
+        typer.secho("--protocol-digest requires --protocol-experiment: a digest claim binds one frozen experiment.", fg=typer.colors.RED)
+        raise typer.Exit(1)
+    if protocol_experiment is not None:
+        try:
+            frozen = select_frozen_protocol(
+                protocol_experiment,
+                root=Path(protocol_root) if protocol_root is not None else None,
+                digest=protocol_digest,
+            )
+        except ProtocolError as exc:
+            typer.secho(f"refusing to run: {exc}", fg=typer.colors.RED)
+            raise typer.Exit(1) from exc
+        typer.echo(f"Frozen protocol: {frozen.protocol.experiment} (digest {frozen.protocol_digest})")
+
     try:
         engine = build_backtest_engine(
             strategy=strategy,
@@ -525,8 +612,10 @@ def report_backtest(
             start_date=date.fromisoformat(start_date),
             end_date=date.fromisoformat(end_date),
             initial_cash=initial_cash,
-            markets=_parse_markets(markets) or ["us_equity"],
+            markets=market_list,
             cost_regime=cost_regime,
+            lake_dir=selected_lake,
+            coverage_basis=basis,
         )
     except ValueError as exc:
         typer.secho(str(exc), fg=typer.colors.RED)
@@ -598,9 +687,36 @@ def report_backtest(
         loader_snapshots: list[dict[str, str | None]] = list(read_snapshots()) if read_snapshots is not None else []
         loader_origin_summaries = list(read_origin_summaries()) if read_origin_summaries is not None else []
         input_snapshots = [
-            InputSnapshot(name=str(snapshot["name"]), sha256=str(snapshot["sha256"]), source=str(snapshot["source"]), version=snapshot.get("version"))
+            InputSnapshot(
+                name=str(snapshot["name"]),
+                sha256=str(snapshot["sha256"]),
+                source=str(snapshot["source"]),
+                version=snapshot.get("version"),
+                # The ADR-0032 basis an action_coverage: read admitted; absent elsewhere.
+                coverage_basis=cast("CoverageBasis | None", snapshot.get("coverage_basis")),
+            )
             for snapshot in loader_snapshots
         ]
+        # R01: a protocol-bound run is checked against the frozen assumptions from its
+        # *own* recorded facts. A violation refuses the run here — before the scope is
+        # built and before any run directory exists, so nothing is published.
+        parameters = dict(engine.strategy.params)
+        if frozen is not None:
+            require_run_conformance(
+                frozen,
+                universe=universe,
+                start_date=result.start_date,
+                end_date=result.end_date,
+                cost_regimes=[cost_regime],
+            )
+            binding = protocol_binding(frozen)
+            collision = sorted(set(binding) & set(parameters))
+            if collision:
+                raise ProtocolError(
+                    f"strategy parameters already carry {collision}: the frozen protocol binding cannot be recorded without overwriting them"
+                )
+            parameters.update(binding)
+            notes.extend(f"protocol: {note}" for note in cost_disclosures(frozen, costs))
         scope = RunScope(
             universe=universe,
             start_date=result.start_date,
@@ -609,7 +725,10 @@ def report_backtest(
             costs=costs,
             initial_cash=float(result.initial_cash),
             # The parameters of the instance that actually ran, never a registry default.
-            parameters=dict(engine.strategy.params),
+            # A protocol-bound run adds the frozen digest and experiment here, so the
+            # binding is part of the run-ID preimage and readable from the manifest
+            # without a new manifest field (R01; no schema change).
+            parameters=parameters,
         )
         finalised = finalise_run(
             result,
@@ -631,6 +750,11 @@ def report_backtest(
             cards=(),
             root=root,
         )
+    except ProtocolError as exc:
+        # A frozen-assumption refusal is not an evidence-write failure: it publishes
+        # nothing and says so (R01).
+        typer.secho(f"refusing to publish this run: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
     except Exception as exc:  # noqa: BLE001 — an evidence write failure must stay visible and nonzero
         typer.secho(f"run evidence could not be written: {exc}", fg=typer.colors.RED)
         raise typer.Exit(1) from exc
@@ -671,3 +795,10 @@ def report_backtest(
     typer.echo(f"\nRun evidence: {finalised.directory}")
     typer.echo(f"Attempt evidence: {attempt.directory} (status {attempt.record.status})")
     typer.echo(f"evaluation status: {run_evaluation_status}" + (f" — {'; '.join(evaluation_notes)}" if evaluation_notes else ""))
+    if frozen is not None:
+        # The binding and every disclosed asymmetry are printed as well as recorded: a
+        # protocol-bound run that applied costs differently from the frozen ratios, or
+        # that executed a different convention, says so where the operator can see it.
+        typer.echo(f"protocol binding: {frozen.protocol.experiment} (digest {frozen.protocol_digest}) recorded in the run scope")
+        for note in cost_disclosures(frozen, costs):
+            typer.secho(f"  {note}", fg=typer.colors.YELLOW)

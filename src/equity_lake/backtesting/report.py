@@ -36,6 +36,7 @@ from equity_lake.findings.writer import refuse_non_finite_json
 if TYPE_CHECKING:  # pragma: no cover - typing only (evidence imports this module)
     from equity_lake.backtesting.attempts import AttemptStatus, FinalisedAttempt, PairOutcome
     from equity_lake.backtesting.evidence import CostApplication, FinalisedRun, UniverseBasis
+    from equity_lake.core.availability import CoverageBasis
 
 logger = structlog.get_logger(__name__)
 
@@ -829,7 +830,14 @@ def _finalise_arena_run_evidence(outcome: ArenaOutcome, *, root: Path) -> _RunEv
     # import of this module.
     loaded_universe = _loaded_canonical_universe(outcome)
     input_snapshots = [
-        InputSnapshot(name=str(snapshot["name"]), sha256=str(snapshot["sha256"]), source=str(snapshot["source"]), version=snapshot.get("version"))
+        InputSnapshot(
+            name=str(snapshot["name"]),
+            sha256=str(snapshot["sha256"]),
+            source=str(snapshot["source"]),
+            version=snapshot.get("version"),
+            # The ADR-0032 basis an action_coverage: read admitted; absent elsewhere.
+            coverage_basis=cast("CoverageBasis | None", snapshot.get("coverage_basis")),
+        )
         for snapshot in outcome.input_snapshots
     ]
     # The read seam's whole-load origin classification, validated here rather than trusted:

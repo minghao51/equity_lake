@@ -82,7 +82,7 @@ def _resolve_configured_tickers(markets: list[str], ticker_config: TickerConfig)
     return [instrument.symbol for instrument in _configured_instruments(markets, ticker_config)]
 
 
-def _resolve_explicit_instruments(
+def resolve_explicit_instruments(
     markets: Sequence[str],
     explicit_tickers: Sequence[str] | None,
     ticker_config: TickerConfig,
@@ -686,7 +686,7 @@ def execute_eod_pipeline(
     if tickers is not None and instruments is not None and sorted(tickers) != sorted(item.symbol for item in instruments):
         raise ValueError("tickers and instruments specify different scopes; pass one selector form")
     explicit_scope = tickers is not None or instruments is not None
-    resolved_instruments = _resolve_explicit_instruments(markets, tickers, ticker_config, instruments=instruments)
+    resolved_instruments = resolve_explicit_instruments(markets, tickers, ticker_config, instruments=instruments)
     scheduled_instruments, not_scheduled_instruments = _scheduled_instruments(resolved_instruments, trading_date)
     feature_markets = list(dict.fromkeys(instrument.market for instrument in scheduled_instruments))
     ticker_symbols = [instrument.symbol for instrument in scheduled_instruments]

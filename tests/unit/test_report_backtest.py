@@ -589,6 +589,9 @@ def test_engine_records_loaded_universe_size_only_for_its_own_load(_engine: Vect
     loaded = pl.DataFrame({"ticker": ["AAPL", "AAPL", "MSFT", "GOOGL"], "date": [DATES[0]] * 4})
 
     class _StubLoader:
+        def __init__(self, **_kwargs: Any) -> None:
+            """Model the real loader's constructor (lake root + coverage basis)."""
+
         def load(self, **_kwargs: Any) -> pl.DataFrame:
             return loaded
 
@@ -608,3 +611,245 @@ def test_engine_records_loaded_universe_size_only_for_its_own_load(_engine: Vect
     )
     assert preloaded._load_data().height == 4
     assert preloaded.loaded_universe_size is None
+
+
+# ---------------------------------------------------------------------------
+# R01: the root / basis flags and the frozen-protocol binding
+# ---------------------------------------------------------------------------
+
+
+def _frozen(tmp_path: Path, **overrides: Any) -> Any:
+    """Freeze one R00 protocol whose window contains the stub run, under ``tmp_path``.
+
+    The stub engine records no loaded identity, so the manifest universe is the bare
+    requested tickers (``ticker_only``) — the frozen universe is stated the same way.
+    """
+    from equity_lake.backtesting.evidence import CostApplication
+    from equity_lake.backtesting.protocol import (  # type: ignore[import-untyped]
+        ResearchProtocol,
+        ResourceBudget,
+        freeze_protocol,
+    )
+
+    values: dict[str, Any] = {
+        "experiment": "R01-baseline-us-2024",
+        "universe": list(TICKERS),
+        "start_date": DATES[0],
+        "end_date": date(2022, 12, 31),
+        "holdout_start": date(2022, 11, 1),
+        "holdout_end": date(2022, 12, 31),
+        "label_horizon_days": 5,
+        "label_maturity_days": 5,
+        "purge_days": 5,
+        "embargo_days": 1,
+        "costs": [CostApplication(regime="realistic", fee_ratio=0.0005, tax_ratio=0.0)],
+        "metrics": ["net_return", "sharpe_ratio", "max_drawdown"],
+        "baselines": ["buy_and_hold", "equal_weight"],
+        "acceptance_tolerances": {"net_return": 0.0, "sharpe_ratio": 0.05},
+        "resource_budget": ResourceBudget(max_runtime_seconds=600.0, max_symbols=5, max_sessions=252),
+    }
+    values.update(overrides)
+    frozen, path = freeze_protocol(ResearchProtocol(**values), root=tmp_path / "research")
+    return frozen, path
+
+
+class TestReportBacktestRootAndBasis:
+    """The evidence path carries one lake root and one ADR-0032 basis (Stage 2a/R01)."""
+
+    def test_help_lists_the_root_and_basis_flags(self) -> None:
+        result = runner.invoke(app, ["report", "backtest", "--help"], env={"COLUMNS": "220"})
+        assert result.exit_code == 0
+        for flag in ("--lake-dir", "--coverage-basis", "--protocol-experiment", "--protocol-digest", "--protocol-root"):
+            assert flag in result.stdout
+        assert "vendor_events_no_clock" in result.stdout
+
+    def test_an_unknown_basis_exits_non_zero(self, tmp_path: Path) -> None:
+        """Falsified by: passing an unvalidated basis string down to the engine."""
+        result = _invoke(tmp_path, _StubEngine(_result()), "--coverage-basis", "guessed_clock")
+        assert result.exit_code == 1
+        assert "Unknown --coverage-basis" in result.stdout
+        assert not (tmp_path / "runs").exists()
+
+    def test_the_root_and_basis_reach_the_engine_construction(self, tmp_path: Path) -> None:
+        """Falsified by: the command keeping the canonical root or the strict basis."""
+        from equity_lake.core.paths import DATA_DIR  # type: ignore[import-untyped]
+
+        captured: dict[str, Any] = {}
+
+        def _build(**kwargs: Any) -> _StubEngine:
+            captured.update(kwargs)
+            return _StubEngine(_result())
+
+        real_root = DATA_DIR / "lake_real"
+        args = [
+            "report",
+            "backtest",
+            "--strategy",
+            "mean_reversion",
+            "--tickers",
+            ",".join(TICKERS),
+            "--start-date",
+            DATES[0].isoformat(),
+            "--end-date",
+            DATES[-1].isoformat(),
+            "--output-dir",
+            str(tmp_path),
+            "--lake-dir",
+            str(real_root),
+            "--coverage-basis",
+            "vendor_events_no_clock",
+        ]
+        with patch("equity_lake.backtesting.factory.build_backtest_engine", side_effect=_build):
+            result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.stdout
+        assert captured["coverage_basis"] == "vendor_events_no_clock"
+        assert captured["lake_dir"] == real_root.resolve()
+        assert captured["lake_dir"].name == "lake_real"
+
+    def test_the_defaults_stay_canonical_and_strict(self, tmp_path: Path) -> None:
+        """Falsified by: a new default that changes an existing invocation."""
+        captured: dict[str, Any] = {}
+
+        def _build(**kwargs: Any) -> _StubEngine:
+            captured.update(kwargs)
+            return _StubEngine(_result())
+
+        args = [
+            "report",
+            "backtest",
+            "--strategy",
+            "mean_reversion",
+            "--tickers",
+            ",".join(TICKERS),
+            "--start-date",
+            DATES[0].isoformat(),
+            "--end-date",
+            DATES[-1].isoformat(),
+            "--output-dir",
+            str(tmp_path),
+        ]
+        with patch("equity_lake.backtesting.factory.build_backtest_engine", side_effect=_build):
+            assert runner.invoke(app, args).exit_code == 0
+        assert captured["coverage_basis"] == "source_clock"
+        assert captured["lake_dir"] is None
+
+
+class TestReportBacktestProtocolBinding:
+    """R01: the run is bound to a frozen R00 protocol, or it refuses."""
+
+    def test_a_bound_run_records_the_frozen_digest_in_its_scope(self, tmp_path: Path) -> None:
+        """Falsified by: publishing a protocol-bound run without the digest in scope."""
+        frozen, _ = _frozen(tmp_path)
+        result = _invoke(
+            tmp_path / "findings",
+            _StubEngine(_result()),
+            "--protocol-experiment",
+            "R01-baseline-us-2024",
+            "--protocol-root",
+            str(tmp_path / "research"),
+        )
+        assert result.exit_code == 0, result.stdout
+        manifest = _manifest(_only(tmp_path / "findings", "runs"))
+        assert manifest["parameters"]["protocol_digest"] == frozen.protocol_digest
+        assert manifest["parameters"]["protocol_experiment"] == "R01-baseline-us-2024"
+        assert str(frozen.protocol_digest) in result.stdout
+
+    def test_the_digest_is_part_of_the_run_identity(self, tmp_path: Path) -> None:
+        """Falsified by: a bound and an unbound run sharing one run ID."""
+        frozen, _ = _frozen(tmp_path)
+        bound = _invoke(
+            tmp_path / "bound",
+            _StubEngine(_result()),
+            "--protocol-experiment",
+            "R01-baseline-us-2024",
+            "--protocol-root",
+            str(tmp_path / "research"),
+        )
+        assert bound.exit_code == 0, bound.stdout
+        unbound = _invoke(tmp_path / "unbound", _StubEngine(_result()))
+        assert unbound.exit_code == 0, unbound.stdout
+        bound_id = _manifest(_only(tmp_path / "bound", "runs"))["run_id"]
+        unbound_id = _manifest(_only(tmp_path / "unbound", "runs"))["run_id"]
+        assert bound_id != unbound_id
+        assert frozen.protocol_digest in _manifest(_only(tmp_path / "bound", "runs"))["parameters"].values()
+
+    def test_an_absent_freeze_refuses_before_the_run(self, tmp_path: Path) -> None:
+        """Falsified by: running first and discovering the missing freeze afterwards."""
+        engine = _StubEngine(_result())
+        with patch("equity_lake.backtesting.factory.build_backtest_engine", return_value=engine) as build:
+            result = _invoke(tmp_path, engine, "--protocol-experiment", "R01-baseline-us-2024", "--protocol-root", str(tmp_path / "research"))
+        assert result.exit_code == 1
+        assert "assumptions are absent" in result.stdout
+        assert build.call_count == 0, "the run must not start without a frozen protocol"
+        assert not (tmp_path / "runs").exists()
+
+    def test_a_digest_claim_that_no_freeze_carries_refuses(self, tmp_path: Path) -> None:
+        """Falsified by: accepting a run whose stated protocol digest is not frozen."""
+        _frozen(tmp_path)
+        result = _invoke(
+            tmp_path,
+            _StubEngine(_result()),
+            "--protocol-experiment",
+            "R01-baseline-us-2024",
+            "--protocol-root",
+            str(tmp_path / "research"),
+            "--protocol-digest",
+            "0" * 64,
+        )
+        assert result.exit_code == 1
+        assert "does not match a frozen record" in result.stdout
+        assert not (tmp_path / "runs").exists()
+
+    def test_a_digest_without_an_experiment_refuses(self, tmp_path: Path) -> None:
+        result = _invoke(tmp_path, _StubEngine(_result()), "--protocol-digest", "0" * 64)
+        assert result.exit_code == 1
+        assert "--protocol-digest requires --protocol-experiment" in result.stdout
+        assert not (tmp_path / "runs").exists()
+
+    def test_a_run_entering_the_holdout_refuses_and_writes_nothing(self, tmp_path: Path) -> None:
+        """Falsified by: publishing a run whose window overlaps the frozen holdout."""
+        _frozen(tmp_path, holdout_start=date(2022, 2, 1), holdout_end=date(2022, 2, 15))
+        result = _invoke(
+            tmp_path,
+            _StubEngine(_result()),
+            "--protocol-experiment",
+            "R01-baseline-us-2024",
+            "--protocol-root",
+            str(tmp_path / "research"),
+        )
+        assert result.exit_code == 1
+        assert "refusing to publish this run" in result.stdout
+        assert "overlaps the frozen holdout" in result.stdout
+        assert not (tmp_path / "runs").exists()
+        assert not (tmp_path / "attempts").exists()
+
+    def test_a_universe_outside_the_frozen_universe_refuses(self, tmp_path: Path) -> None:
+        """Falsified by: admitting a selection change made after the freeze."""
+        _frozen(tmp_path, universe=["AAPL"])
+        result = _invoke(
+            tmp_path,
+            _StubEngine(_result()),
+            "--protocol-experiment",
+            "R01-baseline-us-2024",
+            "--protocol-root",
+            str(tmp_path / "research"),
+        )
+        assert result.exit_code == 1
+        assert "universe differs from the frozen universe" in result.stdout
+        assert not (tmp_path / "runs").exists()
+
+    def test_a_differing_applied_cost_is_disclosed_in_the_evidence(self, tmp_path: Path) -> None:
+        """Falsified by: recording costs silently when they differ from the frozen pair."""
+        _frozen(tmp_path)
+        result = _invoke(
+            tmp_path,
+            _StubEngine(_result(), fee_ratio=0.001425, tax_ratio=0.003),
+            "--protocol-experiment",
+            "R01-baseline-us-2024",
+            "--protocol-root",
+            str(tmp_path / "research"),
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "cost asymmetry (disclosed)" in result.stdout
+        notes = _attempt_record(_only(tmp_path, "attempts"))["notes"]
+        assert any("cost asymmetry (disclosed)" in str(note) for note in notes), notes

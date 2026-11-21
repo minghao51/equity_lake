@@ -4,6 +4,7 @@ import copy
 import json
 from collections.abc import Sequence
 from datetime import date, datetime
+from pathlib import Path
 from typing import Any, Literal, cast
 
 import polars as pl
@@ -13,7 +14,11 @@ from equity_lake.backtesting.data_loader import _PIT_ACTION_CONTEXT, _PIT_RAW_CO
 from equity_lake.backtesting.metrics import DEFAULT_RISK_FREE_RATE, equity_curve_metrics
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy.base import BaseStrategy
-from equity_lake.core.availability import AvailabilityContractError  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    COVERAGE_BASES,
+    AvailabilityContractError,
+    CoverageBasis,
+)
 from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentIdentityError, InstrumentKey
 from equity_lake.storage.lake_reader import with_price_adjustment
 
@@ -111,6 +116,8 @@ class VectorBacktestEngine:
         config: dict[str, Any] | None = None,
         preloaded_data: pl.DataFrame | None = None,
         adjust: Literal["none", "splits", "total_return"] = "splits",
+        lake_dir: Path | None = None,
+        coverage_basis: CoverageBasis = "source_clock",
     ):
         self.strategy = strategy
         self.tickers = [ticker if isinstance(ticker, str) else ticker.display_key for ticker in tickers]
@@ -122,6 +129,14 @@ class VectorBacktestEngine:
         self.config = config or {}
         self.preloaded_data = preloaded_data
         self.adjust: Literal["none", "splits", "total_return"] = adjust
+        #: The one lake root this engine reads (``None`` keeps the canonical lake) and the
+        #: ADR-0032 basis its adjusted reads are admitted under. One root and one basis per
+        #: run: the basis is an explicit request, never inferred from the data (a frame read
+        #: on another basis is refused, not reinterpreted).
+        self.lake_dir = Path(lake_dir) if lake_dir is not None else None
+        if coverage_basis not in COVERAGE_BASES:
+            raise ValueError(f"Unknown coverage basis: {coverage_basis!r} (expected one of {COVERAGE_BASES})")
+        self.coverage_basis: CoverageBasis = coverage_basis
 
         self.fee_ratio = self.config.get("fee_ratio", DEFAULT_FEE_RATIO)
         self.tax_ratio = self.config.get("tax_ratio", DEFAULT_TAX_RATIO)
@@ -250,7 +265,9 @@ class VectorBacktestEngine:
             # mistake the caller's frame for one this engine read.
             return self.preloaded_data.clone()
         if self.data_loader is None:
-            self.data_loader = BacktestDataLoader()
+            # The engine's own loader reads exactly one root under exactly one basis;
+            # a root or basis given to this engine is never dropped on the floor.
+            self.data_loader = BacktestDataLoader(lake_dir=self.lake_dir, coverage_basis=self.coverage_basis)
         loaded = self.data_loader.load(
             tickers=self._requested_tickers,
             start_date=self.start_date,
@@ -268,12 +285,17 @@ class VectorBacktestEngine:
         return loaded
 
     @staticmethod
-    def _decode_action_context(payload: str) -> tuple[pl.DataFrame, pl.DataFrame]:
+    def _decode_action_context(payload: str) -> tuple[pl.DataFrame, pl.DataFrame, CoverageBasis]:
         """Rehydrate the source-issued event and coverage frames from loader handoff."""
         try:
             decoded = json.loads(payload)
         except (TypeError, json.JSONDecodeError) as exc:
             raise AvailabilityContractError("Preloaded backtest action context is corrupt") from exc
+        recorded_basis = decoded.get("coverage_basis", "source_clock")
+        if recorded_basis not in COVERAGE_BASES:
+            raise AvailabilityContractError(f"Preloaded backtest action context records an unknown coverage basis {recorded_basis!r}")
+        if not isinstance(decoded, dict):
+            raise AvailabilityContractError("Preloaded backtest action context is corrupt")
 
         def restore(rows: list[dict[str, Any]], date_columns: tuple[str, ...], time_columns: tuple[str, ...]) -> pl.DataFrame:
             for row in rows:
@@ -316,7 +338,7 @@ class VectorBacktestEngine:
                 }
             )
         )
-        return actions, coverage
+        return actions, coverage, cast(CoverageBasis, recorded_basis)
 
     def _prepare_point_in_time_inputs(self, loaded: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Rebuild each decision window and its split-neutral return mark as-of that session.
@@ -340,6 +362,7 @@ class VectorBacktestEngine:
             "availability_schema_version",
             "action_coverage",
             "action_source_age_days",
+            "action_coverage_basis",
             "point_in_time_available",
             "adj_close",
         ]
@@ -362,6 +385,15 @@ class VectorBacktestEngine:
             filters = [pl.col(column) == value for column, value in zip(IDENTITY_COLUMNS, identity, strict=True)]
             histories[key] = raw.filter(pl.all_horizontal(filters))
         action_contexts = {key: self._decode_action_context(payload) for key, payload in context_by_identity.items()}
+        # One run admits one basis, and a basis is never inferred from the frame it was
+        # handed: a context read on another basis refuses here, before any decision is
+        # silently excluded (ADR-0032 decisions 1/4).
+        for key, (_, _, recorded_basis) in action_contexts.items():
+            if recorded_basis != self.coverage_basis:
+                raise AvailabilityContractError(
+                    f"point-in-time action context for {key} was read on the {recorded_basis!r} coverage basis, "
+                    f"but this run requests {self.coverage_basis!r}: one run admits one basis and a basis is never inferred"
+                )
         last_marks: dict[tuple[str, str, str], tuple[date, float]] = {}
         strategy_weight_parts: list[pl.DataFrame] = []
         execution_rows: list[dict[str, Any]] = []
@@ -374,21 +406,24 @@ class VectorBacktestEngine:
             for key, history in histories.items():
                 if history.filter(pl.col("date") == decision_date).is_empty():
                     continue
-                actions, coverage = action_contexts[key]
+                actions, coverage, _ = action_contexts[key]
                 window = history.filter(pl.col("date") <= decision_date)
                 try:
                     if actions.is_empty():
                         proof_rows = window.head(1) if window.height == 1 else pl.concat([window.head(1), window.tail(1)], how="vertical_relaxed")
-                        verified = with_price_adjustment(proof_rows, actions, coverage=coverage, as_of=decision_date)
+                        verified = with_price_adjustment(
+                            proof_rows, actions, coverage=coverage, as_of=decision_date, coverage_basis=self.coverage_basis
+                        )
                         verified_metadata = verified.row(-1, named=True)
                         adjusted = window.with_columns(
                             pl.lit(verified_metadata["price_adjustment_version"]).alias("price_adjustment_version"),
                             pl.lit(verified_metadata["availability_schema_version"], dtype=pl.Int8).alias("availability_schema_version"),
                             pl.lit(verified_metadata["action_coverage"], dtype=pl.Int8).alias("action_coverage"),
                             pl.lit(verified_metadata["action_source_age_days"], dtype=pl.Int32).alias("action_source_age_days"),
+                            pl.lit(verified_metadata["action_coverage_basis"]).alias("action_coverage_basis"),
                         )
                     else:
-                        adjusted = with_price_adjustment(window, actions, coverage=coverage, as_of=decision_date)
+                        adjusted = with_price_adjustment(window, actions, coverage=coverage, as_of=decision_date, coverage_basis=self.coverage_basis)
                 except AvailabilityContractError as exc:
                     excluded += 1
                     logger.warning(

@@ -61,7 +61,11 @@ from typing import Any, Literal, Self
 import polars as pl
 import structlog
 
-from equity_lake.core.availability import AvailabilityContractError  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    COVERAGE_BASES,
+    AvailabilityContractError,
+    CoverageBasis,
+)
 from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_COLUMNS,
     InstrumentIdentityError,
@@ -73,7 +77,7 @@ from equity_lake.core.price_provenance import (
     PriceOriginClassification,
     classify_price_origin,
 )
-from equity_lake.core.schemas import PRICE_PROVENANCE_VERSION
+from equity_lake.core.schemas import ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX, PRICE_PROVENANCE_VERSION
 from equity_lake.ingestion.types import MARKET_DIR_MAP
 from equity_lake.storage.delta import delta_table_path
 from equity_lake.storage.lake_reader import with_price_adjustment
@@ -142,6 +146,7 @@ class BacktestDataLoader:
         cache_enabled: bool = True,
         action_inputs: Mapping[tuple[str, str, str], tuple[pl.DataFrame, pl.DataFrame]] | None = None,
         lake_dir: Path | None = None,
+        coverage_basis: CoverageBasis = "source_clock",
     ):
         # Kept as compatibility settings for callers; local scans need no SQL
         # connection and never interpolate lake paths or ticker values into SQL.
@@ -149,6 +154,12 @@ class BacktestDataLoader:
         self.cache_enabled = cache_enabled
         self.action_inputs = action_inputs
         self.lake_dir = Path(lake_dir) if lake_dir is not None else None
+        #: The ADR-0032 basis this loader admits for every adjusted read it performs
+        #: (one basis per load). ``source_clock`` is the strict default; the weak
+        #: ``vendor_events_no_clock`` is an explicit opt-in and is never inferred.
+        if coverage_basis not in COVERAGE_BASES:
+            raise ValueError(f"Unknown coverage basis: {coverage_basis!r} (expected one of {COVERAGE_BASES})")
+        self.coverage_basis: CoverageBasis = coverage_basis
         self._action_input_cache: dict[tuple[str, str, str], tuple[pl.DataFrame, pl.DataFrame]] = {}
         #: Read-seam input snapshots of the current load, keyed by name so one
         #: market's two action tables and one price table are each recorded once.
@@ -196,20 +207,27 @@ class BacktestDataLoader:
         """
         return [dict(entry) for entry in sorted(self._price_origin_summaries.values(), key=lambda entry: str(entry.get("name")))]
 
-    def _record_delta_snapshot(self, name: str, table_path: Path, version: int) -> None:
+    def _record_delta_snapshot(self, name: str, table_path: Path, version: int, *, coverage_basis: CoverageBasis | None = None) -> None:
         """Record an immutable ``(path, version)`` reference digest for one table read.
 
         One entry per ``name`` per load: the first read of a given table in the
-        current load wins, and the map is cleared when the next load starts.
+        current load wins, and the map is cleared when the next load starts. A
+        corporate-action coverage snapshot additionally records the ADR-0032 basis
+        its proofs were admitted under, so the manifest binds the basis it read and
+        a scope mixing bases can be refused (ADR-0032 decision 9). The basis is a
+        read parameter stamped here, never part of the ``(path, version)`` digest.
         """
         if name in self._snapshots:
             return
-        self._snapshots[name] = {
+        snapshot: dict[str, str | None] = {
             "name": name,
             "sha256": _delta_reference_digest(table_path, version),
             "source": SNAPSHOT_SOURCE_DELTA,
             "version": str(version),
         }
+        if coverage_basis is not None:
+            snapshot["coverage_basis"] = coverage_basis
+        self._snapshots[name] = snapshot
 
     def _record_parquet_snapshot(self, name: str, root: Path) -> None:
         """Record one aggregate content digest over the parquet file set at ``root``.
@@ -484,11 +502,15 @@ class BacktestDataLoader:
         all: there is no read to bind, and a hash for an unread table would be
         invented evidence.
         """
-        for name, table in ((f"action_events:{market}", events_table), (f"action_coverage:{market}", coverage_table)):
+        snapshot_scope: tuple[tuple[str, str, CoverageBasis | None], ...] = (
+            (f"action_events:{market}", events_table, None),
+            (f"{ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX}{market}", coverage_table, self.coverage_basis),
+        )
+        for name, table, basis in snapshot_scope:
             version = versions.get(table)
             if version is None:
                 continue
-            self._record_delta_snapshot(name, delta_table_path(table, self.lake_dir), version)
+            self._record_delta_snapshot(name, delta_table_path(table, self.lake_dir), version, coverage_basis=basis)
 
     def _scope_action_inputs(self, instrument: InstrumentKey) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Scope market-wide action tables to one identity without guessing collisions."""
@@ -516,6 +538,29 @@ class BacktestDataLoader:
             actions = actions.filter(pl.col("symbol").cast(pl.String) == instrument.symbol)
         return actions, coverage
 
+    def _require_one_basis(self, instrument: InstrumentKey, coverage: pl.DataFrame) -> None:
+        """Refuse a read whose coverage proofs were issued on another basis.
+
+        The per-session loop in :meth:`_point_in_time_marks` turns a session whose
+        proof cannot establish availability into an excluded session. A **basis**
+        mismatch is not a session condition: it affects every session of the read,
+        so excluding them one by one would report a refused read as a successful
+        empty one. One basis per read is enforced here instead, by name (ADR-0032
+        decision 4). A row with no basis stamp predates the column and implies
+        ``source_clock`` exactly as before, so legacy evidence is never reinterpreted
+        as weak and a weak request against it refuses.
+        """
+        if coverage.is_empty():
+            return
+        declared = coverage["coverage_basis"].to_list() if "coverage_basis" in coverage.columns else [None] * coverage.height
+        recorded = {"source_clock" if value is None else str(value) for value in declared}
+        foreign = sorted(recorded - {self.coverage_basis})
+        if foreign:
+            raise AvailabilityContractError(
+                f"{instrument.display_key}: coverage proofs were read on {foreign} but this read requests "
+                f"{self.coverage_basis!r}; one read admits one basis"
+            )
+
     def _attach_point_in_time_context(self, data: pl.DataFrame, markets: list[str]) -> pl.DataFrame:
         """Carry raw bars and source action inputs through the arena preload seam.
 
@@ -532,7 +577,11 @@ class BacktestDataLoader:
                 (pl.col("market") == instrument.market) & (pl.col("mic") == instrument.mic) & (pl.col("symbol") == instrument.symbol)
             )
             actions, coverage = self._scope_action_inputs(instrument)
-            payload = json.dumps({"actions": actions.to_dicts(), "coverage": coverage.to_dicts()}, default=_json_default, sort_keys=True)
+            payload = json.dumps(
+                {"actions": actions.to_dicts(), "coverage": coverage.to_dicts(), "coverage_basis": self.coverage_basis},
+                default=_json_default,
+                sort_keys=True,
+            )
             copies = [pl.col(column).alias(hidden) for column, hidden in _PIT_RAW_COLUMNS.items() if column in subset.columns]
             parts.append(subset.with_columns([*copies, pl.lit(payload).alias(_PIT_ACTION_CONTEXT)]))
         return pl.concat(parts, how="vertical_relaxed") if parts else data.head(0)
@@ -559,6 +608,7 @@ class BacktestDataLoader:
                 (pl.col("market") == instrument.market) & (pl.col("mic") == instrument.mic) & (pl.col("symbol") == instrument.symbol)
             ).sort("date")
             actions, coverage = self._scope_action_inputs(instrument)
+            self._require_one_basis(instrument, coverage)
             dates = subset["date"].to_list()
             if not dates:
                 continue
@@ -578,11 +628,15 @@ class BacktestDataLoader:
                 try:
                     if actions.is_empty():
                         proof_rows = history.head(1) if history.height == 1 else pl.concat([history.head(1), history.tail(1)], how="vertical_relaxed")
-                        verified = with_price_adjustment(proof_rows, actions, coverage=coverage, method=method, as_of=decision_date)
+                        verified = with_price_adjustment(
+                            proof_rows, actions, coverage=coverage, method=method, as_of=decision_date, coverage_basis=self.coverage_basis
+                        )
                         metadata_row = verified.row(-1, named=True)
                         current = subset.filter(pl.col("date") == decision_date)
                     else:
-                        adjusted = with_price_adjustment(history, actions, coverage=coverage, method=method, as_of=decision_date)
+                        adjusted = with_price_adjustment(
+                            history, actions, coverage=coverage, method=method, as_of=decision_date, coverage_basis=self.coverage_basis
+                        )
                         current = adjusted.filter(pl.col("date") == decision_date)
                         metadata_row = None
                 except AvailabilityContractError as exc:
@@ -631,7 +685,10 @@ class BacktestDataLoader:
                 versions.append(str(metadata_row["price_adjustment_version"]))
                 schema_versions.append(int(metadata_row["availability_schema_version"]))
                 coverage_flags.append(1)
-                source_ages.append(int(metadata_row["action_source_age_days"]))
+                # A weak (``vendor_events_no_clock``) row has no source clock, so its
+                # age is null by design (ADR-0032 decision 5) — never defaulted to 0.
+                source_age = metadata_row["action_source_age_days"]
+                source_ages.append(None if source_age is None else int(source_age))
                 available_flags.append(1)
                 last_valid_date = decision_date
                 last_index_close = index_close

@@ -14,12 +14,14 @@ renders it (``typer.secho`` + exit 1). No ``typer`` import in this layer.
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from equity_lake.backtesting.arena import COST_REGIMES, STRATEGY_REGISTRY
 
 if TYPE_CHECKING:
     from equity_lake.backtesting.engine import VectorBacktestEngine
+    from equity_lake.core.availability import CoverageBasis
 
 
 def build_backtest_engine(
@@ -32,6 +34,8 @@ def build_backtest_engine(
     markets: list[str] | None = None,
     cost_regime: str | None = None,
     adjust: Literal["none", "splits", "total_return"] = "splits",
+    lake_dir: Path | None = None,
+    coverage_basis: CoverageBasis = "source_clock",
 ) -> VectorBacktestEngine:
     """Validate the strategy/cost-regime names and build the backtest engine.
 
@@ -46,6 +50,11 @@ def build_backtest_engine(
             ``None`` keeps the engine's default fee/tax pair.
         adjust: Split-only corporate-action adjustment (ADR-0015); forwarded
             to the data loader. ``"none"`` is a compatibility alias for split-only.
+        lake_dir: The one lake root the engine reads; ``None`` keeps the canonical
+            lake (ADR-0030). A root is never mixed with another in one run.
+        coverage_basis: ADR-0032 action-coverage basis admitted by every adjusted
+            read: ``source_clock`` (strict default) or ``vendor_events_no_clock``
+            (explicit weak opt-in). It is never inferred from the data.
 
     Raises:
         ValueError: Unknown strategy or cost regime (message is CLI-ready).
@@ -68,6 +77,8 @@ def build_backtest_engine(
         markets=markets,
         config=dict(COST_REGIMES[cost_regime]) if cost_regime is not None else None,
         adjust=adjust,
+        lake_dir=lake_dir,
+        coverage_basis=coverage_basis,
     )
     return cast("VectorBacktestEngine", engine)
 

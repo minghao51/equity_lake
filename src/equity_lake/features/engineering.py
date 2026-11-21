@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import date
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
@@ -28,7 +29,10 @@ from equity_lake.core.availability import (  # pyright: ignore[reportMissingImpo
     PRICE_ADJUSTMENT_VERSION,
     ActionCoverageProof,
     AvailabilityContractError,
+    CoverageBasis,
+    CoverageProof,
     action_coverage_feature_fields,
+    parse_coverage_proof,
     source_observable_session,
     validate_action_coverage_for_decision,
 )
@@ -66,8 +70,16 @@ NON_NUMERIC_FOR_ZSCORE = {
 class FeatureEngineer:
     """Computes ML features from raw OHLCV data."""
 
-    def __init__(self, db_path: str | None = ":memory:"):
+    def __init__(self, db_path: str | None = ":memory:", *, lake_dir: Path | None = None):
+        """Open the DuckDB scratch connection over one explicit lake root.
+
+        ``lake_dir`` selects the root every source read uses (price markets and the
+        corporate-action store) — ADR-0030's second root arrives here explicitly.
+        ``None`` is the canonical lake; there is no discovery, no fallback and no
+        cross-root mixing (a run reads exactly one root).
+        """
         self.db_path: str = db_path if db_path is not None else ":memory:"
+        self.lake_dir: Path = lake_dir if lake_dir is not None else LAKE_DIR
         self.conn = duckdb.connect(str(self.db_path))
         self.feature_pipeline = FeaturePipeline()
         self._setup_views()
@@ -84,9 +96,9 @@ class FeatureEngineer:
         # into SQL and source MIC/exchange columns remain inspectable.
         ensure_delta_extension(self.conn)
         self.market_sources = [
-            (market, LAKE_DIR / "01_bronze" / "market_data" / market)
+            (market, self.lake_dir / "01_bronze" / "market_data" / market)
             for market in PRICE_MARKETS
-            if (LAKE_DIR / "01_bronze" / "market_data" / market).exists()
+            if (self.lake_dir / "01_bronze" / "market_data" / market).exists()
         ]
         logger.info("feature_price_sources_ready", market_count=len(self.market_sources))
 
@@ -193,6 +205,7 @@ class FeatureEngineer:
         diagnostics: dict[str, Any] | None = None,
         instruments: Sequence[InstrumentKey] | None = None,
         action_inputs: Mapping[tuple[str, str, str], tuple[pl.DataFrame, pl.DataFrame]] | None = None,
+        coverage_basis: CoverageBasis = "source_clock",
     ) -> pl.DataFrame:
         """Generate all features for specified tickers and date range.
 
@@ -320,13 +333,16 @@ class FeatureEngineer:
                 else:
                     from equity_lake.ingestion.corporate_actions import load_corporate_action_inputs
 
-                    actions, coverage = load_corporate_action_inputs(instrument.market)
+                    # The action store belongs to the same root as the price rows:
+                    # one run reads one root (ADR-0030).
+                    actions, coverage = load_corporate_action_inputs(instrument.market, lake_dir=self.lake_dir)
                 computed = self._compute_point_in_time_technical(
                     ticker_df,
                     instrument,
                     actions,
                     coverage,
                     compute_target=compute_target,
+                    coverage_basis=coverage_basis,
                 )
             except AvailabilityContractError as exc:
                 logger.error("instrument_action_availability_unavailable", instrument=instrument.display_key, error=str(exc))
@@ -417,30 +433,52 @@ class FeatureEngineer:
         coverage: pl.DataFrame,
         *,
         compute_target: bool,
+        coverage_basis: CoverageBasis = "source_clock",
     ) -> pl.DataFrame:
-        """Compute each output row using only split/action data known by that session."""
+        """Compute each output row using only split/action data known by that session.
+
+        ``coverage_basis`` is the explicit ADR-0032 opt-in. The default
+        ``source_clock`` keeps the point-in-time contract: a proof must be
+        source-available by its decision session and the row carries a numeric age.
+        ``vendor_events_no_clock`` admits the weak proof instead, performs no clock
+        check, and stamps null clocks/age with ``vendor_events_complete`` — the
+        output then passes only the weak writer contract.
+        """
         from equity_lake.storage.lake_reader import with_price_adjustment
 
         dates = prices["date"].to_list()
         # Keep source proofs unscoped for ticker-only action identity resolution;
         # price-scope selection happens only after the event identity is known.
-        source_proofs = [ActionCoverageProof.model_validate(row) for row in coverage.to_dicts()]
+        source_proofs: list[CoverageProof] = [parse_coverage_proof(row) for row in coverage.to_dicts()]
         instrument_proofs = [proof for proof in source_proofs if proof.identity == instrument.tuple]
         result_rows: list[pl.DataFrame] = []
         for index, anchor in enumerate(dates):
             history = prices.filter(pl.col("date") <= pl.lit(anchor))
-            adjusted_history = with_price_adjustment(history, actions, coverage=source_proofs, as_of=anchor)
-            visible_proofs = [
-                proof
-                for proof in instrument_proofs
-                if proof.coverage_start <= min(dates)
-                and proof.coverage_end >= anchor
-                and source_observable_session(instrument, proof.source_available_at) <= anchor
-            ]
-            if len(visible_proofs) != 1:
-                raise AvailabilityContractError("point-in-time action coverage proof is ambiguous")
-            proof = visible_proofs[0]
-            source_session = validate_action_coverage_for_decision(proof, instrument, anchor)
+            adjusted_history = with_price_adjustment(
+                history,
+                actions,
+                coverage=source_proofs,
+                as_of=anchor,
+                coverage_basis=coverage_basis,
+            )
+            covering = [proof for proof in instrument_proofs if proof.coverage_start <= min(dates) and proof.coverage_end >= anchor]
+            age: int | None = None
+            proof: CoverageProof
+            if coverage_basis == "source_clock":
+                visible_strict = [
+                    proof
+                    for proof in covering
+                    if isinstance(proof, ActionCoverageProof) and source_observable_session(instrument, proof.source_available_at) <= anchor
+                ]
+                if len(visible_strict) != 1:
+                    raise AvailabilityContractError("point-in-time action coverage proof is ambiguous")
+                proof = visible_strict[0]
+                age = (anchor - validate_action_coverage_for_decision(proof, instrument, anchor)).days
+            else:
+                visible_weak = [proof for proof in covering if proof.coverage_basis == coverage_basis]
+                if len(visible_weak) != 1:
+                    raise AvailabilityContractError("vendor event coverage proof is ambiguous or does not reach the window")
+                proof = visible_weak[0]
             technical = self.feature_pipeline.compute_technical(
                 adjusted_history.select("ticker", "date", "open", "high", "low", "close", "volume"),
                 include_target=False,
@@ -454,7 +492,7 @@ class FeatureEngineer:
                 "price_adjustment_version": PRICE_ADJUSTMENT_VERSION,
                 "availability_schema_version": AVAILABILITY_SCHEMA_VERSION,
                 "action_coverage": 1,
-                "action_source_age_days": (anchor - source_session).days,
+                "action_source_age_days": age,
                 **action_coverage_feature_fields(proof),
             }
             if compute_target:
@@ -463,7 +501,13 @@ class FeatureEngineer:
                 if index + 1 < len(dates):
                     next_day = dates[index + 1]
                     pair = prices.filter(pl.col("date").is_in([anchor, next_day]))
-                    adjusted_pair = with_price_adjustment(pair, actions, coverage=source_proofs, as_of=next_day).sort("date")
+                    adjusted_pair = with_price_adjustment(
+                        pair,
+                        actions,
+                        coverage=source_proofs,
+                        as_of=next_day,
+                        coverage_basis=coverage_basis,
+                    ).sort("date")
                     if adjusted_pair.height == 2:
                         previous_close, next_close = adjusted_pair["close"].to_list()
                         if previous_close is not None and next_close is not None and previous_close != 0:
@@ -488,6 +532,7 @@ class FeatureEngineer:
                 "action_source_valid_until": pl.Datetime("us", "UTC"),
                 "action_coverage_status": pl.String,
                 "action_coverage_schema_version": pl.Int8,
+                "action_coverage_basis": pl.String,
             }
             result_rows.append(technical.with_columns([pl.lit(value, dtype=metadata_dtypes.get(name)).alias(name) for name, value in values.items()]))
         return pl.concat(result_rows, how="vertical_relaxed") if result_rows else pl.DataFrame()
