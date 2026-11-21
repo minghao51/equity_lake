@@ -25,13 +25,29 @@ spent, and the ledger is the
 (§10 records the three stage entries, reviewer verdicts and gate counts). The remote is
 at `231d603`; all E01-6 and P03 stages are committed on local `main` and **not yet
 pushed**. ADR-0024/0025/0026/0027 are accepted. Pick up remaining work from the
-[next-agent remaining-tasks handoff](handoffs/20261107-05-next-agent-remaining-tasks.md). **P03 (private console) is implemented** in four reviewed stages (Portfolio, Data
+[next-agent handoff](handoffs/20261120-01-complete-remaining-stages.md). **P03 (private console) is implemented** in four reviewed stages (Portfolio, Data
 Readiness, Research Runs, Signals; see the [private console guide](user-guide/20261107-private-console.md)),
-with one configured private path and display-only guarantees. Work order from here:
-D01 → P00-2/P00-4
-(each needs its own authorization or ADR) → R00/R01/R02 → H00. The queue table in the
-Nov07-01 pickup (§4) is **superseded**. D01, private-account/provider access, real
-ingestion, refits, migrations, deployment and any further commit remain gated.
+with one configured private path and display-only guarantees. **P03's two follow-ups are closed** (populated-ledger no-write proof over a real ledger, tracked per-instrument coverage on Data Readiness) and recorded in the same §10 ledger. **D01 moved on 2026-11-14:** the owner recorded the source (`us_equity`/yfinance), free-tier spend, local-only/no-redistribution and `data/lake/` as the target root; a read-only probe then established reachability, complete 2024 coverage for a five-ticker sample against the repository's own calendar, and null action clocks — and falsified D00's "explicitly unadjusted" assumption, because the vendor's OHLC and volume are split-back-adjusted. The owner accepted [ADR-0028](decisions/0028-d01-real-source-slice.md) on 2026-11-14 and selected landing shape (a) reconstruct-raw-at-ingest — [ADR-0029](decisions/0029-split-treatment-ledger-and-raw-price-basis.md), also the P00-2 ledger amendment, which he then **accepted** — and chose a **second lake root** `data/lake_real/` with the same medallion layout instead of mixing real rows into the demo lake, specified in [ADR-0030](decisions/0030-second-real-source-lake-root.md) and **accepted 2026-11-15**. Both are implemented: the second root (`resolve_lake_root`, `--lake-dir`, alias/containment/inside-canonical/scope guards, all falsified by mutation) and the ledger split contract (`SPLIT` ratio in `quantity`, exact-reciprocal replacement inside the reversal's own account, pre-split-mark refusal). Round 1 returned `NEEDS-REVISION` on five findings, round 2 on four more, and **round 3 returned `PASS` on 2026-11-15** (independent reviewer, mutation-proofed); the owner **accepted both stages on 2026-11-15** — see the [D01 probe record](plans/20261114-01-d01-source-probe.md) and spec §10. One post-acceptance defect is recorded there: the store's v1 SQLite `CHECK` still rejects `SPLIT`, so *persisting* a split was closed on 2026-11-16 by [ADR-0031](decisions/0031-p00-4-ledger-backup-restore-migration-compaction.md) (P00-4, Accepted: schema v2 with `SPLIT` in the `CHECK`, verified backup, `equity portfolio migrate`; restore command and compaction still unimplemented). **The first D01 landing ran on 2026-11-17**
+(owner authority, `us_equity` only: AAPL, MSFT, NVDA, JPM, KO over 2024-01-02..2024-12-31):
+ADR-0029 **Part I** now reconstructs raw prices at the real-root write boundary and fails
+closed on any unproven split action, `equity backfill --tickers` scopes a landing, and the
+slice landed as 1,260 rows / 252 sessions under `data/lake_real/` with `data/lake/` and
+`data/catalog.jsonl` byte-identical. Two defects were raised and **not** fixed, each needing
+its own decision: `data ingest` cannot resolve yfinance identity (no `TickerConfig`), and
+`equity monitor` still checks five markets plus a Gold store, so a `us_equity`-only real root
+reports FAIL. **ADR-0032 is implemented (2026-11-19, decisions 1-9, no runs)** and **R00 is implemented** as
+offline controls (`backtesting/protocol.py`: freeze universe/window/holdout/costs, refuse an
+absent or changed assumption, dated manifest with digests; no ingestion, network or lake
+write). Work order from here: the first authorized real-root feature run (its own scoped
+authorization under ADR-0030 d10) → R01/R02 → H00 build. **D01 widening ran on 2026-11-20**
+under the owner's universe (AAPL, MSFT, GOOGL, NVDA, ADBE, BABA, QQQ, SPY, GLD): a new
+`equity widen` range path (one request per ticker) landed 49,784 rows for the eight covered
+tickers, and ADR-0033 proved GLD's empty action scope (5,535 rows). The real root now holds
+11 tickers / 58,653 rows, 0 duplicates; ADBE is capped at 2005 by its last action and BABA
+starts 2023-12-20 because the vendor list does. `data/lake/` and the catalog are untouched. The ingest-identity fix, real-root monitor scoping,
+P00-4's restore/compaction and the landing widening are **done**. The queue table in the Nov07-01 pickup (§4) is
+**superseded**. Private-account/provider access, real ingestion, refits, migrations,
+deployment and any further commit remain gated.
 
 ## Historical incident follow-up — 2026-10-22
 
@@ -88,7 +104,7 @@ rerun for this update and are not production-data-integrity proof.
 - [developer/architecture/](developer/architecture/) for system design and subsystem docs
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
-- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261107-05](handoffs/20261107-05-next-agent-remaining-tasks.md)** for the remaining gated queue; [20261107-01](handoffs/20261107-01-portfolio-projections-and-open-items.md) for the current queue, the uncommitted E01b/E01c state and the P02 pickup; [20261106-01](handoffs/20261106-01-research-readers-and-portfolio-pickup.md) is the spent E01b specification that E01b.1/b.2/E01c were implemented from; [20261102-01](handoffs/20261102-01-portfolio-and-research-pickup.md) preserves the initial approval/worker protocol; [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md) preserves accepted closure decisions, the R12 watch and the traps; [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register, [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records ADR-0021 implementation and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload work
+- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261118-01](handoffs/20261118-01-implement-adr0032.md)** — ADR-0032 is accepted and unimplemented, and that is the next stage (then R00 → first real-root feature run → R01/R02 → H00 build → commit), with the state, the traps and paste-ready prompts; [20261117-01](handoffs/20261117-01-post-d01-landing.md) carries the landing state it supersedes; [20261116-01](handoffs/20261116-01-next-agent-d01-landing.md) is the pre-landing plan it supersedes; [20261115-01](handoffs/20261115-01-next-agent-d01-landing.md) carries the round-1/round-2 review narrative it supersedes; [20261107-05](handoffs/20261107-05-next-agent-remaining-tasks.md) remains the E01-6/P03 history it records; [20261107-01](handoffs/20261107-01-portfolio-projections-and-open-items.md) for the current queue, the uncommitted E01b/E01c state and the P02 pickup; [20261106-01](handoffs/20261106-01-research-readers-and-portfolio-pickup.md) is the spent E01b specification that E01b.1/b.2/E01c were implemented from; [20261102-01](handoffs/20261102-01-portfolio-and-research-pickup.md) preserves the initial approval/worker protocol; [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md) preserves accepted closure decisions, the R12 watch and the traps; [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register, [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records ADR-0021 implementation and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload work
 - [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
 - [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts

@@ -65,6 +65,7 @@ nav:
       - Conventions: developer/architecture/CONVENTIONS.md
       - Auto-Backfill and Gap Detection: developer/architecture/auto-backfill-and-gap-detection.md
       - Catalog Subsystem: developer/architecture/catalog-subsystem.md
+      - Research Protocols (R00): developer/architecture/research-protocols.md
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
       - Project Structure: developer-guide/project-structure.md
       - Developer Tools: developer-guide/devtools.md
@@ -100,6 +101,8 @@ nav:
           - 'ADR-0020: Synthetic demo lake as a backtestable surface': decisions/0020-synthetic-demo-lake-as-backtestable-surface.md
           - 'ADR-0021: Row-bound forecast provenance and prediction usability': decisions/0021-row-bound-forecast-provenance.md
           - 'ADR-0022: Future forecast-provenance envelope versions': decisions/0022-future-forecast-provenance-envelope.md
+          - 'ADR-0032: Adjusted-read coverage basis for vendor-sourced slices': decisions/0032-adjusted-read-basis-for-vendor-sourced-slices.md
+          - 'ADR-0033: Proven-empty corporate-action scopes': decisions/0033-proven-empty-corporate-action-scopes.md
 
 plugins:
   - search

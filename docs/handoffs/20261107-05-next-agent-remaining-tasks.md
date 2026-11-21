@@ -18,8 +18,8 @@ uv sync --group dev --group backtesting --group dashboard
 
 `uv sync --group dashboard` alone **removes** the backtesting group; use the three-group
 form above or your skip count silently jumps (16 → 39). `uv run pytest` (serial) and
-`uv run pytest -n auto` should both report the same counts; the last recorded boundary was
-**2514 passed, 0 failed, 16 skipped**.
+`uv run pytest -n auto` should both report the same counts; the last recorded boundary is
+**2517 passed, 0 failed, 16 skipped** (after the P03 follow-ups).
 
 ## 2. What is shipped (do not rebuild)
 
@@ -29,6 +29,7 @@ form above or your skip count silently jumps (16 → 39). `uv run pytest` (seria
 | E01-6 stage 2 | `core/price_provenance.py`, `storage/delta.py`, `ingestion/writers.py`, `devtools/seed_demo.py` | nullable envelope, both write routes, generator-only `synthetic`, catalog regenerated |
 | E01-6 stage 3 | `backtesting/data_loader.py`, `arena.py`, `report.py`, `cli/commands/arena.py` | read-seam classification, derived `data_provenance`, v4 writers |
 | P03 stages 1-4 | `dashboard/panels.py`, `dashboard/pages.py`, `dashboard/streamlit_app.py`, `core/settings.py` | loopback-gated Portfolio / Data Readiness / Research Runs / Signals, one configured private path |
+| P03 follow-ups | `dashboard/panels.py`, `dashboard/streamlit_app.py`, `tests/unit/test_dashboard_p03_console.py` | populated-ledger no-write proof (the stage 1 residual); per-instrument coverage on Data Readiness, tracked-watchlist scope; 11 mutation proofs, 4 reviewer rounds (final `PASS`), spec §10 record |
 
 Read `docs/README.md` → this file → `docs/plans/20261107-04-p03-private-console-plan.md` →
 ADR-0027 → ADR-0018 → spec §5.4/§9/§10 before choosing work.
@@ -37,15 +38,15 @@ ADR-0027 → ADR-0018 → spec §5.4/§9/§10 before choosing work.
 
 | # | Task | Gate before starting |
 | --- | --- | --- |
-| 1 | **D01** licensing / retention / source access / spend / target root | owner must name the source, the spend ceiling and the target root; **no network call** until then |
-| 2 | **P00-2** replacement split / quantity-adjustment semantics | an approved **ADR first** (import, replay, basis, valuation-block interaction, ADR-0024 §9) |
-| 3 | **P00-4** backup / restore / migration / compaction of the private ledger | an approved **ADR first** (verification, failure modes, no migration run until authorized) |
+| 1 | **D01** licensing / retention / source access / spend / target root | **ADR-0028 + ADR-0030 Accepted**; probe complete; **second lake root implemented 2026-11-15** (`data/lake_real/`, 16 tests). Next: **accepted 2026-11-15** (round 3 `PASS`); the next gate is a scoped landing authorization — see the [probe record](20261114-01-d01-source-probe.md) and [the current entry point](20261115-01-next-agent-d01-landing.md). Landing shape **(a) reconstruct raw at ingest** and the mixed-lake answer (a second root `data/lake_real/`, same medallion layout, never cataloged, never mixed) are in [ADR-0029](../decisions/0029-split-treatment-ledger-and-raw-price-basis.md) (Accepted) and [ADR-0030](../decisions/0030-second-real-source-lake-root.md) (Accepted 2026-11-15). Ingestion stays gated on its own authorization |
+| 2 | **P00-2** replacement split / quantity-adjustment semantics | **implemented 2026-11-15** (ADR-0029): ledger `SPLIT` with ratio-in-quantity, exact-reciprocal replacement, split-aware oversell check and pre-split-mark refusal; 16 tests, 5 mutation proofs. The D01 price-basis half is deferred until the real root exists |
+| 3 | **P00-4** backup / restore / migration / compaction of the private ledger | **closed for migration and backup 2026-11-16**: [ADR-0031](../decisions/0031-p00-4-ledger-backup-restore-migration-compaction.md) accepted, schema v2 + verified backup + `equity portfolio migrate` implemented. A restore command, compaction and any backup automation remain unauthorized |
 | 4 | **R00 → R01 → R02** research controls → real baseline → ML hypothesis | blocked behind E01 (done) **and** D01 |
 | 5 | **H00** sanitized public hosting | deferred; needs a privacy review of any proposed export |
-| 6 | **P03 follow-ups** (small, no new gate needed if scoped to these) | a populated-ledger render no-write proof; a per-instrument coverage view for Data Readiness |
+| 6 | **P03 follow-ups** | **closed 2026-11-07** — populated-ledger render no-write proof and the per-instrument coverage view are implemented, reviewed and recorded in spec §10 |
 
-Recommended order is dependency-driven, not preference: P03 follow-ups and the two ADRs
-(P00-2/P00-4) are independent; D01 unblocks R00–R02; H00 comes last.
+Recommended order is dependency-driven, not preference: P03 follow-ups (now closed) and the
+two ADRs (P00-2/P00-4) are independent; D01 unblocks R00–R02; H00 comes last.
 
 ## 4. Traps that cost time in the last session
 
@@ -77,6 +78,14 @@ probe that never relaxes the adjusted/PIT proof. No network call until I approve
 specific source and spend.
 ```
 
+**D01 status 2026-11-14:** the owner answered (a)-(c) — `us_equity`/yfinance, free tier,
+local-only/no redistribution, root `data/lake/` — and the no-write probe ran. It falsified
+"explicitly unadjusted": vendor OHLC/volume are split-back-adjusted. ADR-0028 is **Accepted**
+and ADR-0029 (**Accepted**) fixes shape (a) reconstruct-at-ingest. Do not re-probe; ingestion is
+gated on its own scoped authorization. The mixed-lake question this paragraph left open
+(reset vs distinct real path) was settled by ADR-0030: a distinct `data/lake_real/` root,
+accepted and implemented 2026-11-15.
+
 **P00-2 / P00-4 (each an ADR first):**
 
 ```text
@@ -86,6 +95,14 @@ basis, valuation-block interaction) consistent with ADR-0024 §9 and the shipped
 the private SQLite ledger, including verification and failure modes. No implementation,
 no migration run.
 ```
+
+**P00-2 status 2026-11-14:** [ADR-0029](../decisions/0029-split-treatment-ledger-and-raw-price-basis.md)
+is **Accepted** (shape (a) for the D01 basis plus the ledger `SPLIT` semantics with no
+migration). Implementation is a separately authorized stage. The real-root contract is
+[ADR-0030](../decisions/0030-second-real-source-lake-root.md) (now **Accepted 2026-11-15**): `data/lake_real/`,
+same medallion layout, `--lake-dir` only, not cataloged, never mixed. Both are implemented; the round-2 review, the round-3 `PASS` and the owner acceptance
+(2026-11-15) are recorded in spec §10 — see
+[the current entry point](20261115-01-next-agent-d01-landing.md).
 
 **Push (owner only):**
 

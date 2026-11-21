@@ -157,7 +157,9 @@ class TestArenaReportSubcommands:
         result = runner.invoke(app, ["report", "backtest", "--help"])
         assert result.exit_code == 0
         assert "attempt evidence" in result.stdout
-        assert "Findings root for the run and attempt" in result.stdout
+        # The help panel wraps at the runner width, so assert the stable words, not a
+        # phrase that a new option can re-wrap.
+        assert "Findings root" in result.stdout
         assert "undated" in result.stdout
 
 
@@ -170,7 +172,7 @@ class TestPortfolioSubcommands:
         assert "canonical CSV" in result.stdout
         assert "import" in result.stdout
         # P02: the three frozen read reports are registered, not stubbed.
-        for present in ("positions", "summary", "reconcile"):
+        for present in ("positions", "summary", "reconcile", "migrate"):
             assert present in result.stdout
 
     def test_portfolio_import_help(self) -> None:
@@ -209,6 +211,16 @@ class TestPortfolioSubcommands:
         assert "--as-of" in result.stdout
         assert "--statement" in result.stdout
         assert "0.00000001 share and 0.01 USD" in result.stdout
+        assert "Exit codes" in result.stdout
+
+    def test_portfolio_migrate_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "migrate", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "--apply" in result.stdout
+        assert "--report-only" in result.stdout
+        # ADR-0031: the default writes nothing and there is no down-migration.
+        assert "writes nothing" in result.stdout
+        assert "no down-migration" in result.stdout
         assert "Exit codes" in result.stdout
 
 
@@ -722,6 +734,125 @@ class TestNativeCommands:
         assert payload["persisted"] is False
         assert "equity pipeline" in result.stderr
         assert _prediction_row_count() == before
+
+
+class TestIngestIdentityResolution:
+    """`ingest` must resolve vendor rows to an identity, like `backfill` already did.
+
+    yfinance supplies no MIC/exchange, so the source adapter resolves it from the exact
+    current ticker config (`identity_provenance=current_ticker_config`). A CLI that passed
+    no config raised ``LegacyIdentityUnavailableError`` for every `us_equity` row.
+    """
+
+    def test_ingest_threads_the_current_ticker_config(self) -> None:
+        """Falsified by: omitting ``ticker_config``, which makes every us_equity row fail."""
+        from pathlib import Path as _Path
+
+        from equity_lake.core.config import TickerConfig, get_settings
+
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.WRITTEN)}
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes) as mock_ingest:
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-02", "--dry-run", "--markets", "us_equity"])
+
+        assert result.exit_code == 0, result.stdout
+        config = mock_ingest.call_args.kwargs["ticker_config"]
+        assert isinstance(config, TickerConfig)
+        assert config.config_path == _Path(get_settings().ingestion.ticker_config_path)
+
+    def test_ingest_still_passes_an_explicit_ticker_scope_through(self) -> None:
+        """The config must not narrow or replace an explicit ``--tickers`` scope."""
+        outcomes = {"us_equity": SourceOutcome(SourceStatus.WRITTEN)}
+        with patch("equity_lake.ingestion.orchestrator.run_daily_ingestion", return_value=outcomes) as mock_ingest:
+            result = runner.invoke(app, ["ingest", "--date", "2024-01-02", "--dry-run", "--markets", "us_equity", "--tickers", "AAPL"])
+
+        assert result.exit_code == 0, result.stdout
+        assert mock_ingest.call_args.kwargs["explicit_tickers"] == ["AAPL"]
+        assert mock_ingest.call_args.kwargs["ticker_config"] is not None
+
+    def test_the_config_resolves_a_vendor_row_without_a_provider_mic(self) -> None:
+        """End of the thread: with a config, a MIC-less vendor row identifies itself.
+
+        Falsified by: any change that drops the config before the adapter, which makes
+        this raise ``LegacyIdentityUnavailableError`` instead of resolving XNAS.
+        """
+        from pathlib import Path as _Path
+
+        from equity_lake.core.config import TickerConfig, get_settings
+        from equity_lake.sources.us import USEquityFetcher  # type: ignore[import-untyped]
+
+        config = TickerConfig(config_path=_Path(get_settings().ingestion.ticker_config_path))
+        fetcher = USEquityFetcher(tickers=["AAPL"], ticker_config=config, retry_attempts=1, retry_delay=0.0)
+        provider = pl.DataFrame(
+            {
+                "ticker": ["AAPL"],
+                "date": [date(2024, 1, 2)],
+                "open": [10.0],
+                "high": [11.0],
+                "low": [9.0],
+                "close": [10.0],
+                "volume": [100],
+                "market": ["us_equity"],
+            }
+        )
+        identified = fetcher._attach_source_identity(provider)
+        assert identified.select("mic", "identity_provenance").rows() == [("XNAS", "current_ticker_config")]
+
+
+class TestBackfillScope:
+    """A landing run must be expressible as an explicit ticker/date scope."""
+
+    @staticmethod
+    def _result() -> object:
+        from equity_lake.ingestion.backfill import BackfillResult  # type: ignore[import-untyped]
+
+        return BackfillResult(
+            start_date=date(2024, 1, 2),
+            end_date=date(2024, 12, 31),
+            markets=("us_equity",),
+            instruments=("AAA",),
+            authorized=True,
+            trading_dates=0,
+            market_date_attempts=0,
+            succeeded=0,
+            failed=0,
+            dates_recovered=0,
+            per_market={"us_equity": 0},
+        )
+
+    def test_backfill_help_documents_tickers(self) -> None:
+        """The scoped-landing flag is discoverable (AGENTS.md CLI change matrix)."""
+        result = runner.invoke(app, ["backfill", "--help"])
+        assert result.exit_code == 0
+        assert "--tickers" in result.stdout
+
+    def test_backfill_threads_the_explicit_ticker_scope(self) -> None:
+        """``--tickers`` reaches ``backfill_date_range``, deduplicated and ordered.
+
+        Falsified by: accepting the flag but never passing it on, which would silently
+        backfill the whole configured universe instead of the authorized list.
+        """
+        with patch("equity_lake.ingestion.backfill.backfill_date_range", return_value=self._result()) as mock_backfill:
+            result = runner.invoke(
+                app,
+                ["backfill", "--start", "2024-01-02", "--end", "2024-12-31", "--markets", "us_equity", "--tickers", "AAA,BBB,AAA"],
+            )
+        assert result.exit_code == 0, result.stdout
+        assert mock_backfill.call_args.kwargs["explicit_tickers"] == ["AAA", "BBB"]
+
+    def test_backfill_without_tickers_keeps_the_configured_scope(self) -> None:
+        """Omitting the flag must not narrow or invent a scope."""
+        with patch("equity_lake.ingestion.backfill.backfill_date_range", return_value=self._result()) as mock_backfill:
+            result = runner.invoke(app, ["backfill", "--start", "2024-01-02", "--end", "2024-12-31", "--markets", "us_equity"])
+        assert result.exit_code == 0, result.stdout
+        assert mock_backfill.call_args.kwargs["explicit_tickers"] is None
+
+    def test_backfill_rejects_an_explicitly_empty_ticker_scope(self) -> None:
+        """An empty explicit scope is refused, never broadened (mirrors ``ingest``)."""
+        with patch("equity_lake.ingestion.backfill.backfill_date_range") as mock_backfill:
+            result = runner.invoke(app, ["backfill", "--start", "2024-01-02", "--markets", "us_equity", "--tickers", ""])
+        assert result.exit_code == 1
+        assert "empty scope" in result.stdout
+        mock_backfill.assert_not_called()
 
 
 class TestIngestFailureContract:
@@ -1264,3 +1395,88 @@ class TestW02ExitContract:
         assert result.exit_code == 0
         assert "dry_run" in result.stdout
         assert "written" not in result.stdout
+
+
+class TestWidenCommand:
+    def test_widen_help(self) -> None:
+        result = runner.invoke(app, ["widen", "--help"])
+        assert result.exit_code == 0
+        assert "range fetch per ticker" in result.stdout
+        assert "--lake-dir" in result.stdout
+
+
+class TestFeaturesCommand:
+    """Stage 1: the explicitly scoped feature run (``equity features``)."""
+
+    def test_features_help_scan(self) -> None:
+        result = runner.invoke(app, ["features", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        for flag in ("--tickers", "--start", "--end", "--coverage-basis", "--lake-dir", "--dry-run"):
+            assert flag in result.stdout
+        assert "source_clock" in result.stdout
+        assert "vendor_events_no_clock" in result.stdout
+        assert "without writing Gold rows" in result.stdout
+
+    def test_features_requires_an_explicit_ticker_scope(self) -> None:
+        result = runner.invoke(app, ["features", "--tickers", "", "--start", "2024-01-02", "--end", "2024-01-03"])
+        assert result.exit_code == 1
+        assert "never widened" in result.stdout
+
+    def test_features_rejects_a_malformed_date(self) -> None:
+        result = runner.invoke(app, ["features", "--tickers", "AAPL", "--start", "02/01/2024", "--end", "2024-01-03"])
+        assert result.exit_code == 1
+        assert "YYYY-MM-DD" in result.stdout
+
+    def test_features_rejects_an_inverted_window(self) -> None:
+        result = runner.invoke(app, ["features", "--tickers", "AAPL", "--start", "2024-02-01", "--end", "2024-01-03"])
+        assert result.exit_code == 1
+        assert "must not precede" in result.stdout
+
+    def test_features_rejects_an_unknown_coverage_basis(self) -> None:
+        result = runner.invoke(
+            app,
+            ["features", "--tickers", "AAPL", "--start", "2024-01-02", "--end", "2024-01-03", "--coverage-basis", "guessed_clock"],
+        )
+        assert result.exit_code == 1
+        assert "Unknown --coverage-basis" in result.stdout
+
+    def test_features_rejects_a_lake_root_outside_data(self) -> None:
+        result = runner.invoke(
+            app,
+            ["features", "--tickers", "AAPL", "--start", "2024-01-02", "--end", "2024-01-03", "--lake-dir", "/tmp/not-a-lake"],
+        )
+        assert result.exit_code == 1
+        assert "--lake-dir rejected" in result.stdout
+
+    def test_features_propagates_a_coverage_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A run-level refusal (strict basis vs weak-only evidence) exits non-zero."""
+        from equity_lake.core.availability import AvailabilityContractError  # type: ignore[import-untyped]
+
+        def _refuse(**_: object) -> dict[object, object]:
+            raise AvailabilityContractError("us_equity/XNAS/AAPL: point-in-time source_clock coverage is unavailable")
+
+        monkeypatch.setattr("equity_lake.features.scope_action_inputs", _refuse)
+        result = runner.invoke(app, ["features", "--tickers", "AAPL", "--start", "2024-01-02", "--end", "2024-01-03"])
+        assert result.exit_code == 1
+        assert "Feature run refused" in result.stdout
+        assert "source_clock coverage is unavailable" in result.stdout
+
+    def test_features_dry_run_publishes_no_write(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """--dry-run reaches run_feature_job with dry_run=True and claims nothing was written."""
+        captured: dict[str, object] = {}
+
+        def _fake_job(**kwargs: object) -> pl.DataFrame:
+            captured.update(kwargs)
+            return pl.DataFrame({"market": ["us_equity"], "mic": ["XNAS"], "symbol": ["AAPL"], "date": [date(2024, 1, 2)]})
+
+        monkeypatch.setattr("equity_lake.features.scope_action_inputs", lambda **_: {("us_equity", "XNAS", "AAPL"): (None, None)})
+        monkeypatch.setattr("equity_lake.features.run_feature_job", _fake_job)
+        result = runner.invoke(
+            app,
+            ["features", "--tickers", "AAPL", "--start", "2024-01-02", "--end", "2024-01-03", "--dry-run"],
+        )
+        assert result.exit_code == 0, result.stdout
+        assert captured["dry_run"] is True
+        assert captured["coverage_basis"] == "source_clock"
+        assert "nothing written" in result.stdout
+        assert "written to 03_gold/features" not in result.stdout

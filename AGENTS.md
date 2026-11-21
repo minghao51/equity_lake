@@ -18,7 +18,10 @@ unified `equity` CLI. When guidance conflicts, follow this order:
   Import boundary tests (`tests/unit/test_import_boundaries.py`) keep `core/`
   independent of `cli/`, `dashboard/`, and `sources/`.
 - The numbered medallion layout is canonical: `data/lake/01_bronze/` …
-  `04_platinum/`, date-partitioned Delta tables with Parquet data files.
+  `04_platinum/`, date-partitioned Delta tables with Parquet data files. A real-source
+  slice may instead live under the sibling root `data/lake_real/` with the identical
+  layout, selected only by an explicit `--lake-dir` (ADR-0030): never cataloged, never
+  mixed with the demo root, never created implicitly.
 - `data/catalog.jsonl` is generated from `catalog/datasets.py` via
   `uv run equity catalog-generate`; never edit the JSONL directly.
 - Cataloged tables live under `data/lake/` only. Auxiliary artifacts — signals,

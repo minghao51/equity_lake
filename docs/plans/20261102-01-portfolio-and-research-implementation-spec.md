@@ -1497,8 +1497,684 @@ Docs, schema/catalog, privacy, compatibility: user guide + ARCHITECTURE + this l
   docs/README; no lake schema, catalog row, Settings group beyond `console`, dependency or
   ADR change. Private data stays out of static exports, Pages, the public API, logs and
   W&B by construction and by test.
-Residuals, explicit stop condition: stage 1's populated-ledger render proof is deferred
-  (the current no-write proof covers tree byte-identity and the unreadable-ledger case);
-  the console is not an authenticated service and must not be exposed beyond loopback.
+Residuals, explicit stop condition: stage 1's populated-ledger render proof was deferred
+  at this record and is closed by the P03 follow-up entry below; the console is not an
+  authenticated service and must not be exposed beyond loopback.
   D01, P00-2/P00-4, R00-R02 and H00 remain gated.
 ```
+
+### P03 follow-ups — private console (implementation record)
+
+```text
+P03 follow-ups / implemented, two scoped items / 2026-11-07 (no new gate: handoff §3 item 6):
+Scope: the two small follow-ups named in the next-agent handoff, and nothing else - no
+  ledger/marks/readiness/evidence contract change, no Settings key, dependency, ADR, API
+  route, migration or catalog row. Owner rulings recorded: (A) reuse
+  ``build_tracking_readiness``'s calendar-day cut-off and *label* it, rather than adding a
+  second explicit as-of input to this page; (B) downgrade the page's ``SUCCESS`` to
+  ``PARTIAL`` when per-instrument coverage is unavailable or incomplete.
+1. Populated-ledger render proof (the stage 1 residual): a real private root is populated
+  by the shipped writers (``LedgerStore.append`` with real ``LedgerEvent``s, a real
+  ``marks.json`` and a canonical ``statement.csv``), and a full ``render_portfolio`` over
+  it must produce a complete valuation, a matched reconciliation and a rendered table
+  while the tree - directories included, so an empty directory counts - stays
+  byte-identical. The snapshot is taken *before any console read*,
+  because an earlier draft snapshotted after a probe read and a mutation (a write inside
+  ``portfolio_panel``) survived it - the defect this proof was meant to catch.
+2. Per-instrument coverage view on Data Readiness: ``panels.per_instrument_coverage`` reads
+  ``TickerReadiness`` from ``signals.readiness.build_tracking_readiness`` with the
+  configured ``console.private_dir`` bound for both the watchlist file and the tracking
+  database, and the lake passed explicitly as the one non-private read. The panel shows a
+  per-instrument table (price/feature status and sessions, ages, latest scan, signal rows)
+  labelled as tracked-watchlist scope, never market-wide; an unconfigured path, unreadable
+  state or an empty watchlist renders *unavailable* with its reason, never "0 instruments";
+  an unobserved tracked identity, or a scan or signal history that is not ``available``
+  (its columns render *unavailable*, never ``0``/``no scan``), keeps an otherwise-successful
+  page from reporting success and makes it ``PARTIAL`` - an existing ``WARNING`` or
+  ``UNAVAILABLE`` state is never upgraded. A green market summary therefore can never stand
+  in for instrument coverage.
+Mutation proofs: eleven rules removed in turn, each named test failed, file restored and
+  ``diff -q`` identical - render-path file write, render-path empty directory, vacuous
+  render, missing unobserved-instrument downgrade, missing unavailable-coverage downgrade,
+  dropped watchlist binding, a coverage read that creates a file, the history-limitation
+  downgrade, a straight-through history count, and each of the two early returns that had
+  dropped already-read coverage.
+Focused tests / gates: ``tests/unit/test_dashboard_p03_console.py`` (39 tests) plus the
+  dashboard IA parity guard; full serial and parallel suites, ruff check/format and bare
+  ``uv run mypy`` at the boundary. No catalog regeneration: no schema or DAG change.
+Docs: private-console user guide (per-instrument coverage, tracked scope, state rules,
+  directory-inclusive no-write proof), this ledger entry and the next-agent handoff.
+Independent reviewer: round 1 ``NEEDS-REVISION`` (a corrupt/unreadable history was rendered
+  as a measured ``0``/``no scan`` and could keep the page green; the no-write snapshot
+  covered files but not directories; an early return dropped coverage that had already been
+  read) - all three fixed with named tests and mutation proofs; round 2 ``NEEDS-REVISION``
+  for documentation completeness only (history-gap rule and directory-inclusive proof not
+  yet described); round 3 ``NEEDS-REVISION`` for documentation precision only (the guide
+  over-scoped the ``PARTIAL`` rule, which the code applies to ``SUCCESS`` only); round 4
+  ``PASS``.
+Residual, explicit stop condition: the console remains display-only and loopback-only, not
+  an authenticated service. Known cost, not a defect: the reuse path runs
+  ``build_tracking_readiness``, whose synthetic-provenance observation counts rows across
+  every dataset under the reset targets on each render - the same read ``equity readiness``
+  already performs, and deliberately not cached (a cached coverage answer would be a
+  freshness claim the page cannot support). D01, P00-2/P00-4, R00-R02 and H00 remain gated.
+```
+
+### D01 — real-source probe (evidence record)
+
+```text
+D01 / probe complete, ingestion not authorized / 2026-11-14:
+Owner inputs used: `us_equity`/yfinance; free tier (USD 0.00); local-only, no redistribution;
+  target root `data/lake/` for the eventual landing. Recorded in ADR-0028 (proposed on this
+  date; **accepted 2026-11-14**).
+Method: shipped `USEquityFetcher` (`auto_adjust=False`), 5 configured tickers, 2024-01-02..
+  2024-12-31, actions `since=2024-01-01`, `sources.default_rpm=20`; 7 requests attempted
+  (1 discarded by the identity guard), USD 0.00, no lake/schema/catalog/Settings change;
+  artifacts and digests under `data/d01/probe-2026-11-14/`; full record in
+  docs/plans/20261114-01-d01-source-probe.md.
+Coverage: 1,260 price rows; 252/252 sessions with 0 missing and 0 extra for every ticker
+  against `core.calendar.is_trading_day` (independent of the vendor); no null close/volume.
+Identity: the provider supplied no MIC/exchange; the adapter refused the first attempt
+  without the exact current ticker config and every row resolved as
+  `identity_provenance=current_ticker_config` (configured, not vendor-verified).
+Blocking finding (falsifies D00's "explicitly unadjusted"): vendor OHLC and volume are
+  split-back-adjusted - NVDA's 10-for-1 split shows +0.746% close and 0.76x volume across
+  the boundary - and only `adj_close` carries dividend adjustment. `with_price_adjustment`
+  (ADR-0015) assumes unadjusted input at nine call sites, so ingesting these rows as-is
+  would double-adjust every pre-split window. No real price row may enter `data/lake/`
+  until P00-2's ADR accepts one shape: re-inflate at ingest, or store the vendor basis and
+  stamp it so adjusted consumers fail closed (Bronze schema change).
+Actions: 58 rows (`yahoo`), split value 0.1 in the lake convention, all 58 with a null
+  `source_available_at`; `since=` is exclusive and the action window (2024-2026) is not
+  bounded by the price window.
+Claims allowed: reachability, adapter identity/retry/digest behaviour, 2024 sample coverage,
+  action retrieval, USD 0. Claims still blocked: adjusted/PIT correctness, action
+  completeness, survivorship, provider durability (A06 unchanged).
+Residual, explicit stop condition: **ADR-0028 accepted 2026-11-14** by the owner, who
+  selected landing shape (a) reconstruct-at-ingest. [ADR-0029](../decisions/0029-split-treatment-ledger-and-raw-price-basis.md)
+  is also **accepted** (2026-11-14) and specifies that shape plus the ledger `SPLIT`
+  semantics; its implementation is a separately authorized stage. The mixed-lake question is
+  decided in [ADR-0030](../decisions/0030-second-real-source-lake-root.md) (proposed on this
+  date, **Accepted 2026-11-15**): a
+  second root `data/lake_real/` with the same medallion layout, never cataloged and never
+  mixed. Ingestion stays gated on its own scoped authorization (ADR-0030 acceptance alone
+  does not authorize a landing). No
+  further network call is planned for this probe.
+```
+
+### D01 — landing (implementation and run record)
+
+```text
+D01 / ADR-0029 Part I implemented, one scoped landing run completed / 2026-11-17:
+Authorization: owner message "authorize and proceed" over the recommended scope — `us_equity`
+  only; tickers AAPL, MSFT, NVDA, JPM, KO; window 2024-01-02..2024-12-31; target
+  `data/lake_real/`; Gold absent; ADR-0029 Part I first, one landing run, network for that
+  run only.
+Code (5 files + 2 new test modules, no schema/catalog/DAG/Settings/dependency change):
+  `ingestion/price_reconstruction.py` (new) reconstructs raw prices at the write boundary;
+  `core/paths.is_real_source_root` defines the gate; `orchestrator._write_market` applies the
+  transform for `us_equity` into a real root only; `cli/commands/data.py` adds `--tickers` to
+  `backfill` (plumbing already existed in `backfill_date_range`); the **serial** orchestrator
+  branch now threads `lake_dir` into `_finalize_market` (defect: `backfill --lake-dir` was
+  writing into the canonical root; the parallel branch already passed it).
+Tests: `tests/unit/test_price_reconstruction.py` (19 tests: seam/volume/reciprocal/ex-date
+  boundary/adj_close/column-order/no-split/determinism/per-ticker, four refusal reasons, a
+  reverse split, and the three write-boundary wirings), `TestBackfillScope` in
+  `test_cli_unified.py` (4), plus a serial-branch regression test in
+  `test_lake_root_selection.py`. Mutation proofs: storing the vendor frame as fetched, an
+  `ex_date >= date` boundary, a frame-wide factor, scaling volume with OHLC, any of the four
+  refusals, the demo-root gate and the dropped `lake_dir` each fail a named test.
+Actions first (full history, 5 tickers, 1 request per ticker): 703 events into bronze+silver,
+  32 splits, `ex_date` 1962-03-13..2026-11-12; per-ticker watermarks AAPL 2026-11-12,
+  JPM 2026-10-06, KO 2026-09-15, MSFT 2026-08-20, NVDA 2026-09-10 — all past the window, so
+  `action_window_uncovered` did not fire. `coverage_written=0`: yfinance has no source-issued
+  action clock, so no coverage proof exists (unchanged since the probe).
+Refusal proven against the real store, not only in tests: `backfill --tickers TSLA` (absent
+  from the action store) exited with `action_scope_incomplete`, wrote nothing and created no
+  root; the writer recorded no frame.
+Dry run (window): 252 market-dates, 252 `split_reconstruction_applied`, 0 rows written —
+  `data/lake_real/01_bronze/` still held only `corporate_actions/` afterwards.
+Landing run: 252 market-dates succeeded, 252 transforms, 0 failures, 1260 rows into
+  `data/lake_real/01_bronze/market_data/us_equity/` — 252 sessions (2024-01-02..2024-12-31),
+  5 rows per session, 252 rows per ticker, 0 null close/`adj_close`, volume Int64 preserved.
+  Re-running one session reports `skip_existing_data` and rewrites nothing (idempotent).
+Split seams checked: exactly one scale step in the whole window — NVDA 2024-06-10, ratio
+  0.101 (raw close 1208.88 -> 121.79) — and exactly one split has an `ex_date` inside the
+  window; the other four tickers show no scale step (`min_step` >= 0.935). NVDA's raw
+  log-range 2.516 vs 0.229-0.451 for the others is consistent with one 10x step, not two.
+Reciprocal proof on landed rows (decision 7(ii)): a fresh vendor fetch of 2024-06-06..06-11
+  for AAPL+NVDA, re-adjusted with the stored ratios, reproduces the written rows with
+  **0.0** relative error for close and volume; `adj_close` differs by <= 4.6e-05 (float32 vs
+  float64 rounding) and so is stored as fetched (decision 4).
+Isolation proof: `data/lake/` still 1413 files, 0 files newer than 2026-11-01;
+  `data/catalog.jsonl` sha256 `ca4f81e1...67cca2` — byte-identical before and after.
+Gates: focused suites green after the last edit; full serial and `-n auto` suites, ruff,
+  format and bare mypy re-run before handoff (counts in the next handoff).
+Findings raised, NOT fixed here (each needs its own decision):
+  (a) `equity ingest --date ... --markets us_equity` cannot resolve identity — the CLI path
+      passes `ticker_config=None`, so the yfinance rows fail `LegacyIdentityUnavailableError`
+      (`backfill` passes a config and works). The user guide now documents `backfill` as the
+      landing vehicle.
+  (b) `equity monitor --lake-dir data/lake_real` FAILS on a `us_equity`-only root: the
+      freshness and quality checks still union all five price markets (absent `cn_ashare`
+      parquet errors) and require a Gold feature store, which a real slice does not have by
+      design. Health is reported per root, but the per-market scoping for a real root is a
+      health-contract change and was not made.
+  (c) no `coverage` proof row exists for yfinance actions, so ADR-0015's adjusted read stays
+      unavailable on real rows (A06 unchanged) and the reconstruction's only freshness
+      evidence is the store watermark.
+```
+
+### Post-landing fixes — ingest identity and real-root monitoring
+
+```text
+Finding fix / ingest identity resolution / 2026-11-17:
+Defect: `equity data ingest --date <D> --markets us_equity` raised
+  `LegacyIdentityUnavailableError` for every row, because the CLI passed
+  `ticker_config=None` and the provider supplies no MIC/exchange. `backfill` already passed
+  the current config and worked, so the documented daily-ingest command was unusable while
+  the landing vehicle was not.
+Fix: `cli/commands/data.py` builds the current `TickerConfig` from settings and threads it,
+  exactly as `backfill` does. `resolve_explicit_scope` returns `None` per market when no
+  `--tickers` is given, so the configured scope and every fetcher default are unchanged; a
+  ticker absent from `config/tickers.yaml` still fails closed rather than inventing a venue.
+Proof: CLI test asserts a `TickerConfig` whose `config_path` is the settings path is passed;
+  a companion test asserts an explicit `--tickers` scope still passes through unchanged; an
+  adapter-level test resolves a MIC-less AAPL row to `XNAS` / `current_ticker_config`. Live:
+  `ingest --date 2025-01-02 --tickers AAPL --lake-dir data/lake_real --dry-run` fetched,
+  resolved identity, reconstructed, reported `dry_run` and wrote nothing.
+
+Finding fix / real-root monitor scoping / 2026-11-17:
+Defect: `equity monitor --lake-dir data/lake_real` FAILED on absent `cn_ashare`/`hk_sg`/
+  `jpx`/`krx` parquet and on an absent Gold store — data a real root may not hold — so the
+  verdict said nothing about the landed slice.
+Fix: `core/paths.REAL_ROOT_PRICE_MARKETS` + `price_markets_for_root` are the single
+  definition of decision 5's slice, read by both the `--lake-dir` write guard and the monitor.
+  A real root sweeps `us_equity` only; Feature Store, Unstructured Freshness and a 7-day
+  quality window with no rows report `not_applicable` **with a reason** (never `PASS`), and
+  an absent price table still fails. `check_results` keeps its boolean shape for
+  `dashboard/exporter.py`; the report adds `check_status`, `check_notes` and `scope`.
+Proof: `tests/unit/test_monitor_root_scope.py` (10 tests) — slice-only sweep, canonical
+  five-market sweep unchanged, empty real root still fails, three not-applicable verdicts,
+  canonical missing-Gold still fails, canonical unverified-window pass pinned, report shape
+  and scope. Live: the real root now reports `FAIL Data Freshness (687 days old, latest
+  2024-12-31)` + three `N/A` rows, and `--max-age-days 800` reports HEALTHY; the canonical
+  report is unchanged (5 markets, same verdicts, empty notes).
+```
+
+### P00-4 — restore and compaction (remainder implemented)
+
+```text
+P00-4 remainder / ADR-0031 decisions 4-5 implemented / 2026-11-17:
+Scope: `restore_ledger` + `equity portfolio restore --from <verified backup> [--apply]`, and
+  `compact_ledger` + `equity portfolio compact [--apply]`. Report-only by default; nothing
+  runs automatically; no event is ever deleted.
+Restore (decision 4): re-runs the five checks on the candidate; refuses a candidate that is
+  the current file, a different account label (one private book, ADR-0024 d1), a `-journal`
+  beside either file, or insufficient free space. `--apply` backs up the *current* file first
+  (it may hold events the backup lacks), copies to a temp file in the same directory, proves
+  the bytes, `os.replace`, re-applies `0600`/`0700`, re-verifies, and reports what it rolled
+  back (event count + newest `recorded_at`).
+Compaction (decision 5): `VACUUM INTO` a fresh file, verify it, require `user_version`, row
+  count and the `(account, external_id, content_digest)` digest to match the pre-compaction
+  state, back up the current file, swap it in through the restore procedure, re-verify.
+  `row_id` renumbering carries no meaning, so nothing depends on it.
+Tests: `tests/unit/test_portfolio_restore_compaction.py` (18) — report-only writes nothing for
+  both mechanisms, the rollback report, atomic replacement with the newer state preserved as a
+  verified backup, identical-candidate no-op, restore onto a missing ledger, all four
+  refusals, free-space refusals (with no temp/backup left behind), record preservation across a
+  rebuild, replay-after-compaction, and both CLI modes. Three defects the tests caught before
+  shipping: the rebuilt `VACUUM INTO` file was left on disk, the space test never reached the
+  pre-check because a byte-identical candidate short-circuits, and the CLI double had no
+  `_init_logging`.
+Not done, explicit: no run against a real ledger (`data/portfolio/` still does not exist), no
+  retention/pruning/deletion (decision 6), no in-place `VACUUM` form (only the guarded
+  `VACUUM INTO` path), no scheduled anything.
+```
+
+### D01 — landing widened (2020-01-02 .. 2026-08-20)
+
+```text
+D01 / widened landing run / 2026-11-17 (owner: "go with your recommendations"):
+Scope: `us_equity` only, same five tickers (AAPL, MSFT, NVDA, JPM, KO), window extended along
+time, target `data/lake_real/` (append), Gold absent.
+Window end is bounded by evidence, not by preference: the ADR-0029 Part I refusals require each
+ticker's action watermark to reach its price rows, and the watermarks are AAPL 2026-11-12,
+JPM 2026-10-06, KO 2026-09-15, NVDA 2026-09-10, MSFT 2026-08-20 — so the honest end is the
+minimum, **2026-08-20**. Landing past it would have refused four of five tickers rather than
+write prices whose later splits are unproven. An action refresh first confirmed no new events
+(`corporate_actions_no_new_events_unverified_coverage`, `coverage_written=0` as expected).
+Dry run: 1667 market-dates, 1415 `split_reconstruction_applied`, 0 failures; the table was still
+1260 rows / 252 sessions afterwards, so the dry run wrote nothing.
+Run: 1666 succeeded, 1 failed — 2022-07-22 was refused by the pointblank quality gate
+(open/high/low/close/volume/adj_close `> 0` expectations, one failing row). Diagnosis: a
+re-fetch of that date is clean for all five tickers, and the same date landed on retry
+(1/1, 0 failed), so it was a transient vendor row, not the reconstruction. The gate did exactly
+what ADR-0007 asks: refuse a bad batch instead of landing it.
+Result: **8335 rows, 1667 sessions, 2020-01-02..2026-08-20**, 1667 rows and 1667 sessions per
+ticker, 5 rows per session, 0 nulls in OHLC/volume/`adj_close`.
+Independent coverage check: every US session in the window derived from the repository's own
+calendar (`core.calendar.is_trading_day`) is present — expected 1667, landed 1667, missing 0,
+and nothing landed that is not a session.
+Split seams: three splits have an `ex_date` inside the window (AAPL 2020-08-31 `0.25`, NVDA
+2021-07-20 `0.25`, NVDA 2024-06-10 `0.1`) and exactly three scale steps exist — AAPL 0.2585,
+NVDA 0.2478 and NVDA 0.1007 (each the stored ratio plus that session's own move). No other
+ticker shows a step, and none of the pre-2020 splits (JPM 1982/1984, KO 1965-2012, MSFT's nine)
+appears inside the window.
+Isolation: `data/catalog.jsonl` sha256 `ca4f81e1...67cca2` (byte-identical), `data/lake/` still
+1413 files with nothing newer than 2026-11-01, `data/portfolio/` still absent, no ledger or
+`MUTATION` artifact. No code changed in this stage, so the previous green gate counts stand.
+```
+
+### ADR-0032 — implemented 2026-11-19 (decisions 1-9, no runs)
+
+```text
+ADR-0032 / accepted 2026-11-18 / nothing implemented:
+Owner: "accept ADR 0032", taking the implementation on a new thread.
+What was accepted: one explicitly weaker, opt-in coverage basis (`vendor_events_no_clock` —
+  vendor-event completeness, no source clock) admitted only through
+  `with_price_adjustment(coverage_basis=...)`; the strict source-clock basis stays the default
+  and the only point-in-time basis; point-in-time research, the ML loaders, mixed demo/real
+  evidence and mixed bases in one read stay refused; no clock is synthesized; origin stays
+  `unknown` (ADR-0027); dividend adjustment is still out of scope; the demo lake's behaviour is
+  unchanged (decision 7).
+What changes in data when implemented: coverage proofs gain `coverage_basis` and a weak-proof
+  model beside `ActionCoverageProof`, `ACTION_COVERAGE_SCHEMA_VERSION` 2 -> 3, and feature rows
+  carry the stamp. `data/catalog.jsonl` is regenerated only if decision 9 requires it, never by
+  hand.
+What it unblocks, and only after implementation: a split-only adjusted read on the landed real
+  slice, hence the feature half of R01. A Gold table in `data/lake_real/` still needs its own
+  scoped run authorization (ADR-0030 decision 10).
+Evidence used in drafting, verified against the working tree: all 703 Silver action rows carry a
+  null `source_available_at` (written at `sources/base.py`, the fetch seam); the coverage table
+  does not exist under `data/lake_real/`; exactly 9 `with_price_adjustment` call sites exist
+  across `backtesting/data_loader.py` (2), `backtesting/engine.py` (2),
+  `features/engineering.py` (2), `features/labels.py` (1), `signals/generators/backtest.py` (1)
+  and `signals/tracking.py` (1).
+Review of the draft: written by an independent doc-writer subagent, then spot-checked against the
+  code for the two load-bearing claims (null clocks, nine call sites) — both confirmed.
+Next: implementation stage with decision 8's tests and mutation proofs (handoff 20261118-01).
+```
+
+### ADR-0032 — implementation record
+
+```text
+ADR-0032 / implemented 2026-11-19 / nothing run:
+Scope shipped (decisions 1-9): weak proof model + basis stamps; ACTION_COVERAGE_SCHEMA_VERSION
+  2 -> 3, AVAILABILITY_SCHEMA_VERSION 4 -> 5, FEATURE_SCHEMA_VERSION 7 -> 8; opt-in
+  with_price_adjustment(coverage_basis=...) with source_clock still the default; one basis per
+  read; mixed bases and mixed demo/real roots refuse; weak rows carry null clocks/age and
+  vendor_events_complete; strict PIT validators and ML loaders refuse the weak basis; legacy
+  v2/v4/v7 rows read as source_clock; catalog regenerated.
+Write/fetch seam: the clockless yfinance fetch emits one weak proof per ticker over the vendor
+  list window (before the watermark filter); ingest persists typed null clocks; coverage schema
+  and feature writer route on the stamp. The feature path threads the explicit opt-in
+  (generate_features/run_feature_job -> _compute_point_in_time_technical); its default stays
+  strict, and the weak branch stamps null clocks/age and vendor_events_complete.
+Evidence: tests/unit/test_coverage_basis.py (32 tests) plus the landed-slice read-only check
+  (8,335 rows / 1,667 sessions, three scale steps, NVDA 2024-06-10 seam, volume/OHLC
+  reciprocity); one-rule mutation/restore proofs recorded in the same stage.
+Not done: no ingest, no feature run, no R01/R02, no write under data/lake_real/; Gold in the
+  real root still needs its own scoped authorization (ADR-0030 d10).
+Mutation proofs (one rule at a time, each restored): reader one-basis gate, strict PIT
+  validator, mixed demo/real-root gate, weak null-age stamping, weak proof parsing, weak
+  coverage status, feature-writer routing and the feature-path opt-in (8/8); R00 absent freeze,
+  changed freeze, manifest digest binding and canonical set-like fields (4/4) - each mutation
+  made its named test fail.
+```
+
+### R00 — implemented 2026-11-19 (offline controls)
+
+```text
+R00 / implemented 2026-11-19 / offline, nothing run:
+backtesting/protocol.py freezes universe, window, holdout, execution clock/price, label
+  horizon/maturity, purge/embargo, costs, metrics, baselines, acceptance tolerances, synthetic
+  generator/seeds and the numeric resource budget into one canonical payload; its SHA-256 is the
+  protocol identity. freeze_protocol writes a dated manifest (protocol digest, code identity,
+  non-secret config digest, input digests) under data/research/protocols/; require_frozen_protocol
+  refuses an absent freeze and a changed one (naming the fields); load refuses a tampered record.
+Evidence: tests/unit/test_research_protocol.py (23 tests); no ingestion, network, model fit or
+  lake write. R01/R02 remain gated and will bind their E01 manifests to the frozen digest.
+```
+
+### Stage 4 — R02 blocked by the accepted contract (2026-11-20)
+
+```text
+R02 is a point-in-time ML experiment. The only Gold rows in the real root carry the weak
+vendor_events_no_clock basis, and ADR-0032 decision 4 requires the ML loaders to refuse
+vendor-stamped rows; decision 10 explicitly does not authorize "any point-in-time claim,
+feature or label produced from vendor-stamped rows". Independently, ml/feature_loader.py is
+canonical-root-only (no lake_dir) and strict-only. R02 therefore needs a NEW accepted decision
+authorizing vendor-stamped ML with disclosures (or a source-issued action clock, which
+yfinance does not publish), plus a real-root ML reader. Not implemented by design.
+```
+
+### Stage 5 — H00 gated on owner answers (2026-11-20)
+
+```text
+H00 needs the eight answers to docs/reports/20261117-h00-sanitized-demo-lake-page-review.md §7
+(synthetic-metrics disclaimer, predictions display, hosting/privacy, allowlist membership, and
+the rest). No agent may choose them; nothing built or published.
+```
+
+### Stage 3 — R01 baseline evidence (2026-11-20)
+
+```text
+Owner direction: complete the remaining stages; the scope below was adopted under it.
+Protocol revisions (each an explicit new freeze, never an edit): v1 (5 names) left momentum
+  ineligible (min_stocks=10); v2 (10 names, 2024-only) had no 200/252-session warmup for any
+  registered strategy, so no trades; v3 adopted: 2023-01-03..2024-12-31, holdout
+  2024-10-01..2024-12-31, 10 names (AAPL, MSFT, NVDA, GOOGL, QQQ, JPM, KO, BABA, SPY, GLD).
+Frozen v3 (digest e53872973370..., manifest 20261120T130000Z-e53872973370): entry
+  session_close/close (the engine's actual execution), costs realistic 0.001425/0.003 (the
+  applied pair), metrics net_return/sharpe_ratio/max_drawdown, baselines buy_and_hold/
+  equal_weight, tolerances, budget 900 s / 10 symbols / 504 sessions, catalog digest input.
+Run: mean_reversion, 2023-01-03..2024-09-30 (pre-holdout), realistic costs, basis
+  vendor_events_no_clock, bound to the digest before the engine was built. Evaluated: total
+  return +22.79%, CAGR 24.59%, volatility 14.24%, Sharpe 1.49, max drawdown -8.22%, 229
+  trades, 43.2% win rate. Momentum stayed ineligible on v3: BABA has <252 sessions by the
+  rebalance dates, so each slice has 9 of 10 names (< min_stocks=10) - a scope fact.
+Evidence: data/findings/runs/20261121T025630Z-b5dea12ef358; manifest parameters carry
+  protocol_digest + protocol_experiment, dates end 2024-09-30 (holdout untouched), artifacts
+  equity/drawdown/metrics/trades.
+Untouched: data/lake (1,413), catalog (537bf5fb...), Gold (1,260), bronze (58,653); no commit.
+Gates: 2,765 collected / 2,749 passed / 16 skipped / 0 failed in serial and -n auto;
+  ruff/format clean (367), mypy clean (191).
+```
+
+### Stage 2a — backtest lake-root + weak-basis integration (2026-11-20)
+
+```text
+Implemented by a worker (two turns), reviewed PASS.
+Engine/loader: lake_dir and coverage_basis on both (defaults canonical / source_clock), the
+  engine's own loader constructed with them, both data_loader with_price_adjustment call sites
+  threaded, decoded point-in-time action context carries the basis (unknown basis refuses),
+  one-basis-per-load refusal, preloaded frames are never reinterpreted. Null-safe
+  action_source_age_days (weak rows are null, not int(None)).
+Evidence: InputSnapshot.coverage_basis (omitted when absent), only valid on
+  action_coverage:<market> snapshots, mixed-basis manifest scope refuses; RunScope/report/arena
+  thread the basis. Flat `equity backtest` gains --lake-dir/--coverage-basis with Exit(1).
+Tests: tests/unit/test_backtest_basis.py (14) incl. weak read == direct with_price_adjustment and
+  an end-to-end weak backtest; 9 mutation proofs killed (loader gate, context basis, ctor,
+  one-basis-per-run, manifest mixed scope, snapshot placement, snapshot stamp, threading, CLI).
+Gates: 2,741 collected / 2,725 passed / 16 skipped / 0 failed in serial and -n auto;
+  ruff/format clean (367 files), mypy clean (191). One stale test double fixed (report stub).
+Untouched: catalog 537bf5fb..., demo 1,413, Gold 1,260, bronze 58,653; nothing committed.
+```
+
+### Stage 2 — first real-root Gold run (2026-11-20)
+
+```text
+Owner-authorized scope: data/lake_real/, us_equity, AAPL/MSFT/NVDA/JPM/KO, 2024-01-02..
+  2024-12-31, basis vendor_events_no_clock.
+Pre-step: corporate-actions refresh for JPM and KO added 2 coverage proofs (0 new events);
+  the table now holds 11 weak proofs covering all eleven instruments.
+Dry run: 1,260 rows for 5 instruments, wrote nothing (Gold absent, demo 1,413, catalog sha
+  537bf5fb..., no staging change).
+Real run: 76 s, merge 1,260 rows (Delta v0). Verified read-only: 252 dates 2024-01-02..
+  2024-12-31, 5 rows/date, 0 duplicate keys, 0 null closes; action_coverage_basis
+  vendor_events_no_clock, status vendor_events_complete, null clocks/age, versions 8/5/3;
+  next_day_return/label_available_date null only on 2024-12-31; macro columns null with
+  macro_available=0 (no macro dataset) - no imputation. NVDA 2024-06-07/06-10 Gold returns are
+  split-continuous against Bronze raw closes.
+Reviewer PASS. Untouched: data/lake (1,413 files), catalog (537bf5fb...), no portfolio/research,
+  HEAD ad74703, nothing committed.
+Stage 3 readiness BLOCKED (found by the reviewer): backtesting/data_loader.py accepts lake_dir
+  but engine.py:253-260 instantiates it with defaults and exposes no lake-root or coverage-basis
+  option; the point-in-time path does not accept the weak basis. Stage 2a is required first.
+```
+
+### Stage 1 — real-root feature runner (2026-11-20)
+
+```text
+Implemented by a worker subagent; reviewed PASS (round 2, after one NEEDS-REVISION).
+FeatureEngineer(db_path, *, lake_dir) reads one explicit root for price markets and the
+  corporate-action store (canonical default, no discovery/fallback/mixing).
+scope_action_inputs() loads (actions, coverage) per instrument with three refusals: no proof
+  recorded, requested basis has no evidence, window past the coverage bound (never clamped);
+  this fixes the subset read over the 11-ticker action store.
+run_feature_job threads lake_dir/action_inputs/coverage_basis/dry_run through generate_features,
+  preserve_finalized_labels, finalize_preceding_labels and upsert_dataset.
+New flat `equity features` CLI: --tickers (required), --start, --end, --coverage-basis
+  (source_clock default), --lake-dir, --dry-run; help-scan test present.
+Evidence: tests/unit/test_feature_run_scope.py (9), CLI tests (8), 4 mutation proofs (strict/weak
+  refusal, weak/strict branch, coverage-bound refusal, dry-run write seam); full gate 2,727
+  collected / 2,711 passed / 16 skipped / 0 failed in serial and -n auto; ruff/format 366 files,
+  mypy 191 sources. Review findings resolved: the pipeline-contracts row was missing (added) and
+  the catalog dirtiness is the pre-stage ADR-0032 regeneration, not a Stage 1 write.
+No feature/Gold run; no write under data/lake_real/, data/lake/ or the catalog.
+```
+
+### ADR-0033 — implemented 2026-11-20 (proven-empty scopes)
+
+```text
+ADR-0033 / implemented 2026-11-20 / offline contract + one authorized widening:
+A successful, non-raising vendor fetch that returns no action rows is recorded as a weak
+  `vendor_events_no_clock` proof over the exact price window; ADR-0029 Part I then accepts a
+  ticker absent from the action store when such a proof covers its rows (split factor 1).
+  A failed fetch never yields a proof; a strict proof never proves emptiness; a proof that
+  does not reach the rows still refuses. Tests: 4 reconstruction + 2 widening; mutation
+  proofs 6/6 (basis, window, failed fetch, non-empty list, plus the two corrected variants).
+GLD landed through this path: 5,535 rows, 2004-11-18..2026-11-18, coverage proof 2004-01-01..
+  2026-11-18 with null clocks.
+```
+
+### D01 widening — 2026-11-20 (authorized: MSFT, GOOGL, AAPL, NVDA, ADBE, BABA, GLD, SPY, QQQ)
+
+```text
+Range-widening path added because `equity backfill` is per trading day (~10k requests for
+  forty years): `equity widen` fetches each ticker's window once, reconstructs once and writes
+  through the same `_write_market` boundary; each ticker is clamped to its own coverage/action
+  evidence. Initial AAPL per-day attempt was interrupted at 40 min after landing 4,040 rows;
+  the range path then finished 49,784 rows for 8 tickers in one pass.
+Identity: `ARCX` (NYSE Arca) added to the exchange/MIC vocabulary and calendar map; SPY and
+  GLD configured (BABA/QQQ added earlier this stage). GLD has no corporate actions.
+Result in data/lake_real/ (us_equity): 11 tickers, 58,653 price rows, 0 duplicates, 0 null
+  closes. Windows: AAPL 1987-05-11..2026-11-12; MSFT 1987-09-21..2026-08-20; ADBE
+  1987-03-12..2005-05-24 (last action); BABA 2023-12-20..2026-06-11 (vendor list start);
+  GOOGL 2014-04-03..2026-09-04; GLD 2004-11-18..2026-11-18; NVDA 2000-06-27..2026-09-10;
+  QQQ 2000-03-20..2026-09-21; SPY 1993-03-19..2026-09-18; JPM/KO unchanged 2020..2026-08-20.
+Coverage: 9 weak proofs (all but JPM/KO, which keep their older data; GLD proven-empty).
+Untouched: data/lake/ (1,413 files) and data/catalog.jsonl (537bf5fb...). No feature run.
+Next: the real-root feature runner (FeatureEngineer is canonical-root-only) before queue item 3.
+```
+
+### P00-2 — split treatment and the second lake root (decision record)
+
+```text
+P00-2 / ADR-0029 accepted, not implemented / 2026-11-14:
+Owner decisions: D01 landing shape (a) reconstruct raw prices at ingest; the ledger gains a
+  first-class `SPLIT` event with quantity adjustment, exact reciprocal-reversal replacement
+  and a pre-split-mark refusal, with **no migration** (the ratio travels in `quantity`
+  because a `split_ratio` column would need P00-4). ADR-0024 decision 9 is amended by
+  ADR-0029, which is Accepted.
+Mixed-lake question: decided as a **second lake root** `data/lake_real/` with the same
+  medallion layout, explicit `--lake-dir` only, not cataloged, never mixed with the demo
+  root, and Gold absent there until a real action proof exists - ADR-0030 (proposed on this
+  date, **Accepted 2026-11-15**). The
+  write seam is small because `write_delta`/`merge_delta` already accept `lake_dir`; only
+  `upsert_dataset` and the `ingest`/`backfill` commands need threading.
+Implementation status recorded here: none at 2026-11-14. Updated 2026-11-15: both are
+  implemented and green - see the ADR-0030 and P00-2 implementation records in §10; the
+  ledger part is live, the D01 raw-price half stays deferred behind a landing authorization.
+  Ingestion remains gated on its own authorization; no real row may
+  enter `data/lake/`.
+```
+
+### ADR-0030 — second lake root (implementation record)
+
+```text
+ADR-0030 / implemented / 2026-11-15:
+Scope: root selection at the write/read/monitor seams only. `resolve_lake_root` (core/paths)
+  validates an explicit root: it must resolve inside `data/`, must not be `data/` itself, and a
+  symlink escape is caught by `resolve()`. `REAL_LAKE_DIR` names the sibling `data/lake_real/`
+  and is never a default.
+Threading: `upsert_dataset(lake_dir=…)` -> `merge_delta`; `run_daily_ingestion`, the
+  presence check (`_read_partition_coverage`), `_write_market`, `backfill_date_range` and
+  `ingest_corporate_actions`/`max_stored_ex_dates` all carry the root; `--lake-dir` on
+  `equity ingest`, `backfill`, `corporate-actions` and `monitor` validates at the CLI seam.
+  Monitoring rebases its constants per instance and returns them unchanged with no explicit
+  root, so runtime-patched test constants keep working.
+Tests: `tests/unit/test_lake_root_selection.py` (16 tests) - containment, symlink escape, a
+  root nested inside the canonical lake, write isolation with no fallback, writer threading
+  (`None` stays `None`), the orchestrator presence read and its caller's skip decision,
+  dry-run creates nothing, monitor rebasing, CLI flags + rejection, the scope guard on all
+  three write commands and its enrichment-identifier refusal, constant identity. Mutation
+  proofs: removing the coverage-root thread, the writer thread, the containment check, the
+  alias check, the scope-helper rule, the monitor rebasing or the CLI validation each fails
+  its named test (the writer mutation is falsified by the threading test, not the merge
+  test). Round 2 added the falsifiers the first pass lacked: the guard's call sites and
+  `_filter_markets_with_gaps`' coverage read.
+Gates: serial and parallel suites, ruff, bare mypy. No schema, catalog, Settings or dependency
+  change. Residual, explicit stop condition: no real row has been written; the D01 landing
+  still needs its own authorization, and the real root is not cataloged by design.
+Independent reviewer (round 1, 2026-11-15): ``NEEDS-REVISION`` - (a) a symlink or `..` path
+  resolving to the canonical lake was accepted, so an explicit real-root write could land in
+  the demo root; (b) no landing-scope guard, so `--lake-dir` accepted non-us_equity markets.
+  Both fixed: aliasing is rejected unless the operator named the canonical path itself, and a
+  non-canonical root refuses any market other than `us_equity`. New tests: alias rejection,
+  the scope guard (helper-level only at this round; its call sites are covered from round 2).
+  ADR-0030 was accepted 2026-11-15 with decision 5 amended to include the corporate-action
+  tables the reconstruction needs.
+Independent reviewer (round 2, 2026-11-15): ``NEEDS-REVISION`` - the round-1 fixes were
+  re-checked by probe and by one-rule-removed mutation: the alias check, containment, the
+  guard helper, writer threading, monitor rebasing and dry-run no-write all fail their named
+  tests when mutated. Four defects remained. (a) The guard resolved every entry through
+  `canonical_market`, which raises on the enrichment dataset identifiers `--markets` also
+  accepts and which `ingest`'s configured default list contains - so `equity ingest
+  --lake-dir data/lake_real` (no `--markets`) and `corporate-actions --market macro
+  --lake-dir ...` died with an uncaught `ValueError` instead of the documented refusal.
+  (b) Only exact equality with the canonical lake was refused, so `--lake-dir
+  data/lake/01_bronze` was accepted and would have written a real row inside `data/lake/`
+  (decision 10). (c) The guard's three call sites and `_filter_markets_with_gaps`' coverage
+  read had no falsifier: removing any of them left 234 tests green. (d) The guide documented
+  `equity ingest corporate-actions`, which is not a command. Fixed: the guard scopes on price
+  markets and refuses enrichment identifiers cleanly, a root resolving inside the canonical
+  lake is refused, four wiring/refusal tests were added, and the guide, CLI reference and
+  ARCHITECTURE.md were corrected.
+Independent reviewer (round 3, 2026-11-15): ``PASS`` - the round-2 delta was re-verified by a
+  reviewer that wrote none of it. The inside-canonical refusal, the price-market scoping,
+  each of the three scope-guard call sites, the orchestrator's coverage-root thread and the
+  per-account reversal lookup all fail their named test when removed, and the round-1 rules
+  still hold: a symlink or `..` alias of the canonical lake is refused while the canonical
+  path itself is accepted and keeps its multi-market behaviour, and `data/lake/01_bronze` is
+  refused. No new defect found. Focused suite 36 tests green; ruff, format and bare mypy
+  clean. **Stage verdict: PASS** - the remaining step is owner acceptance, not another round.
+Owner acceptance (2026-11-15): **accepted**. The second root, its CLI guard and its test set
+  are the accepted implementation. This acceptance authorizes no landing: a D01 ingest still
+  needs its own scoped authorization, Gold stays absent in the real root, and no real row may
+  enter `data/lake/`.
+```
+
+### P00-2 — split treatment (implementation record)
+
+```text
+P00-2 / ADR-0029 implemented (ledger part) / 2026-11-15:
+Scope: `SPLIT` joins the closed event set; `quantity` carries the share ratio (no migration,
+  as ADR-0029 decided). Contract: ratio > 0 and != 1, `cash_effect` exactly 0, no price/fee/
+  basis. Import accepts the bare kind and still rejects aliases (`STOCK_SPLIT`, ...).
+Replay: quantity multiplies by the ratio, total basis is unchanged (average cost divides),
+  cash/fees/realised gain untouched, unknown basis stays unknown, a split with no position is
+  inert. `oversell_issues` applies the ratio so a post-split sale is not an oversell.
+Replacement: reversal must exactly invert the split it references (exact fraction product 1),
+  checked in `validate_batch` (import refuses) and again in `replay_ledger` (stored data).
+Valuation: the replay exposes applied splits; a mark whose session predates a split is
+  refused for a post-split instant (`MISSING_MARK` with an explicit split blocker). The
+  ledger never edits marks.json or clears a valuation block; the import prints the affected
+  instruments and that consequence.
+Tests: `tests/unit/test_portfolio_splits.py` (20 tests) plus five old-contract tests updated
+  (`test_split_is_the_only_quantity_adjusting_kind`, alias rejection, invalid-row list).
+  Mutation proofs: replay no-op, oversell ignoring the ratio, skipped reversal exactness,
+  accepted pre-split mark and a cash-moving SPLIT each fail their named test.
+Independent reviewer (round 1, 2026-11-15): ``NEEDS-REVISION`` - (a) a reversal that arrives
+  *before* the split it names passed the reciprocal check; (b) a stale pre-split mark lost
+  the ``MISSING_MARK`` status to ``STALE_MARK``; (c) the dry-run preview summed split ratios
+  into a "quantity delta"; (d) the guide still said split accounting did not exist; (e) the
+  working diff also carries the root tranche (expected: two stages in one turn). Fixed (a)-(d)
+  with new tests: reversal ordering, split-refusal precedence, `split_event_count` in the
+  preview and a relabelled delta line, and three corrected guide statements.
+Independent reviewer (round 2, 2026-11-15): ``NEEDS-REVISION`` - (a)-(e) confirmed fixed and
+  mutation-proofed; deleting the ordering branch, the exact-reciprocal branch, the
+  split-refusal precedence or the `split_event_count` increment each fails its named test.
+  Note recorded: the preview's `continue` is redundant defence, because `quantity_delta`
+  already returns 0 for `SPLIT` (removing it leaves the test green). One defect remained:
+  `split_reversal_issues` looked the referenced split up by `external_id` alone, while IDs are
+  unique per account, and because `event_order_key` starts with the account the same ledger
+  was accepted in one CSV row order and rejected in the other - a verdict dependent on file
+  order. Fixed by keying the lookup on `(account, external_id)`; a two-account test proves the
+  verdict is row-order independent and still refuses a non-reciprocal reversal.
+Independent reviewer (round 3, 2026-11-15): ``PASS`` - the per-account reversal keying,
+  reversal ordering, exact reciprocity, split-refusal precedence over staleness and the
+  preview split count each fail their named test when removed; cross-account, non-reciprocal
+  and out-of-order reversals stay refused. No new defect found. Focused suite 36 tests green;
+  ruff, format and bare mypy clean. **Stage verdict: PASS** - the remaining step is owner
+  acceptance, not another round.
+Owner acceptance (2026-11-15): **accepted**. The ledger `SPLIT` contract is the accepted
+  implementation. The D01 price-basis half (ADR-0029 Part I) is still NOT implemented and
+  remains separately authorized; no migration, schema or catalog change is implied.
+Deferred, explicit: the D01 price-basis half (reconstruct raw at ingest) is NOT implemented;
+  it needs the ADR-0030 root first. No migration, no schema change, no catalog change.
+Post-acceptance defect (2026-11-16): **the persisted path rejects `SPLIT`.** `store.py`'s v1
+  `CHECK (event_type IN (…))` still enumerates the seven pre-split kinds, so a batch that
+  passes validation rolls back with a raw `sqlite3.IntegrityError`; measured against a temporary
+  ledger, `OPENING` alone appends while `OPENING`+`SPLIT` and `SPLIT` alone both fail with
+  "CHECK constraint failed". Measured end to end on a temporary ledger, `portfolio import`
+  exits 1 with
+  `the private ledger could not be read (IntegrityError)` / `another process may hold the
+  ledger; retry once it is free` — atomic (nothing written, including the OPENING that would
+  have succeeded) but misdiagnosed: the file is readable and a retry can never work. The 20
+  split tests exercise the
+  event contract, replay, marks and the preview - never the store write boundary - which is
+  why rounds 1-3 missed it. This also corrects the record's "no migration" claim: SQLite
+  cannot widen a `CHECK` in place, so persisting `SPLIT` needs the v1->v2 table rebuild that
+  [ADR-0031](../decisions/0031-p00-4-ledger-backup-restore-migration-compaction.md) (Accepted 2026-11-16)
+  specifies. The in-memory contract stands and stays accepted; only persistence is blocked,
+  and the user guide now states the gap.
+  Fixed 2026-11-16 by P00-4 (ADR-0031): the store is at schema v2 with `SPLIT` in the `CHECK`, a
+  v1 ledger is refused on read and write with a message naming `equity portfolio migrate`, a
+  constraint rejection is reported as a schema/contract mismatch instead of a read failure, and
+  the explicit upgrade writes a verified backup first. `tests/unit/test_portfolio_store_migration.py`
+  closes the coverage gap this note records: a real append, reload and replay of a split.
+
+### P00-4 — ledger schema migration, verified backup and compaction (implementation record)
+
+```text
+P00-4 / ADR-0031 implemented (migration + backup half) / 2026-11-16:
+Driver: ADR-0029 Part II was accepted with the SPLIT kind, but the store's v1 CHECK still listed
+  only the seven pre-split kinds, so a validated batch rolled back with sqlite3.IntegrityError
+  and the CLI reported "the private ledger could not be read (IntegrityError) ... retry once it
+  is free". A CHECK is schema, so persisting SPLIT needed a table rebuild - the migration
+  ADR-0029 believed it did not need.
+Schema: PORTFOLIO_SCHEMA_VERSION 1 -> 2. The event_type CHECK includes SPLIT; fresh databases
+  are created at v2; the upgrade rebuilds the same table body as `ledger_events_v2` and renames
+  it. A v1 file is refused on read and write with a message naming `equity portfolio migrate`;
+  other versions are refused with the supported pair. A constraint rejection raised by append is
+  mapped to a LedgerStoreError naming the schema/contract mismatch - never a read failure, never
+  retry advice.
+Verification: `verify_ledger_file` (read-only URI) captures the file SHA-256, schema version,
+  row count and a record digest over (account, external_id, content_digest), plus
+  integrity_check. `migrate_ledger` is report-only by default and writes nothing; `--apply`
+  checks free space, writes `<ledger>.<utc>.v<old>.bak`, verifies that copy against its source,
+  rebuilds in one BEGIN IMMEDIATE transaction, checks the target column order, proves row count
+  and record digest unchanged inside the transaction, then re-runs integrity_check and
+  foreign_key_check and re-verifies the file.
+Refusals, all before the first write: unsupported version, rollback journal present,
+  column-order drift, leftover rebuild table, insufficient free space, unverified backup,
+  non-SQLite or corrupt file.
+Tests: `tests/unit/test_portfolio_store_migration.py` (17 tests) - the split append/reload/replay
+  the earlier suite lacked, v1 read+write refusal, constraint-rejection mapping, the report-only
+  no-write proof, the backup+upgrade round-trip (backup byte-identical to its source, record
+  unchanged, a later split append works), the verifying no-op on v2, the four-case refusal
+  matrix, damaged-copy verification and two CLI tests; plus the `portfolio migrate` help scan in
+  `tests/unit/test_cli_unified.py`.
+Deferred, explicit: a restore command (documented as verify-then-atomic-copy) and compaction
+  (decision 5) are NOT implemented. No migration has been run against a real ledger - none
+  exists in this checkout - and ADR-0031's acceptance authorized building the mechanism, not
+  running it.
+```
+
+## Appendix: D01 probe artifacts (not committed)
+
+`data/d01/probe-2026-11-14/` holds the probe's `prices.parquet`, `actions.parquet`,
+`report.json` and the two probe scripts. `data/*` is git-ignored, so a fresh clone has the
+recorded digests in the probe document but not the frames.
