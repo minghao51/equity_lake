@@ -110,6 +110,22 @@ and `data/catalog.jsonl` (`537bf5fb…`) are untouched. Real writes to `data/lak
 Gate: reviewer `PASS`; report rows per feature date, tickers covered, stamp values, and the
 untouched-demo evidence.
 
+**Status 2026-11-21 — all six stages are closed.** R02 is implemented, evaluated (negative,
+promoted=false) and reviewed PASS under ADR-0034; H00 is built, reviewed PASS and **not
+published** (publish still needs explicit approval); the Pages workflow now runs only on manual
+dispatch. Committed and pushed to `origin/main`. The next agent inherits an empty tree and the
+records in spec §10; nothing in this handoff is outstanding.
+
+**Status 2026-11-21 — the two gated stages are now decided and in build.** The owner
+delegated both decisions: ADR-0034 (accepted 2026-11-21) authorizes research-only ML on
+vendor-stamped rows with a mandatory disclosure and no PIT claim, and
+`docs/reports/20261121-h00-owner-decisions.md` adopts the eight §7 answers (aggregate
+synthetic metrics only, counts/schema for predictions, loopback preview with no publish,
+30-day staleness banner, one composed artifact, no operator status, no vendor text).
+Workers are implementing R02 (weak-basis ML reader + one frozen experiment + artifacts under
+`data/research/r02/`) and H00 (allowlist-only sanitized page + forbidden-class checks under
+`data/research/h00/`), each to be reviewed before the commit/push stage.
+
 **Status 2026-11-20 — Stages 1, 2, 2a and 3 are done and reviewed; 4 and 5 are
 contractually gated.** Stage 1 (runner) PASS; Stage 2 (1,260 Gold rows, weak stamps) PASS;
 Stage 2a (backtest root/basis, 14 tests, 9 mutations) PASS; Stage 3 (R01) PASS — frozen

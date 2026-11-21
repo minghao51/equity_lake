@@ -55,6 +55,7 @@ nav:
       - REST API: user-guide/20260811-read-api.md
       - RAG Corpus Seeding: user-guide/20260813-rag-corpus-seeding.md
       - Dashboard Hosting: user-guide/20260406-dashboard-hosting.md
+      - H00 Sanitized Demo-Lake Page (Build and Preview Only): user-guide/20261121-h00-sanitized-demo-lake-page.md
   - Developer:
       - Architecture: developer/architecture/ARCHITECTURE.md
       - Data Flow: developer/architecture/data-flow.md
@@ -103,6 +104,7 @@ nav:
           - 'ADR-0022: Future forecast-provenance envelope versions': decisions/0022-future-forecast-provenance-envelope.md
           - 'ADR-0032: Adjusted-read coverage basis for vendor-sourced slices': decisions/0032-adjusted-read-basis-for-vendor-sourced-slices.md
           - 'ADR-0033: Proven-empty corporate-action scopes': decisions/0033-proven-empty-corporate-action-scopes.md
+          - 'ADR-0034: Vendor-stamped ML research with disclosure': decisions/0034-vendor-stamped-ml-research-with-disclosure.md
 
 plugins:
   - search

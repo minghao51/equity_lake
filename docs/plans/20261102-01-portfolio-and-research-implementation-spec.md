@@ -1837,6 +1837,39 @@ Evidence: tests/unit/test_research_protocol.py (23 tests); no ingestion, network
   lake write. R01/R02 remain gated and will bind their E01 manifests to the frozen digest.
 ```
 
+### Stage 4 — R02 implemented and evaluated (2026-11-21)
+
+```text
+ADR-0034 accepted 2026-11-21 by owner delegation: research-only ML on vendor-stamped rows,
+  explicit weak-basis opt-in, no PIT claim, no Platinum writes, mandatory disclosure, nothing
+  promoted. Real-root ML reader: FeatureLoader(lake_dir, coverage_basis) with defaults
+  unchanged; strict still refuses weak; mixed bases refuse.
+Protocol R02-ml-research-2024 frozen (digest 37fd6727..., prespec ae74513b...). One fit
+  (XGBoost, fixed params) + logistic simple model + momentum-20 rule + base rate on matched
+  pre-holdout dates; block bootstrap (5, fixed seed); holdout untouched (last prediction
+  2024-09-23); artifacts under data/research/r02/ carry basis, exact disclosure and both
+  digests (including predictions.parquet).
+Result: test net return -9.99% (primary), Brier 0.3835, AUC 0.4269, DD -17.52%; simple model
+  -7.77%, technical rule -7.20%, no-skill -4.88%; paired difference vs technical -2.79 pp,
+  95% interval [-0.42 pp, +0.31 pp]; promotion criteria 1/5 met, promoted=false. Negative and
+  inconclusive, recorded as such. Review PASS.
+Gates at close: 2,834 collected / 2,818 passed / 16 skipped / 0 failed in serial and -n auto;
+  ruff/format 373, mypy 193.
+```
+
+### Stage 5 — H00 built (2026-11-21)
+
+```text
+Owner decisions recorded (eight §7 answers). Sanitized demo-lake builder (dashboard/h00.py)
+  with allowlist-only payload, in-memory compose, fail-closed negative scan (case-insensitive
+  vendor attributions, exact other classes), demo-root containment (production canonical only),
+  clean-destination + on-disk rescan, 30-day staleness banner, loopback-only preview.
+  B1-B10 closed by allowlist/scope; B5 closed by retiring push/schedule Pages triggers
+  (manual workflow_dispatch only, least privilege, SHA-pinned actions). 33 H00 tests + CLI help
+  tests; artifact passed=true, demo_lake_only, clean scan. NOT published: publication needs its
+  own explicit approval. Review PASS.
+```
+
 ### Stage 4 — R02 blocked by the accepted contract (2026-11-20)
 
 ```text

@@ -113,6 +113,16 @@ class TestDashboardSubcommands:
         result = runner.invoke(app, ["dashboard", "serve", "--help"])
         assert result.exit_code == 0
 
+    def test_dashboard_h00_build_help(self) -> None:
+        result = runner.invoke(app, ["dashboard", "h00-build", "--help"])
+        assert result.exit_code == 0
+        assert "offline" in result.stdout
+
+    def test_dashboard_h00_preview_help(self) -> None:
+        result = runner.invoke(app, ["dashboard", "h00-preview", "--help"])
+        assert result.exit_code == 0
+        assert "loopback" in result.stdout.lower()
+
     def test_dashboard_launcher_binds_loopback(self) -> None:
         with patch("equity_lake.cli.__main__.subprocess.run") as run:
             run.return_value.returncode = 0
