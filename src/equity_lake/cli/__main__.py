@@ -52,6 +52,52 @@ def dashboard_build(
     build_dashboard(output_dir=Path(output_dir) if output_dir else None)
 
 
+@dashboard_app.command("h00-build")
+def dashboard_h00_build(
+    output_dir: Annotated[str | None, typer.Option("--output-dir", "-o", help="Artifact directory (default: data/research/h00)")] = None,
+    verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Debug logging")] = False,
+) -> None:
+    """Build the sanitized demo-lake page (offline; it never publishes).
+
+    The build reads the synthetic demo lake only and writes one composed artifact plus
+    its sanitization report. Publication is not implemented: it needs a separate
+    explicit owner approval.
+    """
+    from equity_lake.dashboard.h00 import H00BuildError, build_sanitized_page
+
+    _init_logging(verbose)
+    try:
+        artifact = build_sanitized_page(output_dir=Path(output_dir) if output_dir else None)
+    except H00BuildError as exc:
+        typer.secho(f"H00 build refused: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"H00 artifact: {artifact.directory}")
+    typer.echo(f"Page built at: {artifact.built_at.isoformat()}")
+    if artifact.stale:
+        typer.secho("stale — rebuild due", fg=typer.colors.YELLOW)
+    typer.echo("Preview: equity dashboard h00-preview  (loopback only; not published)")
+
+
+@dashboard_app.command("h00-preview")
+def dashboard_h00_preview(
+    port: Annotated[int, typer.Option("--port", "-p", help="Loopback port")] = 8765,
+    host: Annotated[str, typer.Option("--host", help="Loopback bind host (127.0.0.1 or localhost)")] = "127.0.0.1",
+    artifact_dir: Annotated[str | None, typer.Option("--artifact-dir", help="Artifact directory (default: data/research/h00)")] = None,
+) -> None:
+    """Preview the sanitized demo-lake page on a loopback address only."""
+    from equity_lake.dashboard.h00 import H00PreviewError, artifact_staleness, serve_preview
+
+    target = Path(artifact_dir) if artifact_dir else None
+    try:
+        stale, build_date = artifact_staleness(target)
+        if stale:
+            typer.secho(f"stale — rebuild due (last build {build_date or 'unknown'})", fg=typer.colors.YELLOW)
+        serve_preview(host=host, port=port, artifact_dir=target)
+    except H00PreviewError as exc:
+        typer.secho(f"H00 preview refused: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+
 @dashboard_app.command("serve")
 def dashboard_serve(
     port: Annotated[int, typer.Option("--port", "-p", help="Port")] = 8501,
