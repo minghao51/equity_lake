@@ -36,7 +36,7 @@ or missing marks each render *unavailable* — never `0`, never a blank table.
 | Page | Shows | Refuses to |
 | --- | --- | --- |
 | **Portfolio** | as-of NAV, cash, positions (quantity, basis status, mark age in exact-venue sessions, `synthetic`/`unknown` mark provenance), allocation, reconciliation | show a total while any position is unvalued; adjust the ledger to make numbers agree |
-| **Data Readiness** | per-market availability, row/symbol counts, latest session, health alerts | present a market-level union as per-instrument coverage |
+| **Data Readiness** | per-market availability, row/symbol counts, latest session, health alerts, per-instrument coverage for tracked watchlist instruments (price/feature status and sessions, ages, latest scan) | present a market-level union as per-instrument coverage; report `success` while any tracked instrument is unobserved |
 | **Research Runs** | immutable runs: protocol, the manifest's derived price origin, finalisation age, last attempt | re-derive or upgrade a label; count an unvalidated directory as a run |
 | **Signals** | established candidates with reason, session, source, price/deviation/threshold | show a candidate as an order or a calibrated probability; read "no candidate" from missing data |
 
@@ -45,12 +45,34 @@ Every panel renders exactly one state from the shared vocabulary — `info`, `su
 the real subtotal and says it is not a total; an `unavailable` panel names the missing
 evidence.
 
+## Per-instrument coverage (Data Readiness)
+
+Instrument coverage is **tracked-instrument coverage**: it answers "does this watchlist
+identity have price and feature rows as of the cut-off", not "is the market complete".
+It is read through `signals.readiness.build_tracking_readiness` with the configured
+private root bound for both the watchlist file and the tracking database.
+
+- Rows are labelled `tracked watchlist instruments only, not market-wide coverage`.
+- Coverage ages are **descriptive calendar days** relative to the report's own cut-off
+date, which is printed on the page. They are not a valuation instant.
+- An unconfigured path, unreadable watchlist/state or an empty watchlist renders
+*unavailable* with the reason — never `0 instruments`, never an empty table.
+- Any tracked identity without rows keeps the page from reporting success, so an
+otherwise-successful page becomes *partial*: a healthy market summary is never allowed to
+imply instrument completeness.
+- Scan or signal history that could not be read makes those columns *unavailable* and
+likewise keeps an otherwise-successful page from reporting success: an unreadable count is
+never `0`, and an unreadable scan is never `no scan`.
+
 ## Privacy and display-only guarantees
 
 - Private pages are **app-only**: no static export file, no navigation link, no Pages
   build, no public API projection, no W&B projection.
 - A page never writes: no ledger event, no mark, no report, no cache file, no backfill, no
-  model fit or inference. Rendering leaves the configured directory byte-identical.
+  model fit or inference. Rendering leaves the configured directory byte-identical, which
+  is proven over a **populated** real ledger (real SQLite read, real marks, real statement),
+  not only over an empty one. The comparison covers directories as well as file bytes, so
+  a render that created an empty directory would fail it.
 - The loopback check runs **before** any private import or read; a non-loopback bind
   renders `refused` and touches nothing.
 - Research evidence (`data/findings/`) is local research evidence, not private account

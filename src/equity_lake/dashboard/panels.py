@@ -21,7 +21,7 @@ in an error string.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -330,8 +330,10 @@ __all__ = [
     "DEFAULT_ACCOUNT_LABEL",
     "PORTFOLIO_MARKS_FILENAME",
     "PORTFOLIO_STATEMENT_FILENAME",
+    "InstrumentCoverage",
     "PortfolioPanel",
     "parse_as_of",
+    "per_instrument_coverage",
     "portfolio_panel",
     "portfolio_private_dir",
     "render_pending_panel",
@@ -345,25 +347,142 @@ __all__ = [
 
 
 @dataclass(frozen=True, slots=True)
+class InstrumentCoverage:
+    """Per-instrument coverage evidence for *tracked* identities (read-only).
+
+    ``rows`` empty never means "zero instruments covered": ``reason`` says why the
+    evidence is unavailable (unconfigured path, unreadable watchlist/lake, or a
+    watchlist with no tracked instrument), so a missing input is never rendered as a
+    measured zero.
+
+    ``limitations`` records per-field evidence gaps (e.g. a corrupt or missing signal
+    history makes a count unavailable rather than zero); any limitation keeps the panel
+    from reporting success over partially unreadable evidence.
+    """
+
+    rows: tuple[dict[str, str], ...]
+    as_of: date | None = None
+    reason: str | None = None
+    limitations: tuple[str, ...] = ()
+
+
+def per_instrument_coverage(private_dir: Path | None) -> InstrumentCoverage:
+    """Read per-instrument coverage for the tracked watchlist identities (read-only).
+
+    Both private paths are bound explicitly to the configured root (the watchlist file
+    and the tracking database), because the process-global defaults would otherwise let
+    one read escape the directory the console was configured with. The lake is public
+    market data and is passed explicitly so the only non-private read is visible.
+
+    Coverage is scoped to the private watchlist: it answers "does this tracked identity
+    have price/feature rows", never "is the market complete". Nothing here writes, and a
+    failure is reported as unavailable rather than as zero coverage.
+    """
+    if private_dir is None:
+        return InstrumentCoverage((), None, "the private console path is not configured")
+    try:
+        from equity_lake.core.paths import LAKE_DIR
+        from equity_lake.signals.readiness import build_tracking_readiness
+
+        report = build_tracking_readiness(
+            watchlist_path=private_dir / PORTFOLIO_WATCHLIST_FILENAME,
+            data_dir=private_dir,
+            # The lake is public market data, not private state; passing it explicitly
+            # keeps the only non-private read visible instead of an implicit default.
+            lake_dir=LAKE_DIR,
+        )
+    except Exception:  # noqa: BLE001 - unreadable coverage is unavailable, never "zero covered"
+        return InstrumentCoverage((), None, "the configured watchlist or lake coverage could not be read")
+
+    # A history that could not be read makes its columns unavailable; it never makes them
+    # zero or "none".
+    scan_status = str(report.scan_history_status)
+    signal_status = str(report.signal_history_status)
+    limitations: list[str] = []
+    if scan_status != "available":
+        limitations.append(f"Scan history is {scan_status}: the scan columns are unavailable, not 'no scan'.")
+    if signal_status != "available":
+        limitations.append(f"Signal history is {signal_status}: signal counts are unavailable, not zero.")
+
+    rows = tuple(
+        {
+            "instrument": f"{row.market}/{row.mic}/{row.ticker}",
+            "price status": row.price_status,
+            "latest price session": row.latest_price_session.isoformat() if row.latest_price_session is not None else "unknown",
+            "price age (days)": "unknown" if row.price_age_days is None else str(row.price_age_days),
+            "feature status": row.feature_status,
+            "latest feature session": row.latest_feature_session.isoformat() if row.latest_feature_session is not None else "unknown",
+            "latest scan session": (
+                (row.latest_scan_target_date.isoformat() if row.latest_scan_target_date is not None else "none")
+                if scan_status == "available"
+                else "unavailable"
+            ),
+            "scan status": (", ".join(row.latest_scan_report_statuses) or "none") if scan_status == "available" else "unavailable",
+            "signal history rows": str(row.signal_history_rows) if signal_status == "available" else "unavailable",
+        }
+        for row in report.tickers
+    )
+    if not rows:
+        return InstrumentCoverage((), report.as_of, "the private watchlist has no tracked instrument", tuple(limitations))
+    return InstrumentCoverage(rows, report.as_of, None, tuple(limitations))
+
+
+def _with_instrument_coverage(
+    notice: Notice,
+    headline: str,
+    details: list[str],
+    coverage: InstrumentCoverage | None,
+) -> tuple[Notice, str, list[str], tuple[dict[str, str], ...], str | None]:
+    """Fold per-instrument coverage into the panel's single state.
+
+    A green market summary is silently incomplete without instrument evidence, so an
+    unavailable or partial coverage answer downgrades ``SUCCESS`` to ``PARTIAL`` rather
+    than leaving a total-looking page behind.
+    """
+    if coverage is None or not coverage.rows:
+        reason = coverage.reason if coverage is not None else "no per-instrument evidence was read"
+        if notice is Notice.SUCCESS:
+            notice = Notice.PARTIAL
+        details.append(f"Per-instrument coverage is unavailable: {reason}. A market-level union is never presented as instrument coverage.")
+        return notice, f"{headline} Per-instrument coverage is unavailable.", details, (), reason
+
+    total = len(coverage.rows)
+    observed = sum(1 for row in coverage.rows if row["price status"] == "observed" and row["feature status"] == "observed")
+    as_of = coverage.as_of.isoformat() if coverage.as_of is not None else "unstated"
+    if (observed < total or coverage.limitations) and notice is Notice.SUCCESS:
+        notice = Notice.PARTIAL
+    details.append(
+        f"Per-instrument coverage is scoped to the private watchlist ({total} tracked instrument(s)), never the whole market; "
+        f"coverage as-of {as_of}, with descriptive calendar-day ages and no valuation-instant claim."
+    )
+    details.extend(coverage.limitations)
+    return notice, f"{headline} {observed} of {total} tracked instrument(s) have both price and feature rows.", details, coverage.rows, None
+
+
+@dataclass(frozen=True, slots=True)
 class ReadinessPanel:
-    """Per-dataset readiness plus the freshness evidence available for it."""
+    """Per-dataset readiness, freshness evidence and tracked per-instrument coverage."""
 
     notice: Notice
     headline: str
     details: tuple[str, ...] = ()
     rows: tuple[dict[str, str], ...] = ()
+    instruments: tuple[dict[str, str], ...] = ()
+    instruments_as_of: date | None = None
+    instruments_unavailable_reason: str | None = None
 
 
-def readiness_panel(datasets: list[dict[str, Any]], health: dict[str, Any] | None) -> ReadinessPanel:
+def readiness_panel(datasets: list[dict[str, Any]], health: dict[str, Any] | None, coverage: InstrumentCoverage | None = None) -> ReadinessPanel:
     """Build the Data Readiness panel from already-loaded summaries and health.
 
     ``datasets`` is the per-market summary the app already computes (rows, symbols,
-    latest session) and ``health`` the pipeline health report. This function only reads
+    latest session), ``health`` the pipeline health report and ``coverage`` the tracked
+    per-instrument evidence (``None`` when it was not read). This function only reads
     those mappings: it performs no lake scan, no write and no inference.
 
-    A **market-level union is not per-instrument coverage**, so the panel says so
-    explicitly: it can show that a market table is fresh, never that each instrument in
-    it is complete.
+    A **market-level union is not per-instrument coverage**, so the panel carries both:
+    the market summary shows that a table is fresh, and the tracked-instrument table shows
+    coverage for named identities — never the other way round.
     """
     from equity_lake.core.paths import PRICE_MARKETS
 
@@ -375,76 +494,93 @@ def readiness_panel(datasets: list[dict[str, Any]], health: dict[str, Any] | Non
     tables = [row for row in datasets if str(row.get("name", "")) not in PRICE_MARKETS]
     available = [row for row in markets if row.get("available")]
     if not markets:
-        return ReadinessPanel(Notice.UNAVAILABLE, "No price market is registered in this lake.")
-    if not available:
-        return ReadinessPanel(
-            Notice.UNAVAILABLE,
-            "No price market is available.",
-            ("Ingest a market first (`equity ingest`); an absent market is not an empty market.",),
+        # Coverage is still folded in: it was read, so the page must show it (or its real
+        # reason) instead of implying that no instrument evidence was consulted.
+        notice, headline = Notice.UNAVAILABLE, "No price market is registered in this lake."
+        rows: tuple[dict[str, str], ...] = ()
+        details: list[str] = []
+    elif not available:
+        notice, headline = Notice.UNAVAILABLE, "No price market is available."
+        rows = ()
+        details = ["Ingest a market first (`equity ingest`); an absent market is not an empty market."]
+    else:
+        rows = tuple(
+            {
+                "dataset": str(row.get("name", "")),
+                "kind": "market" if str(row.get("name", "")) in PRICE_MARKETS else "table",
+                "available": "yes" if row.get("available") else "no",
+                "rows": str(row.get("rows", 0)),
+                "symbols": str(row.get("symbols", 0)),
+                "latest session": str(row.get("latest_date") or "unknown"),
+            }
+            for row in (*markets, *tables)
         )
+        market_count = len(markets)
+        details = [
+            "A market-level summary is a union over the table: it never proves per-instrument coverage.",
+            "Each price row's origin is recorded separately (see the run manifests); a fresh table is not evidence of where its values came from.",
+        ]
+        if health is None:
+            notice = Notice.PARTIAL
+            headline = f"{len(available)} of {market_count} price market(s) available; freshness evidence unavailable."
+            details.append("No health report exists: run `equity monitor` to record per-table freshness.")
+        else:
+            alerts = health.get("alerts", [])
+            metrics = health.get("metrics") or {}
+            if alerts:
+                notice = Notice.WARNING
+                headline = f"{len(available)} of {market_count} price market(s) available; {len(alerts)} health alert(s)."
+                details.extend(str(alert) for alert in alerts)
+            elif not metrics:
+                # A report that carries neither alerts nor metrics says nothing about freshness:
+                # that is missing evidence, never a healthy result.
+                notice = Notice.PARTIAL
+                headline = f"{len(available)} of {market_count} price market(s) available; freshness evidence is empty."
+                details.append("The health report has no metrics: rerun `equity monitor` to record per-table freshness.")
+            elif health.get("healthy") is False:
+                # The report's own verdict wins: metrics without a healthy flag are not health.
+                notice = Notice.WARNING
+                headline = f"{len(available)} of {market_count} price market(s) available; the health report is not healthy."
+                details.append("The report records `healthy: false`; inspect `equity monitor` for the failing checks.")
+            else:
+                notice = Notice.SUCCESS
+                headline = f"{len(available)} of {market_count} price market(s) available and healthy."
 
-    rows = tuple(
-        {
-            "dataset": str(row.get("name", "")),
-            "kind": "market" if str(row.get("name", "")) in PRICE_MARKETS else "table",
-            "available": "yes" if row.get("available") else "no",
-            "rows": str(row.get("rows", 0)),
-            "symbols": str(row.get("symbols", 0)),
-            "latest session": str(row.get("latest_date") or "unknown"),
-        }
-        for row in (*markets, *tables)
+    notice, headline, details, instruments, reason = _with_instrument_coverage(notice, headline, details, coverage)
+    return ReadinessPanel(
+        notice,
+        headline,
+        tuple(details),
+        rows,
+        instruments,
+        coverage.as_of if coverage is not None else None,
+        reason,
     )
-    market_count = len(markets)
-    details = [
-        "A market-level summary is a union over the table: it never proves per-instrument coverage.",
-        "Each price row's origin is recorded separately (see the run manifests); a fresh table is not evidence of where its values came from.",
-    ]
-    if health is None:
-        return ReadinessPanel(
-            Notice.PARTIAL,
-            f"{len(available)} of {market_count} price market(s) available; freshness evidence unavailable.",
-            (*details, "No health report exists: run `equity monitor` to record per-table freshness."),
-            rows,
-        )
-    alerts = health.get("alerts", [])
-    metrics = health.get("metrics") or {}
-    if alerts:
-        return ReadinessPanel(
-            Notice.WARNING,
-            f"{len(available)} of {market_count} price market(s) available; {len(alerts)} health alert(s).",
-            (*details, *(str(alert) for alert in alerts)),
-            rows,
-        )
-    if not metrics:
-        # A report that carries neither alerts nor metrics says nothing about freshness:
-        # that is missing evidence, never a healthy result.
-        return ReadinessPanel(
-            Notice.PARTIAL,
-            f"{len(available)} of {market_count} price market(s) available; freshness evidence is empty.",
-            (*details, "The health report has no metrics: rerun `equity monitor` to record per-table freshness."),
-            rows,
-        )
-    if health.get("healthy") is False:
-        # The report's own verdict wins: metrics without a healthy flag are not health.
-        return ReadinessPanel(
-            Notice.WARNING,
-            f"{len(available)} of {market_count} price market(s) available; the health report is not healthy.",
-            (*details, "The report records `healthy: false`; inspect `equity monitor` for the failing checks."),
-            rows,
-        )
-    return ReadinessPanel(Notice.SUCCESS, f"{len(available)} of {market_count} price market(s) available and healthy.", tuple(details), rows)
 
 
-def render_readiness(st: Any, *, datasets: list[dict[str, Any]], health: dict[str, Any] | None) -> None:
+def render_readiness(st: Any, *, datasets: list[dict[str, Any]], health: dict[str, Any] | None, private_dir: Path | None = None) -> None:
     """Render the Data Readiness page (display-only)."""
     st.title(page_spec("readiness").label)
     st.caption("Read-only readiness and freshness. Nothing here ingests, backfills or repairs a table.")
-    panel = readiness_panel(datasets, health)
+    panel = readiness_panel(datasets, health, per_instrument_coverage(private_dir))
     render_notice(st, panel.notice, panel.headline)
     for line in panel.details:
         st.caption(line)
     if panel.rows:
         st.dataframe(list(panel.rows), hide_index=True, use_container_width=True)
+    st.subheader("Per-instrument coverage")
+    if panel.instruments:
+        st.dataframe(list(panel.instruments), hide_index=True, use_container_width=True)
+        as_of = panel.instruments_as_of.isoformat() if panel.instruments_as_of is not None else "unstated"
+        st.caption(
+            f"Tracked watchlist instruments only, not market-wide coverage. Coverage as-of {as_of}; ages are descriptive calendar days, "
+            "not a valuation instant. A tracked identity with no rows is absent, never a neutral observation."
+        )
+    else:
+        st.caption(
+            f"Unavailable: {panel.instruments_unavailable_reason or 'no per-instrument evidence was read'}. "
+            "Instrument coverage is never inferred from the market summary."
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import date, timedelta
+from pathlib import Path
 
 import structlog
 import typer
@@ -55,6 +57,53 @@ def _init_logging(verbose: bool = False) -> None:
     from equity_lake.core.logging import setup_structured_logging
 
     setup_structured_logging(level="DEBUG" if verbose else "INFO")
+
+
+def _resolve_lake_dir(value: str | None) -> Path | None:
+    """Validate ``--lake-dir`` at the CLI seam (ADR-0030).
+
+    ``None`` keeps the canonical lake, so every existing command is unchanged. A
+    rejected root exits non-zero rather than writing somewhere unexpected; the
+    message never echoes a resolved path.
+    """
+    from equity_lake.core.paths import resolve_lake_root
+
+    try:
+        return resolve_lake_root(value)
+    except ValueError as exc:
+        typer.secho(f"--lake-dir rejected: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
+
+def _require_real_root_scope(markets: Sequence[str], lake_dir: Path | None) -> None:
+    """Refuse an out-of-scope market on a non-canonical root (ADR-0030 decision 5).
+
+    A non-canonical root carries the `us_equity` slice only. The canonical root keeps
+    its existing multi-market behaviour, so this guard changes nothing by default.
+
+    Only price markets name a slice of the lake that could exist under the real root.
+    ``--markets`` also accepts enrichment dataset identifiers (``macro``,
+    ``us_news``, ...) and ``ingest`` defaults to the configured market list, which
+    contains them; they carry no ``us_equity`` slice either, so they are refused like
+    any other out-of-scope market instead of raising an unknown price market from
+    :func:`canonical_market` — that crash would replace this refusal with a traceback
+    on the default landing command.
+    """
+    from equity_lake.core.paths import LAKE_DIR, PRICE_MARKETS, REAL_ROOT_PRICE_MARKETS, SHORT_TO_LONG
+
+    if lake_dir is None or lake_dir == LAKE_DIR.resolve():
+        return
+    out_of_scope: set[str] = set()
+    for market in markets:
+        price_market = market if market in PRICE_MARKETS else SHORT_TO_LONG.get(market)
+        if price_market not in REAL_ROOT_PRICE_MARKETS:
+            out_of_scope.add(market)
+    if out_of_scope:
+        typer.secho(
+            f"--lake-dir carries the us_equity slice only; refused market(s): {', '.join(sorted(out_of_scope))}",
+            fg=typer.colors.RED,
+        )
+        raise typer.Exit(1)
 
 
 def _resolve_date(date_str: str | None, days_back: int = 1, market: str = "us_equity") -> date:

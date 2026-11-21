@@ -362,7 +362,9 @@ def render_p03_readiness(datasets: list[dict[str, Any]], health: dict[str, Any] 
         return
     from equity_lake.dashboard import panels
 
-    panels.render_readiness(st, datasets=datasets, health=health)
+    # Per-instrument coverage is bound to the one configured private path, like every
+    # other private read on the console; the market summary comes from public lake data.
+    panels.render_readiness(st, datasets=datasets, health=health, private_dir=panels.portfolio_private_dir())
 
 
 def render_p03_research() -> None:

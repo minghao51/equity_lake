@@ -24,12 +24,15 @@ import pytest
 
 pytest.importorskip("streamlit", reason="private dashboard tests require the optional dashboard dependency group")
 
+from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]  # noqa: E402
+
 streamlit_app = import_module("equity_lake.dashboard.streamlit_app")
 panels = import_module("equity_lake.dashboard.panels")
 pages = import_module("equity_lake.dashboard.pages")
 components = import_module("equity_lake.dashboard.components")
 portfolio = import_module("equity_lake.portfolio")
 store_module = import_module("equity_lake.portfolio.store")
+core_paths = import_module("equity_lake.core.paths")
 
 P03_KEYS = ("portfolio", "readiness", "research", "signals")
 
@@ -383,8 +386,9 @@ def test_rendering_a_panel_never_modifies_the_private_directory(monkeypatch: pyt
     _stub_reads(monkeypatch, valuation=_valuation(complete=True))
     directory = _private_dir(tmp_path, statement=True)
 
-    def _tree() -> dict[str, bytes]:
-        return {str(path.relative_to(directory)): path.read_bytes() for path in sorted(directory.rglob("*")) if path.is_file()}
+    def _tree() -> dict[str, bytes | None]:
+        # Directories count too: a render that created an empty directory must fail here.
+        return {str(path.relative_to(directory)): (path.read_bytes() if path.is_file() else None) for path in sorted(directory.rglob("*"))}
 
     before = _tree()
     _mock_streamlit(monkeypatch, address="127.0.0.1")
@@ -401,13 +405,128 @@ def test_rendering_a_panel_never_modifies_the_private_directory(monkeypatch: pyt
     assert list(unreadable.rglob("*")) == []
 
 
+def _populated_private_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A real ledger, real marks and a canonical statement under the configured root.
+
+    Populated through the shipped writers (``LedgerStore.append`` and the documented
+    marks/statement text), not through stubs, so a render over it exercises the real
+    SQLite read, valuation and reconciliation path.
+    """
+    directory = tmp_path / "console"
+    directory.mkdir()
+    instrument = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAA")
+    effective = datetime(2024, 1, 2, 15, 0, tzinfo=UTC)
+    received = datetime(2024, 1, 2, 21, 0, tzinfo=UTC)
+
+    def _event(**overrides: Any) -> Any:
+        kwargs: dict[str, Any] = {
+            "parser_version": "fixture-v1",
+            "source_digest": "0" * 64,
+            "account": "main",
+            "external_source": "fixture",
+            "external_id": "evt-0001",
+            "event_type": portfolio.LedgerEventType.OPENING,
+            "effective_at": effective,
+            "received_at": received,
+            "sequence": 1,
+            "instrument": None,
+            "currency": "USD",
+            "cash_effect": Decimal("1000.00"),
+            "quantity": None,
+            "price": None,
+            "fees": Decimal("0"),
+            "basis": None,
+            "basis_status": portfolio.BasisStatus.KNOWN,
+            "reverses_external_id": None,
+        }
+        kwargs.update(overrides)
+        return portfolio.LedgerEvent(**kwargs)
+
+    opening = _event(
+        instrument=instrument,
+        quantity=Decimal("10"),
+        price=Decimal("100.00"),
+        basis=Decimal("1000.00"),
+    )
+    buy = _event(
+        event_type=portfolio.LedgerEventType.BUY,
+        external_id="evt-0002",
+        sequence=2,
+        instrument=instrument,
+        cash_effect=Decimal("-605.00"),
+        quantity=Decimal("5"),
+        price=Decimal("120.00"),
+        fees=Decimal("5.00"),
+    )
+    # The store emits one ``portfolio_ledger_append`` record on append. This fixture is
+    # not a logging test, and structlog's configuration is process-wide: using the real
+    # store logger here would bind it under whatever ``setup_structured_logging()`` an
+    # earlier test left active and make ``structlog.testing.capture_logs`` in
+    # ``test_portfolio_cli`` silently see nothing. Same convention as
+    # ``test_ingestion_writers._RecordingLogger``: keep the module logger out of it.
+    original_logger = store_module.logger
+    monkeypatch.setattr(store_module, "logger", SimpleNamespace(info=lambda *args, **kwargs: None))
+    try:
+        assert store_module.LedgerStore(data_dir=directory).append((opening, buy)).inserted == 2
+    finally:
+        monkeypatch.setattr(store_module, "logger", original_logger)
+    (directory / panels.PORTFOLIO_MARKS_FILENAME).write_text(
+        '{"schema_version": 1, "marks": [{"market": "us_equity", "mic": "XNAS", "symbol": "AAA", '
+        '"currency": "USD", "price": "125", "session": "2024-01-05", '
+        '"as_of": "2024-01-05T21:00:00+00:00", "source": "fixture", "price_basis": "unadjusted", '
+        '"provenance": "synthetic"}], "valuation_blocks": []}',
+        encoding="utf-8",
+    )
+    (directory / panels.PORTFOLIO_STATEMENT_FILENAME).write_text(
+        "account,as_of,line_type,market,mic,symbol,currency,quantity,cash\n"
+        "main,2024-01-05T21:00:00Z,CASH,,,,USD,,395\n"
+        "main,2024-01-05T21:00:00Z,POSITION,us_equity,XNAS,AAA,USD,15,\n",
+        encoding="utf-8",
+    )
+    return directory
+
+
+def test_a_populated_ledger_render_leaves_the_private_directory_byte_identical(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The no-write proof runs over a *real* populated ledger (spec §10 residual).
+
+    The earlier proof stubbed ``LedgerStore``, so no SQLite read ever happened. This one
+    opens the real database, values real positions against a real marks file and
+    reconciles a real statement, then requires the tree to be byte-identical.
+
+    Falsified by: any render-path write (event, mark, cache or report file), or by a
+    vacuous render — a page that shows nothing proves nothing.
+    """
+    directory = _populated_private_dir(tmp_path, monkeypatch)
+    monkeypatch.setattr(core_paths, "LAKE_DIR", tmp_path / "lake")
+
+    def _tree() -> dict[str, bytes | None]:
+        # Directories are part of the tree too: a render that created an empty directory
+        # would otherwise pass a files-only comparison.
+        return {str(path.relative_to(directory)): (path.read_bytes() if path.is_file() else None) for path in sorted(directory.rglob("*"))}
+
+    # Snapshot *before* any console read: a read-path write must be caught too, not just
+    # a write after an identical probe read.
+    before = _tree()
+    assert "portfolio/portfolio.sqlite3" in before  # the ledger really is populated
+    calls = _mock_streamlit(monkeypatch, address="127.0.0.1")
+    panels.render_portfolio(streamlit_app.st, private_dir=directory, as_of_text="2024-01-05T21:00:00Z")
+
+    # Non-vacuity: the real SQLite read produced a complete valuation, the real marks file
+    # valued the position and the real statement reconciled, so the comparison below is
+    # not trivially true.
+    assert any(name == "success" and args and "As-of NAV" in str(args[0]) for name, args in calls), calls
+    assert any(name == "dataframe" and args and "XNAS:AAA" in str(args[0]) for name, args in calls)
+    assert any(name == "caption" and args and "Overall: matched" in str(args[0]) for name, args in calls)
+    assert _tree() == before
+
+
 # ---------------------------------------------------------------------------
 # 6. Data readiness (stage 2)
 # ---------------------------------------------------------------------------
 
 
 def test_readiness_reports_market_coverage_without_claiming_per_instrument_coverage() -> None:
-    """Readiness shows per-market availability and *disclaims* per-instrument coverage.
+    """Readiness shows per-market availability and tracked per-instrument coverage.
 
     Falsified by: presenting a market-level union as instrument coverage, or treating an
     absent market as an empty one.
@@ -418,7 +537,8 @@ def test_readiness_reports_market_coverage_without_claiming_per_instrument_cover
         {"name": "features", "available": True, "rows": 99, "symbols": 3, "latest_date": "2024-01-04"},
     ]
     healthy = {"alerts": [], "healthy": True, "metrics": {"us_equity": {"max_age_days": 2, "latest_session": "2024-01-04"}}}
-    panel = panels.readiness_panel(datasets, healthy)
+    coverage = panels.InstrumentCoverage((_coverage_row("AAA", "observed"),), date(2024, 1, 5))
+    panel = panels.readiness_panel(datasets, healthy, coverage)
 
     assert panel.notice is components.Notice.SUCCESS
     assert any("never proves per-instrument coverage" in detail for detail in panel.details)
@@ -429,6 +549,184 @@ def test_readiness_reports_market_coverage_without_claiming_per_instrument_cover
     ]
     assert panel.rows[1]["available"] == "no"
     assert panel.rows[1]["latest session"] == "unknown"  # absent is not a zero-date
+    # The instrument table is its own evidence, never derived from the market rows.
+    assert [row["instrument"] for row in panel.instruments] == ["us_equity/XNAS/AAA"]
+    assert "1 of 1 tracked instrument(s)" in panel.headline
+    assert "scoped to the private watchlist" in " ".join(panel.details)
+
+
+def _coverage_row(symbol: str, status: str) -> dict[str, str]:
+    observed = status == "observed"
+    return {
+        "instrument": f"us_equity/XNAS/{symbol}",
+        "price status": status,
+        "latest price session": "2024-01-04" if observed else "unknown",
+        "price age (days)": "1" if observed else "unknown",
+        "feature status": status,
+        "latest feature session": "2024-01-04" if observed else "unknown",
+        "latest scan session": "none",
+        "scan status": "none",
+        "signal history rows": "0",
+    }
+
+
+def test_readiness_is_partial_when_per_instrument_coverage_is_unavailable() -> None:
+    """A green market summary never stands in for instrument coverage.
+
+    Falsified by: leaving ``SUCCESS`` when no per-instrument evidence was read, which is
+    exactly the "market-level union presented as per-instrument coverage" the page must
+    refuse.
+    """
+    datasets = [{"name": "us_equity", "available": True, "rows": 10, "symbols": 2, "latest_date": "2024-01-04"}]
+    healthy = {"alerts": [], "healthy": True, "metrics": {"us_equity": {"max_age_days": 2}}}
+
+    for missing in (None, panels.InstrumentCoverage((), None, "the private watchlist has no tracked instrument")):
+        panel = panels.readiness_panel(datasets, healthy, missing)
+        assert panel.notice is components.Notice.PARTIAL
+        assert "Per-instrument coverage is unavailable" in panel.headline
+        assert panel.instruments == ()
+        assert panel.rows  # the market table is still shown
+    assert "no tracked instrument" in " ".join(panel.details)
+
+
+def test_readiness_is_partial_when_a_tracked_instrument_is_unobserved() -> None:
+    """One tracked identity without rows is a subtotal, not a healthy total.
+
+    Falsified by: keeping ``SUCCESS`` whenever at least one instrument is observed.
+    """
+    datasets = [{"name": "us_equity", "available": True, "rows": 10, "symbols": 2, "latest_date": "2024-01-04"}]
+    healthy = {"alerts": [], "healthy": True, "metrics": {"us_equity": {"max_age_days": 2}}}
+    coverage = panels.InstrumentCoverage((_coverage_row("AAA", "observed"), _coverage_row("BBB", "no_rows_as_of")), date(2024, 1, 5))
+
+    panel = panels.readiness_panel(datasets, healthy, coverage)
+
+    assert panel.notice is components.Notice.PARTIAL
+    assert "1 of 2 tracked instrument(s)" in panel.headline
+    assert len(panel.instruments) == 2  # the unobserved identity is named, never dropped
+
+
+def test_per_instrument_coverage_is_bound_to_the_configured_private_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Coverage reads the configured watchlist and tracking directory, never defaults.
+
+    Falsified by: calling ``build_tracking_readiness`` without ``watchlist_path``/``data_dir``,
+    which would read whatever private location the process default points at instead of
+    the one configured private path.
+    """
+    readiness = import_module("equity_lake.signals.readiness")
+    lake = tmp_path / "lake"
+    monkeypatch.setattr(core_paths, "LAKE_DIR", lake)
+    seen: list[dict[str, Any]] = []
+
+    def _fake_readiness(**kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return SimpleNamespace(as_of=date(2024, 1, 5), scan_history_status="available", signal_history_status="available", tickers=[])
+
+    monkeypatch.setattr(readiness, "build_tracking_readiness", _fake_readiness)
+    directory = tmp_path / "console"
+    directory.mkdir()
+
+    coverage = panels.per_instrument_coverage(directory)
+
+    assert seen == [{"watchlist_path": directory / panels.PORTFOLIO_WATCHLIST_FILENAME, "data_dir": directory, "lake_dir": lake}]
+    assert coverage.rows == ()
+    assert coverage.reason == "the private watchlist has no tracked instrument"
+
+
+def test_read_per_instrument_coverage_creates_no_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Reading coverage over an empty private root leaves it empty (display-only).
+
+    Falsified by: a readiness read that creates the tracking database, a watchlist
+    default or any cache file.
+    """
+    monkeypatch.setattr(core_paths, "LAKE_DIR", tmp_path / "lake")
+    directory = tmp_path / "console"
+    directory.mkdir()
+
+    coverage = panels.per_instrument_coverage(directory)
+
+    assert coverage.rows == ()
+    assert list(directory.rglob("*")) == []
+
+
+def test_an_unconfigured_console_reports_coverage_unavailable_not_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No configured path means unavailable with a reason, never ``0 instruments``.
+
+    Falsified by: reading a process default, or returning an empty result that a page
+    could render as a measured zero.
+    """
+    coverage = panels.per_instrument_coverage(None)
+    assert coverage.rows == ()
+    assert "not configured" in (coverage.reason or "")
+
+
+def _fake_readiness_report(*, scan_status: str = "available", signal_status: str = "available") -> Any:
+    """One tracked, fully observed identity with a configurable history state."""
+    return SimpleNamespace(
+        as_of=date(2024, 1, 5),
+        scan_history_status=scan_status,
+        signal_history_status=signal_status,
+        tickers=[
+            SimpleNamespace(
+                market="us_equity",
+                mic="XNAS",
+                ticker="AAA",
+                price_status="observed",
+                latest_price_session=date(2024, 1, 4),
+                price_age_days=1,
+                feature_status="observed",
+                latest_feature_session=date(2024, 1, 4),
+                latest_scan_target_date=date(2024, 1, 4),
+                latest_scan_report_statuses=["success"],
+                latest_scan_outcomes=[],
+                signal_history_rows=0,
+            )
+        ],
+    )
+
+
+def test_unreadable_history_makes_its_columns_unavailable_never_zero(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A history that cannot be read yields ``unavailable``, not `0` and not `none`.
+
+    Falsified by: mapping ``signal_history_rows``/scan fields straight through, which
+    renders an unreadable count as a measured zero; and by leaving the page green over
+    evidence that is partly unreadable.
+    """
+    readiness = import_module("equity_lake.signals.readiness")
+    datasets = [{"name": "us_equity", "available": True, "rows": 10, "symbols": 2, "latest_date": "2024-01-04"}]
+    healthy = {"alerts": [], "healthy": True, "metrics": {"us_equity": {"max_age_days": 2}}}
+
+    for scan_status, signal_status, column in (
+        ("available", "corrupt", "signal history rows"),
+        ("missing", "available", "latest scan session"),
+    ):
+        report = _fake_readiness_report(scan_status=scan_status, signal_status=signal_status)
+        # Default-argument binding: the fake must close over *this* iteration's report.
+        monkeypatch.setattr(readiness, "build_tracking_readiness", lambda _report=report, **kwargs: _report)
+        coverage = panels.per_instrument_coverage(tmp_path)
+
+        assert coverage.rows[0][column] == "unavailable"
+        assert coverage.limitations, (scan_status, signal_status)
+        panel = panels.readiness_panel(datasets, healthy, coverage)
+        assert panel.notice is components.Notice.PARTIAL, (scan_status, signal_status)
+        assert any("unavailable, not" in detail for detail in panel.details)
+
+
+def test_coverage_is_still_shown_when_no_market_is_available() -> None:
+    """Coverage that was read is displayed even when the market summary is unavailable.
+
+    Falsified by: returning early on an absent market (or no registered market), which
+    makes the page claim that no per-instrument evidence was read although it was.
+    """
+    coverage = panels.InstrumentCoverage((_coverage_row("AAA", "no_rows_as_of"),), date(2024, 1, 5))
+    for datasets in (
+        [{"name": "us_equity", "available": False, "rows": 0, "symbols": 0, "latest_date": None}],
+        [{"name": "features", "available": True, "rows": 5, "symbols": 2, "latest_date": "2024-01-04"}],
+    ):
+        panel = panels.readiness_panel(datasets, {"alerts": []}, coverage)
+
+        assert panel.notice is components.Notice.UNAVAILABLE
+        assert [row["instrument"] for row in panel.instruments] == ["us_equity/XNAS/AAA"]
+        assert panel.rows == ()
 
 
 def test_readiness_without_freshness_evidence_is_partial() -> None:
@@ -487,7 +785,8 @@ def test_an_empty_health_report_is_not_a_healthy_result() -> None:
     present missing evidence as a passing check.
     """
     datasets = [{"name": "us_equity", "available": True, "rows": 1, "symbols": 1, "latest_date": "2024-01-04"}]
-    for empty in ({}, {"alerts": []}, {"metrics": {}}):
+    empty_reports: tuple[dict[str, Any], ...] = ({}, {"alerts": []}, {"metrics": {}})
+    for empty in empty_reports:
         panel = panels.readiness_panel(datasets, empty)
         assert panel.notice is components.Notice.PARTIAL
         assert "freshness evidence is empty" in panel.headline
@@ -509,8 +808,13 @@ def _research_lake(tmp_path: Path) -> Any:
     """A finalized run written by the real writer (immutable evidence, not a stub)."""
     import polars as pl
 
-    from equity_lake.backtesting.evidence import CodeIdentity, CostApplication, RunScope, finalise_run
-    from equity_lake.backtesting.result import BacktestResult
+    from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+        CodeIdentity,
+        CostApplication,
+        RunScope,
+        finalise_run,
+    )
+    from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
 
     result = BacktestResult(
         strategy_name="stub",
