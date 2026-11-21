@@ -71,7 +71,10 @@ decision, not an implied later step.
   private (directory `0700`, files `0600`).
 - Migration, compaction and deletion are **not authorized** by this record; any
   such step needs an approved policy first (P00-4). Nothing is migrated,
-  compacted or deleted automatically today.
+  compacted or deleted automatically today. That policy now exists for migration and
+  backup: [ADR-0031](0031-p00-4-ledger-backup-restore-migration-compaction.md) (Accepted
+  2026-11-16) defines the explicit v1→v2 upgrade and verified backup; deletion and
+  retention remain unauthorized.
 - `.gitignore` ignores `data/*` except `data/.gitkeep` and `data/catalog.jsonl`,
   so a private ledger cannot be committed by default. That is intentional and
   must not be special-cased open.
@@ -206,7 +209,7 @@ with the projections they read, so they are named here but not stubbed earlier.
 | ID | Open item | Blocks |
 | --- | --- | --- |
 | P00-2 | Replacement split and quantity-adjustment semantics. Decision 9 already decides the *current* policy (reject split events, block valuation of affected positions); what remains open is any future supported split treatment, which needs an approved amendment. | Import of split-affected history and valuation of affected positions — the block stands until an amendment is accepted. |
-| P00-4 | Migration, compaction and backup/restore policy (mechanism, timing, verification). Decision 3 guarantees only that nothing happens automatically. | Any backup automation, restore tooling, or migration step; P01 ships without them. |
+| P00-4 | Migration, compaction and backup/restore policy (mechanism, timing, verification). Decision 3 guarantees only that nothing happens automatically. **Closed for migration and backup by [ADR-0031](0031-p00-4-ledger-backup-restore-migration-compaction.md) (Accepted 2026-11-16)**; a restore command and compaction are still unimplemented, and backup automation is still not authorized. | Any backup automation, restore tooling, or migration step; P01 ships without them. |
 
 Closed at owner acceptance on 2026-11-03: **P00-1** (`us_equity` / USD, Decision 1)
 and **P00-3** (the four frozen command names with canonical-CSV-only import,
@@ -225,8 +228,8 @@ Decision 13).
   total return, short/margin accounting, time-weighted/money-weighted returns,
   capacity or execution modelling, and any multi-user or hosted access.
 - The private book remains outside the lake and catalog, so it inherits neither
-  lake validation nor lake backup; backup/restore remains an owner decision
-  (P00-4), and until it is decided there is no supported automated backup.
+  lake validation nor lake backup; backup/restore remains an owner-invoked operation
+  (P00-4, now ADR-0031: manual and verified, never automated).
 - Accepted boundaries that must not be bent to make this convenient: ADR-0006
   (auxiliary paths and Pydantic boundaries), ADR-0016 (no identity guessing),
   ADR-0018 (no proxied private exposure), ADR-0021/ADR-0023 read semantics.

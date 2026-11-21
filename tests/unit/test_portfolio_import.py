@@ -202,9 +202,7 @@ def test_parse_records_the_file_digest_per_event(tmp_path: Path) -> None:
         pytest.param(_row(_BUY, symbol=""), "instrument identity is incomplete", id="partial-identity"),
         pytest.param(_row(_BUY, market="", mic="", symbol=""), "requires a canonical instrument identity", id="blank-identity"),
         pytest.param(_row(currency="EUR"), "USD-only", id="wrong-currency"),
-        pytest.param(_row(event_type="SPLIT"), "ADR-0024 decision 9", id="split"),
-        pytest.param(_row(event_type="split"), "ADR-0024 decision 9", id="split-lowercase"),
-        pytest.param(_row(event_type="STOCK_SPLIT"), "ADR-0024 decision 9", id="stock-split"),
+        pytest.param(_row(event_type="STOCK_SPLIT"), "quantity-adjusting alias", id="stock-split"),
         pytest.param(_row(event_type="TRANSFER_IN"), "unknown; expected one of", id="unknown-event-type"),
         pytest.param(_row(_BUY, quantity="-5"), "positive quantity", id="negative-quantity"),
         pytest.param(_row(_BUY, quantity="0"), "positive quantity", id="zero-quantity"),
@@ -231,14 +229,14 @@ def test_invalid_rows_are_rejected_with_the_row_number(row: dict[str, str], expe
 
 
 def test_every_invalid_row_is_reported_once_with_its_own_line_number() -> None:
-    rows = [_row(_DEPOSIT), _row(cash_effect="NaN"), _row(event_type="SPLIT")]
+    rows = [_row(_DEPOSIT), _row(cash_effect="NaN"), _row(event_type="STOCK_SPLIT")]
     with pytest.raises(LedgerValidationError) as excinfo:
         parse_csv_text(_csv(rows))
 
     issues = excinfo.value.issues
     assert [issue.row for issue in issues] == [3, 4]
     assert "NaN" in issues[0].message or "finite number" in issues[0].message
-    assert "ADR-0024 decision 9" in issues[1].message
+    assert "quantity-adjusting alias" in issues[1].message
     assert "rejected 2 issue(s)" in str(excinfo.value)
 
 

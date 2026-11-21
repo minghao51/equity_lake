@@ -29,7 +29,11 @@ database with `0600` permissions.
 `data/*` is git-ignored apart from `data/.gitkeep` and `data/catalog.jsonl`, so a
 private ledger cannot be committed by default. Do not special-case it open, and
 do not copy it into an export, a dashboard build, a notebook output or a public
-page. There is no supported automated backup yet (open item P00-4).
+page. Backup is **manual and verified** (P00-4, [ADR-0031](../decisions/0031-p00-4-ledger-backup-restore-migration-compaction.md)):
+`equity portfolio migrate` writes a verified exact-file copy before it touches anything, and
+`equity portfolio restore` / `equity portfolio compact` verify before they replace or rebuild.
+There is no automated, scheduled or remote backup, and none is authorized. All three are
+report-only by default.
 
 ## Canonical CSV: the only accepted input
 
@@ -79,7 +83,8 @@ and `symbol` are all required together, or all blank for cash-only events.
 - `CASH_DIVIDEND` — the positive net cash amount received; withholding is netted
   in the cash effect, and dividends are income, not basis.
 
-There is deliberately no split, transfer-in, spin-off, merger or conversion type.
+`SPLIT` is the only quantity-adjusting type (ADR-0029); transfer-in, spin-off, merger
+and conversion types are deliberately absent.
 
 ## Usage
 
@@ -108,6 +113,71 @@ file whose content is unchanged is a no-op: every event is reported as
 `unchanged` and no row is duplicated. A batch is atomic, so a rejected row leaves
 the stored ledger untouched.
 
+## Splits: the one quantity-adjusting event (ADR-0029)
+
+> **Storage: schema v2 (2026-11-16).** A ledger from an older build is schema v1, whose SQLite
+> `CHECK` rejected `SPLIT`; splitting is possible on v2 (ADR-0031). This build refuses to read
+> or write a v1 ledger and names the upgrade, and the upgrade is never implicit:
+>
+> ```bash
+> uv run equity portfolio migrate            # report only: verifies and writes nothing
+> uv run equity portfolio migrate --apply    # verified .v1.bak backup, then the rebuild
+> ```
+>
+> The upgrade first writes a verified exact-file copy (`portfolio.sqlite3.<utc>.v1.bak`, mode
+> `0600`) beside the ledger, then rebuilds the table in one transaction and proves the record is
+> unchanged (row count and record digest). It refuses an unsupported version, a rollback
+> journal beside the file, an unexpected column order or a leftover rebuild table — always
+> before the first write. There is no down-migration: restoring that verified backup is the
+> reversal. A split import into a v1 ledger now fails with a message naming `equity portfolio
+> migrate`, not with a misleading "could not be read … retry".
+>
+> **Restore and compaction (2026-11-17, ADR-0031 decisions 4-5).** Both are report-only by
+> default and never automatic:
+>
+> ```bash
+> uv run equity portfolio restore --from portfolio.sqlite3.20261116T101500Z.v2.bak   # plan only
+> uv run equity portfolio restore --from <verified>.bak --apply                      # back up current, swap, re-verify
+> uv run equity portfolio compact                                                    # plan only
+> uv run equity portfolio compact --apply                                            # VACUUM INTO, verify, swap, re-verify
+> ```
+>
+> A restore re-runs the five verification checks on the candidate, refuses a different account
+> label (one private book holds one account), a rollback journal, the current file itself, or
+> insufficient free space, then backs up the **current** file first — it may hold events the
+> backup lacks, and the report tells you how many it rolls back and the newest booking instant
+> it gives up. A compaction rebuilds through `VACUUM INTO` into a fresh file and is accepted
+> only when the version, row count and `(account, external_id, content_digest)` digest all match
+> the pre-compaction state; no event is deleted and `row_id` renumbering carries no meaning.
+
+`SPLIT` is the only event kind that changes a quantity without moving cash. Its
+`quantity` column holds the **share ratio** (new shares per old share) — not a share
+count — because the ledger's stored columns are fixed and a dedicated `split_ratio`
+column would need its own schema change plus an authorized migration run (the v1→v2
+mechanism exists, P00-4/ADR-0031; no column has been added).
+
+```text
+main,fixture,evt-0002,SPLIT,2024-06-10T13:30:00Z,2024-06-10T13:30:00Z,2,us_equity,XNAS,NVDA,USD,0,10,,0,,KNOWN,
+```
+
+- **Replay:** quantity is multiplied by the ratio and the *total* basis stays unchanged, so
+  the average cost per share divides by the same ratio. Cash, fees and realised gain are
+  untouched, and an unknown opening basis stays unknown.
+- **Validation:** the ratio must be positive and not `1`; `cash_effect` must be `0`; no
+  price, fee or basis is allowed. A sale of post-split shares is legitimate.
+- **No position:** a split for an instrument you do not hold is recorded and inert (broker
+  exports carry full histories) — never an error.
+- **Replacement:** a restated split is never an edit. Import a reversal (a second `SPLIT`
+  whose ratio is the exact reciprocal, with `reverses_external_id` naming the original)
+  followed by the corrected split. The product must be exactly `1`.
+- **Marks:** a stored mark from *before* the split is refused for a post-split instant — the
+  position renders `missing_mark` rather than valuing the new quantity at an old price.
+  Replace the mark (or import a fresh one); the ledger never touches `marks.json` and never
+  clears a `valuation_blocks` entry, which stays an explicit operator action.
+
+Broker aliases (`STOCK_SPLIT`, `REVERSE_SPLIT`, `QUANTITY_ADJUSTMENT`, …) are still
+rejected: a ratio convention is never guessed.
+
 ## What `--dry-run` guarantees
 
 `--dry-run` performs the same full validation as a commit and prints:
@@ -128,9 +198,10 @@ Each rejection exits `1` and nothing is written:
 
 - **Other markets or currencies.** Only `us_equity` and USD are supported; a
   `cn_ashare` row or a EUR amount is refused rather than approximated by FX.
-- **Splits and quantity adjustments.** `SPLIT`, `STOCK_SPLIT`, `REVERSE_SPLIT`,
-  `BONUS_ISSUE`, `STOCK_DIVIDEND`, `SPIN_OFF`, `MERGER` and similar types are not
-  representable, because no split accounting is approved (ADR-0024 decision 9).
+- **Split aliases and other quantity adjustments.** The bare `SPLIT` kind is accepted
+  (see the split section below). `STOCK_SPLIT`, `REVERSE_SPLIT`, `BONUS_ISSUE`,
+  `STOCK_DIVIDEND`, `SPIN_OFF`, `MERGER` and similar types are refused: a ratio
+  convention is never guessed, and split discovery does not exist.
 - **Oversells.** A `SELL` that would take a position negative in sequence order is
   refused. Selling a position down to exactly zero is allowed.
 - **Changed content under one external ID.** Re-importing the same
@@ -336,8 +407,8 @@ or widens a tolerance to force agreement, and it is not tax certification.
 ## What a report must never claim
 
 No time-weighted or money-weighted return, no tax-lot or tax-return correctness, no
-multi-currency or FX total, no short/margin state, no split accounting, and no
-historical point-in-time proof. Marks are book marks for this private book only;
+multi-currency or FX total, no short/margin state, no split *discovery* (only imported
+splits adjust), and no historical point-in-time proof. Marks are book marks for this private book only;
 they are not the Bronze price-source provenance of ADR-0027.
 
 ## Not implemented yet
@@ -345,11 +416,16 @@ they are not the Bronze price-source provenance of ADR-0027.
 - No operational mark producer, quote service, broker plugin or network fallback:
   marks are supplied as the local JSON file above, and importing a real account or
   a real quote source remains separately gated.
-- No split accounting, no P00-2 replacement semantics: an affected position is
-  blocked from valuation, never restated.
+- Split discovery: imported `SPLIT` events adjust quantity and average cost at replay,
+  and replacement is an explicit reversal (ADR-0029). The ledger never scans the lake for
+  splits and never clears a `valuation_blocks` entry on its own.
 - No FX or multi-currency totals, no short/margin events.
-- No backup, restore, migration, reset or compaction: nothing is backed up,
-  migrated or deleted automatically (open item P00-4).
+- No automatic backup or compaction and no reset. Every ledger mechanism is explicit and
+  report-only by default: `equity portfolio migrate` (verified backup before the rebuild),
+  `equity portfolio restore` (verify candidate, back up the current file, atomic replace,
+  re-verify) and `equity portfolio compact` (`VACUUM INTO`, record-preserving post-conditions) —
+  all P00-4/ADR-0031, and nothing is ever backed up, migrated, compacted or deleted
+  automatically.
 - No private console or hosted view (P03), no broker API, no automatic ingestion or
   backfill, and no scheduler.
 

@@ -36,7 +36,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import (
     Context,
     Decimal,
@@ -60,6 +60,7 @@ from equity_lake.portfolio.models import (
     LedgerEventType,
     PortfolioLedgerError,
     event_order_key,
+    split_reversal_issues,
 )
 
 # ADR-0026 decision 3: an explicit local context, never the process-global one.
@@ -209,6 +210,18 @@ class PositionProjection(_StrictModel):
         return average_cost_display(self.basis, self.quantity)
 
 
+class SplitProjection(_StrictModel):
+    """One split applied by the replay: its ex-date and share ratio (ADR-0029).
+
+    Exposed on the projection so valuation can refuse a mark that predates the
+    split: a pre-split per-share price is not comparable to the post-split quantity.
+    """
+
+    instrument: InstrumentKey
+    ex_date: date
+    ratio: Decimal
+
+
 class LedgerProjection(_StrictModel):
     """The book at one effective-date instant, reconstructed from stored events.
 
@@ -230,6 +243,7 @@ class LedgerProjection(_StrictModel):
     net_dividend_income: Decimal
     realized_gain: Decimal | None
     replayed_event_count: int
+    splits: tuple[SplitProjection, ...] = ()
 
     @property
     def net_external_flow(self) -> Decimal:
@@ -315,6 +329,19 @@ def _removed_basis(basis: Decimal, held: Decimal, sold: Decimal) -> Decimal:
     """ADR-0026 decision 3: ``B * q / Q`` rounded once, half-even, to 38 dp."""
     exact = Fraction(basis) * Fraction(sold) / Fraction(held)
     return round_half_even(exact, PARTIAL_SALE_BASIS_FRACTIONAL_DIGITS)
+
+
+def _apply_split(event: LedgerEvent, pool: _Pool, context: Context) -> None:
+    """Multiply the quantity by the ratio; total basis stays unchanged (ADR-0029).
+
+    The average cost is derived from ``basis / quantity``, so keeping the total
+    basis constant divides the per-share cost by exactly the ratio. Cash, fees
+    and realised gain are untouched.
+    """
+    ratio = event.quantity
+    if ratio is None or ratio <= 0:  # pragma: no cover - the event contract guarantees a positive ratio
+        raise ProjectionError("SPLIT is missing a positive share ratio")
+    pool.quantity = exact_mul(context, "a SPLIT quantity", pool.quantity, ratio)
 
 
 def _apply_sell(event: LedgerEvent, pool: _Pool, context: Context) -> None:
@@ -406,8 +433,12 @@ def replay_ledger(events: Sequence[LedgerEvent], *, account: str, as_of: datetim
     """
     instant = _aware_utc(as_of, what="the valuation instant")
     timeline = _ordered_timeline(events, account)
+    reversal_issues = split_reversal_issues(timeline)
+    if reversal_issues:
+        raise ProjectionError(reversal_issues[0].message)
 
     pools: dict[tuple[str, str, str], _Pool] = {}
+    splits: list[SplitProjection] = []
     totals = _Totals()
     # ``exact_add``/``exact_sub`` work on the context they are given, and this block
     # additionally makes that context the thread's current one for the plain
@@ -421,7 +452,17 @@ def replay_ledger(events: Sequence[LedgerEvent], *, account: str, as_of: datetim
             key = event.instrument.tuple if event.instrument is not None else None
             pool = None if key is None else pools.setdefault(key, _Pool())
 
-            if event.event_type is LedgerEventType.BUY and pool is not None:
+            if event.event_type is LedgerEventType.SPLIT and pool is not None and event.instrument is not None:
+                _apply_split(event, pool, context)
+                if event.quantity is not None:
+                    splits.append(
+                        SplitProjection(
+                            instrument=event.instrument,
+                            ex_date=event.effective_at.astimezone(UTC).date(),
+                            ratio=event.quantity,
+                        )
+                    )
+            elif event.event_type is LedgerEventType.BUY and pool is not None:
                 _apply_buy(event, pool, context)
                 totals.embedded_fees = exact_add(context, "an embedded fee total", totals.embedded_fees, event.fees)
             elif event.event_type is LedgerEventType.SELL and pool is not None:
@@ -494,6 +535,7 @@ def replay_ledger(events: Sequence[LedgerEvent], *, account: str, as_of: datetim
         net_dividend_income=totals.net_dividend_income,
         realized_gain=realized,
         replayed_event_count=totals.replayed_event_count,
+        splits=tuple(splits),
     )
 
 
@@ -504,6 +546,7 @@ __all__ = [
     "PARTIAL_SALE_BASIS_FRACTIONAL_DIGITS",
     "PROJECTION_DECIMAL_PRECISION",
     "PositionProjection",
+    "SplitProjection",
     "ProjectionError",
     "average_cost_display",
     "exact_add",

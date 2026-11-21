@@ -152,7 +152,9 @@ def portfolio_import(
             typer.echo(f"Dry run: {source.name} validated - {preview.event_count} event(s), nothing was written.")
             typer.echo(f"  proposed effects: {preview.new_event_count} new, {preview.unchanged_event_count} already stored identically")
             typer.echo(f"  events by type: {by_type}")
-            typer.echo(f"  quantity delta by instrument: {by_instrument}")
+            typer.echo(f"  quantity delta by instrument (share-count events only): {by_instrument}")
+            if preview.split_event_count:
+                typer.echo(f"  split events: {preview.split_event_count} (the ratio adjusts quantity at replay, not a share-count delta)")
             typer.echo(f"  cash delta: {format(preview.cash_delta, 'f')}")
             typer.echo("Dry run wrote nothing: no directory, database, rollback journal or backup was created or modified.")
             return
@@ -165,7 +167,184 @@ def portfolio_import(
         _reject(f"the private ledger could not be read ({type(exc).__name__})", ["another process may hold the ledger; retry once it is free"])
 
     typer.echo(f"Imported {source.name}: inserted {outcome.inserted}, unchanged {outcome.unchanged}, rejected 0.")
+    from equity_lake.portfolio import LedgerEventType, instrument_label
+
+    split_events = [event for event in events if event.event_type is LedgerEventType.SPLIT]
+    if split_events:
+        labels = sorted({instrument_label(event.instrument) for event in split_events if event.instrument is not None})
+        # ADR-0029: name the affected instruments, and state the consequence that the
+        # operator has to act on. The ledger never edits or clears a valuation block.
+        typer.echo(
+            f"Split events in this batch: {len(split_events)} for {', '.join(labels)}. Quantities adjust at replay; "
+            "a stored mark from before a split is refused until it is replaced, and a valuation block stays until you remove it."
+        )
     typer.echo("The private ledger is written under data/portfolio/ (not cataloged, never committed).")
+
+
+@portfolio_app.command("migrate")
+def portfolio_migrate(
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--report-only",
+            help="Perform the verified v1->v2 ledger upgrade; the default reports the plan and writes nothing",
+        ),
+    ] = False,
+) -> None:
+    """Upgrade the private ledger schema (v1 -> v2, which accepts the SPLIT kind).
+
+    Report-only by default: it verifies the file, reports its schema version, row count and
+    record digest, and writes nothing at all. ``--apply`` first writes a verified exact-file
+    backup beside the ledger, then rebuilds the table in one transaction, proves the record is
+    unchanged (row count and record digest) and re-verifies the result (ADR-0031).
+
+    No command ever upgrades implicitly: a v1 ledger refuses reads and writes with a message
+    naming this one. There is no down-migration — the verified backup is the reversal.
+
+    Exit codes: 0 when the ledger is already current, when a report is produced, or when the
+    upgrade completes and re-verifies; 1 when the ledger is missing, unreadable, of an
+    unsupported version, has a rollback journal beside it, or fails any check.
+    """
+    from equity_lake.portfolio.store import LedgerStoreError, migrate_ledger, portfolio_db_path
+
+    try:
+        report = migrate_ledger(portfolio_db_path(), apply=apply)
+    except LedgerStoreError as exc:
+        # No blanket "nothing was written" here: a failed --apply may have left a verified
+        # backup beside the ledger, and the message says so where that happened.
+        typer.secho(f"portfolio migrate: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    if report.already_current:
+        typer.echo(f"Ledger {report.filename} is already at schema v{report.target_version}; nothing to do.")
+        return
+    if not report.applied:
+        typer.echo(f"Report only: {report.filename} is schema v{report.found_version}; v{report.target_version} is available.")
+        typer.echo(f"  rows: {report.row_count}")
+        typer.echo(f"  record digest: {report.record_digest}")
+        typer.echo(f"  --apply writes a verified {report.filename}.<utc>.v{report.found_version}.bak copy first, then rebuilds")
+        typer.echo("Report only: nothing was written (no backup, no directory, no journal).")
+        return
+    typer.secho(
+        f"Upgraded {report.filename}: schema v{report.found_version} -> v{report.target_version}, {report.row_count} row(s) unchanged.",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo(f"  verified backup: {report.backup_filename} (sha256 {report.backup_sha256})")
+    typer.echo("  record digest unchanged; integrity_check and foreign_key_check passed")
+
+
+# --- restore and compaction (P00-4 remainder, ADR-0031 decisions 4-5) ---------------
+
+
+def _echo_ledger_backup(filename: str | None, sha256: str | None) -> None:
+    """Report the verified backup a mechanism kept, without naming a path it did not write."""
+    if filename is None:  # pragma: no cover - --apply always writes one for an existing ledger
+        return
+    suffix = f" (sha256 {sha256})" if sha256 else ""
+    typer.echo(f"  verified backup of the current file: {filename}{suffix}")
+
+
+@portfolio_app.command("restore")
+def portfolio_restore(
+    from_path: Annotated[
+        Path,
+        typer.Option("--from", help="Verified backup file to restore from (the file itself is re-verified before it is used)"),
+    ],
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--report-only",
+            help="Back up the current ledger, replace it atomically and re-verify; the default reports the plan and writes nothing",
+        ),
+    ] = False,
+) -> None:
+    """Restore the private ledger from a verified backup (ADR-0031 decision 4).
+
+    Report-only by default: both files are verified and the plan is printed, including what the
+    current ledger holds that the candidate does not (event count and newest booking instant),
+    and nothing at all is written.
+
+    ``--apply`` takes a verified backup of the *current* file first — it may hold events the
+    backup lacks — then replaces the ledger atomically through a temporary file in the same
+    directory and re-verifies the result. A restore is refused when the candidate is unverified
+    or of an unimplemented version, is the current file itself, names a different account than
+    the current ledger, when a rollback journal is present, or when there is no room for the
+    copy plus its backup.
+
+    Exit codes: 0 when a report is produced or the restore completes and re-verifies; 1 on any
+    refusal or failed check.
+    """
+    from equity_lake.portfolio.store import LedgerStoreError, portfolio_db_path, restore_ledger
+
+    try:
+        report = restore_ledger(Path(from_path), portfolio_db_path(), apply=apply)
+    except LedgerStoreError as exc:
+        # No blanket "nothing was written": a failed --apply may have left a verified backup
+        # beside the ledger, and the message names it where that happened.
+        typer.secho(f"portfolio restore: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    if report.already_identical:
+        typer.echo(f"Ledger {report.filename} is already byte-identical to {report.candidate_filename}; nothing to do.")
+        return
+    typer.echo(f"Ledger {report.filename} <- {report.candidate_filename} (schema v{report.candidate_version})")
+    typer.echo(f"  rows: {report.row_count}")
+    typer.echo(f"  record digest: {report.record_digest}")
+    typer.echo(f"  candidate sha256: {report.candidate_sha256}")
+    if report.target_existed:
+        typer.echo(f"  replaces the current file: {report.rolled_back_rows} event(s) it holds would be left out")
+        if report.rolled_back_newest_recorded_at is not None:
+            typer.echo(f"  current ledger's newest booking instant: {report.rolled_back_newest_recorded_at}")
+    else:
+        typer.echo("  no current ledger exists; the candidate becomes the ledger")
+    if not report.applied:
+        typer.echo("Report only: nothing was written (no backup, no temporary file, no directory, no journal).")
+        return
+    _echo_ledger_backup(report.backup_filename, report.backup_sha256)
+    typer.secho(f"Restored {report.filename}: {report.row_count} row(s), re-verified against the candidate.", fg=typer.colors.GREEN)
+
+
+@portfolio_app.command("compact")
+def portfolio_compact(
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--report-only",
+            help="Rebuild the file with VACUUM INTO, verify it and swap it in; the default reports the plan and writes nothing",
+        ),
+    ] = False,
+) -> None:
+    """Rebuild the private ledger with no free pages, preserving the record (ADR-0031 decision 5).
+
+    Report-only by default and never automatic: the version, row count, record digest and file
+    size are printed and nothing is written.
+
+    ``--apply`` runs ``VACUUM INTO`` a fresh file beside the ledger, verifies that the version,
+    row count and ``(account, external_id, content_digest)`` digest all match the pre-compaction
+    state, backs up the current file, replaces it atomically and re-verifies. No event is ever
+    deleted and ``row_id`` renumbering carries no meaning.
+
+    Exit codes: 0 when a report is produced or the compaction completes and re-verifies; 1 on a
+    missing or v1 ledger, a rollback journal, or any failed post-condition.
+    """
+    from equity_lake.portfolio.store import LedgerStoreError, compact_ledger, portfolio_db_path
+
+    try:
+        report = compact_ledger(portfolio_db_path(), apply=apply)
+    except LedgerStoreError as exc:
+        typer.secho(f"portfolio compact: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Ledger {report.filename} (schema v{report.schema_version}): {report.before_bytes} bytes, {report.row_count} row(s)")
+    typer.echo(f"  record digest: {report.record_digest}")
+    if not report.applied:
+        typer.echo("Report only: VACUUM INTO a verified copy, then the verified-restore swap. Nothing was written.")
+        return
+    _echo_ledger_backup(report.backup_filename, report.backup_sha256)
+    typer.secho(
+        f"Compacted {report.filename}: {report.before_bytes} -> {report.after_bytes} bytes, {report.row_count} row(s) preserved.",
+        fg=typer.colors.GREEN,
+    )
 
 
 # --- read commands (P02) -------------------------------------------------------------

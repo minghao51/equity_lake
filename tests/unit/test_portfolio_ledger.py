@@ -280,7 +280,8 @@ def test_pydantic_backed_failures_never_render_input_values() -> None:
     assert "<redacted>" in instrument_message, instrument_message
 
 
-def test_split_and_other_quantity_adjusting_kinds_do_not_exist() -> None:
+def test_split_is_the_only_quantity_adjusting_kind() -> None:
+    """ADR-0029 adds exactly one quantity-adjusting kind; aliases stay absent."""
     assert {kind.value for kind in LedgerEventType} == {
         "OPENING",
         "BUY",
@@ -289,9 +290,11 @@ def test_split_and_other_quantity_adjusting_kinds_do_not_exist() -> None:
         "WITHDRAWAL",
         "FEE",
         "CASH_DIVIDEND",
+        "SPLIT",
     }
-    with pytest.raises(ValueError):
-        LedgerEventType("SPLIT")
+    for alias in ("STOCK_SPLIT", "REVERSE_SPLIT", "TRANSFER_IN", "SPIN_OFF"):
+        with pytest.raises(ValueError):
+            LedgerEventType(alias)
 
 
 def test_event_content_is_exact_and_normalised_to_utc() -> None:
@@ -468,7 +471,10 @@ def test_database_constraint_failure_after_a_successful_insert_rolls_the_batch_b
     before = _stored_rows(store.path)
     _install_rejecting_trigger(store.path, "evt-0003")
 
-    with pytest.raises(sqlite3.IntegrityError):
+    # ADR-0031: a storage-boundary constraint rejection is reported as a schema/contract
+    # mismatch (the CLI used to call this "could not be read ... retry"), never as a raw sqlite3
+    # error escaping to the caller.
+    with pytest.raises(LedgerStoreError, match="schema refused an event that the event contract allows"):
         store.append([_buy(sequence=2), _buy(sequence=3)])
 
     assert _stored_rows(store.path) == before
@@ -677,7 +683,7 @@ def test_ledger_rejects_an_unknown_schema_version(tmp_path: Path) -> None:
 
     with pytest.raises(LedgerStoreError) as excinfo:
         store.append([_buy(sequence=2)])
-    assert "unsupported private portfolio ledger version 99" in str(excinfo.value)
+    assert "unsupported private portfolio ledger schema version 99" in str(excinfo.value)
 
 
 def test_read_path_refuses_an_unsupported_schema_version(tmp_path: Path) -> None:
@@ -691,7 +697,7 @@ def test_read_path_refuses_an_unsupported_schema_version(tmp_path: Path) -> None
 
     with pytest.raises(LedgerStoreError) as excinfo:
         store.load_events()
-    assert "unsupported private portfolio ledger version 7" in str(excinfo.value)
+    assert "unsupported private portfolio ledger schema version 7" in str(excinfo.value)
 
 
 def test_an_unexpected_user_version_is_refused_by_both_paths_without_a_rewrite(tmp_path: Path) -> None:
@@ -706,11 +712,11 @@ def test_an_unexpected_user_version_is_refused_by_both_paths_without_a_rewrite(t
 
     with pytest.raises(LedgerStoreError) as read_exc:
         store.load_events()
-    assert "unsupported private portfolio ledger version 42" in str(read_exc.value)
+    assert "unsupported private portfolio ledger schema version 42" in str(read_exc.value)
 
     with pytest.raises(LedgerStoreError) as write_exc:
         store.append([_buy(sequence=2)])
-    assert "unsupported private portfolio ledger version 42" in str(write_exc.value)
+    assert "unsupported private portfolio ledger schema version 42" in str(write_exc.value)
 
     assert store.path.read_bytes() == before
     assert _companion_files(store.path) == []

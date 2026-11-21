@@ -608,6 +608,7 @@ def _valuation_of(
     *,
     as_of: datetime,
     max_stale_sessions: int,
+    split_dates: Sequence[date] = (),
 ) -> PositionValuation:
     label = instrument_label(position.instrument)
     if position.instrument.tuple in blocked:
@@ -632,10 +633,18 @@ def _valuation_of(
         )
 
     mark, status = _select_mark(marks, as_of)
+    pre_split = mark is not None and any(mark.session < split_date for split_date in split_dates)
+    if pre_split:
+        # ADR-0029: a pre-split per-share price is not comparable to the post-split
+        # quantity. Refuse it as a missing mark instead of valuing the new quantity at
+        # an old price; the mark itself stays visible for diagnosis.
+        status = MarkStatus.MISSING_MARK
     age = None
     if mark is not None:
         age = completed_sessions_after(position.instrument, mark.session, as_of)
-        if age > max_stale_sessions:
+        if not pre_split and age > max_stale_sessions:
+            # A pre-split mark is refused for a reason the staleness bound does not
+            # describe, so the split refusal keeps its own status.
             status = MarkStatus.STALE_MARK
 
     # A selected-but-unusable mark keeps its identity, source, session and age in
@@ -663,7 +672,14 @@ def _valuation_of(
         value=value,
         unrealized_gain=unrealized,
         status=status,
-        blocker=None if status is MarkStatus.VALUED else _blocker_text(status, label),
+        blocker=(
+            None
+            if status is MarkStatus.VALUED
+            else f"{label}: the stored mark predates a split, so its per-share price is not comparable to the adjusted quantity; "
+            "value and NAV are withheld"
+            if pre_split
+            else _blocker_text(status, label)
+        ),
     )
 
 
@@ -699,12 +715,23 @@ def value_positions(
     for mark in document.marks:
         grouped.setdefault(mark.instrument.tuple, []).append(mark)
     blocked = {block.instrument.tuple for block in document.valuation_blocks}
+    split_dates: dict[tuple[str, str, str], list[date]] = {}
+    for split in projection.splits:
+        split_dates.setdefault(split.instrument.tuple, []).append(split.ex_date)
     # Valuation shares the replay's exactness rule: one explicit context, never the
     # process-global one (ADR-0026 decision 3).
     context = Context(prec=PROJECTION_DECIMAL_PRECISION)
 
     valuations = tuple(
-        _valuation_of(position, grouped.get(position.instrument.tuple, ()), blocked, context, as_of=as_of, max_stale_sessions=bound)
+        _valuation_of(
+            position,
+            grouped.get(position.instrument.tuple, ()),
+            blocked,
+            context,
+            as_of=as_of,
+            max_stale_sessions=bound,
+            split_dates=tuple(split_dates.get(position.instrument.tuple, ())),
+        )
         for position in projection.positions
     )
     blockers = tuple(valuation.blocker for valuation in valuations if valuation.blocker is not None)

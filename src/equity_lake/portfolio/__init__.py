@@ -86,9 +86,13 @@ from equity_lake.portfolio.reconcile import (
 from equity_lake.portfolio.store import (
     AppendOutcome,
     LedgerConflictError,
+    LedgerFileVerification,
+    LedgerMigrationReport,
     LedgerStore,
     LedgerStoreError,
+    migrate_ledger,
     portfolio_db_path,
+    verify_ledger_file,
 )
 
 __all__ = [
@@ -103,7 +107,9 @@ __all__ = [
     "LedgerConflictError",
     "LedgerEvent",
     "LedgerEventType",
+    "LedgerFileVerification",
     "LedgerIssue",
+    "LedgerMigrationReport",
     "LedgerProjection",
     "LedgerStore",
     "LedgerStoreError",
@@ -141,6 +147,7 @@ __all__ = [
     "dump_marks_text",
     "instrument_label",
     "load_marks_file",
+    "migrate_ledger",
     "money_display",
     "parse_csv_file",
     "parse_csv_text",
@@ -153,4 +160,5 @@ __all__ = [
     "replay_ledger",
     "validate_batch",
     "value_positions",
+    "verify_ledger_file",
 ]

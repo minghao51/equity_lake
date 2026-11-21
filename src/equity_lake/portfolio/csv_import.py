@@ -81,9 +81,11 @@ CANONICAL_CSV_COLUMNS: Final[tuple[str, ...]] = (
 # Split and other quantity-adjusting events are not representable in the ledger
 # (ADR-0024 decision 9). They get their own message so the rejection names the
 # policy instead of looking like a typo.
+#: Quantity-adjusting *aliases* that remain unsupported. The bare ``SPLIT`` kind is
+#: approved by ADR-0029 and is deliberately absent from this set: a broker alias is
+#: never silently mapped onto it, because the ratio convention must be explicit.
 QUANTITY_ADJUSTING_EVENT_TYPES: Final[frozenset[str]] = frozenset(
     {
-        "SPLIT",
         "STOCK_SPLIT",
         "REVERSE_SPLIT",
         "SPLIT_ADJUSTMENT",
@@ -113,6 +115,7 @@ class ImportPreview(BaseModel):
     event_count: int = Field(ge=0)
     counts_by_type: dict[str, int]
     quantity_deltas: dict[str, Decimal]
+    split_event_count: int = Field(default=0, ge=0)
     cash_delta: Decimal
     new_event_count: int = Field(ge=0)
     unchanged_event_count: int = Field(ge=0)
@@ -193,8 +196,8 @@ def _event_type(row: Mapping[str, str]) -> LedgerEventType:
         raise _RowError(f"event_type is blank; expected one of {', '.join(kind.value for kind in LedgerEventType)}")
     if text in QUANTITY_ADJUSTING_EVENT_TYPES:
         raise _RowError(
-            f"event_type {text!r} is a split or other quantity-adjusting event, which is not approved (ADR-0024 decision 9); "
-            "no split accounting exists and a position whose quantity basis is uncertain must stay unsupported"
+            f"event_type {text!r} is a quantity-adjusting alias, which is not approved; use the bare SPLIT kind with "
+            "quantity = new shares per old share (ADR-0029). An alias is never mapped silently onto it"
         )
     try:
         return LedgerEventType(text)
@@ -321,10 +324,16 @@ def preview_events(events: Sequence[LedgerEvent], *, data_dir: Path | None = Non
 
     counts: dict[str, int] = {}
     deltas: dict[str, Decimal] = {}
+    split_event_count = 0
     cash_delta = _ZERO
     for event in sorted(batch, key=event_order_key):
         counts[event.event_type.value] = counts.get(event.event_type.value, 0) + 1
         cash_delta += event.cash_effect
+        if event.event_type is LedgerEventType.SPLIT:
+            # A split ratio is not a share-count delta; summing it into this map
+            # would display a misleading quantity.
+            split_event_count += 1
+            continue
         if event.instrument is not None and event.quantity is not None:
             label = instrument_label(event.instrument)
             deltas[label] = deltas.get(label, _ZERO) + quantity_delta(event)
@@ -333,6 +342,7 @@ def preview_events(events: Sequence[LedgerEvent], *, data_dir: Path | None = Non
         event_count=len(batch),
         counts_by_type=dict(sorted(counts.items())),
         quantity_deltas=dict(sorted(deltas.items())),
+        split_event_count=split_event_count,
         cash_delta=cash_delta,
         new_event_count=len(new_events),
         unchanged_event_count=len(batch) - len(new_events),

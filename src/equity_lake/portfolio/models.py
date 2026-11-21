@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum, StrEnum
+from fractions import Fraction
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -59,16 +60,18 @@ _ZERO: Final[Decimal] = Decimal("0")
 REDACTED_VALUE: Final[str] = "<redacted>"
 
 _SHARE_EVENTS: Final[frozenset[str]] = frozenset({"BUY", "SELL"})
-_INSTRUMENT_EVENTS: Final[frozenset[str]] = frozenset({"BUY", "SELL", "CASH_DIVIDEND"})
+_INSTRUMENT_EVENTS: Final[frozenset[str]] = frozenset({"BUY", "SELL", "CASH_DIVIDEND", "SPLIT"})
 _CASH_FLOW_EVENTS: Final[frozenset[str]] = frozenset({"DEPOSIT", "WITHDRAWAL"})
 
 
 class LedgerEventType(StrEnum):
     """The complete, closed set of ledger event kinds (ADR-0024 decision 4).
 
-    There is intentionally no split, transfer-in, spin-off or conversion kind:
-    ADR-0024 decision 9 keeps quantity-adjusting events unsupported, so they
-    cannot be represented, let alone approximated.
+    ``SPLIT`` is the single quantity-adjusting kind, approved by ADR-0029 (which
+    amends ADR-0024 decision 9). Its ``quantity`` is the **share ratio** (new
+    shares per old share), not a share count, because the ledger's stored column
+    set is fixed and adding a ``split_ratio`` column would require a migration.
+    There is still no transfer-in, spin-off or conversion kind.
     """
 
     OPENING = "OPENING"
@@ -78,6 +81,7 @@ class LedgerEventType(StrEnum):
     WITHDRAWAL = "WITHDRAWAL"
     FEE = "FEE"
     CASH_DIVIDEND = "CASH_DIVIDEND"
+    SPLIT = "SPLIT"
 
 
 class BasisStatus(StrEnum):
@@ -310,6 +314,14 @@ class LedgerEvent(_StrictModel):
                 self.quantity is None and self.price is None and self.basis is None,
                 "FEE must not carry a quantity, price or basis",
             )
+        if kind == LedgerEventType.SPLIT.value:
+            # ADR-0029: the only quantity-adjusting kind. ``quantity`` is the ratio.
+            _require(self.instrument is not None, "SPLIT requires a canonical instrument identity")
+            _require(self.quantity is not None and self.quantity > 0, "SPLIT requires a positive share ratio in quantity")
+            _require(self.quantity != 1, "SPLIT ratio must change the quantity; 1 is not a split")
+            _require(self.cash_effect == 0, "SPLIT must not move cash")
+            _require(self.price is None and self.fees == 0 and self.basis is None, "SPLIT must not carry a price, fee or basis")
+            _require(self.basis_status is BasisStatus.KNOWN, "SPLIT does not state a basis")
         if kind == LedgerEventType.CASH_DIVIDEND.value:
             _require(self.cash_effect > 0, "CASH_DIVIDEND cash_effect must be the positive net amount received")
             _require(self.price is None and self.basis is None, "CASH_DIVIDEND must not carry a price or basis")
@@ -387,7 +399,12 @@ def instrument_label(instrument: InstrumentKey) -> str:
 
 
 def quantity_delta(event: LedgerEvent) -> Decimal:
-    """Quantity change contributed by one event (quantity-adjusting kinds are absent)."""
+    """Quantity change contributed by one event.
+
+    ``SPLIT`` contributes no delta: it multiplies the position by ``quantity``,
+    so callers that need the resulting quantity must apply the ratio themselves
+    (see :func:`oversell_issues` and the projection).
+    """
     if event.quantity is None:
         return _ZERO
     if event.event_type is LedgerEventType.SELL:
@@ -428,6 +445,12 @@ def oversell_issues(existing: Sequence[LedgerEvent], batch: Sequence[LedgerEvent
         key = _position_key(event)
         if key is None:
             continue
+        if event.event_type is LedgerEventType.SPLIT:
+            # The ratio multiplies the current position; without it a legitimate
+            # post-split sale would look like an oversell.
+            if event.quantity is not None:
+                positions[key] = positions.get(key, _ZERO) * event.quantity
+            continue
         remaining = positions.get(key, _ZERO) + quantity_delta(event)
         if remaining < 0:
             issues.append(
@@ -442,13 +465,65 @@ def oversell_issues(existing: Sequence[LedgerEvent], batch: Sequence[LedgerEvent
     return issues
 
 
+def split_reversal_issues(events: Sequence[LedgerEvent]) -> list[LedgerIssue]:
+    """Validate that a split reversal exactly inverts the split it references.
+
+    ADR-0029: a restated split is a reversal (reciprocal ratio) plus a corrected
+    split, never an edit. The product must be exactly one, checked with exact
+    fractions so a decimal rounding cannot pass it. The referenced split is looked up
+    inside the reversal's own account: external IDs are unique per account (ADR-0024),
+    so an ID that another account also uses must never be compared against.
+    """
+    # Keyed exactly as the store and ``validate_batch`` key it. A lookup by external ID
+    # alone resolves to whichever account's event came last in the file, and because
+    # ``event_order_key`` starts with the account that comparison could flip the
+    # verdict with row order — the one thing this ledger refuses to depend on.
+    by_id = {(event.account, event.external_id): event for event in events}
+    issues: list[LedgerIssue] = []
+    for event in events:
+        if event.event_type is not LedgerEventType.SPLIT or event.reverses_external_id is None:
+            continue
+        original = by_id.get((event.account, event.reverses_external_id))
+        if original is None or original.event_type is not LedgerEventType.SPLIT:
+            issues.append(
+                LedgerIssue(
+                    f"SPLIT external_id {event.external_id!r} reverses an event that is not a stored split; "
+                    "a replacement reverses the split it replaces (ADR-0029)",
+                    event.source_row,
+                )
+            )
+            continue
+        if event_order_key(original) >= event_order_key(event):
+            # The lookup is per account, so the account prefix is equal and the
+            # comparison is the source sequence alone.
+            issues.append(
+                LedgerIssue(
+                    f"SPLIT external_id {event.external_id!r} reverses a split that does not precede it; "
+                    "a reversal applied before the split it names would distort every intervening event (ADR-0029)",
+                    event.source_row,
+                )
+            )
+            continue
+        if original.quantity is None or event.quantity is None:  # pragma: no cover - the event contract guarantees these
+            continue
+        if Fraction(original.quantity) * Fraction(event.quantity) != 1:
+            issues.append(
+                LedgerIssue(
+                    f"SPLIT external_id {event.external_id!r} does not exactly invert the split it reverses; "
+                    "reversal ratios must multiply to 1 (ADR-0029)",
+                    event.source_row,
+                )
+            )
+    return issues
+
+
 def validate_batch(existing: Sequence[LedgerEvent], batch: Sequence[LedgerEvent]) -> tuple[LedgerEvent, ...]:
     """Validate a batch against stored events and return only the new events.
 
     Checks duplicate IDs inside the batch, ambiguous source sequences,
-    idempotency conflicts with stored content, reversal references, and the
-    quantity-only oversell invariant. Nothing is written: this is also the
-    dry-run path (ADR-0024 decision 13).
+    idempotency conflicts with stored content, reversal references, split
+    reversal exactness (ADR-0029) and the quantity-only oversell invariant.
+    Nothing is written: this is also the dry-run path (ADR-0024 decision 13).
     """
     issues: list[LedgerIssue] = []
     existing_by_key = {(event.account, event.external_id): event for event in existing}
@@ -510,6 +585,7 @@ def validate_batch(existing: Sequence[LedgerEvent], batch: Sequence[LedgerEvent]
                 )
             )
 
+    issues.extend(split_reversal_issues((*existing, *batch)))
     if not issues:
         issues.extend(oversell_issues(existing, batch))
     if issues:

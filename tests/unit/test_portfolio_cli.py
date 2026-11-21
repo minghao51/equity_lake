@@ -244,7 +244,7 @@ def test_dry_run_writes_nothing_and_reports_proposed_effects(tmp_path: Path, iso
     assert "nothing was written" in result.stdout
     assert "4 new, 0 already stored identically" in result.stdout
     assert "events by type: BUY 1, CASH_DIVIDEND 1, OPENING 1, SELL 1" in result.stdout
-    assert f"quantity delta by instrument: XNAS:{SYMBOL} 11" in result.stdout
+    assert f"quantity delta by instrument (share-count events only): XNAS:{SYMBOL} 11" in result.stdout
     assert "cash delta: 924.00" in result.stdout
     _assert_no_ledger_written(tmp_path, isolated_ledger)
     assert PORTFOLIO_DIR.exists() is repo_portfolio_before
@@ -516,15 +516,21 @@ def test_import_help_states_the_frozen_exit_contract() -> None:
     assert "nothing is written" in result.stdout.lower()
 
 
-def test_only_import_and_the_read_reports_are_registered() -> None:
-    """The frozen surface is exactly the import plus the three P02 read reports."""
+def test_only_import_the_read_reports_and_the_explicit_ledger_mechanisms_are_registered() -> None:
+    """The frozen surface: import, the three P02 read reports and the three explicit
+    ledger mechanisms (migrate, restore, compact — ADR-0031 decisions 2, 4 and 5).
+
+    Falsified by: adding a portfolio command that is not one of these eight; mechanisms are
+    added by a decision, never by convenience.
+    """
     registered = {command.name for command in portfolio_app.registered_commands}
-    assert registered == {"import", "positions", "summary", "reconcile"}
+    expected = {"import", "positions", "summary", "reconcile", "migrate", "restore", "compact"}
+    assert registered == expected
     assert portfolio_app.registered_groups == []
 
     help_result = runner.invoke(app, ["portfolio", "--help"], env={"COLUMNS": "180"})
     assert help_result.exit_code == 0, help_result.output
-    for present in ("import", "positions", "summary", "reconcile"):
+    for present in expected:
         assert present in help_result.stdout, present
 
 
