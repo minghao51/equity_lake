@@ -2269,6 +2269,40 @@ Next eligible stage: none awaiting an agent. One approval (H00 publish) unblocks
   paths.
 ```
 
+### R20 close-out and H00 build re-verification — 2026-11-22
+
+```text
+R20 close-out / dead-validator removal / documentation reconciliation / 2026-11-22:
+Scope: the last open item carried by the 2026-10-16 review register. No stage was re-opened and
+  no scan behaviour changed; the H00 artifact was re-built to fresh evidence, not published.
+Finding vs code: R20's recommendation (validate the watchlist at scan entry; reject malformed
+  YAML, typos and invalid tickers with actionable messages) was already implemented by
+  `load_watchlist()` (signals/config.py:77-99: unknown keys, missing name, empty ticker list)
+  and `validate_us_watchlist()` (signals/config.py:36-58: not-active / wrong-market / ambiguous
+  tickers each raise), covered by tests/unit/test_signal_input_validation.py. What remained was
+  dead code: `Watchlist.validate_against_tickers` (log-and-return, no caller) and one test.
+Change: removed the unused method and its orphaned test; no __all__ or export referenced it, and
+  `logger` is still used in models.py, so removal is behaviour-neutral.
+Reviewer: independent reviewer returned **PASS** with no findings; it re-ran the focused suites and
+  confirmed the removed symbol has no remaining reference in src/ or tests/, that the live
+  load_watchlist/validate_us_watchlist path is intact, and that `logger` is still used in
+  models.py:373.
+Tests: focused 36 passed / 0 failed (test_signal_models.py, test_signal_input_validation.py);
+  CLI help surface (test_cli_unified.py) green. Full gates at this change: 2,833 collected /
+  2,817 passed / 16 skipped / 0 failed, identical in serial and -n auto (the one-test drop from
+  2,834 to 2,833 is the deleted orphaned test); ruff clean, format clean for 373 files, bare
+  mypy clean for 193 source files.
+H00 re-verification (build only, still unpublished): `equity dashboard h00-build -o <tmp>` at
+  this tree produced index.html + payload.json + sanitization-report.json with
+  `passed=true`, `root=demo_lake_only`, `stale=false`, `negative_scan.state=clean` over the nine
+  forbidden classes (paths, secrets, secret_shapes, private_book, private_state, real_slice,
+  vendor, alert_text, claims) and `provenance=synthetic`. Nothing was dispatched or deployed.
+Register: R20 now reads closed with all ten documented items verified item by item; no item in
+  R01-R20 is left unassigned.
+Next eligible stage: none. H00 publication is the single owner-gated decision, and it also needs
+  a publish design because .github/workflows/pages.yml builds the dashboard, not the H00 artifact.
+```
+
 ## 11. Remaining-item disposition (2026-11-21)
 
 Every item that this specification ever left open is classified here, once, so no later
@@ -2288,10 +2322,9 @@ checkout**. Nothing below is an unassigned implementation task unless it says so
 | Non-US real slices (CN/HK-SG/JPX/KRX) | **Unauthorized** | D00 established feasibility only; no source, spend or target-root authorization exists for those markets |
 | Cash-dividend adjustment in backtests | **Documented boundary** | ADR-0015 and the backtesting guide: adjustment is split-only; `--adjust total_return` requires a vendor total-return series |
 | Live signal delivery and scheduler activation (R12) | **Authorization gate** | No delivery, scheduling or deployment authorization exists; the private console is loopback and display-only |
-| Watchlist validation at scan entry (R20) | **Open, unassigned, outside this spec** | `Watchlist.validate_against_tickers` exists with no caller; carried by the [findings register](../finding/20261016-repository-review-and-equity-alerts.md#status-reconciliation-2026-11-21). It belongs to the signals scope, not this plan |
+| Watchlist validation at scan entry (R20) | **Closed 2026-11-22.** | The finding's recommendation was already implemented by `load_watchlist()` + `validate_us_watchlist()` (`signals/config.py:36-99`, covered by `tests/unit/test_signal_input_validation.py`); the leftover unused `Watchlist.validate_against_tickers` duplicate was deleted so nobody can wire the weaker validator to the finding. No scan behaviour changed |
 
 Reconciled in the same pass, so the surrounding registers no longer contradict the code:
-
 - the [findings register](../finding/20261016-repository-review-and-equity-alerts.md#status-reconciliation-2026-11-21)
   now carries a dated reconciliation for R06/R15 (ADR-0032/0033 made the opt-in adjusted read
   real), R13 (API exposure policy shipped), R19 (3.13 CI matrix and advisory `pip-audit`

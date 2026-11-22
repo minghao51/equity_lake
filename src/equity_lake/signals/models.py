@@ -200,17 +200,6 @@ class Watchlist:
                     if ticker not in self.tickers:
                         self.tickers.append(ticker)
 
-    def validate_against_tickers(self, known_tickers: set[str]) -> list[str]:
-        """Return tickers in this watchlist that are absent from known_tickers."""
-        unknown = [t for t in self.tickers if t not in known_tickers]
-        if unknown:
-            logger.warning(
-                "watchlist_tickers_not_in_config",
-                unknown=unknown,
-                message="These tickers have no configured data source",
-            )
-        return unknown
-
 
 @dataclass
 class SignalConfig:

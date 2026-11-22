@@ -70,15 +70,6 @@ def test_signal_config_generator_enabled() -> None:
     assert config.is_generator_enabled("ml")
 
 
-def test_watchlist_validate_against_tickers_returns_unknown_entries() -> None:
-    """Test watchlist validation returns unconfigured tickers without raising."""
-    watchlist = Watchlist(name="My Portfolio", tickers=["AAPL", "MISSING"])
-
-    unknown = watchlist.validate_against_tickers({"AAPL", "MSFT"})
-
-    assert unknown == ["MISSING"]
-
-
 # ---------------------------------------------------------------------------
 # SignalRecord — closed write-boundary model (handoff 08, B4)
 # ---------------------------------------------------------------------------

@@ -87,3 +87,25 @@ catalog or data file was touched, so the code gates are unaffected by this recor
   today would publish a different surface, so it was deliberately not run.
 - **To do anything else:** nothing is waiting. A new product stage needs its own bounded
   authorization under the spec's §1 before any code moves.
+
+## 6. Close-out — 2026-11-22
+
+One more pass finished the last open item and re-took the H00 evidence at the new head:
+
+- **R20 closed.** The finding's recommendation was already implemented (`load_watchlist` +
+  `validate_us_watchlist`, `signals/config.py:36-99`); the unused
+  `Watchlist.validate_against_tickers` duplicate and its orphaned test were deleted, which is
+  behaviour-neutral. Every one of R20's ten documented items is now verified landed, and no
+  item in R01-R20 is left unassigned.
+- **H00 re-verified, still unpublished.** A fresh `equity dashboard h00-build` at this tree
+  produced the three-file artifact with `passed=true`, `root=demo_lake_only`,
+  `negative_scan.state=clean` across the nine forbidden classes, `stale=false` and
+  `provenance=synthetic`. Nothing was dispatched: `pages.yml` builds the dashboard, so a
+  dispatch today would publish a different surface than the H00 page.
+- Gates re-run at the change: focused 36/36 for the signals surface, plus the full serial and
+  `-n auto` suites agreeing exactly.
+
+The distribution of state after this record: closed stages, one owner-gated decision
+(H00 publication, which also needs a publish design), and deliberate boundaries that need
+new decisions rather than work — ledger retention/deletion, in-place `VACUUM`, R02 promotion,
+point-in-time claims on vendor-stamped rows, real-root cataloging, non-US real slices.

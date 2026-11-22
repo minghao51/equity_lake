@@ -19,7 +19,7 @@ decided publish path (the Pages workflow deploys the dashboard, not the H00 arti
 explicit approval. No implementation stage is open, and R02 (the one ML experiment) came back
 negative and promoted nothing. The specification's [§11 disposition](plans/20261102-01-portfolio-and-research-implementation-spec.md#11-remaining-item-disposition-2026-11-21)
 classifies every remaining item; the older review registers were reconciled against the code
-on 2026-11-21.
+on 2026-11-21 and closed out on 2026-11-22, so no register item is left unassigned.
 
 Before proposing new work, read the [gap accounting record](handoffs/20261121-01-gap-accounting.md) —
 it separates the one real gap from environment deltas (git-ignored `data/`, optional `.env`
