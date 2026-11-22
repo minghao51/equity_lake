@@ -32,6 +32,30 @@ command directly. The synthetic demo is offline, requires no provider
 credentials, and writes only to `data/sample/`; see the safe first-run step
 below.
 
+## What a fresh clone does not have
+
+- **No lake and no artifacts.** `data/*` is git-ignored, so `data/lake/`,
+  `data/lake_real/`, `data/research/` and `data/portfolio/` exist only where
+  something wrote them. Seed the synthetic demo with `uv run equity demo seed`;
+  a real-source root is re-landed with the ADR-0028/0030 commands under its own
+  authorization.
+- **No provider credentials.** The provider seams in `.env.example`
+  (`FRED_API_KEY`, `FINNHUB_API_KEY`, `DEEPSEEK_API_KEY`, `WANDB_*`, `AWS_*`,
+  `STOCKTWITS_*`, `REDDIT_*`) ship empty; those commands are simply unavailable
+  until a recorded authorization fills them.
+- **Optional settings are genuinely optional.** Unset `EQUITY_CONSOLE__PRIVATE_DIR`
+  renders the private console panels `unavailable` and attempts no private read;
+  unset `EQUITY_MONITORING__*` falls back to the `config/settings.yaml` defaults.
+  A missing key is not a broken install.
+
+For the full gate set, sync all three groups in one command — syncing
+`--group dashboard` alone removes the backtesting group and changes the skip
+count (16 → 39):
+
+```bash
+uv sync --group dev --group backtesting --group dashboard
+```
+
 ## Verify
 
 ```bash

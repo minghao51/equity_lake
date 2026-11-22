@@ -2,6 +2,11 @@
 
 **Recorded:** 2026-11-20
 
+> **Closed 2026-11-21.** All six stages are committed and pushed. This record is spent as an
+> entry point — the current state and the one remaining decision are in the
+> [gap accounting record](20261121-01-gap-accounting.md). Its §5 trap history is still worth
+> reading before touching this area.
+
 This document **supersedes** [20261118-01](20261118-01-implement-adr0032.md) as the entry
 point. That record is spent — do not extend it. Its status updates are historical and its
 §5 trap history is still worth reading.

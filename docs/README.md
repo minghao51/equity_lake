@@ -11,7 +11,18 @@ When guidance conflicts, follow the order defined in `AGENTS.md`: enforced
 contracts first, then accepted decision records in `decisions/`, then these
 architecture pages and guides.
 
-## Current continuation — 2026-11-07
+## Current status — 2026-11-21
+
+Every stage in the plan queue is closed except one decision: **H00 publication**. The
+sanitized page is built and reviewed `PASS` and is **not published**; publication needs an
+explicit approval and the Pages workflow is manual dispatch only. No implementation stage is
+open, and R02 (the one ML experiment) came back negative and promoted nothing.
+
+Before proposing new work, read the [gap accounting record](handoffs/20261121-01-gap-accounting.md) —
+it separates the one real gap from environment deltas (git-ignored `data/`, optional `.env`
+keys, the dependency groups the gates need) that are not defects.
+
+## Continuation record — 2026-11-07 (historical)
 
 **E01-6 (row-bound price origin) is implemented** in three sequential commits under
 accepted ADR-0027 and decisions D1–D8: reader-first protocol `equity-run-manifest/4`
@@ -73,7 +84,7 @@ rerun for this update and are not production-data-integrity proof.
 
 ## Start Here
 
-- Current product work: [E01-6 implementation pickup](handoffs/20261107-03-e01-6-implementation-pickup.md) and [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) — portfolio accounting (delivered), row-bound price-origin provenance (approved, next), evidence correctness and real-data feasibility before ML operations; gate records so far: [ADR-0024 private portfolio ledger](decisions/0024-private-portfolio-ledger-and-accounting.md), [ADR-0025 research evidence](decisions/0025-immutable-research-evidence-and-run-manifests.md), [ADR-0026 portfolio projections](decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md) and [ADR-0027 price-origin provenance](decisions/0027-row-bound-price-source-provenance.md) (all Accepted) and the [D00 offline source-feasibility packet](plans/20261103-01-d00-offline-source-feasibility.md)
+- Current status and remaining gaps: [gap accounting — 2026-11-21](handoffs/20261121-01-gap-accounting.md) and the [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) §2 queue / §10 ledger — portfolio accounting, row-bound price-origin provenance, the real-source slice and the R01/R02 research evidence are all delivered; gate records: [ADR-0024 private portfolio ledger](decisions/0024-private-portfolio-ledger-and-accounting.md), [ADR-0025 research evidence](decisions/0025-immutable-research-evidence-and-run-manifests.md), [ADR-0026 portfolio projections](decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md), [ADR-0027 price-origin provenance](decisions/0027-row-bound-price-source-provenance.md), [ADR-0032 adjusted-read coverage basis](decisions/0032-adjusted-read-basis-for-vendor-sourced-slices.md), [ADR-0033 proven-empty action scopes](decisions/0033-proven-empty-corporate-action-scopes.md) and [ADR-0034 vendor-stamped ML research](decisions/0034-vendor-stamped-ml-research-with-disclosure.md)
 - New users: [Getting Started](getting-started/quickstart.md)
 - Operators: [Pipeline Usage](user-guide/pipeline.md) — commands, config, scheduling
 - Ingestion details: [Ingestion](user-guide/ingestion.md) — sources, destinations, retries, and recovery

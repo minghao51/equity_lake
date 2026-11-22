@@ -1,15 +1,18 @@
 # Portfolio and Research — Implementation Plan and Specification
 
 **Recorded:** 2026-11-02
-**Status (updated 2026-11-06):** Active specification and outcome ledger. B00,
-F01–F04, P00/E00/D00, P01a/P01b, E01a, E01b.1, E01b.2 and E01c are complete for
-their recorded scope; whole E01 still needs E01-6. P02 is the next eligible
-planning stage. Future implementation still needs its bounded approval gate.
+**Status (updated 2026-11-21):** Active specification and outcome ledger. Every
+stage in the §2 queue is closed for its recorded scope except H00 publication,
+which needs one explicit owner approval; no implementation stage is open. R02
+was negative and promoted nothing. What remains is in the
+[gap accounting record](../handoffs/20261121-01-gap-accounting.md).
 **Purpose:** Personal portfolio monitoring and a defensible raw-data → structured-data
 → features → research → optional ML-signal workflow.
 **Evidence:** [A01–A11 audit](../finding/20261102-product-readiness-audit.md).
-**Execution:** [Current pickup and next-thread queue](../handoffs/20261107-01-portfolio-projections-and-open-items.md).
-The [original Nov02 pickup](../handoffs/20261102-01-portfolio-and-research-pickup.md)
+**Execution:** [Gap accounting — 2026-11-21](../handoffs/20261121-01-gap-accounting.md)
+(current), and the [completion handoff](../handoffs/20261120-01-complete-remaining-stages.md)
+(closed 2026-11-21). The
+[original Nov02 pickup](../handoffs/20261102-01-portfolio-and-research-pickup.md)
 is historical. §10 records approvals, reviews and outcomes; §2 is the current queue.
 
 ## 1. Product direction and authorization
@@ -54,11 +57,11 @@ unchanged generated catalog and passing Markdown lint. The audit's separate
 Neither result establishes real-market performance. Re-establish actual baseline
 and dependency groups in the pickup thread; never copy historical counts as new.
 
-| Stage | Deliverable | Depends on | Entry approval / remaining gate | Current status (2026-11-06) |
+| Stage | Deliverable | Depends on | Entry approval / remaining gate | Current status (updated 2026-11-21) |
 | --- | --- | --- | --- | --- |
 | B00 | Preserve/freeze carried ADR-0023 work | — | Completed separately | Complete: `1b380af`, `d85b561` |
 | F01–F04 | Benchmark, momentum/ties, signed costs, arena completion | B00 | Approved and reviewed | Complete: `df4e423` |
-| P00 | Private accounting/privacy ADR and account/import policy | F04 | ADR-0024 accepted; US/USD, canonical CSV only | Complete; future split and backup policies remain open |
+| P00 | Private accounting/privacy ADR and account/import policy | F04 | ADR-0024 accepted; US/USD, canonical CSV only | Complete; split, backup, migrate, restore and compaction landed (ADR-0029 Part II, ADR-0031) |
 | E00 | Research-artifact/reader compatibility ADR | F04 | ADR-0025 accepted; E01-1..5 frozen | Complete |
 | D00 | US and CN offline feasibility packet | F04 | No source calls; adjusted/PIT evidence blocked | Complete: packet reviewed |
 | P01a | Validated private ledger and atomic idempotent import | P00 | Fixtures only | Complete: `0f6d771` |
@@ -67,19 +70,25 @@ and dependency groups in the pickup thread; never copy historical counts as new.
 | E01b.1 | Attempt records, last attempt/latest success, arena legacy-write removal | E01a | Owner-approved bounded plan (2026-11-06) | Complete (uncommitted): attempt dir, validated-run readers, frozen legacy view |
 | E01b.2 | Migrate `equity report backtest` off the legacy layout | E01b.1 | Owner-authorized continuation (2026-11-06) | Complete (uncommitted): run + attempt evidence, no production legacy writer |
 | E01c | Canonical universe identity and read-seam snapshot binding | E01b.1/E01b.2 | Owner-approved 2026-11-06: protocol v3, provenance stays `unknown` | Complete (uncommitted): protocol v3, universe basis, Delta/parquet read-seam snapshots |
-| E01-6 | Persisted price-source marker (the only honest route to `real`/`synthetic`) | E01c | Needs its own ADR + storage/schema decision and backfill answer | Open; blocks declaring E01 complete |
-| P02 | Positions, cash, marks, P&L, reconciliation and three read CLI commands | P01a/P01b | Approve bounded fixture-only plan under ADR-0024/§5.3 | Eligible for planning |
-| D01 | Authorized US raw/unadjusted data slice | D00 | Candidate chosen; licensing/retention, source-call and target-root authorization still required | Decision gated |
-| P03 | Private Streamlit portfolio/readiness console | P02 | Approve private UI scope; research panel waits for E01 | Blocked by P02 |
-| R00 | Synthetic controls and computational scale benchmark | F04, completed E01 | Frozen experiment and numeric resource budget, §7 | Blocked by dependencies |
-| R01 | Real-data baseline strategy evidence | R00, D01 | Frozen universe/window/holdout/costs | Decision gated |
-| R02 | Incremental ML experiment, not deployment/refitting | R01 | Frozen ML hypothesis/timing/promotion criteria | Decision gated |
-| H00 | Single sanitized public Pages deployment | E01 | Separate hosting/privacy decision | Deferred |
+| E01-6 | Persisted price-source marker (the only honest route to `real`/`synthetic`) | E01c | ADR-0027 accepted and implemented in three commits | Complete; rows without evidence still report `unknown` |
+| P02 | Positions, cash, marks, P&L, reconciliation and three read CLI commands | P01a/P01b | Approved bounded fixture-only plan under ADR-0024/§5.3 | Complete: `positions`/`summary`/`reconcile`, ADR-0026 precision marks |
+| D01 | Authorized US raw/unadjusted data slice | D00 | ADR-0028/0029/0030 accepted; raw reconstruction at the write boundary | Complete: 11 tickers / 58,653 rows in `data/lake_real/`; demo root and catalog byte-identical |
+| P03 | Private Streamlit portfolio/readiness console | P02 | Approved private UI scope; display-only, loopback bind | Complete: four reviewed stages plus two closed follow-ups |
+| R00 | Synthetic controls and computational scale benchmark | F04, completed E01 | Frozen experiment and numeric resource budget, §7 | Complete: `backtesting/protocol.py` freeze/refuse controls |
+| R01 | Real-data baseline strategy evidence | R00, D01 | Frozen universe/window/holdout/costs; owner-approved scope | Complete: protocol v3 `e5387297…`, pre-holdout +22.79% / Sharpe 1.49 / 229 trades |
+| R02 | Incremental ML experiment, not deployment/refitting | R01 | ADR-0034 accepted: vendor-stamped research with mandatory disclosure | Complete and negative: `promoted=false`, 1/5 criteria; nothing promoted |
+| H00 | Single sanitized public Pages deployment | E01 | Owner decisions adopted 2026-11-21; publication still needs its own approval | Built, reviewed PASS, **not published**; Pages workflow is manual dispatch only |
 
 The in-session todo list is a convenience, not the cross-thread source of
-truth. Use this table, §10 and the current handoff. Whole E01 remains partial
-until E01c (and any further identified write-side gaps) satisfy ADR-0025; the
-provenance upgrade needs a persisted price-source marker that does not exist yet.
+truth. Use this table, §10 and the current handoff.
+
+**Status 2026-11-21:** every row above is closed except one gated decision —
+H00 publication — which needs a single explicit approval. E01 is no longer
+partial: E01c plus E01-6's persisted row-bound price-origin envelope (ADR-0027)
+satisfy ADR-0025, and rows that carry no evidence still report `unknown`. What
+remains is recorded in the [gap accounting record](../handoffs/20261121-01-gap-accounting.md):
+that publish approval, environment deltas local to this checkout, and no open
+implementation stage.
 
 **Owner approval (2026-11-02 UTC):** B00 commit plan (b) — separate commits for the carried
 ADR-0023 work and the planning docs, then one F01–F04 tranche commit after the full gates.
@@ -2204,6 +2213,50 @@ Deferred, explicit: a restore command (documented as verify-then-atomic-copy) an
   (decision 5) are NOT implemented. No migration has been run against a real ledger - none
   exists in this checkout - and ADR-0031's acceptance authorized building the mechanism, not
   running it.
+```
+
+Status update 2026-11-21: the `Deferred, explicit` note above is historical and this record
+is superseded for decisions 4-5 by the P00-4 restore/compaction entry above
+(2026-11-17). `restore_ledger` / `compact_ledger` ship behind
+`equity portfolio restore|compact` with `tests/unit/test_portfolio_restore_compaction.py`.
+The runtime residual still stands and is unchanged: no run has happened against a real
+ledger, because `data/portfolio/` does not exist in this checkout.
+
+### Repository gap accounting — 2026-11-21
+
+```text
+Gap accounting / documentation reconciliation / 2026-11-21:
+Scope: record what actually remains after the 2026-11-20 handoff closed. No product, schema,
+  catalog or data change; documentation only. Every claim below was re-derived before writing,
+  not copied from the handoff.
+Verified state:
+- `git status -sb` clean, `main...origin/main` at 23514f8; nothing staged, nothing unpushed.
+- `equity portfolio --help` lists import/migrate/restore/compact/positions/summary/reconcile,
+  so ADR-0031 decisions 4-5 ARE implemented (the older P00-4 migration record's
+  "Deferred, explicit" note is stale - corrected above).
+- `.env` lacks EQUITY_CONSOLE__PRIVATE_DIR and EQUITY_MONITORING__{MAX_AGE_DAYS,
+  NULL_THRESHOLD_PCT}: not a defect - core/settings.py defaults them (2 / 5.0), and an unset
+  private_dir means the private panels render `unavailable` with no private read attempted.
+- Provider seams are empty by design: AWS_*, STOCKTWITS_*, REDDIT_*, FRED_API_KEY,
+  FINNHUB_API_KEY, DEEPSEEK_API_KEY, WANDB_*. No provider authorization exists.
+- data/portfolio absent; data/research present (h00, protocols, r02); demo root 1,413 files;
+  real root 65,699 files; catalog sha 537bf5fb...; .gitignore:23 is `data/*`, so no lake,
+  artifact or ledger is in git and a fresh clone starts without one.
+Open gap (one, owner-gated): H00 publication. Owner decision 3 (2026-11-21) makes publishing a
+  separate explicit approval and .github/workflows/pages.yml is `workflow_dispatch:` only;
+  building and preview stay local, and nothing is queued to deploy.
+Closed by this reconciliation: the §2 queue statuses for P00, E01-6, P02, P03, D01, R00, R01,
+  R02 and H00; the "E01 remains partial / marker does not exist" paragraph (E01-6 shipped the
+  marker under ADR-0027); this record's header and execution pointers; the stale P00-4
+  deferral note; and docs/README.md's entry point, which still advertised the spent E01-6
+  pickup as current.
+Not open, deliberately: no refit, no scheduled ingestion, no real-ledger migration, restore or
+  compaction run, no PIT claim on vendor-stamped rows, no promotion of the R02 model.
+Docs: this spec (§2, §10), docs/README.md, docs/getting-started/quickstart.md and the
+  20261121-01 gap accounting handoff. No ADR: nothing architectural changed.
+Next eligible stage: none awaiting an agent. One approval (H00 publish) unblocks the only
+  remaining deliverable; a real ledger would be the first honest exercise of P00-4's runtime
+  paths.
 ```
 
 ## Appendix: D01 probe artifacts (not committed)
