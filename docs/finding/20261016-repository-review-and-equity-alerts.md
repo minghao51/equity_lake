@@ -129,7 +129,7 @@ for the final packet status and evidence.
 | R01 | **Implementation/offline contracts reviewed and accepted.** Settings/export and bounded retry/provider logs have synthetic token coverage; analyst transient retries are preserved. This is not a universal provider-exception scrubber or security audit. |
 | R02–R04, R10 | **Implementation/offline contracts reviewed and accepted.** Sequential scans, truthful monitor persistence, HK/SG default union, and no-side-effect signal dry-run are covered by final evidence. |
 | R05 | **Implementation/offline contracts reviewed and accepted.** Per-refit fit and threshold samples require mature labels; interval purging, pending right-edge events, early-hit maturity, and per-refit threshold state are covered synthetically. Passing fixtures establish no alpha. |
-| R06, R15 | **Implementation/offline contracts reviewed and accepted.** ADR-0015 split-only read-time semantics, fail-closed action/vintage handling, versioned missing-aware predictors, and `source_valid_until` propagation through persisted features/loaders/model freshness are covered. Native yfinance action proof is unavailable, so adjusted reads remain unavailable; no raw fallback, production repair, or migration is claimed. |
+| R06, R15 | **Implementation/offline contracts reviewed and accepted.** ADR-0015 split-only read-time semantics, fail-closed action/vintage handling, versioned missing-aware predictors, and `source_valid_until` propagation through persisted features/loaders/model freshness are covered. The vendor publishes no action clock, so ADR-0032's opt-in `vendor_events_no_clock` coverage proof now carries the adjusted read on the real slice (the stamp travels in the rows) and ADR-0033 covers proven-empty scopes; there is still no point-in-time claim, no raw fallback, and no production repair or migration. Reconciled 2026-11-21 — see the status reconciliation below. |
 | R07–R09 | **Implementation/offline contracts reviewed and accepted.** Config injection, effective-threshold provenance, explicit outcomes, zero-event reports, finite scored-article coverage, exact-session freshness, and optional ML age/schema/identity gates are covered. No signal-quality claim. |
 | R11, R14 | **Implementation/offline contracts reviewed and accepted.** Composite identity, provenance-only legacy reads, and supported deterministic paths across all five markets are covered by synthetic fixtures and C10. Unknown identity remains unavailable; no production migration. |
 | R12 | **Implementation/offline contracts reviewed and accepted.** Private CRUD, readiness, UI/API projections, SQLite event/outbox states (`pending`, `sent`, `failed`, `expired`), retries, revalidation, removal cancellation, and ML-neutral re-arm were reviewed on synthetic fixtures. Live notification and scheduler activation remain separate operational gates. |
@@ -137,7 +137,7 @@ for the final packet status and evidence.
 | R16 | **Implementation/offline contracts reviewed and accepted.** NULL-safe native nullable additive Delta evolution, OCC up to three retries, concurrent creation, scoped locking, and visible failures are covered synthetically. No production migration. |
 | R17 | **Implementation/offline contracts reviewed and accepted.** Explicit locked scope, independent checkpoint state, ≤25 items per batch and ≤100 items per invocation, finite caps, durable checkpoint ordering, and fail-closed pending/provider-crash behavior are covered. No actual provider-cost adapter exists; SEC `--process` fails before fetch, paid authorization is zero, and default paid work is a planned skip. |
 | R18 | **Implementation/offline contracts reviewed and accepted.** Provenance, feature/model compatibility, age, and `source_valid_until` checks are covered. This does not create native source proof or live model availability; no automatic retraining. |
-| R19 | **Implementation/offline contracts reviewed and accepted.** Offline-default/network-marker policy, format CI gate, temporary paths, synthetic fixtures, and ML/SEC seams are covered. Network/provider coverage, Python 3.13 CI, dependency-security audit, and deployment remain unverified. |
+| R19 | **Implementation/offline contracts reviewed and accepted.** Offline-default/network-marker policy, format CI gate, temporary paths, synthetic fixtures, and ML/SEC seams are covered. Reconciled 2026-11-21: Python 3.13 CI and an advisory `pip-audit` job now run in `.github/workflows/quality.yml`; network/provider coverage stays out of the fast suite by design (marked, separately authorized), and deployment remains unexercised and unauthorized. |
 | R20 | **Implementation/offline contracts reviewed and accepted.** Config validation, Makefile/examples, optional install guidance, UTC scheduling labels, and documentation fixes are covered. This does not imply operational onboarding or live delivery readiness. |
 
 ### Historical coordinator update — 2026-10-18 (superseded by final closure below)
@@ -1105,4 +1105,25 @@ product/policy choices:
 2. Desired rules and whether tracked equities are candidates, holdings, or both.
 3. Adjustment/identity policy and any separately authorized historical repair.
 4. Live-delivery enablement after a private deterministic MVP and paper/shadow
-   period; ML-based alerts remain gated on research-integrity validation.
+period; ML-based alerts remain gated on research-integrity validation.
+
+## Status reconciliation — 2026-11-21
+
+This register was written on 2026-10-16 and still read as if several items were open that
+had since shipped, while its historical Phase A table (R13) read as if one item were open
+that the read API now covers. Reconciled against the code, not against other prose. Any stage
+outcome quoted from a later record is linked there, not re-verified here.
+
+| Finding | Reconciled status | Evidence |
+| --- | --- | --- |
+| R06, R15 | **Adjusted reads are available on real rows under an opt-in weak basis.** The vendor publishes no action clock, so ADR-0032's `vendor_events_no_clock` coverage proof carries the adjusted read and the stamp travels in the rows; ADR-0033 covers proven-empty scopes (GLD). No point-in-time claim exists or is implied | `data/lake_real/` weak proofs; spec §10 ADR-0032/0033 records |
+| R12 | **Accepted; live notification and scheduler activation remain authorization gates, not backlog.** No code change is pending and none should be started without a delivery decision | Register's own current-resolution row; no delivery/scheduling authorization exists |
+| R13 | **Closed.** The API exposure policy is implemented and documented: loopback default, interactive confirmation, `--allow-unauthenticated-exposure` for an explicitly authorized deployment, and an explicit warning that the container bind is unauthenticated. The historical Phase A table's "API container's noninteractive exposure policy remains open" is superseded | `docs/user-guide/20260811-read-api.md:18-23,164-171` |
+| R19 | **Closed for its CI items.** `.github/workflows/quality.yml` runs a 3.12 + 3.13 matrix and an advisory `pip-audit --skip-editable` job. Network/provider coverage is excluded from the fast suite by design (`AGENTS.md`), and deployment stays unverified because no deployment is authorized | `.github/workflows/quality.yml:17,67-69` |
+| R20 | **Closed for every documented item except one.** Verified landed: quickstart lists `dotenvx` and the optional groups (plus the fresh-clone deltas), `make demo` no longer chains into setup, `health-report.json` is the one name on every page, `config validate` labels its tickers-only default and offers `--all`, the scheduler's UTC cron is stated, ADR-0011's header and footer agree, and the dead `examples/` targets are gone. **Still open: `Watchlist.validate_against_tickers` is defined but never called at scan entry**, so malformed watchlist YAML and unknown tickers are not rejected there | `src/equity_lake/signals/models.py:203` (no caller); `Makefile:253`; `docs/getting-started/quickstart.md`; `docs/user-guide/20260829-monitoring-and-alerting.md:19,121` |
+
+Open items this register still owns, with no stage assigned: the R20 watchlist-validation gap above.
+Everything else in R01-R20 is either fixed, covered by an accepted implementation/offline
+contract, or an authorization gate. The active portfolio/research plan's remaining-item
+disposition lives in the
+[implementation specification §11](../plans/20261102-01-portfolio-and-research-implementation-spec.md#11-remaining-item-disposition-2026-11-21).

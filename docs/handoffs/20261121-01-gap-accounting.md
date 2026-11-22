@@ -70,14 +70,20 @@ rows, and promotion of the R02 experiment.
 | Same, §10 | — | New dated entry *Repository gap accounting — 2026-11-21* |
 | `docs/README.md` | Nov-07 continuation and a Start Here bullet pointing at the spent E01-6 pickup | New 2026-11-21 current-status section, Nov-07 marked historical, Start Here repointed |
 | `getting-started/quickstart.md` | Install only | Fresh-clone deltas: combined sync, git-ignored `data/`, optional-key semantics |
+| `finding/20261016-…-equity-alerts.md` | R06/R15 claimed adjusted reads unavailable on real rows; R19 claimed no 3.13 CI or security audit | Dated *Status reconciliation* section: R06/R15 (ADR-0032/0033), R12 (authorization gate), R13 (closed — exposure policy shipped), R19 (closed for its CI items), R20 (nine items landed, watchlist validation listed open) |
+| `plans/20261016-…-remaining-scope-handoff.md` | "C10 remains open" beside a header saying C00–C10 were accepted | Pre-closure snapshot note with the current green gates; the "strict adjusted reads must remain unavailable" sentence marked superseded in part by ADR-0032/0033 |
+| `plans/20261102-01-…-spec.md` §7/§8/§11 | §7 and §8 read as future gates; no single place listed what remains | §7/§8 carry status pointers; new **§11 Remaining-item disposition** classifies every open item as closed, owner-gated, deliberate boundary, or not possible from this checkout |
 
 No ADR was needed: nothing architectural, stored or public-API changed. No code, schema,
 catalog or data file was touched, so the code gates are unaffected by this record.
 
 ## 5. Next entry gate
 
-- **To publish H00:** an explicit instruction naming it as publication approval. Then
-  dispatch `pages.yml` manually, confirm the artifact still passes its own negative scan,
-  and record the run in spec §10.
+- **To publish H00:** two things are needed, and neither is a dispatch of the existing
+  workflow. First a decided publish design — `.github/workflows/pages.yml` builds
+  `equity dashboard build`, i.e. the *dashboard*, and nothing in the repository publishes the
+  H00 artifact ([guide](../user-guide/20261121-h00-sanitized-demo-lake-page.md) says so
+  explicitly); then an explicit approval naming H00 publication. Dispatching `pages.yml`
+  today would publish a different surface, so it was deliberately not run.
 - **To do anything else:** nothing is waiting. A new product stage needs its own bounded
   authorization under the spec's §1 before any code moves.

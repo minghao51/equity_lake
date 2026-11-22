@@ -479,6 +479,12 @@ been rerun after those changes, and no parallel suite has run. Other captured
 failures outside the assigned test modules remain outside this repair; there
 is no full-green claim.
 
+**Status 2026-11-21:** this section is the pre-closure snapshot its own heading warns about.
+C10 closed on 2026-10-18 (final closure above), and the current repository gates are green:
+2,834 collected / 2,818 passed / 16 skipped / 0 failed in serial and `-n auto` at the R02
+close (spec §10). The 47 failures and the missing full re-run are historical, not a current
+open item. Nothing here needs an agent.
+
 Additional current evidence: offline `uv sync --frozen --inexact --offline`
 audited 288 packages; Ruff passed, formatting passed for 304 files, and mypy
 passed for 170 source files. Scoped `git diff --check` passes for the files in
@@ -495,7 +501,11 @@ The native action source has not provided qualifying source-availability proof;
 strict adjusted reads must remain unavailable for it. There is no actual paid
 cost adapter, and SEC `--process` remains disabled with nonzero failure. No
 live provider, paid-work, delivery, or production-readiness claim is made, and
-no scope deferrals are accepted. LSP reports are explicitly not warning-free:
+no scope deferrals are accepted. **(2026-11-21: superseded in part by ADR-0032/0033 —
+the vendor's missing action clock is now handled by the opt-in `vendor_events_no_clock`
+coverage proof, so the adjusted read exists under an explicit weak basis with no point-in-time
+claim; the strict/canonical path is unchanged. See the
+[findings-register reconciliation](../finding/20261016-repository-review-and-equity-alerts.md#status-reconciliation-2026-11-21).)** LSP reports are explicitly not warning-free:
 the only primary finding is a verified false positive in unchanged
 `ml/_metrics.py:68` (runtime `precision_zero_division=0`; installed stub says
 `str`, with triage under `/tmp/equity-proof-triage*`); other review-LSP counts

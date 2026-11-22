@@ -468,6 +468,11 @@ local ingestion time. No operational readiness if the selected proof is blocked.
 
 ## 7. R00–R02 — Evidence gates before ML operations
 
+> **Status 2026-11-21: closed.** R00 shipped the freeze/refuse controls, R01 produced the
+> frozen-protocol baseline, and R02 ran once under ADR-0034 and came back negative with
+> `promoted=false`. The text below is the binding contract those stages ran under; the
+> disposition of what remains is §11.
+
 ### R00: offline harness controls and computational scale
 
 Freeze a versioned protocol before running: data generator/seeds, tradable signal
@@ -528,6 +533,11 @@ seven-day cap change, live signal enablement or model promotion follows from
 passing a synthetic control or obtaining one positive fold.
 
 ## 8. H00 — Optional public hosting cleanup
+
+> **Status 2026-11-21: built, reviewed `PASS`, not published.** The rules below are met by the
+> allowlist builder and the retired push/schedule triggers; no publish path exists yet and
+> publication is owner-gated. See §11 and the
+> [page guide](../user-guide/20261121-h00-sanitized-demo-lake-page.md).
 
 One workflow must publish one composed/sanitized Pages artifact rather than
 letting catalog/dashboard deployments replace each other. Decide public routes,
@@ -2258,6 +2268,44 @@ Next eligible stage: none awaiting an agent. One approval (H00 publish) unblocks
   remaining deliverable; a real ledger would be the first honest exercise of P00-4's runtime
   paths.
 ```
+
+## 11. Remaining-item disposition (2026-11-21)
+
+Every item that this specification ever left open is classified here, once, so no later
+reader has to infer a status from a historical entry. Four dispositions are used: **closed**,
+**owner-gated**, **deliberate boundary** (decided, not backlog) and **not possible from this
+checkout**. Nothing below is an unassigned implementation task unless it says so.
+
+| Item | Disposition | Basis and what would change it |
+| --- | --- | --- |
+| H00 publication | **Owner-gated, and no publish path exists.** The build and loopback preview are done; publication is genuinely unimplemented, not just unapproved — `.github/workflows/pages.yml` builds `equity dashboard build`, i.e. the *dashboard*, and nothing in the repository publishes the H00 artifact | Owner decision 3 (2026-11-21) reserves publication. Publishing needs a decided design (where the H00 artifact is deployed and under what operator identity) plus an explicit approval. Judgement recorded here: a general "complete the remaining work" instruction is not that approval, and dispatching `pages.yml` would publish a different surface, so it was not dispatched |
+| Real private ledger | **Not possible from this checkout.** `data/portfolio/` does not exist, so P00-1 import and P00-4 migrate/restore/compact have never run on real data | The owner imports one canonical CSV; the commands are built and covered by 35+ fixture tests |
+| Ledger retention, pruning, archival, deletion | **Deliberate boundary** | ADR-0031 d6 and ADR-0024 d3: deletion stays unauthorized and a retention decision needs its own ADR |
+| In-place `VACUUM` compaction form | **Deliberate boundary — decided not to implement.** ADR-0031 d5 permits it only with a verified backup, a no-writer window and 2× free space; the no-writer window cannot be proven by a local CLI, while `VACUUM INTO` plus the restore procedure already yields a verified, record-preserving rebuild | Revisit only with a real reason to avoid the temp file; the guarded path stays authoritative |
+| R02 promotion or refit | **Deliberate boundary** | Stage 4: `promoted=false`, 1/5 criteria, negative and inconclusive; no automated refit is authorized |
+| Point-in-time claims on vendor-stamped rows | **Permanent contract** | ADR-0032 d10 and ADR-0034: the weak basis supports research only, with the mandatory disclosure |
+| Cataloging or mixing the real root | **Permanent contract** | ADR-0030: `data/lake_real/` is never cataloged, never mixed with the demo root, never created implicitly |
+| Non-US real slices (CN/HK-SG/JPX/KRX) | **Unauthorized** | D00 established feasibility only; no source, spend or target-root authorization exists for those markets |
+| Cash-dividend adjustment in backtests | **Documented boundary** | ADR-0015 and the backtesting guide: adjustment is split-only; `--adjust total_return` requires a vendor total-return series |
+| Live signal delivery and scheduler activation (R12) | **Authorization gate** | No delivery, scheduling or deployment authorization exists; the private console is loopback and display-only |
+| Watchlist validation at scan entry (R20) | **Open, unassigned, outside this spec** | `Watchlist.validate_against_tickers` exists with no caller; carried by the [findings register](../finding/20261016-repository-review-and-equity-alerts.md#status-reconciliation-2026-11-21). It belongs to the signals scope, not this plan |
+
+Reconciled in the same pass, so the surrounding registers no longer contradict the code:
+
+- the [findings register](../finding/20261016-repository-review-and-equity-alerts.md#status-reconciliation-2026-11-21)
+  now carries a dated reconciliation for R06/R15 (ADR-0032/0033 made the opt-in adjusted read
+  real), R13 (API exposure policy shipped), R19 (3.13 CI matrix and advisory `pip-audit`
+  exist) and R20 (nine of ten items verified landed; watchlist validation listed above);
+- the [equity-alerts handoff](20261016-equity-alerts-remaining-scope-handoff.md) no longer
+  reads "C10 remains open" without its closure note, and its "strict adjusted reads must
+  remain unavailable" sentence is marked as superseded in part by ADR-0032/0033.
+
+No code, schema, catalog or data changed for this section. The code gates are therefore
+unaffected: the last recorded full run was 2,834 collected / 2,818 passed / 16 skipped / 0
+failed, serial and `-n auto`, at the R02 close.
+
+**Next eligible stage: none.** Two things could start work, and both need an owner decision
+first: H00 publish design plus approval, or a new bounded stage under §1.
 
 ## Appendix: D01 probe artifacts (not committed)
 
