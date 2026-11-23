@@ -400,8 +400,9 @@ Post-implementation review: the independent review of the accumulated diff retur
 (overstated source-clock integrity claim, MD013 disabled without an auditable record, paper-shadow scan/delivery lock ordering,
 and a baseline written without a Pydantic boundary) plus a missing stamp-invariant mutation. All four were fixed and a
 real point-in-time gap was closed in the process (evidence published after an `as_of` date can no longer qualify that
-read); the fixes and their mutation/gate results are recorded in the RS-R01 status-correction entry below. Stage
-entries follow as recorded at merge time.
+read); the fixes and their mutation/gate results are recorded in the RS-R01 status-correction entry below.
+The re-review of those fixes returned **PASS**: all four findings resolved, no new issues, and ruff, ruff format,
+mypy, `make lint-md` and the four touched test modules all exit 0. Stage entries follow as recorded at merge time.
 
 ## RS-B01
 
