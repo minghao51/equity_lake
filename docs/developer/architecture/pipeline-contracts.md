@@ -136,3 +136,86 @@ authorization `--authorize-broad` (D09). No broad or automatic repair runs.
 - **Rollback.** Roll back code and schema-aware readers together; the
 label-only update is key-scoped and replayable, and Delta snapshots are
 preserved for an authorized repair rollback (no vacuum here).
+
+## Source-clock qualification and root containment (RS-D01)
+
+Point-in-time correctness is impossible on `vendor_events_no_clock` rows by
+construction: those rows carry vendor-event completeness and no clock at all
+(ADR-0032 decision 6). Their stamps and invariants are preserved as they are —
+they are never relabelled, never back-filled with a synthesised clock, and the
+strict basis still refuses them. Qualifying an *alternative* source is a separate,
+evidence-bound procedure implemented in `src/equity_lake/core/source_clock.py`.
+
+### What counts as evidence
+
+A qualification record states one `(source, market, series)` and must carry:
+
+- **Source-issued evidence.** `evidence_kind` is closed to `source_publication`
+  and `source_vintage` — a notice, release note or vintage table issued by the
+  source — and the document is referenced by `evidence_digest` (sha256) or
+  `evidence_uri`. At least one is required and the document is never fetched here.
+- **A source clock.** `source_available_at`, a timezone-aware UTC timestamp taken
+  from that document, not from anything local.
+- **A covered window and an expiry.** `coverage_start`..`coverage_end` (the sessions
+  the qualification speaks for) and `expires_on`, which cannot precede
+  `coverage_end`.
+- **A rights reference.** `rights_reference` names the licence or entitlement that
+  authorizes keeping the series locally; an unlicensed series is not qualified.
+- **Provenance of the record itself.** `recorded_at`, and `supersedes` naming the
+  record this one corrects.
+
+An **ingest-time clock cannot be expressed as proof**. `ingest_time` appears in the
+evidence vocabulary only so the refusal is explicit: constructing a record with it
+raises, `source_available_at` may not postdate `recorded_at`, and
+`source_vintage`/`source_publication` are the only admitted kinds. A fetch time, a
+file-write time or a guessed TTL is exactly the weakness `vendor_events_no_clock`
+names — writing it into a record would launder it, so the write boundary refuses it.
+
+### Append-only records
+
+Records live in an auxiliary artifact, `DATA_DIR/source_clock_qualification/records.jsonl`
+(ADR-0006: not cataloged, not pointblank-validated, created only by an append):
+
+- **Never restamped.** `record_id` is the sha256 of the record's own content, and a
+  row that no longer matches it is *unverifiable*: the reader refuses the store and
+  the gate refuses the answer rather than dropping or repairing the line.
+- **A correction is a new record.** Appending the same record twice refuses, a
+  correction names what it supersedes, and a record can only be superseded once —
+  the correction chain is linear, so no edit ever rewrites history.
+- **Expiry is a fact, not a promise.** Past `expires_on` the record no longer
+  qualifies a read; refreshing evidence means appending a new record.
+
+### The strict consumer gate
+
+`qualify_source_clock(records, source=…, market=…, series=…, as_of=…)` answers
+`present` only for exactly one verified, active, in-window and unexpired record. It
+fails closed — `unknown` plus the named input packet — on: no record for the scope,
+an unverifiable record, every candidate superseded, more than one active record (an
+ambiguous trail), an `as_of` outside the covered window, and an `as_of` after expiry.
+`require_qualified_source_clock` raises `SourceClockUnavailable` for the same cases;
+it never falls back to the weak `vendor_events_no_clock` basis and never synthesises
+a clock. The only wiring is an explicit opt-in on
+`FeatureLoader.load_features(..., source_clock_source=…, source_clock_records=…)`;
+every default read is unchanged.
+
+### Real-root containment
+
+`delta_table_path` is the single resolution seam every reader and writer passes
+through, and `refuse_cross_root_symlink` runs there: a path that reaches the other
+lake root — `data/lake_real/01_bronze` pointing at `data/lake/01_bronze`, or the
+reverse — or that leaves its own root entirely is refused, and so is an uncontained
+`--lake-dir`. The check is refusal-only: nothing is redirected, created or
+discovered, so the join stays dumb while a canary symlink can no longer serve one
+root's rows as the other's. Legitimate explicit `--lake-dir` use is unaffected, the
+real root stays uncataloged and unmixed, and `resolve_lake_root` keeps its existing
+rules.
+
+### Status: `blocked-input`
+
+No source is qualified. The records, the gate and the guard are exercised only by
+synthetic fixtures in the test suite. **Passing those guards is not qualified data**,
+it does not qualify any real source, it does not unblock a live consumer or any
+ingest/feature/backtest run against `data/lake_real/`, and it does not change the
+point-in-time limit on `vendor_events_no_clock` rows. Actual qualification stays
+blocked until an operator supplies source-issued publication/vintage clocks,
+coverage/expiry evidence and rights.
