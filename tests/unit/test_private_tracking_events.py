@@ -1073,7 +1073,7 @@ def test_paper_shadow_rechecks_readiness_before_delivery_and_refuses_corrupt_his
         calls.append("readiness")
         return "history_corrupt"
 
-    monkeypatch.setattr(tracking, "_pit_readiness_reason", false_readiness)
+    monkeypatch.setattr(tracking, "_shadow_readiness_reason", false_readiness)
     blocked = tracking.run_paper_shadow(now=CLOCK, data_dir=data_dir)
 
     assert blocked.status == "blocked" and blocked.reason == "history_corrupt"
@@ -1082,7 +1082,7 @@ def test_paper_shadow_rechecks_readiness_before_delivery_and_refuses_corrupt_his
 
     # The same readiness is re-checked after the scan and before any send.
     states = iter([None, "history_corrupt"])
-    monkeypatch.setattr(tracking, "_pit_readiness_reason", lambda **_kwargs: next(states))
+    monkeypatch.setattr(tracking, "_shadow_readiness_reason", lambda **_kwargs: next(states))
     scanned: list[int] = []
     monkeypatch.setattr(tracking, "scan_private_watchlist", lambda **_kwargs: scanned.append(1))
     rechecked = tracking.run_paper_shadow(now=CLOCK, data_dir=data_dir)

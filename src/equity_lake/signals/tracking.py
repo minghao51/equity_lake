@@ -2087,7 +2087,7 @@ def live_scan_readiness(
     return LiveScanReadiness(status="ready", basis="source_clock", reason="strict_coverage_established")
 
 
-def _pit_readiness_reason(*, watchlist_file: Path | None, ticker_config_path: Path | None, data_dir: Path | None) -> str | None:
+def _shadow_readiness_reason(*, watchlist_file: Path | None, ticker_config_path: Path | None, data_dir: Path | None) -> str | None:
     """Value-free readiness reason; the paper shadow refuses instead of acting on unready local state."""
     try:
         load_private_watchlist(watchlist_file, ticker_config_path)
@@ -2170,7 +2170,7 @@ def run_paper_shadow(
                 reason=readiness.reason,
                 refusal=readiness.refusal,
             )
-    reason = _pit_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
+    reason = _shadow_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
     if reason is not None:
         return _shadow_report(status="blocked", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason=reason)
     if delivery_kill_switch_active(data_dir):
@@ -2190,7 +2190,7 @@ def run_paper_shadow(
             logger.warning("paper_shadow_scan_failed")
             scan_status = "failed"
     with _delivery_lock(data_dir, blocking=False):
-        reason = _pit_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
+        reason = _shadow_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
         if reason is not None:
             return _shadow_report(status="blocked", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason=reason)
         rounds_run: list[PaperShadowRound] = []
