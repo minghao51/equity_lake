@@ -21,6 +21,10 @@ of that artifact and it is **display-only and offline**:
   alert/run text, vendor strings, forbidden claims), writes
   ``sanitization-report.json`` *inside* the artifact, and writes nothing if the scan
   finds a hit. Failing closed is the point: a partial artifact is never left behind.
+* **Staleness survives elapsed viewer time.** The stale banner element is always
+  rendered with the build instant and the 30-day threshold, and a small inline
+  script unhides it once the artifact is older than that threshold in the viewer's
+  browser — a page that was fresh at build time still goes stale (owner decision 4).
 * **Preview on loopback only** (:func:`serve_preview`), reusing the existing
   ``dashboard.streamlit_app.is_loopback_bind_address`` gate. Publishing is not
   implemented here at all: it needs a separate explicit owner approval (owner
@@ -65,6 +69,12 @@ INDEX_FILENAME: Final = "index.html"
 PAYLOAD_FILENAME: Final = "payload.json"
 REPORT_FILENAME: Final = "sanitization-report.json"
 ARTIFACT_FILENAMES: Final = (INDEX_FILENAME, PAYLOAD_FILENAME, REPORT_FILENAME)
+
+#: The stale banner's element id: the client-side age check below reads its
+#: ``data-built-at`` / ``data-threshold-days`` attributes and unhides it.
+STALE_ELEMENT_ID: Final = "h00-stale"
+#: Milliseconds per day, used only by the rendered client-side age check.
+_MS_PER_DAY: Final = 86_400_000
 
 ARTIFACT_NAME: Final = "h00-sanitized-demo-lake"
 PAYLOAD_SCHEMA_VERSION: Final = 1
@@ -609,6 +619,7 @@ _STYLE: Final = """
     .banner { background:#fff4d6; border:1px solid #e6c15c; border-radius:14px; padding:14px 18px; font-weight:600; }
     .banner + .banner { margin-top:8px; }
     .stale { background:#fdecea; border-color:#e0a9a2; }
+    .banner[hidden] { display:none; }
     h1 { font-size:clamp(1.6rem,4vw,2.6rem); margin:26px 0 6px; }
     h2 { font-size:1.1rem; margin:32px 0 8px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
     .note { color:var(--muted); max-width:52rem; }
@@ -628,16 +639,51 @@ def _render_table(rows: Sequence[Sequence[Any]], headers: Sequence[str]) -> str:
     return f"<table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
 
 
+def _render_stale_banner(payload: Mapping[str, Any]) -> str:
+    """The stale element, always present, visible at build time or by elapsed age.
+
+    The build-time verdict decides only the initial ``hidden`` state. The embedded
+    instant and threshold are what the client-side check uses, so a page that was
+    fresh when built still flips to the banner once the artifact ages past the
+    threshold — the build instant alone cannot carry that.
+    """
+    built_at = payload.get("built_at")
+    threshold_days = payload.get("stale_threshold_days")
+    note = f"{_e(STALE_BANNER)} — last build {_e(last_build_date(datetime.fromisoformat(str(built_at))))} (threshold {_e(threshold_days)} days)"
+    hidden = "" if bool(payload.get("stale")) else " hidden"
+    return (
+        f'<p class="banner stale" id="{STALE_ELEMENT_ID}" data-built-at="{_e(built_at)}"'
+        f' data-threshold-days="{_e(threshold_days)}"{hidden}>{note}</p>'
+    )
+
+
+def _render_stale_check() -> str:
+    """The client-side age check: unhide the stale banner when the artifact is old.
+
+    It reads the instant and threshold the page was rendered with (no separate
+    constant), and it fails open — an unparseable instant shows the banner rather
+    than presenting old numbers as fresh.
+    """
+    return f"""<script>
+      (function () {{
+        var el = document.getElementById("{STALE_ELEMENT_ID}");
+        if (!el) {{ return; }}
+        var builtAt = Date.parse(el.getAttribute("data-built-at"));
+        var thresholdDays = Number(el.getAttribute("data-threshold-days"));
+        if (isNaN(builtAt) || !(thresholdDays > 0)) {{ el.hidden = false; return; }}
+        if (Date.now() - builtAt > thresholdDays * {_MS_PER_DAY}) {{ el.hidden = false; }}
+      }})();
+    </script>"""
+
+
 def _render_html(payload: Mapping[str, Any]) -> str:
     """Render the composed page from the allowlisted payload only."""
-    stale = bool(payload.get("stale"))
     built_at = payload.get("built_at")
-    banners = [f'<p class="banner">{_e(payload.get("banner"))}</p>', f'<p class="banner">{_e(payload.get("demo_data_only"))}</p>']
-    if stale:
-        banners.append(
-            f'<p class="banner stale">{_e(payload.get("stale_banner"))} — last build {_e(last_build_date(datetime.fromisoformat(str(built_at))))}'
-            f" (threshold {_e(payload.get('stale_threshold_days'))} days)</p>"
-        )
+    banners = [
+        f'<p class="banner">{_e(payload.get("banner"))}</p>',
+        f'<p class="banner">{_e(payload.get("demo_data_only"))}</p>',
+        _render_stale_banner(payload),
+    ]
 
     dataset_rows = [
         (row["name"], "yes" if row["available"] else "absent", row["rows"], row["symbols"], row["latest_date"] or "—")
@@ -736,6 +782,7 @@ def _render_html(payload: Mapping[str, Any]) -> str:
         {footer}
       </footer>
     </main>
+    {_render_stale_check()}
   </body>
 </html>
 """
@@ -898,6 +945,7 @@ __all__ = [
     "REPORT_FILENAME",
     "STALENESS_THRESHOLD_DAYS",
     "STALE_BANNER",
+    "STALE_ELEMENT_ID",
     "SYNTHETIC_BANNER",
     "artifact_staleness",
     "build_sanitized_page",

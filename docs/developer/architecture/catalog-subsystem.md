@@ -80,14 +80,17 @@ base path of `/equity_lake` into `docs/catalog/dist` (`npm run build` inside
   `ingestion/writers.py`, and on PRs the JSONL itself), it regenerates the
   catalog and fails if `git diff --exit-code data/catalog.jsonl` reports a
   change — i.e. if the committed catalog is stale.
-- **`.github/workflows/catalog-deploy.yml`** (Deploy Catalog) — on pushes to
-  main touching `data/catalog.jsonl` or `docs/catalog/**` (plus manual
-  dispatch), runs `npm ci && npm run build` in `docs/catalog/` and publishes
-  `dist` to GitHub Pages.
-- **`.github/workflows/pages.yml`** — the separate dashboard/docs Pages
-  build. It is unrelated to the catalog site but runs the schedule-sync
-  guard (`devtools/sync_schedule --check`) described in the developer
-  guide's devtools page.
+- **`.github/workflows/catalog-site-build.yml`** (Build Catalog Site) — build/compile
+  check only, on pushes to main touching `data/catalog.jsonl` or `docs/catalog/**`
+  (plus manual dispatch): runs `npm ci && npm run build` in `docs/catalog/`. It has no
+  Pages permissions and no Pages artifact upload: its former deploy job was retired in
+  residual plan RS-H01, because it published a second artifact to the same
+  `github-pages` environment as the dashboard workflow.
+- **`.github/workflows/h00-publish.yml`** — the only publication path in the repository:
+  manual dispatch of the sanitized three-file H00 artifact for the demo lake, after an
+  allowlist/containment/negative-rescan verification of the exact bytes to upload. It
+  never publishes the catalog site. See
+  [Dashboard Hosting](../../user-guide/20260406-dashboard-hosting.md).
 
 ## When to regenerate
 

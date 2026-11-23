@@ -89,6 +89,12 @@ jobs:
       - name: Markdown lint
         run: uv run pymarkdown --disable-rules MD013,MD033,MD041 scan docs/developer/architecture/data-flow.md docs/developer/architecture/pipeline-contracts.md docs/user-guide/ingestion.md
 
+      # Repository-wide recursive markdown gate, owned by the `make lint-md` target (the
+      # baseline ratchet behind it is RS-Q00's). The changed-file step above stays
+      # mandatory; this one adds the tree-wide check instead of replacing it.
+      - name: Recursive Markdown ratchet
+        run: make lint-md
+
       - name: MkDocs build
         run: uv run mkdocs build
 

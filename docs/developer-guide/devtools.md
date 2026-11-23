@@ -1,7 +1,7 @@
 # Devtools
 
 `src/equity_lake/devtools/` holds developer-only helpers: demo/sample data
-seeding, the test-data generator, a schedule-sync checker, and a one-off
+seeding, the test-data generator, a release verifier, and a one-off
 corpus seeder. Nothing in the runtime pipeline imports this package — it
 exists so contributors can populate a lake, test the showcase flow, and keep
 CI configuration honest without touching production sources. Two of its
@@ -89,20 +89,28 @@ Flags: `--start-date`, `--end-date`, `--days` (default 365), `--markets`,
 `--num-tickers`, `--volatility`, `--trend`, `--seed`, `--verbose`. Output
 lands under `data/sandbox/test_data/` — delete that directory to reset it.
 
-## Schedule sync — `devtools/sync_schedule.py`
+## Release verification — `devtools/verify_h00_release.py`
 
-Keeps the GitHub Pages workflow cron aligned with configuration:
-`config/settings.yaml` (`schedule.cron`) is the single source of truth, and
-the script rewrites the first `cron:` entry in
-`.github/workflows/pages.yml` to match.
+Checks the composed H00 artifact immediately before it is uploaded, so the publish
+path re-proves the allowlist instead of trusting the build: exactly
+`index.html`, `payload.json` and `sanitization-report.json`, no symlinks, size
+bounds, path containment (flat files only), a report consistent with the payload
+and with the current forbidden classes, and a fresh negative rescan of the
+bytes-to-publish using `dashboard/h00.py`'s needles.
 
 ```bash
-uv run python -m equity_lake.devtools.sync_schedule          # rewrite
-uv run python -m equity_lake.devtools.sync_schedule --check  # verify only
+uv run python -m equity_lake.devtools.verify_h00_release --dir dist
 ```
 
-`--check` exits non-zero on drift and is run as a CI step in `pages.yml`
-before any dashboard build. Covered by `tests/unit/test_schedule_sync.py`.
+Exit 1 with a **value-free** message on any violation (a position, a count or a
+forbidden class — never a needle, a file's contents or an unexpected name), so CI
+logs cannot become the leak the scan prevents. Covered by
+`tests/unit/test_h00_release_verification.py` and wired as a step in
+`.github/workflows/h00-publish.yml`, the only publication path.
+
+The former `devtools/sync_schedule.py` (workflow-cron sync against
+`config/settings.yaml`) was retired with `.github/workflows/pages.yml`: no workflow
+publishes on a schedule any more, so there is no workflow cron to keep in sync.
 
 ## Transcript corpus seeding — `devtools/seed_transcripts.py`
 
