@@ -1,0 +1,156 @@
+{
+  "generated_by": "uv run python -m equity_lake.devtools.markdown_lint --update-baseline",
+  "scan": [
+    "-d",
+    "md013",
+    "scan",
+    "-r",
+    "README.md",
+    "docs"
+  ],
+  "total": 314,
+  "files": {
+    "docs/archive/20260830-02-p0-ingestion-correctness.md": {
+      "MD011": 1,
+      "MD022": 7,
+      "MD032": 1
+    },
+    "docs/archive/20260830-03-p0-storage-validation-correctness.md": {
+      "MD004": 3,
+      "MD022": 6,
+      "MD032": 1
+    },
+    "docs/archive/20260830-04-p1-safety-rails.md": {
+      "MD022": 7,
+      "MD032": 1
+    },
+    "docs/archive/20260830-05-p2-market-vocabulary.md": {
+      "MD022": 1,
+      "MD031": 1
+    },
+    "docs/archive/20260830-07-p3-dry-consolidation.md": {
+      "MD011": 1,
+      "MD022": 1
+    },
+    "docs/archive/20260830-08-p3-ml-backtest-integrity.md": {
+      "MD022": 13,
+      "MD032": 1
+    },
+    "docs/archive/20260830-09-p4-monitoring-api-catalog.md": {
+      "MD022": 5,
+      "MD032": 1
+    },
+    "docs/archive/CONCERNS.md": {
+      "MD022": 33,
+      "MD031": 2,
+      "MD032": 1,
+      "MD041": 1
+    },
+    "docs/archive/parallel-ingestion.md": {
+      "MD024": 1,
+      "MD040": 2,
+      "MD041": 1
+    },
+    "docs/archive/technical_roadmap.md": {
+      "MD024": 6,
+      "MD032": 1,
+      "MD040": 3
+    },
+    "docs/decisions/0018-private-watchlist-events-and-delivery.md": {
+      "MD029": 2
+    },
+    "docs/developer-guide/project-structure.md": {
+      "MD040": 2
+    },
+    "docs/developer/architecture/ARCHITECTURE.md": {
+      "MD022": 24,
+      "MD031": 13,
+      "MD040": 9
+    },
+    "docs/developer/architecture/STACK.md": {
+      "MD040": 1
+    },
+    "docs/finding/20261016-repository-review-and-equity-alerts.md": {
+      "MD001": 1
+    },
+    "docs/handoffs/20260910-01-source-hygiene-tier0.md": {
+      "MD024": 1
+    },
+    "docs/handoffs/20261107-03-e01-6-implementation-pickup.md": {
+      "MD036": 3
+    },
+    "docs/handoffs/20261116-01-next-agent-d01-landing.md": {
+      "MD004": 1
+    },
+    "docs/plans/20260614-unstructured-data-ingestion-design.md": {
+      "MD031": 1,
+      "MD040": 5
+    },
+    "docs/plans/20260615-medallion-architecture-migration.md": {
+      "MD031": 2,
+      "MD040": 7
+    },
+    "docs/plans/20260623-project-streamlining.md": {
+      "MD031": 12,
+      "MD040": 1
+    },
+    "docs/plans/20260711-operational-contracts-implementation-handoff.md": {
+      "MD024": 9,
+      "MD029": 1
+    },
+    "docs/plans/20260719-project-cleanup.md": {
+      "MD036": 4,
+      "MD041": 1
+    },
+    "docs/plans/20260804-integration-recon.md": {
+      "MD004": 1,
+      "MD022": 12,
+      "MD031": 1
+    },
+    "docs/plans/20260804-pre-phase1-hygiene.md": {
+      "MD031": 2
+    },
+    "docs/plans/20260805-phase2-handoff.md": {
+      "MD004": 1,
+      "MD022": 5
+    },
+    "docs/plans/20260806-phase2a-execution-handoff.md": {
+      "MD011": 1,
+      "MD031": 4,
+      "MD040": 1
+    },
+    "docs/plans/20260811-phase2c-rag-agent-handoff.md": {
+      "MD022": 5,
+      "MD031": 1,
+      "MD032": 1,
+      "MD034": 1
+    },
+    "docs/plans/20260821-arch-cleanup-phase3-5-handoff.md": {
+      "MD031": 1,
+      "MD040": 1
+    },
+    "docs/plans/20261006-dag-pipeline-01-correctness.md": {
+      "MD004": 1
+    },
+    "docs/plans/20261006-dag-pipeline-02-outcomes-and-coverage.md": {
+      "MD032": 1
+    },
+    "docs/plans/20261006-dag-pipeline-03-incremental-contracts.md": {
+      "MD004": 1,
+      "MD032": 4
+    },
+    "docs/reports/20261117-h00-sanitized-demo-lake-page-review.md": {
+      "MD036": 2
+    },
+    "docs/reports/equity-data-sources-analysis-2026.md": {
+      "MD022": 36,
+      "MD026": 8,
+      "MD031": 15,
+      "MD036": 1,
+      "MD040": 3
+    },
+    "docs/user-guide/backtesting.md": {
+      "MD029": 2
+    }
+  }
+}
