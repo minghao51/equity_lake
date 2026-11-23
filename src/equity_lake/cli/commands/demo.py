@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
@@ -25,6 +26,16 @@ def demo_seed(
     tickers: Annotated[str | None, typer.Option("--tickers", "-t", help="Comma-separated tickers (default: demo group)")] = None,
     real: Annotated[bool, typer.Option("--real", help="Attempt live yfinance fetch (falls back to synthetic)")] = False,
     seed: Annotated[int, typer.Option("--seed", help="Synthetic RNG seed")] = 42,
+    end_date: Annotated[
+        str | None,
+        typer.Option(
+            "--end-date",
+            help=(
+                "Last day of the synthetic window (YYYY-MM-DD; default: yesterday). Pin it with --seed to make the seeded "
+                "data identical on any wall-clock day, e.g. for a reproducible CI bootstrap."
+            ),
+        ),
+    ] = None,
     lake: Annotated[
         str | None,
         typer.Option(
@@ -51,6 +62,13 @@ def demo_seed(
 
     _init_logging(verbose)
 
+    end = None
+    if end_date is not None:
+        try:
+            end = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise typer.BadParameter(f"expected YYYY-MM-DD, got {end_date!r}", param_hint="--end-date") from exc
+
     target: Path | None = None
     production_target = False
     if lake is not None:
@@ -72,6 +90,7 @@ def demo_seed(
             tickers=_parse_comma_list(tickers),
             real=real,
             seed=seed,
+            end_date=end,
             verbose=verbose,
             lake_dir=target,
             overwrite_production_lake=production_target or overwrite_production_lake,

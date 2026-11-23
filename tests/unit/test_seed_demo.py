@@ -217,3 +217,78 @@ def test_seeded_rows_carry_a_recomputable_synthetic_origin_claim(tmp_path: Path)
     )
     assert frame["price_source_sha256"].unique().to_list() == [expected]
     assert frame["price_source_sha256"].unique().to_list() != ["synthetic_demo_seed"]  # not the coverage label
+
+
+# ---------------------------------------------------------------------------
+# RS-E01: the pinned end date makes the seeded lake reproducible on any day
+# ---------------------------------------------------------------------------
+
+
+def _frozen_date(day: date) -> type[date]:
+    """A ``date`` type whose ``today()`` is *day* (simulates a wall-clock day)."""
+
+    class _Frozen(date):
+        @classmethod
+        def today(cls) -> _Frozen:
+            return cls(day.year, day.month, day.day)
+
+    return _Frozen
+
+
+_PINNED_END = date(2026, 11, 20)
+
+
+def test_cli_demo_seed_help_documents_end_date() -> None:
+    """The new reproducibility option is in the command's own help text."""
+    from typer.testing import CliRunner
+
+    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+
+    result = CliRunner().invoke(app, ["demo", "seed", "--help"])
+    assert result.exit_code == 0, result.output
+    assert "--end-date" in result.stdout
+    assert "YYYY-MM-DD" in result.stdout
+
+
+def test_same_seed_and_end_date_are_identical_on_two_wall_clock_days(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same seed + same end date => identical logical data, whatever "today" is.
+
+    Digests the written frames (never mtimes), so a data difference — even with an
+    identical row count — fails here.
+    """
+    from equity_lake.core.calendar import is_trading_day
+    from equity_lake.core.price_provenance import price_batch_digest
+    from equity_lake.devtools import seeding  # type: ignore[import-untyped]
+    from equity_lake.storage.delta import read_delta
+
+    assert is_trading_day("us_equity", _PINNED_END)
+    roots = (tmp_path / "day-one", tmp_path / "day-two")
+
+    for root, simulated_today in zip(roots, (date(2026, 12, 1), date(2027, 6, 1)), strict=True):
+        monkeypatch.setattr(seeding, "date", _frozen_date(simulated_today))
+        seed_demo(years=1, tickers=["AAPL", "MSFT"], seed=42, end_date=_PINNED_END, lake_dir=root)
+
+    # Delta does not promise a read order, so compare the logical rows, not the frames.
+    frames = [read_delta(_TABLE, lake_dir=root).sort(["ticker", "date"]) for root in roots]
+    assert frames[0].equals(frames[1])
+    assert price_batch_digest(frames[0]) == price_batch_digest(frames[1])
+    # The stored ADR-0027 envelope is identical too: same sessions, same batch digest.
+    assert frames[0]["price_source_sha256"].unique().to_list() == frames[1]["price_source_sha256"].unique().to_list()
+    # Pinned, not anchored to the (simulated) wall clock.
+    assert sorted(set(frames[0]["date"].to_list()))[-1] == _PINNED_END
+
+
+def test_without_end_date_the_window_follows_the_wall_clock_day(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control for the test above: the simulated day really moves an unpinned window."""
+    from equity_lake.core.price_provenance import price_batch_digest
+    from equity_lake.devtools import seeding  # type: ignore[import-untyped]
+    from equity_lake.storage.delta import read_delta
+
+    roots = (tmp_path / "day-one", tmp_path / "day-two")
+    for root, simulated_today in zip(roots, (date(2026, 11, 20), date(2027, 6, 1)), strict=True):
+        monkeypatch.setattr(seeding, "date", _frozen_date(simulated_today))
+        seed_demo(years=0.1, tickers=["AAPL"], seed=42, lake_dir=root)
+
+    first, second = (read_delta(_TABLE, lake_dir=root) for root in roots)
+    assert first["date"].max() != second["date"].max()
+    assert price_batch_digest(first) != price_batch_digest(second)
