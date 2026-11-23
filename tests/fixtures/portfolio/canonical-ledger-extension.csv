@@ -1,0 +1,6 @@
+account,external_source,external_id,event_type,effective_at,received_at,sequence,market,mic,symbol,currency,cash_effect,quantity,price,fees,basis,basis_status,reverses_external_id
+main,synthetic-broker,evt-0001,OPENING,2024-01-02T15:00:00Z,2024-01-02T21:00:00Z,1,us_equity,XNAS,PRIVATESYM,USD,1000.00,10,100.00,,1000.00,KNOWN,
+main,synthetic-broker,evt-0002,BUY,2024-01-03T15:00:00Z,2024-01-03T21:00:00Z,2,us_equity,XNAS,PRIVATESYM,USD,-605.00,5,120.00,5.00,,KNOWN,
+main,synthetic-broker,evt-0003,SELL,2024-01-04T15:00:00Z,2024-01-04T21:00:00Z,3,us_equity,XNAS,PRIVATESYM,USD,518.00,4,130.00,2.00,,KNOWN,
+main,synthetic-broker,evt-0004,CASH_DIVIDEND,2024-01-04T16:00:00Z,2024-01-04T21:00:00Z,4,us_equity,XNAS,PRIVATESYM,USD,11.00,,,0,,,
+main,synthetic-broker,evt-0005,DEPOSIT,2024-01-05T15:00:00Z,2024-01-05T21:00:00Z,5,,,,USD,100.00,,,,,,
