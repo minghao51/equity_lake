@@ -70,6 +70,7 @@ nav:
           - cn_ashare (RS-M01): developer/architecture/market-cn-ashare-feasibility.md
           - hk_sg_equity (RS-M02): developer/architecture/market-hk-sg-equity-feasibility.md
           - jpx_equity (RS-M03): developer/architecture/market-jpx-equity-feasibility.md
+          - krx_equity (RS-M04): developer/architecture/market-krx-equity-feasibility.md
       - Residual Specification and Implementation Plan: plans/20261122-01-residual-spec-and-implementation-plan.md
       - Research Protocols (R00): developer/architecture/research-protocols.md
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
