@@ -1,11 +1,16 @@
 # Residual Spec and Implementation Plan — 2026-11-22
 
-**Status: `DRAFT` planning deliverable at `fc589d1` on `main` (tree clean at drafting start).** Closes out the residuals
+**Status: planning document drafted at `2634060` on `main`; stage outcomes recorded in §11 (2026-11-23).** Closes out the residuals
 of the [2026-11-02 implementation spec](20261102-01-portfolio-and-research-implementation-spec.md) §11 with encoded
-design decisions, a stage map, and per-stage specifications. Every stage is `planned` or `blocked-input`; none is
-implemented or operated. Not an accepted ADR, not publication/delivery authorization, not permission to fetch data,
-deploy, delete events, or retrain/promote models. No code, workflow, or data changed while drafting; no existing
-workflow was dispatched.
+design decisions, a stage map, and per-stage specifications. Every stage has since been implemented locally and its
+outcome is recorded in §11 as `verified-local`, `blocked-input`, or `deferred-invariant`. Nothing is `operated`: no
+publication, no live delivery, no real-ledger rehearsal, no data acquisition, no model promotion. Still not an
+accepted ADR, not publication/delivery authorization, and not permission to fetch data, deploy, delete events, prune
+backups, or retrain/promote models.
+
+> **Read §11 first if you are picking this up.** It records, per stage, what was actually implemented, what was
+> measured on this host, which mutations were proven, and which prerequisites remain operator-gated. The §3
+dispositions below are the drafting-time record, kept for traceability.
 
 ## 1. Verified baseline corrections
 
@@ -120,6 +125,9 @@ already closed (2026-11-22) and carries no work here.
   Single-host sequential ceilings: 30 min per scale size, 2 h aggregate for controls and scale, RSS `min(8 GiB, 50% host RAM)`. Abort if RSS cannot be monitored; unavailable I/O counters carry a reason, not invented zeros. Over-budget or incomplete seed/scale sets remain censored and cannot establish a passing power or scale claim. No benchmark executed during drafting.
 
 ## 3. Residual → stage map
+
+> **Drafting-time record.** This table states each residual's disposition when the plan was written on 2026-11-22.
+> §11 supersedes it with the implemented outcome for every stage; nothing below should be read as current status.
 
 | Residual | Source | Stage | Disposition at drafting |
 | --- | --- | --- | --- |
@@ -348,11 +356,14 @@ Residuals left and next eligible stage:
 ## 9. What this document is not
 
 Not an accepted ADR, not a publication or delivery authorization, not permission to fetch data, deploy, delete events,
-prune backups, or retrain/promote models. It records design decisions so implementers do not re-litigate them; it
-records no implementation and no implementation outcome. All stage statuses are `planned`, `blocked-input`, or `deferred-invariant`;
-no historical review count or gate is claimed as current implementation status.
+prune backups, or retrain/promote models. It records design decisions so implementers do not re-litigate them, and §11
+records local implementation outcomes. A `verified-local` stage means its gates, review and mutation proofs passed
+locally; it is not an operational claim, and it does not discharge an operator-gated prerequisite. No historical
+review count or gate is claimed as current implementation status, and no stage is `operated`.
 
 ## 10. Draft review and documentation validation
+
+> Historical record of the drafting review. Implementation outcome and the post-implementation review are in §11.
 
 Independent plan review returned **PASS** after three revisions: remove unrelated offline-stage dependencies,
 specify all six leakage-control regressions/mutations, and define positive disposable-checkout proof. This verdict
@@ -362,3 +373,217 @@ Explicit lint of all four changed Markdown files passed; 99 local file/anchor li
 passed. MkDocs built to `/tmp/equity-residual-plan-site` with four existing warnings in ADR-0029 and the Nov07
 handoffs, none targeting the new plan. The full recursive Markdown baseline remains non-clean (§1.6); a nonrecursive
 repo scan is not substituted for that result.
+
+## 11. Stage outcomes and ledger (2026-11-23)
+
+Every stage below was implemented locally in isolated worktrees and merged into `main` one at a time, each merge
+re-verified in the main checkout (targeted tests plus `ruff`, `ruff format --check`, `mypy`, and the recursive
+Markdown ratchet). Status vocabulary is §7's. `verified-local` = gates + independent review + mutation proofs
+passed locally. **No stage is `operated`.** Nothing here authorizes a publish, a live delivery, a real-ledger
+rehearsal, data acquisition, or a model promotion.
+
+Summary of what is genuinely closed and what is not:
+
+- **Closed locally, with measured evidence:** RS-Q00, RS-B01, RS-R02-D1, RS-E01, RS-H01 (infrastructure only), RS-D01
+  (guards only), RS-M01..RS-M04 (offline packs), RS-S01 (paper shadow only), RS-P02, RS-R01, and RS-P01's synthetic half.
+- **`blocked-input`, requires an operator:** H00 publication (platform reviewer protection evidence + publication
+  approval + a route ADR), real-ledger rehearsal (canonical CSV + statements), live notification delivery
+  (endpoint/channel + scheduler host + kill-switch owner), off-host backup export/drill (a NEW ADR + destination),
+  real non-US market use (a per-market source/licence packet + an ADR amending ADR-0030 decision 5).
+- **`deferred-invariant`, each needs its own ADR:** event deletion or pruning, backup-file pruning, in-place `VACUUM`,
+  a cash-distribution backtest path, a vendor total-return adapter, R02 promotion/refit.
+- **Named residual from the post-implementation review:** the H00 deployment receipt, retained rollback bundles and
+  90-day bundle retention are documented in the hosting guide as *not implemented*; ~140 test files still carry
+  pre-existing `# type: ignore[import-untyped]` comments that are now redundant (recorded debt, not mass-edited).
+
+Post-implementation review: the independent review of the accumulated diff returned FAIL with four blocking findings
+(overstated source-clock integrity claim, MD013 disabled without an auditable record, paper-shadow scan/delivery lock ordering,
+and a baseline written without a Pydantic boundary) plus a missing stamp-invariant mutation. All four were fixed and a
+real point-in-time gap was closed in the process (evidence published after an `as_of` date can no longer qualify that
+read); the fixes and their mutation/gate results are recorded in the RS-R01 status-correction entry below. Stage
+entries follow as recorded at merge time.
+
+## RS-B01
+
+Stage RS-B01 / status: verified-local / recorded 2026-11-23
+Deliverable and design reference (§2.10, §5): one early actionable `total_return` refusal at loader, engine constructor, engine factory and CLI; `with_price_adjustment` keeps defence in depth; unknown adjust values raise a clear ValueError instead of KeyError; split-only output byte-identical (digest 93fabd19…, unchanged).
+Dependencies: RS-Q00 (planned); ADR-0015 unchanged, no new ADR.
+Commit identity: 2634060 → ddf86f1 (merged de30b59).
+Evidence: /tmp/integrate-b01.log (32 passed); mutation: removing the early resolve_adjustment_method in load() fails test_total_return_is_refused_before_any_read (exit 1), restored with diff -q exit 0 and identical sha256; ruff/format/mypy exit 0 (193 files).
+Inputs used: local repo only; no network, no vendor total-return series.
+External prerequisite state: none. A future vendor TR series is operator input and needs a new schema/ADR (documented as non-scheduled follow-up).
+Rollback: git revert ddf86f1 (no data or migration effects).
+Residuals left: cash-dividend backtest path (schema/ADR first, deferred-invariant); `total_return` remains in the public Literals deliberately (removing it would be a breaking surface change); next eligible stage RS-D01 / RS-Q00.
+
+## RS-Q00
+
+Stage RS-Q00 / status: verified-local / recorded 2026-11-23
+Deliverable and design reference (§5 RS-Q00, §1, §2): durable evidence register docs/finding/20261123-01-residual-evidence-register.md (each §1 claim CONFIRMED with a reproduction command); genuinely recursive markdown gate (devtools/markdown_lint.py) with a reviewed (file,rule,count) baseline config/markdown-lint-baseline.json (314 findings / 35 files); explicit `make lint-md-baseline` is the only refresh path; changed-file lint in quality.yml retained.
+Dependencies: none (base stage). No ADR.
+Commit identity: 2634060 -> af4d45c (merged).
+Evidence: `make lint-md` exit 0 ("314 preexisting findings in 35 files match baseline; 0 new or expanded", 9s); 11 new tests in tests/unit/test_markdown_lint_gate.py; mutation A removed `-r` -> planted nested violation invisible and the gate wrongly passed (exit 0) -> restored, diff -q identical; mutation B (growth detection) -> wrongly passed -> restored identical; ruff/format/mypy exit 0.
+Inputs used: /tmp/residual-recursive-markdown-baseline.log re-derived identically; local repo only.
+External prerequisite state: none.
+Rollback: revert af4d45c (Makefile returns to the non-recursive scan; four added files removed).
+Residuals left: 314 findings frozen as classified debt (not fixed, by design); R00 evidence still unverified -> RS-R01; R02 estimand -> RS-R02-D1.
+Plan correction to apply: §1.7 says `data/research/` holds h00/r02/protocols — true in the operator checkout, but a fresh worktree has no `data/research/` at all (runtime data is gitignored). Reword to "in the operator checkout".
+
+## RS-R02-D1
+
+Stage RS-R02-D1 / status: verified-local / recorded 2026-11-23
+Deliverable and design reference (§1.5, §2.7, §5): committed read-only verifier `python -m equity_lake.devtools.verify_r02_artifacts --research-dir data/research/r02 [--lake-dir …]` (exit 0 verified / 1 tamper / 2 absent), tracked digest anchor docs/finding/20261123-01-r02-recovery-receipt.md, append-only `## Correction (2026-11-23, append-only)` in docs/reports/20261121-r02-result.md with the original text byte-identical.
+Dependencies: independent. ADR-0034 d4/d5 (promoted=false) preserved; no refit.
+Commit identity: 2634060 -> f6ccdee (merged).
+Evidence: main-checkout reproduction `checks: 275, mismatches: 0` with `--lake-dir data/lake_real`; without a lake root the economic metrics are reported UNVERIFIED (174 checks) rather than assumed — predictions.parquet carries no per-session closes. Tamper tests: tampered baselines -> exit 1; perturbed prediction -> exit 1; mutated prespecification_digest -> exit 1; mutated manifest input_digests -> exit 1; absent archive -> exit 2 SKIPPED with reason. Originals: same six sha256 before/after.
+Estimand finding (no defect): point estimate -0.0279030349 (-2.79 pp) is the difference of COMPOUNDED net returns; the recorded interval [-0.0041605634, 0.0030657660] is the percentile interval of the MEAN PER-SESSION difference whose own estimand is -0.0003740027 (-0.0374 pp/session) and lies inside. The economics criterion fails on test_delta > 0 regardless, so 1/5 and promoted=false are unchanged.
+Inputs used: operator `data/research/r02/*` + manifest 20261121T130000Z-37fd6727d62f (read-only), ml/experiment.py frozen estimators.
+External prerequisite state: satisfied where the archive exists; a fresh clone skips with a reason.
+Rollback: revert f6ccdee; archive untouched, appended section additive.
+Residuals left: report-generator wording (label compounded vs per-session difference) is a deferred follow-up; RS-R02-D2 still gated on RS-R01 + RS-D01.
+
+## RS-P01 (synthetic rehearsal half only)
+
+Stage RS-P01 / status: synthetic rehearsal PASSED; real-instance rehearsal BLOCKED-INPUT / recorded 2026-11-23
+Deliverable and design reference (§2.6, §3, §5): rehearsal on committed synthetic fixtures — dry-run with zero private writes (tree hash unchanged), idempotent double import (`inserted 0, unchanged 4`, stable record_digest), statement reconciliation with a deliberate mismatch reported (`delta -24.00`, ledger not adjusted), restore+compact on isolated copies with the production digest unchanged, fresh v2 needs no migration and manufactures no backup, legacy v1 converted only on a legacy copy.
+Dependencies: independent of RS-Q00 in execution; ADR-0024 d3-5/10/13, ADR-0031 d2-5/7 unchanged.
+Commit identity: 334a58f -> e248d57 (merged).
+Evidence: /tmp/integrate-p01.log (12 passed in the main checkout); mutation of `portfolio.py:148` `if dry_run:` -> `and False:` made 2 named tests fail (exit 1), restored with diff -q exit 0 and sha256sum -c OK; ruff/format/mypy 0 (195 files); markdown lint 0.
+Inputs used: tests/fixtures/portfolio/{canonical-ledger,canonical-ledger-extension,statement-matched,statement-mismatched}.csv + legacy-v1-ledger.sql — synthetic, committed, invented values. No real ledger exists in this checkout.
+External prerequisite state: PENDING — operator canonical CSV + statements/marks (§8). Synthetic rehearsal does not discharge it.
+Rollback: revert the single commit (one test module, five fixtures, one record); no production code, CLI, store or data/ path touched.
+Residuals: no `portfolio backup`/`backups` command existed at rehearsal time (RS-P02 delivers it); `_write_verified_backup` names per second and never overwrites, so two drills sharing a directory in the same second would refuse the second copy — drills must own their directory. Real-instance rehearsal remains blocked-input.
+
+## RS-P02
+
+Stage RS-P02 / status: verified-local (orchestrator-verified after an interrupted run) / recorded 2026-11-23
+Deliverable (§2.5, §5): `equity portfolio backup --output-dir <private-dir> [--apply]` (report-only by default; `--output-dir` required; created 0700 with --apply only; never a shared or public path) and `equity portfolio backups --directory <private-dir>` (read-only inventory; symlinks and foreign files reported and never read). Store helpers `export_verified_backup` / `inventory_backups` plus frozen report models `LedgerBackupReport`, `LedgerBackupCandidate`, `LedgerBackupSkip`, `LedgerBackupInventory`; reused `verify_ledger_file`, `_write_verified_backup`, `_replace_atomically`.
+Dependencies: ADR-0031 d3 (manual local verified backup export; no scheduled/remote/cloud backup). No new ADR.
+Commit identity: merged from recovered branch (base 2634060).
+Evidence: /tmp/integrate-p02.log — test_portfolio_cli, test_portfolio_store_migration, test_portfolio_restore_compaction and test_portfolio_synthetic_rehearsal all pass, plus new tests/unit/test_portfolio_backup.py; `portfolio backup --help` and `portfolio backups --help` inspected; ruff/format/mypy exit 0.
+Inputs used: synthetic fixtures and tmp_path only; no operator ledger, no data/ writes.
+External prerequisite state: PENDING — the off-host encrypted export/drill needs a NEW ADR + operator destination and is NOT implemented; backup-file pruning and event deletion remain deferred-invariant with their own ADR required.
+Rollback: revert the merge (two CLI commands, store helpers, tests, docs); no ledger migration.
+Residuals left: retention invariant documented (all events retained, no pruning); in-place VACUUM documented as a non-goal with VACUUM INTO as the supported form; drill evidence is synthetic/isolated-copy only, not an operator-ledger drill.
+
+## RS-H01
+
+Stage RS-H01 / status: verified-local; publication remains owner/platform-gated / recorded 2026-11-23
+Deliverable (§2.1, §2.3, §2.4, §5): a single `.github/workflows/h00-publish.yml` — `workflow_dispatch` only, `permissions: contents: read` at workflow level with `pages: write` + `id-token: write` scoped to the deploy job, shared `concurrency: {group: github-pages, cancel-in-progress: false}`, builds ONLY `equity dashboard h00-build -o dist`, runs `python -m equity_lake.devtools.verify_h00_release --dir dist`, uploads `dist` with `retention-days: 3`, and a single SHA-pinned `actions/deploy-pages`. `pages.yml` retired (deleted); `catalog-deploy.yml` replaced by build-only `catalog-site-build.yml` (no deploy job, no Pages permissions); `sync_schedule.py` and its test retired with no remaining caller.
+Dependencies: H00 owner decisions; a route ADR must precede any public-route change (not created here).
+Commit identity: merged from a recovered branch (base 2634060).
+Evidence: /tmp/integrate-h01.log — test_publish_workflows, test_h00_release_verification, test_h00_sanitized_page and test_markdown_lint_gate all pass; `grep -rn deploy-pages .github/workflows/` shows exactly one real step (h00-publish.yml:83, SHA d6db9016…) plus two explanatory comments; no workflow triggers a publisher on push/schedule; `make lint-md` still 314/35.
+verify_h00_release refusals: release path or any entry is a symlink; nested directory; non-regular file; non-plain file name; entry escaping the release directory; size bounds; non-UTF-8; invalid JSON; sanitization report not recording a passing scan, the demo-lake root, synthetic provenance or the allowlist.
+Staleness over elapsed viewer time: the stale element is always present and a client-side age check against the payload timestamp plus `stale_threshold_days` flips it, while build-time `is_stale` is retained. Honest limit: proven by structural/JS assertions and mutation, not by a real browser run.
+Inputs used: local repo only; no publish, no Pages enablement, no secrets, no network.
+External prerequisite state: PENDING — platform environment protection (required reviewers) must be verified in platform settings with recorded evidence; owner publication approval outstanding; rollback bundles and the artifact-to-commit deployment receipt are explicitly documented as NOT implemented yet (docs/user-guide/20260406-dashboard-hosting.md:88-90), and 90-day retention of three verified bundles is not implemented.
+Rollback: revert the merge (publish workflow removed, legacy deployers restored); nothing was published, so no withdrawal is needed.
+Residuals: deployment receipt and retained rollback bundles unimplemented (documented); publication not performed and not authorized.
+
+## RS-M01 (cn_ashare only)
+
+Stage RS-M01 / status: verified-local (orchestrator-verified after an interrupted run); M02..M04 still open / recorded 2026-11-23
+Deliverable (§2.9, §5): `docs/developer/architecture/market-cn-ashare-feasibility.md` (verified seams with file:line, declared gaps, input packets, ADR-0030 d5 as the blocking amendment); `src/equity_lake/core/market_contracts.py` — per-market capabilities with explicit `CapabilityState = Literal["present","unknown"]`, `Capability.input_packet`, and `require_capability` failing closed on `unknown`; fixtures for all four markets under `tests/fixtures/markets/<market>/ohlcv.csv` plus README and `tests/unit/_market_fixture_pack.py`; `tests/unit/test_market_cn_ashare.py`; `corporate_actions.py` now admits only `CORPORATE_ACTION_MARKETS`, a behaviour-preserving literal-to-declaration refactor that keeps us_equity the only supported route and leaves non-US markets declared unsupported with input packets.
+Commit identity: merged from a recovered branch (base de30b59).
+Evidence: /tmp/integrate-m01.log — test_market_cn_ashare passes; no `data/catalog.jsonl` drift; the corporate_actions.py diff was inspected and does not relax the non-US refusal.
+Inputs used: repository evidence and synthetic fixtures only; no network, no data acquisition, no FX.
+External prerequisite state: PENDING — a NEW ADR amending ADR-0030 d5 plus a scoped source/licence/input packet before any real-root use; not created here.
+Rollback: revert the merge; no data or catalog effect.
+Residuals: M02 (hk_sg_equity), M03 (jpx_equity), M04 (krx_equity) outstanding; volume/lot, price-limit, settlement and rights contracts remain `unknown` by design.
+
+## RS-M02
+
+Stage RS-M02 / status: verified-local (offline pack) / recorded 2026-11-23
+Deliverable (§2.9, §5): docs/developer/architecture/market-hk-sg-equity-feasibility.md; tests/unit/test_market_hk_sg_equity.py; one MARKET_CONTRACTS row; mkdocs nav. Verified seams cited at paths.py:71,157,170,224; types.py:41,62,93; router.py:61-73,389; sources/hk_sg.py:55; calendar.py:27,44-45,62-72,75-94,116,141-156,159; tickers.yaml:650-651,789-790; instruments.py:40,42,62,264; catalog/datasets.py:221-228.
+Dependencies: RS-D01 guards; ADR-0030 d5 unchanged, no ADR created. Commit: 6543f7f -> a0b91fa (merged).
+Evidence: 36 market tests pass in the main checkout (/tmp/integrate-m02.log); mutation of corporate_actions -> _US_CORPORATE_ACTIONS made 2 tests fail (exit 1), restored with diff -q 0 then pytest 0; fixture digest 8571b7aa…; ruff/format/mypy 0 (196 files); catalog byte-identical (537bf5fb…, 18 datasets).
+HK/SG no-conflation proof: two venues (XHKG/XSES), two currencies (HKD/SGD) never converted; test_hk_and_sg_are_never_conflated uses 2024-06-10 (XHKG closed, XSES open) and 2024-06-17 (inverse) to show classify_market_sessions/is_trading_day return True (union) while trading_days_between excludes them (intersection); market_timezone returns the HK zone and is documented as not an SG clock.
+External prerequisite state: PENDING — operator market source/licence packet plus a NEW ADR amending ADR-0030 d5 before any real-root use.
+Residuals: actions, volume/lot, price-limit, settlement and rights all `unknown` with input packets; next eligible RS-M03.
+
+## RS-M03
+
+Stage RS-M03 / status: verified-local (offline pack) / recorded 2026-11-23
+Deliverable: market-jpx-equity-feasibility.md; test_market_jpx_equity.py; one MARKET_CONTRACTS row; nav. Resolves the caveat: paths.py:158 ("JPX",) is a calendar identifier while identity is XTKS (instruments.py:44-46,63), bridged only at calendar.py:46; one calendar so intersection == union, pinned to the exact 06:00 UTC TSE close.
+Dependencies: RS-M02. Commit: a0b91fa -> 12052d4 (merged).
+Evidence: mutation of _MIC_TO_CALENDAR["XTKS"] -> "XHKG" failed the tests (exit 1), restored diff -q 0 then pytest 0; fixture digest e6691d00….
+External prerequisite state: PENDING — same operator packet + ADR-0030 d5 amendment.
+Residuals: the five contracts remain unknown; next eligible RS-M04.
+
+## RS-M04
+
+Stage RS-M04 / status: verified-local (offline pack) / recorded 2026-11-23
+Deliverable: market-krx-equity-feasibility.md; test_market_krx_equity.py; one MARKET_CONTRACTS row; nav. Seams: paths.py:73,159; types.py:64; router.py:391,162-175; sources/krx.py:19-20,75,80 (FinanceDataReader, not yfinance); calendar.py:47; tickers.yaml:975-976,1133; catalog/datasets.py:237-244.
+Dependencies: RS-M03. Commit: 12052d4 -> abfc7f3 (merged).
+Evidence: mutation of PRICE_MARKET_CONFIG_KEYS["krx_equity"] -> ("jpx",) failed the tests (exit 1), restored diff -q 0 then pytest 0; fixture digest 477a75d9….
+External prerequisite state: PENDING — same operator packet + ADR-0030 d5 amendment.
+Residuals: five contracts unknown plus a provider venue-label gap; all five markets are now declared, with us_equity the only market holding a `present` corporate-action capability; next eligible stage is the operator input packet + ADR-0030 d5 amendment.
+
+## RS-D01
+
+Stage RS-D01 / status: verified-local guards; real qualification BLOCKED-INPUT / recorded 2026-11-23
+Deliverable (§2.8, §5): `src/equity_lake/core/source_clock.py` — frozen `SourceClockRecord` (extra="forbid") with record_id = sha256 of its own content, source, market, series ("*" = whole market), evidence_kind, evidence_digest/evidence_uri (at least one required), source_available_at, coverage_start/end, expires_on, rights_reference, recorded_at, supersedes, record_schema_version; append-only store at `DATA_DIR/source_clock_qualification/records.jsonl` (auxiliary, not cataloged; DATA_DIR read at call time); `qualify_source_clock(...)` and `require_qualified_source_clock` (raises `SourceClockUnavailable`); `core/paths.refuse_cross_root_symlink` called from `storage/delta.delta_table_path` (single resolution seam); opt-in clock gate on `FeatureLoader.load_features(source_clock_source=…, source_clock_records=…)` with defaults unchanged.
+Dependencies: ADR-0015 d4, ADR-0030 d2-4/d10, ADR-0032 d6/d10, ADR-0034, ADR-0006, ADR-0019. No ADR created or changed.
+Commit identity: 6543f7f -> ede3f9d, 006fe95 (merged).
+Evidence: /tmp/integrate-d01.log — test_source_clock_qualification, test_pit_invariants, test_lake_root_selection and test_feature_loader_coverage_basis pass in the main checkout; mutation (a) removing the strict as-of filter failed test_future_dated_rows_cannot_enter_an_earlier_as_of_read (exit 1), restored diff -q 0; mutation (b) removing the refuse_cross_root_symlink call failed 3 canary tests (exit 1), restored all pass; fixture digest 7fec1283…; catalog unchanged 537bf5fb…; ruff/format/mypy 0; markdown ratchet 0.
+Why an ingest clock cannot be proof: `evidence_kind` is closed to `source_publication|source_vintage`; `ingest_time` exists only so the refusal is explicit and testable (constructing raises). `source_available_at` may not postdate `recorded_at`; `expires_on >= coverage_end`; a tampered row fails its content digest and is treated as unverifiable.
+Gate fail-closed cases: no record, unverifiable record, all superseded, more than one active record (ambiguity), outside the coverage window, expired — each returns `unknown` plus the input packet; there is no weak-basis fallback.
+Root guards: canary `lake_real/01_bronze -> lake/01_bronze` and the reverse are refused on read, the canonical default root is guarded, root escapes are refused, a legitimate explicit `--lake-dir` keeps working, and the guard is inert for paths outside any named lake root (no I/O).
+External prerequisite state: PENDING — source-issued publication/vintage clocks, coverage/expiry evidence and rights, plus any ADR amending ADR-0030 d5 before a real-root extension. No source is qualified and no live consumer is unblocked.
+Rollback: revert the two commits; no data, catalog, ADR or ingestion default changed; delete the auxiliary directory to discard records.
+Residuals: PIT on `vendor_events_no_clock` rows remains impossible and is tested as a refusal, never relabelled.
+
+## RS-S01 (paper-shadow half only)
+
+Stage RS-S01 / status: verified-local shadow; live activation BLOCKED-INPUT / recorded 2026-11-23
+Deliverable (§2.11, §5): `equity tracking shadow` with `--as-of`, `--rounds` (1–30), `--scan/--no-scan`, `--require-strict-coverage`, `--watchlist`, `--ticker-config`, `--config`, `--lake-dir`, `--data-dir`, plus `equity tracking deliver --remove-event ID`. Local `PaperSink` receipt recorder (no HTTP sender is ever constructed). Kill switch = file marker `data/tracking/DELIVERY_DISABLED` (fails closed if uninspectable). Expiry = the event's own stored session at most 5 venue sessions behind the latest completed session -> `expired`/`expired_out_of_window`; removal marks `pending`->`expired`/`removed_by_operator` and reports `unsend_possible: false`. No ledger migration and no new column.
+Dependencies: ADR-0018 outbox contract (unchanged). No ADR created.
+Commit identity: 6543f7f -> f4329eb, 5ed4352, 16fa929 (merged).
+Evidence: /tmp/integrate-s01.log — test_private_tracking_events, test_tracking_cli and test_tracking_readiness pass in the main checkout (38/38 in the lane, 86 across touched modules); mutation disabling expiry failed test_paper_shadow_expires_a_stale_session_instead_of_burst_delivering (exit 1), restored diff -q 0 with identical sha256; ruff/format/mypy 0 (196 files); markdown ratchet 0.
+Guard order: readiness (watchlist_unreadable / history_corrupt) -> strict-coverage gate -> kill switch -> bounded scan -> readiness re-checked -> per round, under `_delivery_lock(blocking=False)` (overlap refused, never queued), kill switch and quiet hours re-checked -> per event expiry -> revalidation -> at most 3 attempts.
+Strict coverage: a `vendor_events_no_clock` (weak) basis is refused by the live-scan readiness path while the paper shadow still runs on synthetic data, proven with a fixture.
+Disclosure preserved: `NOT_EXACTLY_ONCE_DISCLOSURE` appears in the module, `format_schedule_plan`, the report (`not_exactly_once`) and the docs; dedup keys are never described as exactly-once and duplicate receipts are recorded in `duplicate_event_ids`.
+Inputs used: synthetic fixtures and tmp_path only; no network, no real data, no secrets.
+External prerequisite state: PENDING — operator endpoint/channel, scheduler host and kill-switch owner (§8 item 6); scheduler activation stays owner-gated; intended shape is an external local cron/systemd job, never a public Pages job or a secret-bearing GitHub job.
+Rollback: revert the three commits; no ledger migration, no data effect.
+Residuals: live delivery not enabled or tested; an earlier partial branch's `deliver_pending`-inside-`flock` design was discarded as a self-deadlock.
+
+## RS-E01
+
+Stage RS-E01 / status: verified-local (orchestrator-verified after relaunch) / recorded 2026-11-23
+Deliverable (§2.2, §5): `seed_demo(end_date=…)` pins the synthetic window; `equity demo seed --end-date YYYY-MM-DD` (ISO parse, `BadParameter` on garbage); new `src/equity_lake/devtools/bootstrap.py` with `bootstrap_disposable_lake()`, `BootstrapRefused`/`BootstrapError`, `unavailable_datasets()`, and `python -m equity_lake.devtools.bootstrap --end-date … [--keep] [--seed] [--years] [--tickers]`; three documented fresh-clone profiles in docs/getting-started/quickstart.md (sample -> data/sample, canonical synthetic CI -> disposable seeded data/lake, real-root restore/re-land operator-run and explicit); CLI reference updated.
+Dependencies: ADR-0020/0027 generator envelope, ADR-0030 real root explicit-only. No new ADR.
+Commit identity: 79c26f5 -> a67e777, 7f7e5dc, af97c87, 37e1628 (merged).
+Evidence: /tmp/integrate-e01.log — test_disposable_bootstrap and test_seed_demo pass in the main checkout (70 passed in the lane); `equity demo seed --help` shows `--end-date` and the bootstrap entry point exposes `--keep/--seed/--years/--tickers`; ruff/format/mypy 0; `make lint-md` 0 with 0 new findings.
+Disposable guards, each proven: (a) default `mkdtemp` under the OS temp root, disposed unless `--keep`; (b) `git archive HEAD` members proven equal to `git ls-tree`, with links, `.env` and untracked `data/*` refused; (c) destination and the child's `PROJECT_ROOT`/`LAKE_DIR` both resolve beneath the allocation; (d) the child reports its imported module and a foreign (operator) provenance is refused; (e) symlinked destination aliases refused; (f) a reused/non-empty target refuses; (g) an operator lake — or containment either way — is refused regardless of `overwrite_production_lake`, with the sentinel hashed before/after (unchanged).
+Reproducibility: same seed + `end_date` under simulated wall-clock days 2026-12-01 and 2027-06-01 yields equal `price_batch_digest`, equal sorted frames and one identical `price_source_sha256`; a control without `end_date` shows the days shift and the digests differ.
+Canary / unavailable: a path canary and a value canary make `build_sanitized_page` raise `H00BuildError("sanitization scan failed closed (classes: paths, secret_shapes)")` with nothing written, while a clean synthetic lake builds exactly the three allowlisted files; a temporary `.env` canary is caught by the `secrets` class; optional provider and gold/platinum routes report `available: false` with reasons and create nothing.
+Mutation: removing the destination guard made the operator-lake sentinel test fail (exit 1, `BootstrapError` instead of the preflight `BootstrapRefused`); restored from /tmp with `diff -q` exit 0 and the test green.
+Inputs used: tracked source at HEAD only, plus the synthetic generator; no network, no provider credentials, no real data.
+External prerequisite state: none for the offline bootstrap; real-root use still needs the explicit operator path and must never be implicit.
+Rollback: revert the four commits; no lake, catalog or ADR touched.
+Residuals: CI workflow wiring is RS-H01's; `equity demo seed --end-date` unified help coverage is confirmed by the auto-discovering help scan.
+
+## RS-R01
+
+Stage RS-R01 / status: verified-local (frozen measurement set, this host) / recorded 2026-11-23
+Deliverable (§1.4, §2.12, §5): `src/equity_lake/ml/r01_controls.py` (prespec + freeze, six leakage controls, planted/null runner, exact Clopper-Pearson bounds, censoring/status, mutation runner, CLI `python -m equity_lake.ml.r01_controls --mode freeze|controls|scale|mutations|all`) and `src/equity_lake/ml/r01_scale.py` (5/50/200 harness with ceilings, RSS, I/O, parity, refusals); durable preregistration `docs/research/20261123-01-r01-preregistration.{md,json}` and manifest `docs/research/protocols/20261123T135029Z-42d13c802634.manifest.json`; results `docs/research/20261123-01-r01-results.json` and report `docs/research/20261123-01-r01-report.md`; 31 named regressions in `tests/unit/test_r01_controls.py` and `tests/unit/test_r01_scale.py`.
+Dependencies: RS-Q00, RS-E01. ADR-0034 unchanged; no promotion.
+Commit identity: 6543f7f -> 0a3802e, 73ce538, f74f9ce (freeze, before any run), b506d83, 353647d (merged).
+Frozen before the run: protocol digest `42d13c802634bb4f4bc127db5991d2fe85ad5f7ee8ebf64461b49c4817e2a481`, prespecification digest `fb20a96cfdeff0090303a69995d4d968b4fae64a3a1002cecdbed540b99d33e4`, recorded_at 2026-11-23T13:50:29Z. Seeds 1729–1828 (100 null) and 11729–11778 (50 planted), one-sided alpha 0.05, FPR upper bound <=10%, power lower bound >=80%, statistic `mean_per_session_net_return` with the estimand named and explicitly NOT the compounded return, moving-block bootstrap (block 5, 2000 resamples, seed = the control seed), sizes 5/50/200, ceilings 1800 s per size, 7200 s aggregate, RSS <= min(8 GiB, 50% host RAM).
+Evidence (reproduced by the orchestrator in the main checkout): `--mode controls` -> null 0/100 false positives, one-sided upper bound 0.029513 <= 0.10; planted 46/50 detected, lower bound 0.826209 >= 0.80; six leakage controls passed; sets complete, not censored. `--mode all` -> `verification_status: verified` with no reasons, exit 0. Scale: 5 = 0.025 s / 342 MB / 3785 rows / 914 decisions / min universe 5; 50 = 0.074 s / 390 MB / 37832 / 15504 / 49; 200 = 0.243 s / 519 MB / 151263 / 45562 / 198; aggregate 8.72 s of 7200 s; I/O measured (`read_bytes`/`write_bytes` genuinely 0, `rchar` 241040) with a tested path for unavailable counters; parity digests equal and vectorised economics == the R02 reference path (diff 0.0). All eight mutants killed (exit 1) and restored.
+Inputs used: synthetic generator only (`devtools/seeding.synthetic_ohlcv`, `devtools/test_data`); no network, no real data, no R02 artifacts modified.
+External prerequisite state: runtime capacity for the frozen defaults was available on this host; the measurement is synthetic-fixture evidence, not a market claim, and the report says so.
+Rollback: revert the stage commits; no data, catalog, ADR or R02 artifact touched.
+Residuals (named in the report): synthetic fixture only; model-based decisions are not required to agree across sizes; planted strength was set by a pre-freeze design calculation on non-predeclared seeds 1001–1005; a 0.4%/session inspection of planted seeds 11729–11730 during harness development is disclosed in the preregistration and those seeds stayed in the frozen set unchanged; power clears its floor by only 2.6 pp.
+Note: the lane found and fixed a real fixture defect — `TEST_DATA_TICKERS["cn_ashare"]` listed `601988` twice, which corrupted 200-instrument economics until the pool was de-duplicated.
+
+## RS-R01 status correction after independent review (2026-11-23)
+
+The independent review of the accumulated diff returned FAIL with four blocking findings against merged stages (two against RS-D01's and RS-S01's work, one against RS-Q00's gate, one against the module's Pydantic boundary). All four were fixed in the main checkout, plus a real PIT gap the review's mutation request exposed:
+1. `core/source_clock.py` — the integrity claim is narrowed everywhere (module docstring and `docs/developer/architecture/pipeline-contracts.md`): the digest is a corruption check, NOT a signature, and the store is not tamper-proof against a writer who recomputes it. No signature/key path was added (that needs its own decision record).
+2. `devtools/markdown_lint.py` — the MD013 exclusion is now RECORDED and auditable: the baseline artifact is a frozen Pydantic model with `disabled_rules` entries (rule, justification, measured legacy cost) and fails closed when the recorded set does not match the gate's. Measured cost of closing it: 5250 MD013 findings. Counts unchanged at 314 findings / 35 files.
+3. `signals/tracking.py` — the paper-shadow scan moved INSIDE the non-blocking delivery lock (readiness -> scan -> deliver), so two local runs cannot overlap in the scan phase; new regression `test_the_scan_cannot_overlap_another_shadow_run` proves a competing run never reaches the scan, and the readiness-recheck test now asserts the plan's order (scan skipped on refusal).
+4. `devtools/markdown_lint.py` — baseline write/load go through `LintBaseline` (extra="forbid", positive counts, total must equal the recorded findings); two new tests cover a mismatched disable set and a missing disable set.
+5. New PIT invariant in `core/source_clock.py`: evidence the source had not published by the `as_of` date can no longer qualify that read (look-ahead refusal). Mutation proof: removing the check made `test_clock_evidence_published_after_the_as_of_date_never_qualifies_it` fail (exit 1); restored with `diff -q` exit 0 and identical sha256, test green.
+Also fixed during this pass: `src/equity_lake/py.typed` added (the package is mypy-strict clean over 200 files, but every isolated per-file analysis reported first-party imports as untyped); repo-convention `# pyright: ignore[reportMissingImports]` added to the two optional `wandb` imports in `ml/registry.py`. Pre-existing stale `# type: ignore[import-untyped]` comments remain in ~140 test files (611 occurrences) and are recorded as debt rather than mass-edited here.
+Gates after the fixes: `uv run ruff check .` 0, `uv run ruff format --check .` 0, `uv run mypy` 0 (200 files), `make lint-md` 0 (314/35), and the touched test modules green.

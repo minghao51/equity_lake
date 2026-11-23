@@ -22,9 +22,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.core import paths  # type: ignore[import-untyped]
-from equity_lake.core.paths import PROJECT_ROOT  # type: ignore[import-untyped]
-from equity_lake.core.source_clock import (  # type: ignore[import-untyped]
+from equity_lake.core import paths
+from equity_lake.core.paths import PROJECT_ROOT
+from equity_lake.core.source_clock import (
     MARKET_SERIES,
     QUALIFICATION_DIR_NAME,
     QUALIFICATION_INPUT_PACKET,
@@ -255,11 +255,23 @@ def test_gate_fails_closed_after_expiry() -> None:
 
 def test_gate_fails_closed_outside_the_covered_window() -> None:
     """A covered window that does not reach the as-of date is not evidence for it."""
-    early = _answer([_record()], as_of=date(2023, 12, 29))
+    early = _answer([_record(source_available_at=datetime(2023, 12, 1, tzinfo=UTC))], as_of=date(2023, 12, 29))
     late = _answer([_record(coverage_end=date(2024, 5, 31), expires_on=date(2025, 3, 31))], as_of=date(2024, 7, 1))
 
     assert early.state == "unknown" and "does not include the as-of date" in early.evidence
     assert late.state == "unknown" and "does not include the as-of date" in late.evidence
+
+
+def test_clock_evidence_published_after_the_as_of_date_never_qualifies_it() -> None:
+    """Point-in-time: a clock the source had not published yet cannot qualify an earlier read."""
+    answer = _answer(
+        [_record(source_available_at=datetime(2024, 6, 10, 21, 0, tzinfo=UTC), recorded_at=datetime(2024, 6, 11, 12, 0, tzinfo=UTC))],
+        as_of=date(2024, 6, 3),
+    )
+
+    assert answer.state == "unknown"
+    assert "after the as-of date 2024-06-03" in answer.evidence
+    assert answer.record_id is None
 
 
 def test_a_superseding_record_answers_and_the_withdrawn_one_never_does() -> None:

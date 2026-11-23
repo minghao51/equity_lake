@@ -177,8 +177,13 @@ Records live in an auxiliary artifact, `DATA_DIR/source_clock_qualification/reco
 (ADR-0006: not cataloged, not pointblank-validated, created only by an append):
 
 - **Never restamped.** `record_id` is the sha256 of the record's own content, and a
-  row that no longer matches it is *unverifiable*: the reader refuses the store and
-  the gate refuses the answer rather than dropping or repairing the line.
+  row altered without recomputing that digest is *unverifiable*: the reader refuses
+  the store and the gate refuses the answer rather than dropping or repairing the
+  line. The digest is a corruption check, **not a signature**: the store is a local
+  operator-owned auxiliary artifact, so a writer who edits a row and recomputes its
+  digest will pass. Do not describe a record as authenticated, or the store as
+  tamper-proof, without an independently protected anchor this design does not have
+  (that would need its own decision record and key handling).
 - **A correction is a new record.** Appending the same record twice refuses, a
   correction names what it supersedes, and a record can only be superseded once —
   the correction chain is linear, so no edit ever rewrites history.
@@ -191,7 +196,9 @@ Records live in an auxiliary artifact, `DATA_DIR/source_clock_qualification/reco
 `present` only for exactly one verified, active, in-window and unexpired record. It
 fails closed — `unknown` plus the named input packet — on: no record for the scope,
 an unverifiable record, every candidate superseded, more than one active record (an
-ambiguous trail), an `as_of` outside the covered window, and an `as_of` after expiry.
+ambiguous trail), an `as_of` outside the covered window, an `as_of` after expiry, and
+an `as_of` earlier than the date the source published the clock it quotes (evidence
+published later cannot qualify an earlier read without look-ahead).
 `require_qualified_source_clock` raises `SourceClockUnavailable` for the same cases;
 it never falls back to the weak `vendor_events_no_clock` basis and never synthesises
 a clock. The only wiring is an explicit opt-in on

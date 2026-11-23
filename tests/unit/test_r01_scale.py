@@ -9,14 +9,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from equity_lake.backtesting.protocol import ProtocolError  # type: ignore[import-untyped]
-from equity_lake.ml.r01_controls import freeze_r01_protocol  # type: ignore[import-untyped]
-from equity_lake.ml.r01_scale import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.protocol import ProtocolError
+from equity_lake.ml import r01_scale
+from equity_lake.ml.r01_controls import SCALE_WARMUP_SESSIONS, freeze_r01_protocol
+from equity_lake.ml.r01_scale import (
     MINIMUM_UNIVERSE,
-    SCALE_WARMUP_SESSIONS,
     ScaleCeilings,
     ScaleError,
     economics_parity,
@@ -32,6 +33,22 @@ from equity_lake.ml.r01_scale import (  # type: ignore[import-untyped]
 
 RECORDED_AT = datetime(2026, 11, 23, 14, 0, tzinfo=UTC)
 TINY_SESSIONS = three_year_sessions()[:80]
+
+#: A deterministic injected peak RSS. The real reader reports the WHOLE process's high-water
+#: mark, which inside a long pytest session is the suite's peak, not this point's footprint —
+#: so in-process tests must always inject these metrics (the CLI measures in a fresh process).
+INJECTED_PEAK_RSS_BYTES = 256 * 1024 * 1024
+
+
+def _fixed_peak_rss() -> int:
+    """A stable peak RSS for in-process measurement."""
+    return INJECTED_PEAK_RSS_BYTES
+
+
+def _tiny_point(size: int, **kwargs: Any) -> dict[str, Any]:
+    """Run one tiny in-process point with injected RSS unless the caller supplies one."""
+    kwargs.setdefault("peak_rss_reader", _fixed_peak_rss)
+    return run_scale_point(size, sessions=TINY_SESSIONS, **kwargs)
 
 
 def test_an_over_budget_scale_point_refuses() -> None:
@@ -65,14 +82,14 @@ def test_an_unmeasurable_host_ram_aborts() -> None:
 
 def test_unavailable_io_counters_carry_a_reason_and_never_zeros() -> None:
     reason = "the host exposes no /proc/self/io, so I/O counters are unavailable (never reported as zero)"
-    point = run_scale_point(5, sessions=TINY_SESSIONS, io_reader=lambda: {"available": False, "reason": reason})
+    point = _tiny_point(5, io_reader=lambda: {"available": False, "reason": reason})
     assert point["io"]["available"] is False
     assert point["io"]["reason"] == reason
     assert "read_bytes" not in point["io"] and "write_bytes" not in point["io"]
 
 
 def test_a_measured_point_records_every_required_field() -> None:
-    point = run_scale_point(5, sessions=TINY_SESSIONS)
+    point = _tiny_point(5)
     for field in (
         "wall_seconds",
         "peak_rss_bytes",
@@ -126,7 +143,7 @@ def test_the_scale_universe_is_distinct_instruments_and_reaches_two_hundred() ->
 
 
 def test_a_measured_point_records_the_fixture_diagnostics() -> None:
-    point = run_scale_point(5, sessions=TINY_SESSIONS)
+    point = _tiny_point(5)
     diagnostics = point["fixture_diagnostics"]
     assert diagnostics["degenerate_paths"] == 0
     assert diagnostics["price_floor"] > 0.0
@@ -172,9 +189,27 @@ def test_a_complete_sweep_records_verified_scale_evidence(tmp_path: Path) -> Non
         protocol_root=tmp_path,
         sizes=[5, 8],
         subprocess_isolation=False,
-        in_process=lambda size, **kwargs: run_scale_point(size, sessions=TINY_SESSIONS, **kwargs),
+        in_process=_tiny_point,
     )
     assert payload["verification_status"] == "verified"
     assert len(payload["points"]) == 2
     assert payload["parity"]["shared_instrument_features_equal"] is True
     assert payload["parity"]["shared_instrument_decisions_equal"] is True
+
+
+def test_an_in_process_point_ignores_the_ambient_process_high_water_mark(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real reader reports the WHOLE process peak, so in-process tests must inject it.
+
+    This is the trap that made these tests fail inside the full suite: after a few thousand
+    tests the pytest process's high-water mark exceeds the 8 GiB ceiling even though one
+    tiny point allocates a few hundred MB. The ceiling check is correct; the test is what
+    must inject a per-point figure.
+    """
+    monkeypatch.setattr(r01_scale, "peak_rss_bytes", lambda: 9 * 1024**3)
+
+    with pytest.raises(ScaleError, match="beyond the frozen ceiling"):
+        run_scale_point(5, sessions=TINY_SESSIONS)
+
+    point = _tiny_point(5)
+    assert point["peak_rss_bytes"] == INJECTED_PEAK_RSS_BYTES
+    assert point["censored"] is False

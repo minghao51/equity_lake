@@ -9,6 +9,13 @@
     "docs"
   ],
   "total": 314,
+  "disabled_rules": [
+    {
+      "rule": "MD013",
+      "justification": "line length was already excluded by the pre-ratchet Makefile target; re-enabling it is a documentation migration across the existing docs, not a lint-gate change, and it is not hidden by this ratchet",
+      "measured_legacy_findings": 5250
+    }
+  ],
   "files": {
     "docs/archive/20260830-02-p0-ingestion-correctness.md": {
       "MD011": 1,

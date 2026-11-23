@@ -11,23 +11,29 @@ When guidance conflicts, follow the order defined in `AGENTS.md`: enforced
 contracts first, then accepted decision records in `decisions/`, then these
 architecture pages and guides.
 
-## Current plan — 2026-11-22
+## Current status — 2026-11-23
 
-Start with the [residual specification and implementation plan](plans/20261122-01-residual-spec-and-implementation-plan.md).
-It accounts for publication, private-ledger recovery, research evidence, source qualification,
-non-US slices, dividends, notification activation and fresh-clone setup. Its stages are
-**planned, not implemented**; external account/source/endpoint inputs are named explicitly.
-No live operation is performed by drafting the plan.
+The [residual specification and implementation plan](plans/20261122-01-residual-spec-and-implementation-plan.md)
+§11 is the record. Its stages were implemented locally and merged one at a time, each merge re-verified in the
+main checkout with targeted tests, ruff, mypy and the recursive Markdown ratchet: the disposable bootstrap, the
+single manual H00 publisher, verified local backup export, source-clock qualification and real-root guards, the four
+non-US offline market packs, the paper-shadow delivery loop, the recursive lint ratchet, the `total_return` refusal,
+the R02 archival recomputation, and R00's frozen controls and scale measurements.
 
-The earlier claim that only an approval remained was too broad: the Pages workflow still
-runs a cron-sync check after removing its cron, the independent catalog deployment can
-replace the same site, and R00 protocol controls do not establish measured controls/scale
-evidence. The new plan assigns those gaps without reopening accepted data boundaries.
-H00 remains unpublished and R02 remains negative with `promoted=false`.
+**Nothing is `operated`.** No publication, no live delivery, no real-ledger rehearsal, no data acquisition and no
+model promotion happened. What remains needs an operator: H00 publication (platform reviewer-protection evidence, an
+owners approval and a route ADR), a real-ledger rehearsal, a live delivery endpoint and scheduler host, an off-host
+backup decision, a per-market source/licence packet plus an ADR-0030 amendment, and the H00 deployment receipt and
+rollback bundles that the hosting guide documents as not implemented. H00 remains unpublished and R02 remains negative
+with `promoted=false`.
+
+The earlier claim that only an approval remained was too broad: the Pages workflow ran a cron-sync check after
+removing its cron, an independent catalog deployment could replace the same site, and R00's protocol controls did not
+establish measured controls or scale evidence. Those are now fixed or measured rather than reclassified.
 
 The [prior specification](plans/20261102-01-portfolio-and-research-implementation-spec.md)
 and [gap accounting record](handoffs/20261121-01-gap-accounting.md) preserve the delivered
-scope and historical evidence; the new plan governs the residual queue.
+scope and historical evidence.
 
 ## Continuation record — 2026-11-07 (historical)
 

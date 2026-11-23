@@ -69,7 +69,7 @@ def log_comparison(
     entity_name = entity or os.getenv("WANDB_ENTITY")
     run_name = name or "-".join(card.id for card in cards)
     try:
-        import wandb
+        import wandb  # pyright: ignore[reportMissingImports] -- optional dependency group; guarded by the try/except
 
         run = wandb.init(
             project=project_name,
@@ -121,7 +121,10 @@ def _create_comparison_report(
     ``None`` and the caller falls back to the run URL.
     """
     try:
-        from wandb.apis.reports import MarkdownBlock, Report  # private/volatile API; guarded by the try/except below
+        from wandb.apis.reports import (  # pyright: ignore[reportMissingImports] -- private/volatile API; guarded by the try/except below
+            MarkdownBlock,
+            Report,
+        )
     except Exception as exc:  # private API; best-effort.
         logger.debug("wandb_report_import_failed", error=str(exc))
         return None

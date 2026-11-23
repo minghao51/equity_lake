@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.devtools import markdown_lint  # type: ignore[import-untyped]
+from equity_lake.devtools import markdown_lint
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NESTED_REL = "docs/guides/deep/nested/planted.md"
@@ -178,3 +178,38 @@ def test_the_committed_baseline_is_recursive_and_the_tree_matches_it() -> None:
     assert "-r" in markdown_lint.SCAN_ARGS
     assert markdown_lint.DISABLED_RULES == "md013"
     assert markdown_lint.check() == 0
+
+
+def test_the_only_disabled_rule_is_recorded_with_its_measured_cost() -> None:
+    """A blanket disable must be written down, and shipped in the reviewed baseline."""
+    shipped = markdown_lint.LintBaseline.model_validate_json(markdown_lint.BASELINE_PATH.read_text(encoding="utf-8"))
+
+    assert [record.rule for record in shipped.disabled_rules] == ["MD013"]
+    record = shipped.disabled_rules[0]
+    assert record.justification.strip()
+    assert record.measured_legacy_findings > 0
+    assert markdown_lint.DISABLED_RULES == "md013"
+
+
+def test_a_baseline_recording_a_different_disable_set_refuses(tmp_path: Path) -> None:
+    """Recording a different disable set than the gate applies is refused, never implied."""
+    baseline = tmp_path / "baseline.json"
+    markdown_lint.write_baseline({}, baseline)
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    payload["disabled_rules"] = [{"rule": "MD009", "justification": "an extra disable", "measured_legacy_findings": 1}]
+    baseline.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(markdown_lint.LintBaselineError, match="do not match the gate's"):
+        markdown_lint.load_baseline(baseline)
+
+
+def test_a_baseline_without_a_recorded_disable_set_refuses(tmp_path: Path) -> None:
+    """An unrecorded disable set cannot pass: the artifact must state the gate's coverage."""
+    baseline = tmp_path / "baseline.json"
+    markdown_lint.write_baseline({}, baseline)
+    payload = json.loads(baseline.read_text(encoding="utf-8"))
+    payload.pop("disabled_rules")
+    baseline.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(markdown_lint.LintBaselineError):
+        markdown_lint.load_baseline(baseline)

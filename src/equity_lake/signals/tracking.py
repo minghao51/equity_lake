@@ -2144,12 +2144,14 @@ def run_paper_shadow(
     """Rehearse the delivery loop offline with a local in-memory sink; never sends.
 
     Guard order: readiness, then the optional live-scan strict-coverage gate, then the
-    operator kill switch, then the bounded scan, then the re-checked readiness, kill
-    switch and quiet-hours gates per round while holding the same cross-process
-    delivery lock the live seam uses. Delivery additionally revalidates each event and
-    expires any event whose own session left the delivery window, so a missed session
-    is retired with a value-free reason instead of burst-delivered. No HTTP sender is
-    constructed, no scheduler is activated, and live delivery stays disabled.
+    operator kill switch, then the re-checked readiness, kill switch, bounded scan and
+    quiet-hours gates per round while holding the same cross-process delivery lock the
+    live seam uses. The scan runs inside that lock, not before it, so two local shadow
+    runs can never overlap in the scan phase and only meet at delivery. Delivery
+    additionally revalidates each event and expires any event whose own session left
+    the delivery window, so a missed session is retired with a value-free reason
+    instead of burst-delivered. No HTTP sender is constructed, no scheduler is
+    activated, and live delivery stays disabled.
     """
     clock = now or datetime.now(UTC)
     if clock.tzinfo is None or clock.utcoffset() is None:
@@ -2175,24 +2177,30 @@ def run_paper_shadow(
         return _shadow_report(status="blocked", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason=reason)
     if delivery_kill_switch_active(data_dir):
         return _shadow_report(status="kill_switch", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason="kill_switch")
-    if scan:
-        try:
-            scan_private_watchlist(
-                now=clock,
-                watchlist_file=watchlist_file,
-                ticker_config_path=ticker_config_path,
-                signal_config_path=signal_config_path,
-                lake_dir=lake_dir,
-                data_dir=data_dir,
-            )
-            scan_status = "scanned"
-        except Exception:
-            logger.warning("paper_shadow_scan_failed")
-            scan_status = "failed"
     with _delivery_lock(data_dir, blocking=False):
+        # The scan happens INSIDE the lock: two local loops must not overlap even while
+        # scanning, because the scan writes signal events the delivery phase consumes.
         reason = _shadow_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
         if reason is not None:
             return _shadow_report(status="blocked", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason=reason)
+        if delivery_kill_switch_active(data_dir):
+            return _shadow_report(
+                status="kill_switch", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason="kill_switch"
+            )
+        if scan:
+            try:
+                scan_private_watchlist(
+                    now=clock,
+                    watchlist_file=watchlist_file,
+                    ticker_config_path=ticker_config_path,
+                    signal_config_path=signal_config_path,
+                    lake_dir=lake_dir,
+                    data_dir=data_dir,
+                )
+                scan_status = "scanned"
+            except Exception:
+                logger.warning("paper_shadow_scan_failed")
+                scan_status = "failed"
         rounds_run: list[PaperShadowRound] = []
         for index in range(1, rounds + 1):
             delivery_gate = _delivery_gate(clock, enabled=True, data_dir=data_dir)

@@ -1080,17 +1080,31 @@ def test_paper_shadow_rechecks_readiness_before_delivery_and_refuses_corrupt_his
     assert blocked.refusal is None and blocked.delivered_event_ids == []
     assert blocked.scan_status == "skipped" and calls == ["readiness"]
 
-    # The same readiness is re-checked after the scan and before any send.
+    # The same readiness is re-checked inside the delivery lock, BEFORE the scan: the
+    # plan's order is readiness -> scan -> deliver, so this refusal skips the scan.
     states = iter([None, "history_corrupt"])
     monkeypatch.setattr(tracking, "_shadow_readiness_reason", lambda **_kwargs: next(states))
     scanned: list[int] = []
     monkeypatch.setattr(tracking, "scan_private_watchlist", lambda **_kwargs: scanned.append(1))
     rechecked = tracking.run_paper_shadow(now=CLOCK, data_dir=data_dir)
 
-    assert scanned == [1]
+    assert scanned == []
     assert rechecked.status == "blocked" and rechecked.reason == "history_corrupt"
-    assert rechecked.scan_status == "scanned" and rechecked.rounds_run == 0
+    assert rechecked.scan_status == "skipped" and rechecked.rounds_run == 0
     assert rechecked.delivered_event_ids == []
+
+
+def test_the_scan_cannot_overlap_another_shadow_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A competing shadow run must not reach the scan at all, not merely refuse at delivery."""
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=145)
+    scanned: list[int] = []
+    monkeypatch.setattr(tracking, "scan_private_watchlist", lambda **_kwargs: scanned.append(1))
+
+    with tracking._delivery_lock(data_dir, blocking=False), pytest.raises(tracking.TrackingError):
+        tracking.run_paper_shadow(now=CLOCK, data_dir=data_dir)
+
+    assert scanned == []
 
 
 def _watchlist_with_us_instrument(tmp_path: Path) -> tuple[Path, Path]:

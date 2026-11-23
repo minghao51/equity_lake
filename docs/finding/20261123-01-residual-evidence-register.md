@@ -3,7 +3,7 @@
 **Stage:** RS-Q00 (evidence inventory and true recursive lint) of the
 [residual spec and implementation plan](../plans/20261122-01-residual-spec-and-implementation-plan.md) §1, §3 and §5.
 **Status:** every §1 claim re-derived at this baseline; the recursive lint gate is implemented with a reviewed
-baseline ratchet. **No finding was fixed and no rule was disabled** — the 314 preexisting findings are classified
+baseline ratchet. **No finding was fixed and no rule was newly disabled** — the 314 preexisting findings are classified
 below and frozen as debt.
 
 Recorded 2026-11-23 00:46 UTC on branch `feat/rs-q00-recursive-markdown-lint`, cut from `2634060`
@@ -242,7 +242,11 @@ directly over named Markdown files (asserted by a test), and because the repo ga
 file: any new finding on it raises its count.
 
 Deliberate limits, stated so they are not mistaken for coverage: MD013 (line length) stays excluded exactly as the
-pre-stage command excluded it, and MD033 stays enabled with its narrow `pyproject.toml` element allowlist. The
+pre-stage command excluded it, and MD033 stays enabled with its narrow `pyproject.toml` element allowlist. That
+exclusion is no longer merely implied: the baseline artifact records it as a `disabled_rules` entry with its
+justification and the measured cost of closing it — **5250 MD013 findings** across the docs at the time of recording
+(the baseline itself totals 314 findings in 35 files across every other enabled rule). Enabling MD013 is a
+documentation migration, not a lint-gate change, so it is recorded debt rather than a hidden gap. The
 baseline is keyed by `(file, rule, count)`, not by line, so a finding that merely moves within an unchanged file is
 tolerated; a finding that is added is not.
 
@@ -281,8 +285,9 @@ be regenerated in the mutated tree (2b/2c) — which is exactly why regenerating
 - `docs/developer-guide/devtools.md` enumerates devtools modules and now under-describes the package (it does not
   mention `markdown_lint`). That guide is outside this stage's edit scope, so the omission is recorded here and
   returned as a residual rather than edited in this branch.
-- The 314 findings and their classification are debt frozen for later stages: no fix, no rule disabled, no
-  `.pymarkdown` config added. Broad cleanup is deliberately not hidden inside RS-Q00.
+- The 314 findings and their classification are debt frozen for later stages: no fix and no newly disabled rule, and
+  no `.pymarkdown` config added beyond recording the pre-existing MD013 exclusion (with its measured 5250-finding
+  cost) in the baseline artifact. Broad cleanup is deliberately not hidden inside RS-Q00.
 - Rollback: revert this stage's commit. The Makefile returns to the non-recursive scan and the two new files
   disappear; no data, workflow, or catalog artifact is touched by this stage.
 

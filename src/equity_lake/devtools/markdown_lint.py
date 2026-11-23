@@ -23,12 +23,81 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+
+class DisabledRule(BaseModel):
+    """One rule this gate does not enforce, recorded so the gap is auditable.
+
+    A blanket disable is invisible unless it is written down: recording the rule, why it
+    is off, and what the measured legacy cost is keeps a reader from mistaking the gate
+    for full coverage. Adding a second entry needs its own justification and cost.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    rule: str
+    justification: str = Field(min_length=1)
+    measured_legacy_findings: int = Field(ge=0)
+
+    @field_validator("rule")
+    @classmethod
+    def _rule_is_a_markdownlint_id(cls, rule: str) -> str:
+        if re.fullmatch(r"MD\d{3}", rule) is None:
+            raise ValueError(f"disabled rule {rule!r} is not a markdownlint rule id")
+        return rule
+
+
+class LintBaseline(BaseModel):
+    """The reviewed baseline artifact: ``file -> rule -> count`` plus the recorded gaps."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    generated_by: str = Field(min_length=1)
+    scan: list[str] = Field(min_length=1)
+    total: int = Field(ge=0)
+    disabled_rules: list[DisabledRule]
+    files: dict[str, dict[str, int]]
+
+    @field_validator("files")
+    @classmethod
+    def _counts_are_positive(cls, files: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+        for file_path, rules in files.items():
+            if not file_path or not rules:
+                raise ValueError(f"baseline entry {file_path!r} is empty")
+            for rule, count in rules.items():
+                if re.fullmatch(r"MD\d{3}", rule) is None:
+                    raise ValueError(f"baseline entry {file_path!r} has a non-markdownlint rule {rule!r}")
+                if count < 1:
+                    raise ValueError(f"baseline count {file_path!r}/{rule!r} must be at least 1")
+        return files
+
+    @model_validator(mode="after")
+    def _totals_agree(self) -> LintBaseline:
+        computed = sum(sum(rules.values()) for rules in self.files.values())
+        if computed != self.total:
+            raise ValueError(f"baseline total {self.total} does not equal the recorded findings ({computed})")
+        return self
+
+
 ROOT: Final = Path(__file__).resolve().parents[3]
 BASELINE_PATH: Final = ROOT / "config" / "markdown-lint-baseline.json"
 SCAN_TARGETS: Final = ("README.md", "docs")
-# MD013 (line length) stays excluded exactly as the pre-ratchet Makefile target did;
-# no other rule is disabled here and none is disabled by the baseline.
-DISABLED_RULES: Final = "md013"
+# MD013 (line length) stays excluded exactly as the pre-ratchet Makefile target did; no
+# other rule is disabled here and none is disabled by the baseline. The exclusion is a
+# RECORDED entry in the baseline rather than an implied one, so the gate's coverage is
+# auditable, and the measured cost of closing it is written beside it.
+DISABLED_RULE_RECORDS: Final[tuple[DisabledRule, ...]] = (
+    DisabledRule(
+        rule="MD013",
+        justification=(
+            "line length was already excluded by the pre-ratchet Makefile target; re-enabling it is a documentation "
+            "migration across the existing docs, not a lint-gate change, and it is not hidden by this ratchet"
+        ),
+        measured_legacy_findings=5250,
+    ),
+)
+DISABLED_RULES: Final = ",".join(record.rule.lower() for record in DISABLED_RULE_RECORDS)
 # `-r` is mandatory: without it pymarkdown lints only the named files and never
 # descends into `docs/`, which is how the previous gate covered almost nothing.
 SCAN_ARGS: Final = ("-d", DISABLED_RULES, "scan", "-r", *SCAN_TARGETS)
@@ -105,39 +174,40 @@ def count_findings(scan_output: str, root: Path) -> dict[str, dict[str, int]]:
     return counts
 
 
+def _require_recorded_disabled_rules(recorded: Sequence[DisabledRule], path: Path) -> None:
+    """The baseline must record exactly the disables this gate actually applies."""
+    declared = {record.rule for record in DISABLED_RULE_RECORDS}
+    on_file = {record.rule for record in recorded}
+    if declared != on_file:
+        raise LintBaselineError(
+            f"{path}: recorded disabled rules {sorted(on_file)} do not match the gate's {sorted(declared)}; "
+            "a disable must be recorded deliberately, never implied"
+        )
+
+
 def load_baseline(path: Path = BASELINE_PATH) -> dict[str, dict[str, int]]:
-    """Read the reviewed baseline, refusing any shape that is not ``file -> rule -> count``."""
+    """Read the reviewed baseline through its model, refusing a malformed or unrecorded-gap shape."""
     if not path.is_file():
         raise LintBaselineError(f"no reviewed baseline at {path}; create one explicitly with --update-baseline")
-    raw: object = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
-        raise LintBaselineError(f"{path}: baseline root must be an object")
-    files = raw.get("files")
-    if not isinstance(files, dict):
-        raise LintBaselineError(f"{path}: baseline needs a 'files' object")
-    baseline: dict[str, dict[str, int]] = {}
-    for file_path, rules in files.items():
-        if not isinstance(file_path, str) or not isinstance(rules, dict):
-            raise LintBaselineError(f"{path}: baseline entry {file_path!r} is malformed")
-        rule_counts: dict[str, int] = {}
-        for rule, count in rules.items():
-            if not isinstance(rule, str) or not isinstance(count, int) or isinstance(count, bool) or count < 1:
-                raise LintBaselineError(f"{path}: baseline count {file_path!r}/{rule!r} is malformed")
-            rule_counts[rule] = count
-        baseline[file_path] = rule_counts
-    return baseline
+    try:
+        baseline = LintBaseline.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValidationError as error:
+        raise LintBaselineError(f"{path}: {error}") from error
+    _require_recorded_disabled_rules(baseline.disabled_rules, path)
+    return {file_path: dict(rules) for file_path, rules in baseline.files.items()}
 
 
 def write_baseline(observed: dict[str, dict[str, int]], path: Path = BASELINE_PATH) -> None:
     """Rewrite the reviewed baseline from one scan; only ``--update-baseline`` calls this."""
-    payload = {
-        "generated_by": GENERATED_BY,
-        "scan": list(SCAN_ARGS),
-        "total": sum(sum(rules.values()) for rules in observed.values()),
-        "files": {file_path: dict(sorted(rules.items())) for file_path, rules in sorted(observed.items())},
-    }
+    baseline = LintBaseline(
+        generated_by=GENERATED_BY,
+        scan=list(SCAN_ARGS),
+        total=sum(sum(rules.values()) for rules in observed.values()),
+        disabled_rules=list(DISABLED_RULE_RECORDS),
+        files={file_path: dict(sorted(rules.items())) for file_path, rules in sorted(observed.items())},
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(baseline.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
 
 
 def growths(observed: dict[str, dict[str, int]], baseline: dict[str, dict[str, int]]) -> list[Deviation]:

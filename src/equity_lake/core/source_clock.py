@@ -21,7 +21,14 @@ An ingest-time clock cannot be expressed as proof. The evidence vocabulary is cl
 (:data:`CLOCK_EVIDENCE_KINDS`), and ``ingest_time`` appears in it only so the refusal is
 explicit and testable: constructing a record with it raises. A record also cannot be
 appended before the clock it quotes, and its ``record_id`` is the digest of its own
-content, so a hand-edited row reads as unverifiable rather than as evidence.
+content, so a row altered WITHOUT recomputing that digest reads as unverifiable rather
+than as evidence.
+
+That digest is a corruption check, not a signature: the store is a local
+operator-owned auxiliary artifact, and a writer who edits a row and recomputes its
+digest will pass verification. Do not describe a record as authenticated, or the store
+as tamper-proof, without an independently protected anchor that this module does not
+have (that would need its own decision record and key handling).
 
 Nothing here qualifies a real source. Every market answers ``unknown`` until an operator
 supplies source-issued clocks, vintage/expiry evidence and rights; passing the synthetic
@@ -361,6 +368,17 @@ def qualify_source_clock(
         return ClockQualification(
             state="unknown",
             evidence=f"{record.record_id} expired on {record.expires_on.isoformat()}, before the as-of date {as_of.isoformat()}",
+            input_packet=QUALIFICATION_INPUT_PACKET,
+        )
+    if as_of < record.source_available_at.date():
+        # Point-in-time: evidence the source had not published by the as-of date cannot
+        # qualify that read without look-ahead, even when its coverage window contains it.
+        return ClockQualification(
+            state="unknown",
+            evidence=(
+                f"{record.record_id} quotes a clock the source published on "
+                f"{record.source_available_at.date().isoformat()}, after the as-of date {as_of.isoformat()}"
+            ),
             input_packet=QUALIFICATION_INPUT_PACKET,
         )
     if not record.coverage_start <= as_of <= record.coverage_end:
