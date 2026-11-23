@@ -973,3 +973,277 @@ def test_removal_waits_for_an_in_flight_delivery_reservation(tmp_path: Path, mon
     assert summary.sent == 1 and summary.pending == 0
     assert snapshot.watchlist.instruments == []
     assert snapshot.recent_events[0].status == "sent"
+
+
+def _seed_pending_event(data_dir: Path, *, suffix: int, session: date = SESSION) -> Any:
+    instrument = _instrument("us_equity", "XNAS")
+    outcome = tracking.TrackingRuleOutcome(source="price_sma20", status="signal", candidate=_candidate(instrument, session=session))
+    created = tracking._persist_scan(_scan_report(instrument, outcome, suffix=suffix), 0, data_dir)
+    assert len(created.events) == 1
+    return created.events[0]
+
+
+def test_tracking_shadow_help_documents_offline_sink_and_guard_options() -> None:
+    unified_app = import_module("equity_lake.cli.__main__").app
+    help_env = {"COLUMNS": "160", "TERM": "dumb"}
+    shadow_help = runner.invoke(unified_app, ["tracking", "shadow", "--help"], env=help_env)
+    assert shadow_help.exit_code == 0
+    for option in ("--as-of", "--rounds", "--require-strict-coverage", "--no-scan", "--lake-dir", "--data-dir"):
+        assert option in shadow_help.stdout
+    assert "in-memory sink" in shadow_help.stdout
+    deliver_help = runner.invoke(unified_app, ["tracking", "deliver", "--help"], env=help_env)
+    assert deliver_help.exit_code == 0
+    assert "--remove-event" in deliver_help.stdout
+
+
+def test_paper_shadow_delivers_to_the_local_sink_without_constructing_an_http_sender(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    unified_app = import_module("equity_lake.cli.__main__").app
+    data_dir = tmp_path / "aux"
+    event = _seed_pending_event(data_dir, suffix=140)
+    monkeypatch.setattr(tracking, "_event_is_current", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(tracking, "_send_http", lambda *_args, **_kwargs: pytest.fail("the paper shadow must never construct or call an HTTP sender"))
+
+    result = runner.invoke(
+        unified_app,
+        ["tracking", "shadow", "--no-scan", "--as-of", CLOCK.isoformat(), "--data-dir", str(data_dir)],
+    )
+
+    assert result.exit_code == 0, result.output
+    report = _json_output(result.stdout)
+    assert report["status"] == "completed" and report["sink"] == "local_in_memory"
+    assert report["scan_status"] == "skipped"
+    assert report["rounds_run"] == 1 and report["rounds"][0]["sent"] == 1 and report["rounds"][0]["receipts"] == 1
+    assert report["delivered_event_ids"] == [event.event_id]
+    assert report["duplicate_event_ids"] == []
+    assert report["live_delivery_enabled"] is False and report["scheduler_activated"] is False
+    snapshot = tracking.private_tracking_snapshot(now=CLOCK, data_dir=data_dir)
+    assert [item.status for item in snapshot.recent_events] == ["sent"]
+
+
+def test_paper_shadow_kill_switch_stops_delivery_even_when_enabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    unified_app = import_module("equity_lake.cli.__main__").app
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=141)
+    monkeypatch.setattr(tracking, "_event_is_current", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(tracking, "_send_http", lambda *_args, **_kwargs: pytest.fail("disabled delivery must not build an HTTP sender"))
+    marker = tracking.delivery_kill_switch_path(data_dir)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("operator stop\n", encoding="utf-8")
+
+    live = tracking.deliver_pending(enabled=True, sender=lambda _payload: pytest.fail("kill switch must stop the send"), now=CLOCK, data_dir=data_dir)
+    shadow = runner.invoke(unified_app, ["tracking", "shadow", "--no-scan", "--as-of", CLOCK.isoformat(), "--data-dir", str(data_dir)])
+
+    assert live.status == "kill_switch" and live.attempted == 0 and live.pending == 1
+    assert shadow.exit_code == 0, shadow.output
+    report = _json_output(shadow.stdout)
+    assert report["status"] == "kill_switch" and report["rounds"] == [] and report["delivered_event_ids"] == []
+    assert report["scan_status"] == "skipped"
+    snapshot = tracking.private_tracking_snapshot(now=CLOCK, data_dir=data_dir)
+    assert [(item.status, item.attempts) for item in snapshot.recent_events] == [("pending", 0)]
+
+
+def test_paper_shadow_quiet_hours_deliver_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=142)
+    monkeypatch.setattr(tracking, "_event_is_current", lambda *_args, **_kwargs: True)
+    quiet_clock = datetime(2024, 2, 3, 3, 0, tzinfo=UTC)
+    assert tracking.in_quiet_hours(quiet_clock)
+
+    report = tracking.run_paper_shadow(now=quiet_clock, rounds=2, scan=False, data_dir=data_dir)
+
+    assert report.status == "quiet_hours" and report.rounds_run == 1
+    assert report.rounds[0].delivery_status == "quiet_hours" and report.rounds[0].receipts == 0
+    assert report.delivered_event_ids == []
+
+
+def test_paper_shadow_refuses_an_overlapping_run_with_the_delivery_lock(tmp_path: Path) -> None:
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=143)
+
+    with tracking._delivery_lock(data_dir, blocking=False), pytest.raises(tracking.TrackingError, match="holds the local delivery lock"):
+        tracking.run_paper_shadow(now=CLOCK, scan=False, data_dir=data_dir)
+
+
+def test_paper_shadow_rechecks_readiness_before_delivery_and_refuses_corrupt_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=144)
+    calls: list[str] = []
+
+    def false_readiness(**_kwargs: Any) -> str | None:
+        calls.append("readiness")
+        return "history_corrupt"
+
+    monkeypatch.setattr(tracking, "_pit_readiness_reason", false_readiness)
+    blocked = tracking.run_paper_shadow(now=CLOCK, data_dir=data_dir)
+
+    assert blocked.status == "blocked" and blocked.reason == "history_corrupt"
+    assert blocked.refusal is None and blocked.delivered_event_ids == []
+    assert blocked.scan_status == "skipped" and calls == ["readiness"]
+
+    # The same readiness is re-checked after the scan and before any send.
+    states = iter([None, "history_corrupt"])
+    monkeypatch.setattr(tracking, "_pit_readiness_reason", lambda **_kwargs: next(states))
+    scanned: list[int] = []
+    monkeypatch.setattr(tracking, "scan_private_watchlist", lambda **_kwargs: scanned.append(1))
+    rechecked = tracking.run_paper_shadow(now=CLOCK, data_dir=data_dir)
+
+    assert scanned == [1]
+    assert rechecked.status == "blocked" and rechecked.reason == "history_corrupt"
+    assert rechecked.scan_status == "scanned" and rechecked.rounds_run == 0
+    assert rechecked.delivered_event_ids == []
+
+
+def _watchlist_with_us_instrument(tmp_path: Path) -> tuple[Path, Path]:
+    config = _ticker_config(tmp_path / "tickers.yaml")
+    watchlist = tmp_path / "watchlist.yaml"
+    instrument = _instrument("us_equity", "XNAS")
+    tracking.add_instrument(market=instrument.market, mic=instrument.mic, symbol=instrument.symbol, path=watchlist, ticker_config_path=config)
+    return watchlist, config
+
+
+def _write_coverage(lake_dir: Path, *, weak: bool) -> None:
+    availability = import_module("equity_lake.core.availability")
+    corporate_actions = import_module("equity_lake.ingestion.corporate_actions")
+    delta = import_module("equity_lake.storage.delta")
+
+    if weak:
+        proof: Any = availability.VendorEventCoverageProof(
+            market="us_equity",
+            mic="XNAS",
+            symbol="SHARED",
+            source="synthetic-vendor",
+            coverage_start=date(2024, 1, 1),
+            coverage_end=date(2024, 2, 29),
+        )
+    else:
+        proof = availability.ActionCoverageProof(
+            market="us_equity",
+            mic="XNAS",
+            symbol="SHARED",
+            source="synthetic-strict",
+            coverage_start=date(2024, 1, 1),
+            coverage_end=date(2024, 2, 29),
+            source_available_at=datetime(2024, 1, 1, tzinfo=UTC),
+            source_valid_until=datetime(2030, 1, 1, tzinfo=UTC),
+        )
+    delta.merge_delta(
+        pl.DataFrame([proof.model_dump()]),
+        corporate_actions.corporate_action_coverage_table("us_equity"),
+        key_columns=["market", "mic", "symbol", "source", "coverage_start", "coverage_end"],
+        lake_dir=lake_dir,
+        partition_by=["coverage_end"],
+    )
+
+
+def test_live_scan_readiness_refuses_weak_coverage_while_the_paper_shadow_still_rehearses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    watchlist, config = _watchlist_with_us_instrument(tmp_path)
+    weak_lake = tmp_path / "weak-lake"
+    _write_coverage(weak_lake, weak=True)
+    strict_lake = tmp_path / "strict-lake"
+    _write_coverage(strict_lake, weak=False)
+
+    weak = tracking.live_scan_readiness(watchlist_file=watchlist, ticker_config_path=config, lake_dir=weak_lake)
+    assert weak.status == "refused" and weak.basis == "vendor_events_no_clock" and weak.reason == "weak_coverage_basis"
+    assert weak.refusal is not None and "vendor_events_no_clock" in weak.refusal and "coverage_basis=source_clock" in weak.refusal
+    missing = tracking.live_scan_readiness(watchlist_file=watchlist, ticker_config_path=config, lake_dir=tmp_path / "absent-lake")
+    assert missing.status == "refused" and missing.basis == "missing" and missing.reason == "coverage_proof_missing"
+    strict = tracking.live_scan_readiness(watchlist_file=watchlist, ticker_config_path=config, lake_dir=strict_lake)
+    assert strict.status == "ready" and strict.basis == "source_clock" and strict.refusal is None
+
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=145)
+    monkeypatch.setattr(tracking, "_event_is_current", lambda *_args, **_kwargs: True)
+    refused = tracking.run_paper_shadow(
+        now=CLOCK,
+        scan=False,
+        require_strict_coverage=True,
+        watchlist_file=watchlist,
+        ticker_config_path=config,
+        lake_dir=weak_lake,
+        data_dir=data_dir,
+    )
+    assert refused.status == "blocked" and refused.reason == "weak_coverage_basis"
+    assert refused.refusal is not None and "vendor_events_no_clock" in refused.refusal
+    assert refused.rounds_run == 0 and refused.delivered_event_ids == []
+    assert (
+        tracking.private_tracking_snapshot(now=CLOCK, watchlist_file=watchlist, ticker_config_path=config, data_dir=data_dir).recent_events[0].status
+        == "pending"
+    )
+
+    rehearsed = tracking.run_paper_shadow(
+        now=CLOCK,
+        scan=False,
+        watchlist_file=watchlist,
+        ticker_config_path=config,
+        lake_dir=weak_lake,
+        data_dir=data_dir,
+    )
+    assert rehearsed.status == "completed" and rehearsed.rounds[0].sent == 1
+
+
+def test_paper_shadow_expires_a_stale_session_instead_of_burst_delivering(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "aux"
+    _seed_pending_event(data_dir, suffix=146, session=date(2024, 1, 2))
+    monkeypatch.setattr(tracking, "_event_is_current", lambda *_args, **_kwargs: True)
+    stale_clock = datetime(2024, 3, 1, 17, 30, tzinfo=UTC)
+
+    report = tracking.run_paper_shadow(now=stale_clock, scan=False, data_dir=data_dir)
+
+    assert report.status == "completed"
+    assert report.rounds[0].expired == 1 and report.rounds[0].sent == 0 and report.rounds[0].attempted == 0
+    assert report.rounds[0].receipts == 0 and report.delivered_event_ids == []
+    snapshot = tracking.private_tracking_snapshot(now=stale_clock, data_dir=data_dir)
+    assert snapshot.recent_events[0].status == "expired"
+    assert snapshot.recent_events[0].error_code == "expired_out_of_window"
+
+
+def test_operator_removal_expires_one_pending_row_and_states_unsending_is_impossible(tmp_path: Path) -> None:
+    unified_app = import_module("equity_lake.cli.__main__").app
+    data_dir = tmp_path / "aux"
+    event = _seed_pending_event(data_dir, suffix=147)
+
+    removed = runner.invoke(unified_app, ["tracking", "deliver", "--remove-event", event.event_id, "--data-dir", str(data_dir)])
+
+    assert removed.exit_code == 0, removed.output
+    summary = _json_output(removed.stdout)
+    assert summary == {"event_id": event.event_id, "status": "expired", "reason": "removed_by_operator", "unsend_possible": False}
+    snapshot = tracking.private_tracking_snapshot(now=CLOCK, data_dir=data_dir)
+    assert [(item.status, item.error_code) for item in snapshot.recent_events] == [("expired", "removed_by_operator")]
+
+    repeated = runner.invoke(unified_app, ["tracking", "deliver", "--remove-event", event.event_id, "--data-dir", str(data_dir)])
+    assert repeated.exit_code == 1
+    assert "not pending" in repeated.output
+
+
+def test_duplicate_receipts_are_recorded_as_a_disclosure_not_an_exactly_once_claim(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data_dir = tmp_path / "aux"
+    event = _seed_pending_event(data_dir, suffix=148)
+    payload = tracking.OpportunityWebhookPayload(
+        event_id=event.event_id,
+        market=event.instrument.market,
+        mic=event.instrument.mic,
+        symbol=event.instrument.symbol,
+        session=event.session,
+        source=event.source,
+        action=event.action,
+        rule_version=event.rule_version,
+        reason=event.reason,
+    )
+    sink = tracking.PaperSink()
+    # A previous ambiguous attempt: the receiver may already have accepted this event
+    # while the outbox row stayed pending. The sink records the duplicate honestly.
+    sink(payload)
+    monkeypatch.setattr(tracking, "_event_is_current", lambda *_args, **_kwargs: True)
+
+    report = tracking.run_paper_shadow(now=CLOCK, scan=False, sink=sink, data_dir=data_dir)
+
+    assert report.status == "completed"
+    assert report.delivered_event_ids == [event.event_id]
+    assert report.duplicate_event_ids == [event.event_id]
+    assert report.disclosure == tracking.NOT_EXACTLY_ONCE_DISCLOSURE
+    assert "not exactly-once" in report.disclosure and "cannot be ruled out" in report.disclosure
+    plan = tracking.format_schedule_plan()
+    assert plan["not_exactly_once"] == tracking.NOT_EXACTLY_ONCE_DISCLOSURE
+    assert plan["kill_switch_marker"] == "DELIVERY_DISABLED"
+    assert plan["dedup_expiry_sessions"] == tracking.DELIVERY_EXPIRY_SESSIONS
+    assert plan["scheduler_activated"] is False and plan["live_delivery_enabled"] is False

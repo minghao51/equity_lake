@@ -349,9 +349,26 @@ def tracking_deliver(
         Path | None,
         typer.Option("--config", help="Exact signal config used for explicit-config events; mismatch expires the event"),
     ] = None,
+    remove_event: Annotated[
+        str | None,
+        typer.Option("--remove-event", help="Expire one pending outbox event instead of delivering; an accepted send cannot be un-sent"),
+    ] = None,
 ) -> None:
     """Deliver a bounded local outbox batch; live sending is disabled unless explicitly opted in."""
     tracking = import_module("equity_lake.signals.tracking")
+    if remove_event is not None:
+        try:
+            with _json_diagnostics_to_stderr():
+                removal = tracking.remove_pending_delivery(remove_event, data_dir=data_dir)
+        except tracking.TrackingError as exc:
+            # These messages are fixed local text: no event payload, endpoint or credential.
+            typer.secho(f"Outbox removal failed: {exc}", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+        except Exception as exc:
+            typer.secho(f"Outbox removal failed ({type(exc).__name__}).", fg=typer.colors.RED, err=True)
+            raise typer.Exit(1) from exc
+        typer.echo(removal.model_dump_json(indent=2))
+        return
     # The raw credential URL is read only at the explicitly enabled client seam and is never echoed/logged.
     webhook_url = os.getenv("EQUITY_OPPORTUNITY_WEBHOOK_URL") if enable_live else None
     try:
@@ -369,6 +386,49 @@ def tracking_deliver(
         typer.secho(f"Delivery was not completed ({type(exc).__name__}).", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from exc
     typer.echo(result.model_dump_json(indent=2))
+
+
+@tracking_app.command("shadow")
+def tracking_shadow(
+    as_of: Annotated[str | None, typer.Option("--as-of", help="Aware ISO-8601 paper clock; defaults to the current UTC time")] = None,
+    rounds: Annotated[int, typer.Option("--rounds", min=1, max=30, help="Bounded delivery rounds to rehearse against the local sink")] = 1,
+    scan: Annotated[bool, typer.Option("--scan/--no-scan", help="Scan stored data once before the delivery rounds")] = True,
+    require_strict_coverage: Annotated[
+        bool,
+        typer.Option(
+            "--require-strict-coverage",
+            help="Apply the live-scan readiness gate; refuse a non-source_clock basis such as vendor_events_no_clock",
+        ),
+    ] = False,
+    watchlist: Annotated[Path | None, typer.Option("--watchlist", help="Private YAML path used for readiness and revalidation")] = None,
+    ticker_config: Annotated[Path | None, typer.Option("--ticker-config", help="Exact active source ticker configuration YAML")] = None,
+    signal_config: Annotated[Path | None, typer.Option("--config", help="Exact signal config used by the readiness-first scan")] = None,
+    lake_dir: Annotated[Path | None, typer.Option("--lake-dir", help="Medallion lake root read by the scan and the coverage gate")] = None,
+    data_dir: Annotated[Path | None, typer.Option("--data-dir", help="Auxiliary data root for the outbox and shadow receipts")] = None,
+) -> None:
+    """Rehearse the outbox delivery loop offline against a local in-memory sink; never sends."""
+    tracking = import_module("equity_lake.signals.tracking")
+    try:
+        clock = _parse_aware_datetime(as_of) if as_of is not None else None
+        with _json_diagnostics_to_stderr():
+            report = tracking.run_paper_shadow(
+                now=clock,
+                rounds=rounds,
+                scan=scan,
+                require_strict_coverage=require_strict_coverage,
+                watchlist_file=watchlist,
+                ticker_config_path=ticker_config,
+                signal_config_path=signal_config,
+                lake_dir=lake_dir,
+                data_dir=data_dir,
+            )
+    except Exception as exc:
+        typer.secho(f"Paper shadow did not run ({type(exc).__name__}).", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(report.model_dump_json(indent=2))
+    if report.status == "blocked":
+        typer.secho(f"Paper shadow refused: {report.refusal or report.reason}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
 
 
 def _parse_iso_date(value: str, option_name: str) -> date:
