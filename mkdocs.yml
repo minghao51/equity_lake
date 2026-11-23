@@ -66,6 +66,7 @@ nav:
       - Conventions: developer/architecture/CONVENTIONS.md
       - Auto-Backfill and Gap Detection: developer/architecture/auto-backfill-and-gap-detection.md
       - Catalog Subsystem: developer/architecture/catalog-subsystem.md
+      - Residual Specification and Implementation Plan: plans/20261122-01-residual-spec-and-implementation-plan.md
       - Research Protocols (R00): developer/architecture/research-protocols.md
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
       - Project Structure: developer-guide/project-structure.md

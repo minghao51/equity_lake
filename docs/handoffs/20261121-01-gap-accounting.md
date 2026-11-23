@@ -1,6 +1,14 @@
 # Gap accounting — what actually remains (2026-11-21)
 
 **Recorded:** 2026-11-21
+
+> **Residual queue superseded — 2026-11-22.** Use the
+> [residual specification and implementation plan](../plans/20261122-01-residual-spec-and-implementation-plan.md)
+> for current tasks. The “one decision, no implementation work” summary below is historical:
+> subsequent inspection found a broken Pages cron check, an independent competing catalog
+> deployment, and unverified R00 controls/scale evidence. This record preserves prior outcomes,
+> not a claim that those newly identified gaps are complete.
+
 **Supersedes:** [20261120-01-complete-remaining-stages](20261120-01-complete-remaining-stages.md)
 as the entry point. That record closed its own six stages; this one accounts for what is
 left afterwards and corrects the documentation that still pointed at spent work.

@@ -11,19 +11,23 @@ When guidance conflicts, follow the order defined in `AGENTS.md`: enforced
 contracts first, then accepted decision records in `decisions/`, then these
 architecture pages and guides.
 
-## Current status — 2026-11-21
+## Current plan — 2026-11-22
 
-Every stage in the plan queue is closed except one decision: **H00 publication**. The
-sanitized page is built and reviewed `PASS` and is **not published**; publication needs a
-decided publish path (the Pages workflow deploys the dashboard, not the H00 artifact) plus an
-explicit approval. No implementation stage is open, and R02 (the one ML experiment) came back
-negative and promoted nothing. The specification's [§11 disposition](plans/20261102-01-portfolio-and-research-implementation-spec.md#11-remaining-item-disposition-2026-11-21)
-classifies every remaining item; the older review registers were reconciled against the code
-on 2026-11-21 and closed out on 2026-11-22, so no register item is left unassigned.
+Start with the [residual specification and implementation plan](plans/20261122-01-residual-spec-and-implementation-plan.md).
+It accounts for publication, private-ledger recovery, research evidence, source qualification,
+non-US slices, dividends, notification activation and fresh-clone setup. Its stages are
+**planned, not implemented**; external account/source/endpoint inputs are named explicitly.
+No live operation is performed by drafting the plan.
 
-Before proposing new work, read the [gap accounting record](handoffs/20261121-01-gap-accounting.md) —
-it separates the one real gap from environment deltas (git-ignored `data/`, optional `.env`
-keys, the dependency groups the gates need) that are not defects.
+The earlier claim that only an approval remained was too broad: the Pages workflow still
+runs a cron-sync check after removing its cron, the independent catalog deployment can
+replace the same site, and R00 protocol controls do not establish measured controls/scale
+evidence. The new plan assigns those gaps without reopening accepted data boundaries.
+H00 remains unpublished and R02 remains negative with `promoted=false`.
+
+The [prior specification](plans/20261102-01-portfolio-and-research-implementation-spec.md)
+and [gap accounting record](handoffs/20261121-01-gap-accounting.md) preserve the delivered
+scope and historical evidence; the new plan governs the residual queue.
 
 ## Continuation record — 2026-11-07 (historical)
 
@@ -87,7 +91,7 @@ rerun for this update and are not production-data-integrity proof.
 
 ## Start Here
 
-- Current status and remaining gaps: [gap accounting — 2026-11-21](handoffs/20261121-01-gap-accounting.md) and the [implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) §2 queue / §10 ledger — portfolio accounting, row-bound price-origin provenance, the real-source slice and the R01/R02 research evidence are all delivered; gate records: [ADR-0024 private portfolio ledger](decisions/0024-private-portfolio-ledger-and-accounting.md), [ADR-0025 research evidence](decisions/0025-immutable-research-evidence-and-run-manifests.md), [ADR-0026 portfolio projections](decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md), [ADR-0027 price-origin provenance](decisions/0027-row-bound-price-source-provenance.md), [ADR-0032 adjusted-read coverage basis](decisions/0032-adjusted-read-basis-for-vendor-sourced-slices.md), [ADR-0033 proven-empty action scopes](decisions/0033-proven-empty-corporate-action-scopes.md) and [ADR-0034 vendor-stamped ML research](decisions/0034-vendor-stamped-ml-research-with-disclosure.md)
+- Current residual work: [specification and implementation plan — 2026-11-22](plans/20261122-01-residual-spec-and-implementation-plan.md); delivered-scope evidence: [gap accounting](handoffs/20261121-01-gap-accounting.md) and the [prior implementation specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) §2 queue / §10 ledger — portfolio accounting, row-bound price-origin provenance, the real-source slice and the R01/R02 research evidence are all delivered; gate records: [ADR-0024 private portfolio ledger](decisions/0024-private-portfolio-ledger-and-accounting.md), [ADR-0025 research evidence](decisions/0025-immutable-research-evidence-and-run-manifests.md), [ADR-0026 portfolio projections](decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md), [ADR-0027 price-origin provenance](decisions/0027-row-bound-price-source-provenance.md), [ADR-0032 adjusted-read coverage basis](decisions/0032-adjusted-read-basis-for-vendor-sourced-slices.md), [ADR-0033 proven-empty action scopes](decisions/0033-proven-empty-corporate-action-scopes.md) and [ADR-0034 vendor-stamped ML research](decisions/0034-vendor-stamped-ml-research-with-disclosure.md)
 - New users: [Getting Started](getting-started/quickstart.md)
 - Operators: [Pipeline Usage](user-guide/pipeline.md) — commands, config, scheduling
 - Ingestion details: [Ingestion](user-guide/ingestion.md) — sources, destinations, retries, and recovery
@@ -98,7 +102,7 @@ rerun for this update and are not production-data-integrity proof.
 - CLI operators: [CLI Reference](user-guide/20260406-cli-reference.md)
 - Private tracking: [Canonical watchlists, readiness, events, and delivery](user-guide/20261016-private-tracking-preview.md) — implementation/offline-contract review accepted; loopback-only API/UI and disabled-by-default delivery
 - Private console: [Loopback-only P03 console](user-guide/20261107-private-console.md) — Portfolio, Data Readiness, Research Runs and Signals; display-only, one configured private path, never exported
-- Private portfolio: [Canonical CSV import, projections and reconciliation](user-guide/20261103-private-portfolio-ledger.md) — `equity portfolio import|positions|summary|reconcile`: canonical CSV, idempotent atomic commits, dry-run that writes nothing, stored book-mark valuation with exact-venue staleness, and statement reconciliation; no mark producer or backup is implemented
+- Private portfolio: [Canonical CSV import, projections and reconciliation](user-guide/20261103-private-portfolio-ledger.md) — `equity portfolio import|positions|summary|reconcile`: canonical CSV, idempotent atomic commits, dry-run that writes nothing, stored book-mark valuation with exact-venue staleness, and statement reconciliation; verified manual backup, migration, restore and compaction are implemented; no automatic mark producer or remote backup
 - Forecast provenance: [ML availability and provenance](user-guide/20261016-ml-availability-and-provenance.md) — point-in-time proof, refit cutoffs, and remaining source-availability gates
 - Read API: [Private/local API operation](user-guide/20260811-read-api.md) — exposure consent and limits
 - Static hosting: [Dashboard Hosting](user-guide/20260406-dashboard-hosting.md)
@@ -118,11 +122,11 @@ rerun for this update and are not production-data-integrity proof.
 - [developer/architecture/](developer/architecture/) for system design and subsystem docs
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
-- [handoffs/](handoffs/) for task handoffs and next-agent specifications — **start with [20261118-01](handoffs/20261118-01-implement-adr0032.md)** — ADR-0032 is accepted and unimplemented, and that is the next stage (then R00 → first real-root feature run → R01/R02 → H00 build → commit), with the state, the traps and paste-ready prompts; [20261117-01](handoffs/20261117-01-post-d01-landing.md) carries the landing state it supersedes; [20261116-01](handoffs/20261116-01-next-agent-d01-landing.md) is the pre-landing plan it supersedes; [20261115-01](handoffs/20261115-01-next-agent-d01-landing.md) carries the round-1/round-2 review narrative it supersedes; [20261107-05](handoffs/20261107-05-next-agent-remaining-tasks.md) remains the E01-6/P03 history it records; [20261107-01](handoffs/20261107-01-portfolio-projections-and-open-items.md) for the current queue, the uncommitted E01b/E01c state and the P02 pickup; [20261106-01](handoffs/20261106-01-research-readers-and-portfolio-pickup.md) is the spent E01b specification that E01b.1/b.2/E01c were implemented from; [20261102-01](handoffs/20261102-01-portfolio-and-research-pickup.md) preserves the initial approval/worker protocol; [20261031-01](handoffs/20261031-01-next-thread-and-r12-watch.md) preserves accepted closure decisions, the R12 watch and the traps; [20261030-01](handoffs/20261030-01-postpreload-findings-and-remaining-issues.md) is the closed R1–R13 register, [20261030-02](handoffs/20261030-02-row-bound-forecast-provenance-implementation.md) records ADR-0021 implementation and [20261029-01](handoffs/20261029-01-demo-preload-and-audit-followups.md) the closed demo-preload work
+- [handoffs/](handoffs/) for cross-thread records; the [20261121 gap accounting](handoffs/20261121-01-gap-accounting.md) preserves prior outcomes, while the [20261122 residual plan](plans/20261122-01-residual-spec-and-implementation-plan.md) is the current work queue. Earlier pickup instructions are historical, not pending implementation.
 - [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
 - [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts
-- [Current product implementation plan](plans/20261102-01-portfolio-and-research-implementation-spec.md) for the approval-gated portfolio/research task queue
+- [Current residual implementation plan](plans/20261122-01-residual-spec-and-implementation-plan.md) for the ordered follow-up queue; [prior product specification](plans/20261102-01-portfolio-and-research-implementation-spec.md) for delivered-scope contracts and stage evidence
 - [Portfolio showcase roadmap](plans/20260804-portfolio-roadmap.md) for the earlier career-portfolio/showcase context; the current product plan above governs this new work (the archived `technical_roadmap.md` and its coverage map remain superseded — see `archive/`)
 
 ## Notes

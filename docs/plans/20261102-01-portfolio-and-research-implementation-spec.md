@@ -1,7 +1,15 @@
 # Portfolio and Research — Implementation Plan and Specification
 
 **Recorded:** 2026-11-02
-**Status (updated 2026-11-21):** Active specification and outcome ledger. Every
+
+> **Residual queue superseded — 2026-11-22.** The
+> [residual specification and implementation plan](20261122-01-residual-spec-and-implementation-plan.md)
+> governs new work. Historical completion statements below are not proof of every originally
+> required run: R00's protocol implementation is delivered, but controls/scale evidence needs
+> reconciliation. The new plan also covers the broken Pages cron check and competing catalog
+> deployment. Accepted contracts and recorded results below remain binding.
+
+**Historical status (2026-11-21):** Delivered-scope specification and outcome ledger. Every
 stage in the §2 queue is closed for its recorded scope except H00 publication,
 which needs one explicit owner approval; no implementation stage is open. R02
 was negative and promoted nothing. What remains is in the
@@ -9,8 +17,9 @@ was negative and promoted nothing. What remains is in the
 **Purpose:** Personal portfolio monitoring and a defensible raw-data → structured-data
 → features → research → optional ML-signal workflow.
 **Evidence:** [A01–A11 audit](../finding/20261102-product-readiness-audit.md).
-**Execution:** [Gap accounting — 2026-11-21](../handoffs/20261121-01-gap-accounting.md)
-(current), and the [completion handoff](../handoffs/20261120-01-complete-remaining-stages.md)
+**Execution:** [Residual plan — 2026-11-22](20261122-01-residual-spec-and-implementation-plan.md)
+(current); [gap accounting — 2026-11-21](../handoffs/20261121-01-gap-accounting.md)
+(previous reconciliation), and the [completion handoff](../handoffs/20261120-01-complete-remaining-stages.md)
 (closed 2026-11-21). The
 [original Nov02 pickup](../handoffs/20261102-01-portfolio-and-research-pickup.md)
 is historical. §10 records approvals, reviews and outcomes; §2 is the current queue.
@@ -74,7 +83,7 @@ and dependency groups in the pickup thread; never copy historical counts as new.
 | P02 | Positions, cash, marks, P&L, reconciliation and three read CLI commands | P01a/P01b | Approved bounded fixture-only plan under ADR-0024/§5.3 | Complete: `positions`/`summary`/`reconcile`, ADR-0026 precision marks |
 | D01 | Authorized US raw/unadjusted data slice | D00 | ADR-0028/0029/0030 accepted; raw reconstruction at the write boundary | Complete: 11 tickers / 58,653 rows in `data/lake_real/`; demo root and catalog byte-identical |
 | P03 | Private Streamlit portfolio/readiness console | P02 | Approved private UI scope; display-only, loopback bind | Complete: four reviewed stages plus two closed follow-ups |
-| R00 | Synthetic controls and computational scale benchmark | F04, completed E01 | Frozen experiment and numeric resource budget, §7 | Complete: `backtesting/protocol.py` freeze/refuse controls |
+| R00 | Synthetic controls and computational scale benchmark | F04, completed E01 | Frozen experiment and numeric resource budget, §7 | Protocol freeze/refuse controls delivered; measured positive/null/leakage and 5/50/200 scale evidence unverified; follow-up RS-R01 in the residual plan |
 | R01 | Real-data baseline strategy evidence | R00, D01 | Frozen universe/window/holdout/costs; owner-approved scope | Complete: protocol v3 `e5387297…`, pre-holdout +22.79% / Sharpe 1.49 / 229 trades |
 | R02 | Incremental ML experiment, not deployment/refitting | R01 | ADR-0034 accepted: vendor-stamped research with mandatory disclosure | Complete and negative: `promoted=false`, 1/5 criteria; nothing promoted |
 | H00 | Single sanitized public Pages deployment | E01 | Owner decisions adopted 2026-11-21; publication still needs its own approval | Built, reviewed PASS, **not published**; Pages workflow is manual dispatch only |
@@ -468,10 +477,10 @@ local ingestion time. No operational readiness if the selected proof is blocked.
 
 ## 7. R00–R02 — Evidence gates before ML operations
 
-> **Status 2026-11-21: closed.** R00 shipped the freeze/refuse controls, R01 produced the
-> frozen-protocol baseline, and R02 ran once under ADR-0034 and came back negative with
-> `promoted=false`. The text below is the binding contract those stages ran under; the
-> disposition of what remains is §11.
+> **Reconciled 2026-11-22.** R00 shipped freeze/refuse controls, not evidence of every
+> control/scale run required below. RS-R01 in the residual plan inventories and closes that
+> evidence debt. R01 produced the frozen-protocol baseline, and R02 ran once under ADR-0034
+> and came back negative with `promoted=false`; those outcomes are unchanged.
 
 ### R00: offline harness controls and computational scale
 
@@ -2304,6 +2313,10 @@ Next eligible stage: none. H00 publication is the single owner-gated decision, a
 ```
 
 ## 11. Remaining-item disposition (2026-11-21)
+
+> **Historical disposition.** The [20261122 residual plan](20261122-01-residual-spec-and-implementation-plan.md)
+> supersedes this queue and its concluding “none” statement. Invariants remain unchanged;
+> implementation gaps and evidence debt now have explicit follow-up stages.
 
 Every item that this specification ever left open is classified here, once, so no later
 reader has to infer a status from a historical entry. Four dispositions are used: **closed**,
