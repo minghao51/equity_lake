@@ -517,14 +517,21 @@ def test_import_help_states_the_frozen_exit_contract() -> None:
 
 
 def test_only_import_the_read_reports_and_the_explicit_ledger_mechanisms_are_registered() -> None:
-    """The frozen surface: import, the three P02 read reports and the three explicit
-    ledger mechanisms (migrate, restore, compact — ADR-0031 decisions 2, 4 and 5).
+    """The frozen surface: import, the three P02 read reports and the four explicit
+    ledger mechanisms (migrate, restore, compact — ADR-0031 decisions 2, 4 and 5 — and
+    backup/backups — ADR-0031 decision 3, authorized by the residual plan's RS-P02).
 
-    Falsified by: adding a portfolio command that is not one of these eight; mechanisms are
+    The two backup commands are added here deliberately, not by convenience: ADR-0031
+    decision 3 requires a manual, locally verified backup export with manual retention and
+    explicitly introduces no scheduled, remote or cloud backup; RS-P02 §2.5 delivers only
+    that in-contract posture (a report-only inventory plus the manual export) and forbids
+    backup-file pruning and off-host/encrypted export, which need their own new ADR.
+
+    Falsified by: adding a portfolio command that is not one of these nine; mechanisms are
     added by a decision, never by convenience.
     """
     registered = {command.name for command in portfolio_app.registered_commands}
-    expected = {"import", "positions", "summary", "reconcile", "migrate", "restore", "compact"}
+    expected = {"import", "positions", "summary", "reconcile", "migrate", "restore", "compact", "backup", "backups"}
     assert registered == expected
     assert portfolio_app.registered_groups == []
 

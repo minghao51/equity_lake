@@ -30,10 +30,38 @@ database with `0600` permissions.
 private ledger cannot be committed by default. Do not special-case it open, and
 do not copy it into an export, a dashboard build, a notebook output or a public
 page. Backup is **manual and verified** (P00-4, [ADR-0031](../decisions/0031-p00-4-ledger-backup-restore-migration-compaction.md)):
-`equity portfolio migrate` writes a verified exact-file copy before it touches anything, and
+`equity portfolio migrate` writes a verified exact-file copy before it touches anything,
+`equity portfolio backup --apply` exports one into a private directory of your choice,
+`equity portfolio backups` inventories such a directory read-only, and
 `equity portfolio restore` / `equity portfolio compact` verify before they replace or rebuild.
-There is no automated, scheduled or remote backup, and none is authorized. All three are
+There is no automated, scheduled or remote backup, and none is authorized. All of them are
 report-only by default.
+
+## Retention invariant: everything is kept, nothing runs automatically
+
+This is the retention rule the ledger is built on, and it is not a policy that a later
+command may quietly change:
+
+- **Every ledger event is retained.** There is no retention window, no expiry, no pruning and
+  no deletion of events. A correction is an explicit reversal/repair event, never an edit or a
+  removal (ADR-0024 decision 5), and no command in this page deletes an event or a row.
+- **Backup files are never pruned.** Exported `.bak` files accumulate until you remove one
+  yourself. Automatic deletion, rotation, age-out or "keep the newest N" housekeeping is a
+  **separate future housekeeping decision with its own ADR**; nothing implements it today, and
+  `equity portfolio backups` only lists and verifies — it never deletes.
+- **Off-host, encrypted and cloud export is out of contract.** ADR-0031 decision 3 introduces
+  no remote or cloud backup, so any encrypted off-host export or drill needs a **new ADR**
+  (and a real destination chosen by the operator) before it may be implemented or operated.
+  A local drill on an isolated copy is in contract; shipping a copy off this machine is not.
+- **In-place `VACUUM` is a documented non-goal.** `VACUUM INTO` a fresh verified file
+  (`equity portfolio compact`) is the supported compaction form. In-place `VACUUM` is not
+  implemented because there is no measured need for it — not because writer exclusion is
+  impossible; if a measured need appears, ADR-0031 decision 5's conditions (verified backup in
+  place, positive exclusive-writer evidence, 2× free space) apply. Compaction is never a
+  retention step: it preserves the record and deletes nothing.
+- **Nothing runs automatically.** No scheduler, timer, hook or background task backs up,
+  migrates, restores, compacts or deletes the ledger. Each mechanism needs an explicit command
+  and, for the private `--apply` form, your own instruction.
 
 ## Canonical CSV: the only accepted input
 
@@ -177,6 +205,81 @@ main,fixture,evt-0002,SPLIT,2024-06-10T13:30:00Z,2024-06-10T13:30:00Z,2,us_equit
 
 Broker aliases (`STOCK_SPLIT`, `REVERSE_SPLIT`, `QUANTITY_ADJUSTMENT`, …) are still
 rejected: a ratio convention is never guessed.
+
+## Backup export, inventory and the recovery drill (RS-P02)
+
+ADR-0031 decision 3 defines a backup as an exact-file copy taken in a no-writer window and
+accepted only after all five checks pass (file SHA-256 recorded, read-only open, expected
+`schema_version`, matching row count, every `content_digest` recomputed). RS-P02 delivers that
+local posture with two commands and one documented drill:
+
+```bash
+# Plan only: verifies the ledger and prints what would be written. Writes nothing at all.
+uv run equity portfolio backup --output-dir ~/private-ledger-backups
+
+# Write a verified copy named <ledger>.<utc>.v<version>.bak into that private directory.
+uv run equity portfolio backup --output-dir ~/private-ledger-backups --apply
+
+# Read-only inventory of the directory: name, size, mtime, schema version, rows, digest, verdict.
+uv run equity portfolio backups --directory ~/private-ledger-backups
+```
+
+What `backup --apply` guarantees:
+
+- the directory is created with `0700` only when it is missing, and the copy has mode `0600`;
+- the copy is written under a temporary name, verified against its source, and only then
+  renamed into place, so a damaged copy never wears a backup name;
+- an existing backup name is never overwritten — a same-second collision, or a file you put
+  there yourself, refuses the export instead of replacing it;
+- the ledger itself is not modified, moved or compacted, and the report prints the source
+  SHA-256, row count and record digest beside the copy's;
+- it refuses a missing, locked (busy) or corrupt ledger, an unsupported schema version, a
+  rollback journal beside the ledger, and a destination that is a symlink or not a directory.
+
+What `backups` guarantees: it is a listing, not a housekeeping tool. Each `.bak` entry is
+opened read-only and re-verified; a candidate that fails is reported as **refused** and the
+command exits `1`, so a damaged recovery point is loud instead of silent. Symlinks,
+sub-directories and files whose name is not a ledger backup name are reported as *skipped* and
+never opened. Nothing is created, modified or deleted, and a missing directory is reported as
+absent rather than created. Skipped entries do not change the exit code; a refused backup does.
+
+### Recovery points across migration
+
+The v1 -> v2 upgrade already writes its own recovery point: `equity portfolio migrate --apply`
+first writes `<ledger>.<utc>.v1.bak` beside the ledger and verifies it, and only then rebuilds.
+That file is the pre-migration record byte for byte, and it stays the reversal because there is
+no down-migration. `equity portfolio restore` accepts only the implemented schema version, so a
+v1 point is reversed by copying it back into place as an exact file (or by restoring a v2 copy
+taken later), not by `restore`.
+
+Do **not** run `migrate --apply` merely to obtain a backup: on a current ledger it is a
+verifying no-op that writes no backup at all. Take a recovery point with
+`equity portfolio backup --apply`, which works on the current ledger and names what it verified.
+
+### The drill (local, on isolated copies)
+
+Run this before trusting any backup. The ledger path in angle brackets is the one you exported;
+the drill never writes to the live ledger:
+
+```bash
+# 1. Export a verified point; the command prints the source SHA-256 it verified.
+uv run equity portfolio backup --output-dir ~/drill-backups --apply
+
+# 2. Inventory it: it must show "verified" with the row count the export reported.
+uv run equity portfolio backups --directory ~/drill-backups
+
+# 3. Compare the copy with a restore into an isolated empty target — never the live ledger.
+cmp <ledger>.<utc>.v<version>.bak ~/drill/portfolio.sqlite3 && diff -q <ledger>.<utc>.v<version>.bak ~/drill/portfolio.sqlite3
+
+# 4. Prove the isolated copy is a working ledger, then re-hash the live one.
+uv run equity portfolio summary --as-of <instant> --marks marks.json
+sha256sum <ledger>
+```
+
+`tests/unit/test_portfolio_backup.py::TestRecoveryDrill` runs the same procedure against
+`tmp_path` only: a verified export restored into an empty isolated target reproduces the source
+SHA-256 and the replay fingerprint (cash, per-instrument quantities and the replayed event
+count), the restored copy appends new events, and the production-side ledger hash is unchanged.
 
 ## What `--dry-run` guarantees
 
@@ -422,10 +525,18 @@ they are not the Bronze price-source provenance of ADR-0027.
 - No FX or multi-currency totals, no short/margin events.
 - No automatic backup or compaction and no reset. Every ledger mechanism is explicit and
   report-only by default: `equity portfolio migrate` (verified backup before the rebuild),
+  `equity portfolio backup` (verified local export into a private directory you choose),
+  `equity portfolio backups` (read-only inventory of such a directory),
   `equity portfolio restore` (verify candidate, back up the current file, atomic replace,
   re-verify) and `equity portfolio compact` (`VACUUM INTO`, record-preserving post-conditions) —
   all P00-4/ADR-0031, and nothing is ever backed up, migrated, compacted or deleted
   automatically.
+- No encrypted, off-host, remote or cloud export or drill, and no backup-file pruning: the
+  local verified copy and the read-only inventory above are the whole in-contract posture
+  (RS-P02). Off-host/encrypted export needs a new ADR and a real destination first; backup-file
+  pruning is a separate housekeeping decision with its own ADR.
+- No `VACUUM` in place: `VACUUM INTO` through `equity portfolio compact` is the supported form,
+  and in-place `VACUUM` is a documented non-goal rather than pending work.
 - No private console or hosted view (P03), no broker API, no automatic ingestion or
   backfill, and no scheduler.
 

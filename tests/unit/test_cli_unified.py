@@ -233,6 +233,24 @@ class TestPortfolioSubcommands:
         assert "no down-migration" in result.stdout
         assert "Exit codes" in result.stdout
 
+    def test_portfolio_backup_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "backup", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "--output-dir" in result.stdout
+        assert "--apply" in result.stdout
+        # RS-P02 / ADR-0031 decision 3: report-only default, local copy only, no pruning.
+        assert "writes nothing" in result.stdout
+        assert "off-host" in result.stdout
+        assert "pruning" in result.stdout
+        assert "Exit codes" in result.stdout
+
+    def test_portfolio_backups_help(self) -> None:
+        result = runner.invoke(app, ["portfolio", "backups", "--help"], env={"COLUMNS": "200"})
+        assert result.exit_code == 0
+        assert "--directory" in result.stdout
+        assert "read-only" in result.stdout
+        assert "Exit codes" in result.stdout
+
 
 class TestDemoSubcommands:
     def test_demo_seed_help(self) -> None:

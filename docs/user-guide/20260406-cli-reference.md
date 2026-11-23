@@ -21,7 +21,7 @@ logging, and mutating commands accept `--dry-run` to simulate without writes.
 | Unstructured & news | `news`, `sentiment`, `transcripts`, `ratings`, `sec`, `financials` |
 | Intelligence & ML | `forecast`, `ml compare`, `ml ablate`, `ml train` |
 | Analysis | `query`, `signal scan`, `signal history`, `tracking`, `backtest`, `arena run`, `report backtest` |
-| Private portfolio | `portfolio import`, `portfolio positions`, `portfolio summary`, `portfolio reconcile` |
+| Private portfolio | `portfolio import`, `portfolio positions`, `portfolio summary`, `portfolio reconcile`, `portfolio backup`, `portfolio backups` |
 | Maintenance & ops | `monitor`, `delta-vacuum`, `delta-compact`, `delta-migrate`, `catalog-generate`, `dashboard build`, `dashboard serve` |
 | Config & validation | `config show`, `config get`, `config validate`, `config export`, `validate check`, `validate profile`, `validate drift` |
 | Utilities | `doctor`, `bootstrap sample`, `demo seed`, `api serve` |
@@ -527,6 +527,32 @@ Exit codes: `0` only for a complete result (for `reconcile`: every line matched)
 `1` for required unavailability, a mismatch, or invalid input. Partial reports stay
 visible, and a nonzero exit never means they were complete. Private values appear
 only in the requested local report, never in error text.
+
+`equity portfolio backup --output-dir <private-dir> [--apply]` is the manual local
+backup of ADR-0031 decision 3 (RS-P02). It is report-only by default: the ledger is
+verified, the destination name is printed and nothing at all is written — no
+directory, no file, no journal. `--apply` writes a verified exact-file copy named
+`<ledger>.<utc>.v<version>.bak` into the directory (created `0700` when missing), mode
+`0600`, under a temporary name that is verified against its source and only then
+renamed into place. An existing backup name is never overwritten and the ledger
+itself is not modified. It refuses a missing, locked, corrupt or unsupported-version
+ledger, a rollback journal beside it, and a destination that is a symlink or not a
+directory. This is a local copy only: there is no scheduled, remote, encrypted,
+off-host or cloud export and no backup-file pruning, both of which need a new ADR.
+
+```bash
+uv run equity portfolio backup --output-dir ~/private-ledger-backups            # plan only: writes nothing
+uv run equity portfolio backup --output-dir ~/private-ledger-backups --apply    # verified .bak copy
+uv run equity portfolio backups --directory ~/private-ledger-backups            # read-only inventory
+```
+
+`equity portfolio backups --directory <private-dir>` lists `.bak` candidates
+read-only, each with its name, size, modification time, schema version, row count,
+digest and verification result. A tampered or unreadable candidate is reported as
+**refused** (and exits `1`): it is not a recovery point until a fresh verified
+export replaces it. Symlinks, sub-directories and files that are not ledger backups
+are listed as skipped and never opened, nothing is created or deleted, and a missing
+directory is reported as absent rather than created.
 
 See the [private portfolio guide](20261103-private-portfolio-ledger.md) for the
 canonical CSV, the stored mark JSON, the staleness rule and the accounting

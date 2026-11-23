@@ -347,6 +347,134 @@ def portfolio_compact(
     )
 
 
+# --- verified backup export and backup inventory (RS-P02, ADR-0031 decision 3) -------
+
+
+@portfolio_app.command("backup")
+def portfolio_backup(
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            help="Private local directory to write the verified exact-file copy into (created 0700 with --apply only; never a shared or public path)",
+        ),
+    ],
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--report-only",
+            help="Write and verify the copy; the default reports the plan and writes nothing at all",
+        ),
+    ] = False,
+) -> None:
+    """Export a verified exact-file backup of the private ledger (ADR-0031 decision 3).
+
+    Report-only by default: the ledger is verified, the destination name is computed and
+    printed, and nothing at all is written — no directory, no file, no temporary file, no
+    journal.
+
+    ``--apply`` writes a copy named ``<ledger>.<utc>.v<version>.bak`` into ``--output-dir``
+    (created with ``0700`` when missing), mode ``0600``, under a temporary name that is
+    verified against its source and only then renamed into place. The row count and record
+    digest must match the source, an existing backup name is never overwritten, and the
+    ledger itself is not modified, moved or compacted.
+
+    This is a local copy only. There is no scheduled, remote, encrypted, off-host or cloud
+    export and no backup-file pruning: both need a new decision (and their own ADR) before
+    they may be implemented. Nothing here deletes an event or a backup.
+
+    Exit codes: 0 when a report is produced or the verified copy is written and re-verified;
+    1 when the ledger is missing, locked, corrupt, of an unsupported version, has a rollback
+    journal beside it, when the destination is a symlink or not a directory, or when the copy
+    does not match its source. A failed export leaves no backup file behind.
+    """
+    from equity_lake.portfolio.store import LedgerStoreError, export_verified_backup, portfolio_db_path
+
+    try:
+        report = export_verified_backup(Path(output_dir), portfolio_db_path(), apply=apply)
+    except LedgerStoreError as exc:
+        typer.secho(f"portfolio backup: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    typer.echo(f"Ledger {report.filename} (schema v{report.schema_version}): {report.size_bytes} bytes, {report.row_count} row(s)")
+    typer.echo(f"  record digest: {report.record_digest}")
+    typer.echo(f"  source sha256: {report.sha256}")
+    typer.echo(f"  destination: {report.directory}{'' if report.directory_exists else ' (created 0700 by --apply)'}")
+    if not report.applied:
+        typer.echo(f"  --apply writes {report.filename}.<utc>.v{report.schema_version}.bak there, mode 0600, verified then renamed into place")
+        typer.echo("Report only: nothing was written (no directory, no file, no journal).")
+        return
+    typer.secho(f"Exported a verified backup: {report.backup_filename}", fg=typer.colors.GREEN)
+    typer.echo(f"  backup sha256: {report.backup_sha256}")
+    typer.echo("  the copy's row count and record digest match the source; the ledger itself was not modified.")
+    typer.echo("  local copy only: no off-host, encrypted or cloud export exists (a new ADR is required) and no backup is ever pruned.")
+
+
+@portfolio_app.command("backups")
+def portfolio_backups(
+    directory: Annotated[
+        Path,
+        typer.Option("--directory", help="Private directory to list read-only; symlinks and foreign files are reported and never read"),
+    ],
+) -> None:
+    """List the backup files in a private directory, read-only (ADR-0031 decision 3).
+
+    Each ``.bak`` entry is verified with the same five checks a backup must pass and reported
+    with its name, size, modification time, schema version, row count, digest and verification
+    result. A candidate that fails is reported as refused: it is not a recovery point until it
+    is replaced by a fresh verified export.
+
+    Nothing is created, read through a symlink, modified or deleted. A symlink, a directory
+    entry and any file whose name is not a ledger backup name are listed as skipped and never
+    opened, so an unrelated directory can be inspected safely. A missing directory is reported
+    as absent and is never created.
+
+    Exit codes: 0 when the directory exists and every ledger backup in it verifies (skipped
+    entries do not change the exit code); 1 when the directory is missing, is a symlink or not a
+    directory, or any backup fails verification.
+    """
+    from equity_lake.portfolio.store import LedgerStoreError, inventory_backups
+
+    try:
+        inventory = inventory_backups(Path(directory))
+    except LedgerStoreError as exc:
+        typer.secho(f"portfolio backups: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    if not inventory.exists:
+        typer.secho(f"portfolio backups: no directory at {inventory.directory}", fg=typer.colors.RED, err=True)
+        typer.secho(
+            "  this listing never creates a directory; export a backup with `equity portfolio backup --apply` first",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    refused = [candidate for candidate in inventory.candidates if not candidate.verified]
+    verified = len(inventory.candidates) - len(refused)
+    typer.echo(
+        f"Backups in {inventory.directory}: {len(inventory.candidates)} candidate(s), "
+        f"{verified} verified, {len(refused)} refused, {len(inventory.skipped)} skipped"
+    )
+    for candidate in inventory.candidates:
+        version = "-" if candidate.schema_version is None else f"v{candidate.schema_version}"
+        rows = "-" if candidate.row_count is None else str(candidate.row_count)
+        state = "verified" if candidate.verified else "refused"
+        typer.echo(f"  {candidate.filename}  {candidate.size_bytes} bytes  {candidate.modified_at}  {version}  {rows} row(s)  {state}")
+        if candidate.detail is not None:
+            typer.echo(f"    {candidate.detail}")
+    for skip in inventory.skipped:
+        typer.echo(f"  skipped {skip.filename}: {skip.reason}")
+    typer.echo("Read only: nothing was created, read through a symlink, modified or deleted.")
+    if refused:
+        typer.secho(
+            f"portfolio backups: {len(refused)} backup file(s) failed verification and are not recovery points",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
 # --- read commands (P02) -------------------------------------------------------------
 
 _MONEY_NOTE: Final[str] = "money is displayed in cents, half-even; quantities are shown exactly"
