@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.backtesting.protocol import ProtocolError, conformance_violations  # type: ignore[import-untyped]
+from equity_lake.backtesting.protocol import ProtocolError, conformance_violations, require_frozen_protocol  # type: ignore[import-untyped]
 from equity_lake.ml.r01_controls import (  # type: ignore[import-untyped]
     AGGREGATE_CEILING_SECONDS,
     CONTROL_UNIVERSE,
@@ -223,6 +223,15 @@ def test_freezing_r01_is_byte_reproducible_and_binds_the_preregistration(tmp_pat
 def test_an_unfrozen_protocol_refuses_the_run(tmp_path: Path) -> None:
     with pytest.raises(ProtocolError) as excinfo:
         run_controls(protocol_root=tmp_path)
+    assert "assumptions are absent" in str(excinfo.value)
+
+
+def test_a_foreign_frozen_protocol_cannot_stand_in_for_this_one(tmp_path: Path) -> None:
+    """Another experiment's frozen manifest never satisfies this run's freeze."""
+    freeze_r01_protocol(recorded_at=RECORDED_AT, root=tmp_path)
+    foreign = r01_protocol().model_copy(update={"experiment": "R01-unrelated-experiment"})
+    with pytest.raises(ProtocolError) as excinfo:
+        require_frozen_protocol(foreign, root=tmp_path)
     assert "assumptions are absent" in str(excinfo.value)
 
 

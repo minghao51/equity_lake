@@ -26,6 +26,7 @@ from equity_lake.ml.r01_scale import (  # type: ignore[import-untyped]
     scale_panel,
     scale_pipeline,
     scale_universe,
+    shipped_pool,
     three_year_sessions,
 )
 
@@ -109,6 +110,27 @@ def test_the_vectorised_economics_matches_the_reference_path() -> None:
     measured = scale_pipeline(panel)
     parity = economics_parity(panel, measured["decisions"])
     assert parity["equal_within_1e12"] is True
+
+
+def test_the_scale_universe_is_distinct_instruments_and_reaches_two_hundred() -> None:
+    pool = shipped_pool()
+    assert len(pool) == len(set(pool))
+    assert len(pool) == 104
+    for size in (5, 50, 200):
+        universe = scale_universe(size)
+        assert len(universe) == size
+        assert len(set(universe)) == size
+    assert scale_universe(5) == pool[:5]
+    assert scale_universe(200)[:104] == pool
+    assert scale_universe(200)[-1][1].startswith("SCALE")
+
+
+def test_a_measured_point_records_the_fixture_diagnostics() -> None:
+    point = run_scale_point(5, sessions=TINY_SESSIONS)
+    diagnostics = point["fixture_diagnostics"]
+    assert diagnostics["degenerate_paths"] == 0
+    assert diagnostics["price_floor"] > 0.0
+    assert "not interpretable" in point["economic_note"]
 
 
 def test_an_unfrozen_protocol_refuses_the_scale_sweep(tmp_path: Path) -> None:

@@ -1348,8 +1348,9 @@ MUTATIONS: tuple[MutationSpec, ...] = (
         name="leakage_1_label_maturity_rule",
         protected="append_after_cutoff_invariance",
         path="src/equity_lake/ml/r01_controls.py",
-        find='mature = pl.col("label").is_not_null() & pl.col("label_end_date").is_not_null() & (pl.col("label_end_date") <= pl.lit(cutoff))',
-        replace='mature = pl.col("label").is_not_null() & pl.col("label_end_date").is_not_null()',
+        find='    mature = pl.col("label").is_not_null() & pl.col("label_end_date").is_not_null() & (pl.col("label_end_date") <= pl.lit(cutoff))\n'
+        "    return featured.filter(mature)",
+        replace='    mature = pl.col("label").is_not_null() & pl.col("label_end_date").is_not_null()\n    return featured.filter(mature)',
         regression_test="tests/unit/test_r01_controls.py::test_leakage_control_1_append_after_cutoff_is_invariant",
     ),
     MutationSpec(
@@ -1394,8 +1395,8 @@ MUTATIONS: tuple[MutationSpec, ...] = (
         name="leakage_6_executable_bar_rule",
         protected="execution_lag_and_label_purge",
         path="src/equity_lake/ml/r01_controls.py",
-        find="    entry_session = index + 1",
-        replace="    entry_session = index",
+        find="    entry_session = index + 1\n    if entry_session >= len(opens):",
+        replace="    entry_session = index\n    if entry_session >= len(opens):",
         regression_test="tests/unit/test_r01_controls.py::test_leakage_control_6_execution_lag_and_purge_match_hand_math",
     ),
     MutationSpec(
@@ -1404,7 +1405,7 @@ MUTATIONS: tuple[MutationSpec, ...] = (
         path="src/equity_lake/backtesting/protocol.py",
         find="records = [record for record in load_frozen_protocols(root) if record.protocol.experiment == protocol.experiment]",
         replace="records = list(load_frozen_protocols(root))",
-        regression_test="tests/unit/test_r01_controls.py::test_an_unfrozen_protocol_refuses_the_run",
+        regression_test="tests/unit/test_r01_controls.py::test_a_foreign_frozen_protocol_cannot_stand_in_for_this_one",
     ),
     MutationSpec(
         name="refusal_over_budget_rule",
@@ -1442,7 +1443,13 @@ def run_mutation_proofs(*, root: Path | None = None, python: str | None = None) 
             records.append({"name": spec.name, "protected": spec.protected, "applied": False, "error": "mutation anchor is not unique"})
             continue
         shutil.copy2(target, backup)
-        record: dict[str, Any] = {"name": spec.name, "protected": spec.protected, "path": spec.path, "regression_test": spec.regression_test}
+        record: dict[str, Any] = {
+            "name": spec.name,
+            "protected": spec.protected,
+            "path": spec.path,
+            "regression_test": spec.regression_test,
+            "mutation": {"find": spec.find, "replace": spec.replace},
+        }
         try:
             target.write_text(original.replace(spec.find, spec.replace, 1), encoding="utf-8")
             completed = subprocess.run(
@@ -1469,10 +1476,21 @@ def run_mutation_proofs(*, root: Path | None = None, python: str | None = None) 
 # ---------------------------------------------------------------------------
 
 
+def _json_safe(value: Any) -> Any:
+    """Replace a non-finite float with ``null``: an unestimable value is absent, never a fake number."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 def _write_results(path: Path, payload: Mapping[str, Any]) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(dict(payload), indent=2, sort_keys=True, ensure_ascii=True, allow_nan=False) + "\n", encoding="utf-8")
+    target.write_text(json.dumps(_json_safe(dict(payload)), indent=2, sort_keys=True, ensure_ascii=True, allow_nan=False) + "\n", encoding="utf-8")
     return target
 
 
@@ -1494,6 +1512,11 @@ def _status(payload: Mapping[str, Any]) -> tuple[str, list[str]]:
     scale_status = str(scale.get("verification_status", "absent")) if isinstance(scale, Mapping) else "absent"
     if scale_status != "verified":
         reasons.append(f"scale evidence is {scale_status}")
+    proofs = [record for record in (payload.get("mutation_proofs") or []) if isinstance(record, Mapping)]
+    surviving = [str(record.get("name")) for record in proofs if not record.get("mutant_killed") or not record.get("restored_identical")]
+    if len(proofs) < len(MUTATIONS) or surviving:
+        reasons.append(f"mutation proofs incomplete or surviving: {surviving or 'missing records'}")
+        return "unverified", reasons
     if controls_verdict.get("censored") or scale_status != "verified":
         return "partially-verified", reasons
     if not controls_verdict.get("passed"):
@@ -1551,6 +1574,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from equity_lake.ml import r01_scale
 
         payload["scale"] = r01_scale.run_scale(protocol_root=protocol_root, budget=budget)
+    if arguments.mode == "all":
+        payload["mutation_proofs"] = run_mutation_proofs()
     status, reasons = _status(payload)
     payload["verification_status"] = status
     payload["status_reasons"] = reasons

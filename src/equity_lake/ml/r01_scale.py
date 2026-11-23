@@ -54,7 +54,7 @@ import numpy as np
 import polars as pl
 import structlog
 
-from equity_lake.devtools.seeding import TEST_DATA_TICKERS, business_days, synthetic_ohlcv
+from equity_lake.devtools.seeding import PRICE_FLOOR, TEST_DATA_TICKERS, business_days, synthetic_ohlcv
 from equity_lake.devtools.test_data import MARKET_CONFIGS, market_profile
 from equity_lake.ml.experiment import DECISION_THRESHOLD, HOLDING_SESSIONS, ROUND_TRIP_COST, _economic_summary, _strategy_returns
 from equity_lake.ml.r01_controls import (
@@ -173,8 +173,19 @@ def three_year_sessions() -> list[date]:
 
 
 def shipped_pool() -> list[tuple[str, str]]:
-    """The shipped ticker pools in a fixed order (44 + 36 + 25 = 105 instruments)."""
-    return [(market, ticker) for market in MARKET_CONFIGS for ticker in TEST_DATA_TICKERS[market]]
+    """The shipped ticker pools in a fixed order, de-duplicated (105 entries, 104 distinct).
+
+    ``TEST_DATA_TICKERS`` lists ``601988`` twice inside ``cn_ashare``; the pool is
+    de-duplicated so a scale size is a count of distinct instruments.
+    """
+    pool: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for market in MARKET_CONFIGS:
+        for ticker in TEST_DATA_TICKERS[market]:
+            if (market, ticker) not in seen:
+                seen.add((market, ticker))
+                pool.append((market, ticker))
+    return pool
 
 
 def scale_universe(size: int) -> list[tuple[str, str]]:
@@ -280,6 +291,31 @@ def _digest(frame: pl.DataFrame, columns: Sequence[str]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def fixture_diagnostics(panel: pl.DataFrame) -> dict[str, Any]:
+    """Fixture health: a synthetic price path that reaches the generator's floor is degenerate.
+
+    ``synthetic_ohlcv`` floors every price at :data:`~equity_lake.devtools.seeding.PRICE_FLOOR`,
+    so a path that collapses to the floor and rebounds produces enormous single-session returns.
+    The control fixture (five US instruments, one year) stays far from that; the 200-instrument
+    three-year scale fixture includes low-priced CN/HK names that do reach it. The economic
+    figure at such a point is recorded for completeness and is not interpretable, which is why
+    the pathology is counted here instead of hidden.
+    """
+    ordered = panel.sort([*_IDENTITY_KEYS, "date"]).with_columns(
+        (pl.col("close").shift(-1).over(_IDENTITY_KEYS) / pl.col("close") - 1.0).alias("session_return"),
+    )
+    lowest = panel.group_by(_IDENTITY_KEYS).agg(pl.col("close").min().alias("min_close"))
+    degenerate = lowest.filter(pl.col("min_close") <= PRICE_FLOOR * 2.0).height
+    min_close = panel["close"].min()
+    worst = ordered["session_return"].abs().max() if ordered.height else 0.0
+    return {
+        "degenerate_paths": degenerate,
+        "min_close": float(min_close) if isinstance(min_close, (int, float)) else 0.0,
+        "max_abs_single_session_return": float(worst) if isinstance(worst, (int, float)) else 0.0,
+        "price_floor": PRICE_FLOOR,
+    }
+
+
 def smallest_universe(decisions: pl.DataFrame) -> int:
     """The smallest number of instruments held on any decision session."""
     held = decisions.group_by("date").agg(pl.len().alias("held"))["held"].min()
@@ -323,8 +359,9 @@ def scale_pipeline(
     evaluation_sessions = sorted(set(decisions["date"].to_list()))
     returns = vectorised_strategy_returns(panel, decisions, sessions=evaluation_sessions)
     economics = _economic_summary(returns)
+    diagnostics = fixture_diagnostics(panel)
     return {
-        "instruments": panel["symbol"].n_unique(),
+        "instruments": panel.select(*_IDENTITY_KEYS).n_unique(),
         "sessions": len(sessions),
         "warmup_sessions": warmup_sessions,
         "decision_sessions": len(evaluation_sessions),
@@ -340,6 +377,7 @@ def scale_pipeline(
         "estimand": "mean_per_session_net_return (not the compounded net return)",
         "decisions": decisions,
         "returns": returns,
+        "diagnostics": diagnostics,
     }
 
 
@@ -461,6 +499,12 @@ def run_scale_point(
         "mean_per_session_net_return": measured["mean_per_session_net_return"],
         "compounded_net_return": measured["compounded_net_return"],
         "estimand": measured["estimand"],
+        "fixture_diagnostics": measured["diagnostics"],
+        "economic_note": (
+            "computational scale evidence only: the per-session net return is recorded beside the cost "
+            "measurement and is not economic evidence; a non-zero degenerate_paths count means the synthetic "
+            "fixture contains a path at the generator's price floor, so that figure is not interpretable"
+        ),
         "parity": feature_parity(panel, instruments=parity_instruments()),
         "censored": False,
     }
@@ -653,6 +697,7 @@ __all__ = [
     "ScaleError",
     "economics_parity",
     "feature_parity",
+    "fixture_diagnostics",
     "parity_instruments",
     "host_ram_bytes",
     "io_counters",
