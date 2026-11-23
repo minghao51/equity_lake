@@ -33,7 +33,7 @@ subclass backed by FinanceDataReader rather than the shared yfinance base. The v
 label therefore has to come from that adapter or the exact ticker config, and the
 identity mapping is explicit (`KRX` / `KOREA EXCHANGE` → `XKRX`,
 `core/instruments.py:47-48`); no ticker suffix is interpreted anywhere
-(`core/instruments.py:9-11`, `sources/base.py:208-270`).
+(`core/instruments.py:3-4`, `sources/base.py:210-270`).
 
 ## Verified present seams
 
@@ -52,7 +52,7 @@ identity mapping is explicit (`KRX` / `KOREA EXCHANGE` → `XKRX`,
 | Timezone | registry `Asia/Seoul`; `core/calendar.py:159` `market_timezone` | assertion on `str(market_timezone(...))` |
 | Session close clock | `core/calendar.py:116` `instrument_session_close` (UTC, exact venue session) | aware-close, exact-close and non-session assertions |
 | Column contract | `core/schemas.py:95` `STANDARD_COLUMNS` (`volume` is a plain integer); `ingestion/writers.py:253` `validate_schema` generic OHLCV branch requires `ticker, date, open, high, low, close, volume` | fixture passes; each dropped required field fails closed |
-| Instrument identity | `core/instruments.py:47-48` (`KRX` / `KOREA EXCHANGE` → `XKRX`), `:64` `MARKET_MICS["krx_equity"] == {"XKRX"}`; `:264` `prepare_source_identity_frame`; fetch-side `sources/base.py:208` `_attach_source_identity` | fixture states the venue label only; round-trip derives the MIC |
+| Instrument identity | `core/instruments.py:47-48` (`KRX` / `KOREA EXCHANGE` → `XKRX`), `:64` `MARKET_MICS["krx_equity"] == {"XKRX"}`; `:264` `prepare_source_identity_frame`; fetch-side `sources/base.py:210` `_attach_source_identity` | fixture states the venue label only; round-trip derives the MIC |
 | Catalog row | `catalog/datasets.py:237-244` `krx_equity_ohlcv` (bronze, path from `KRX_EQUITY_DIR`, `STANDARD_COLUMNS`) | unchanged by this stage (no catalog-affecting change) |
 | Real-root scope | `core/paths.py:170` `REAL_ROOT_PRICE_MARKETS == ("us_equity",)` | assertion — this market is not permitted there |
 
@@ -69,7 +69,7 @@ them instead of letting a consumer treat an absent rule as satisfied.
 | Price-limit band | `validation/schemas.py:61` `PriceDataSchema` asserts only positive OHLC, `high >= low/open/close` and non-negative volume; no daily limit, band or halt rule exists | Rule extract for daily price limits / bands / halts with effective dates, document id, licence, vintage, and how a limit-locked session is represented |
 | Settlement cycle | `core/calendar.py:116` yields the scheduled close only; no settlement-date or T+N rule exists under `src/` | CSD settlement-cycle evidence (cycle length, effective dates, document id, licence) if a consumer ever needs a settlement date |
 | Rights / allotment terms | `core/schemas.py:166` `CORPORATE_ACTION_TYPES = ("dividend", "split")`, enforced at `validation/schemas.py:261`; `core/schemas.py:154` has no rights or entitlement column | Rights/allotment event feed with terms (ratio, subscription price, currency, entitlement cut-off), source-issued publication clock, coverage evidence, licence |
-| Provider venue label | `sources/krx.py:19-24` is the FinanceDataReader adapter, so its venue label is adapter-provided or config-derived and resolved only through the explicit map (`core/instruments.py:47-48`, `sources/base.py:245-258`); nothing in this repository proves the adapter always emits one label per board | A provider-contract note or sample payloads proving which venue/MIC label the adapter emits per board, if a consumer ever needs board-level identity rather than `XKRX` |
+| Provider venue label | `sources/krx.py:19-20` is the FinanceDataReader adapter, so its venue label is adapter-provided or config-derived and resolved only through the explicit map (`core/instruments.py:47-48`, `sources/base.py:245-258`); nothing in this repository proves the adapter always emits one label per board | A provider-contract note or sample payloads proving which venue/MIC label the adapter emits per board, if a consumer ever needs board-level identity rather than `XKRX` |
 | Real-root use | ADR-0030 decision 5 (`core/paths.py:170`); this stage creates no ADR | A **NEW accepted ADR amending decision 5** plus the scoped source/licence packet above |
 
 ## Golden fixture pack
