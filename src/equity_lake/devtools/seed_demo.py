@@ -231,6 +231,7 @@ def seed_demo(
     tickers: list[str] | None = None,
     real: bool = False,
     seed: int = 42,
+    end_date: date | None = None,
     verbose: bool = False,
     lake_dir: str | Path | None = None,
     overwrite_production_lake: bool = False,
@@ -244,6 +245,9 @@ def seed_demo(
             (falling back to :data:`DEMO_UNIVERSE`).
         real: Attempt a live yfinance pull; fall back to synthetic on failure.
         seed: Deterministic seed for synthetic generation.
+        end_date: Last day of the synthetic window (default: yesterday). Pin it
+            together with ``seed`` to make the seeded data reproducible on any
+            wall-clock day (the window is otherwise anchored to yesterday).
         verbose: Debug logging.
         lake_dir: Lake root override. Defaults to the auxiliary sample lake
             (``data/sample/``); targeting the canonical ``LAKE_DIR`` (or a path
@@ -289,7 +293,7 @@ def seed_demo(
         # window is a calendar span ending yesterday, so it is filtered in place:
         # the span is unchanged and only the date set shrinks — a seed never
         # asserts a bar on a session the venue was closed.
-        days = [day for day in trailing_business_days(int(years * 365)) if is_trading_day(US_EQUITY_SOURCE_MARKET, day)]
+        days = [day for day in trailing_business_days(int(years * 365), end=end_date) if is_trading_day(US_EQUITY_SOURCE_MARKET, day)]
         df = synthetic_ohlcv(universe, days, profile=DEMO_PROFILE, seed=seed)
         logger.info("seed_demo_synthetic", tickers=len(universe), days=len(days))
 
