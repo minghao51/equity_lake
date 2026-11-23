@@ -26,7 +26,7 @@ from equity_lake.ingestion import orchestrator  # type: ignore[import-untyped]
 from equity_lake.ingestion.orchestrator import run_daily_ingestion  # type: ignore[import-untyped]
 from equity_lake.ingestion.types import SourceStatus  # type: ignore[import-untyped]
 from equity_lake.monitoring.health import GOLD_FEATURES_DIR, PipelineMonitor, _price_market_paths  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta, read_delta  # type: ignore[import-untyped]
+from equity_lake.storage.delta import delta_table_path, merge_delta, read_delta  # type: ignore[import-untyped]
 
 TABLE = "01_bronze/market_data/us_equity"
 
@@ -406,3 +406,87 @@ def test_the_scope_guard_refuses_enrichment_identifiers_cleanly(tmp_path: Path, 
         assert result.exit_code == 1, (argv, result.stdout)
         assert "us_equity slice only" in result.stdout, (argv, result.stdout)
         assert "Unknown price market" not in result.stdout, argv
+
+
+# ---------------------------------------------------------------------------
+# Canary symlinks and containment at the resolution seam (RS-D01)
+# ---------------------------------------------------------------------------
+
+
+def _canary_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
+    """A temp ``data/`` holding the canonical and real roots, patched into ``core.paths``."""
+    data = tmp_path / "data"
+    lake = data / "lake"
+    real = data / "lake_real"
+    lake.mkdir(parents=True)
+    real.mkdir(parents=True)
+    monkeypatch.setattr(paths, "DATA_DIR", data)
+    monkeypatch.setattr(paths, "LAKE_DIR", lake)
+    monkeypatch.setattr(paths, "REAL_LAKE_DIR", real)
+    return lake, real
+
+
+def test_a_canary_symlink_inside_the_real_root_refuses_demo_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A link from the real root into the demo lake is refused when a reader resolves it.
+
+    Falsified by: dropping ``refuse_cross_root_symlink`` from ``delta_table_path``, which
+    makes the canary silently serve demo rows as if they were real-root rows.
+    """
+    lake, real = _canary_roots(tmp_path, monkeypatch)
+    merge_delta(_frame(), TABLE, key_columns=["ticker", "date"], lake_dir=lake)
+    (real / "01_bronze").symlink_to(lake / "01_bronze", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="never mixed through a symlink"):
+        delta_table_path(TABLE, lake_dir=real)
+    with pytest.raises(ValueError, match="never mixed through a symlink"):
+        read_delta(TABLE, lake_dir=real)
+
+
+def test_a_canary_symlink_inside_the_demo_root_refuses_real_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reverse direction is refused too: the demo root never serves real rows."""
+    lake, real = _canary_roots(tmp_path, monkeypatch)
+    merge_delta(_frame(), TABLE, key_columns=["ticker", "date"], lake_dir=real)
+    (lake / "01_bronze").symlink_to(real / "01_bronze", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="never mixed through a symlink"):
+        delta_table_path(TABLE, lake_dir=lake)
+
+
+def test_the_guard_applies_to_the_canonical_default_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``lake_dir=None`` (the canonical default) is guarded, not exempt."""
+    lake, real = _canary_roots(tmp_path, monkeypatch)
+    monkeypatch.setattr("equity_lake.storage.delta.LAKE_DIR", lake)
+    (lake / "01_bronze").symlink_to(real / "01_bronze", target_is_directory=True)
+
+    with pytest.raises(ValueError, match="never mixed through a symlink"):
+        delta_table_path(TABLE)
+
+
+def test_a_canary_symlink_escaping_its_root_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A root-internal link that leaves the root entirely is not a contained route."""
+    _lake, real = _canary_roots(tmp_path, monkeypatch)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (real / "03_gold").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="resolves outside its root"):
+        delta_table_path("03_gold/features", lake_dir=real)
+
+
+def test_a_legitimate_explicit_root_still_writes_and_reads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard never blocks honest use: an explicit root keeps working, unredirected."""
+    lake, real = _canary_roots(tmp_path, monkeypatch)
+
+    assert delta_table_path(TABLE, lake_dir=real) == real / TABLE
+    assert merge_delta(_frame(), TABLE, key_columns=["ticker", "date"], lake_dir=real) is True
+    assert (real / TABLE / "_delta_log").is_dir()
+    assert read_delta(TABLE, lake_dir=real).height == 1
+    assert not (lake / TABLE).exists()
+
+
+def test_the_guard_is_inert_for_a_lake_outside_the_named_roots(tmp_path: Path) -> None:
+    """A test/scratch root is joined exactly as before: the guard adds no side effects."""
+    scratch = tmp_path / "scratch_lake"
+
+    assert delta_table_path(TABLE, lake_dir=scratch) == scratch / TABLE
+    assert not scratch.exists()  # resolution creates nothing
