@@ -17,6 +17,16 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from equity_lake.core.instruments import InstrumentKey
 
 PRICE_ADJUSTMENT_VERSION = "split-only-v1"
+#: The one operator-facing refusal for the ``total_return`` adjust mode (RS-B01).
+#: Cash-dividend adjustment is not the same thing as total return and no vendor
+#: total-return series exists in this lake, so every entry path — the reader, the
+#: backtest loader, the engine/factory and the CLI — raises this identical text
+#: before any read rather than failing late or approximating a return.
+TOTAL_RETURN_UNAVAILABLE = (
+    "total_return adjustment is unsupported (ADR-0015): only point-in-time split-only adjustment is implemented and no "
+    "vendor total-return series exists in this lake; cash dividends are not a substitute for vendor-adjusted returns "
+    "(use split-only adjustment)"
+)
 AVAILABILITY_SCHEMA_VERSION = 5
 ACTION_COVERAGE_SCHEMA_VERSION = 3
 #: Named coverage bases (ADR-0032 decision 5). ``source_clock`` is the strict, default
@@ -407,6 +417,7 @@ __all__ = [
     "IMPLICIT_STRICT_AVAILABILITY_SCHEMA_VERSION",
     "AVAILABILITY_SCHEMA_VERSION",
     "PRICE_ADJUSTMENT_VERSION",
+    "TOTAL_RETURN_UNAVAILABLE",
     "VENDOR_EVENTS_NO_CLOCK_DISCLOSURE",
     "ActionCoverageProof",
     "AvailabilityContractError",
