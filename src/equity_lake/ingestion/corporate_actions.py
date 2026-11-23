@@ -34,6 +34,7 @@ from equity_lake.core.availability import (  # pyright: ignore[reportMissingImpo
     VendorEventCoverageProof,
     parse_coverage_proof,
 )
+from equity_lake.core.market_contracts import CORPORATE_ACTION_MARKETS
 from equity_lake.core.paths import canonical_market
 from equity_lake.core.schemas import CORPORATE_ACTION_COVERAGE_SCHEMA, CORPORATE_ACTION_SCHEMA
 
@@ -199,7 +200,11 @@ def ingest_corporate_actions(
     from equity_lake.ingestion.router import MARKET_REGISTRY
     from equity_lake.ingestion.writers import upsert_dataset
 
-    if market != "us_equity":
+    # The supported route set is the declared `corporate_actions` capability
+    # (core/market_contracts.py), not a literal here, so the per-market record and
+    # the guard cannot drift. A market declared `unknown` is refused before any
+    # fetcher is built — no network call is made for it.
+    if market not in CORPORATE_ACTION_MARKETS:
         logger.error("corporate_actions_unsupported_market", market=market)
         return {"ok": False, "fetched": 0, "since": None, "market": market}
 
