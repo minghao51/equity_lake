@@ -68,6 +68,7 @@ nav:
       - Catalog Subsystem: developer/architecture/catalog-subsystem.md
       - Market Feasibility Packs:
           - cn_ashare (RS-M01): developer/architecture/market-cn-ashare-feasibility.md
+          - hk_sg_equity (RS-M02): developer/architecture/market-hk-sg-equity-feasibility.md
       - Residual Specification and Implementation Plan: plans/20261122-01-residual-spec-and-implementation-plan.md
       - Research Protocols (R00): developer/architecture/research-protocols.md
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
