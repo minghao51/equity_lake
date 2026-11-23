@@ -355,7 +355,11 @@ def test_a_backup_that_does_not_match_its_source_is_discarded(tmp_path: Path, mo
 
 
 def test_migrate_is_a_verifying_no_op_on_a_current_ledger(tmp_path: Path) -> None:
-    """A v2 ledger is reported current: no backup, no rebuild, no write."""
+    """A v2 ledger is reported current: no backup, no rebuild, no write.
+
+    Consequence for RS-P02: a no-op ``migrate --apply`` must never be run just to obtain a
+    recovery point — a current ledger gets one from ``equity portfolio backup --apply``.
+    """
     store = LedgerStore(data_dir=tmp_path)
     store.append(parse_csv_text(_rows(_opening())))
     path = tmp_path / "portfolio" / "portfolio.sqlite3"
@@ -365,6 +369,39 @@ def test_migrate_is_a_verifying_no_op_on_a_current_ledger(tmp_path: Path) -> Non
     assert report.already_current is True and report.applied is False
     assert report.backup_filename is None
     assert _user_version(path) == PORTFOLIO_SCHEMA_VERSION
+    assert [p.name for p in path.parent.iterdir() if p.name.endswith(".bak")] == []
+
+
+def test_the_upgrade_leaves_a_verified_pre_migration_recovery_point(tmp_path: Path) -> None:
+    """ADR-0031 decision 2/3: the upgrade backs up first, and that copy is a recovery point.
+
+    Falsified by: rebuilding before the verified backup, or writing a copy that does not verify
+    at the version it claims — either way the pre-migration record would be unrecoverable.
+
+    The drill is an exact-file copy into an isolated directory (``restore`` accepts only the
+    current schema version, so a v1 point is reversed by copying it back, not by ``restore``);
+    the point reproduces the pre-migration bytes and still verifies at v1.
+    """
+    path = _write_v1_ledger(tmp_path / "portfolio" / "portfolio.sqlite3", rows=3)
+    before = verify_ledger_file(path, expect_version=1)
+    before_bytes = path.read_bytes()
+
+    report = migrate_ledger(path, apply=True)
+
+    assert report.applied is True and report.backup_filename is not None
+    recovery_point = path.parent / str(report.backup_filename)
+    assert recovery_point.name.endswith(".v1.bak")
+    verified = verify_ledger_file(recovery_point, expect_version=1)
+    assert verified.sha256 == before.sha256 == report.backup_sha256
+    assert (verified.row_count, verified.record_digest) == (before.row_count, before.record_digest)
+    assert _user_version(path) == PORTFOLIO_SCHEMA_VERSION  # the live ledger moved on
+
+    isolated = tmp_path / "isolated" / "portfolio.sqlite3"
+    isolated.parent.mkdir()
+    isolated.write_bytes(recovery_point.read_bytes())
+    assert isolated.read_bytes() == before_bytes  # the pre-migration record, byte for byte
+    assert verify_ledger_file(isolated, expect_version=1).sha256 == before.sha256
+    assert _all_rows(isolated) == _all_rows(recovery_point)
 
 
 @pytest.mark.parametrize(

@@ -481,6 +481,70 @@ class LedgerCompactionReport(BaseModel):
     backup_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
+class LedgerBackupReport(BaseModel):
+    """What one ``export_verified_backup`` invocation found and did (ADR-0031 decision 3).
+
+    Nothing here carries a stored value: names, counters and digests only. ``directory`` is the
+    operator-chosen destination, echoed back so the report names the private location used.
+    ``backup_filename`` stays ``None`` in report-only mode, so a plan never claims a file exists.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    filename: str
+    directory: str
+    directory_exists: bool
+    applied: bool
+    schema_version: int = Field(ge=0)
+    row_count: int = Field(ge=0)
+    record_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(ge=0)
+    backup_filename: str | None = None
+    backup_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class LedgerBackupCandidate(BaseModel):
+    """One ``.bak`` candidate in a backup directory, read-only and never followed.
+
+    ``verified`` is the result of the same five checks every backup must pass (ADR-0031
+    decision 3); a refused candidate still reports its size and modification time so a damaged
+    recovery point is visible instead of silent, and ``detail`` is this module's own value-free
+    refusal text.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    filename: str
+    size_bytes: int = Field(ge=0)
+    modified_at: str
+    verified: bool
+    schema_version: int | None = Field(default=None, ge=0)
+    row_count: int | None = Field(default=None, ge=0)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    detail: str | None = None
+
+
+class LedgerBackupSkip(BaseModel):
+    """One directory entry an inventory did not read: a symlink or a non-backup file."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    filename: str
+    reason: str
+
+
+class LedgerBackupInventory(BaseModel):
+    """A read-only listing of one backup directory (ADR-0031 decision 3). Nothing was changed."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    directory: str
+    exists: bool
+    candidates: tuple[LedgerBackupCandidate, ...] = ()
+    skipped: tuple[LedgerBackupSkip, ...] = ()
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -590,23 +654,35 @@ def _require_free_space(path: Path) -> None:
         raise LedgerStoreError(f"the upgrade needs at least {needed} bytes free beside the ledger and {free} are available; nothing was written")
 
 
-def _write_verified_backup(path: Path, *, source: LedgerFileVerification) -> LedgerFileVerification:
-    """Exact-file copy, verified before it may be called a backup (ADR-0031 decision 3)."""
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    backup = path.with_name(f"{path.name}.{stamp}.v{source.schema_version}.bak")
+def _write_verified_backup(
+    path: Path, *, source: LedgerFileVerification, directory: Path | None = None, stamp: str | None = None
+) -> LedgerFileVerification:
+    """Exact-file copy, verified before it may be called a backup (ADR-0031 decision 3).
+
+    ``directory`` places the copy in an operator-chosen private directory (the manual export of
+    ADR-0031 decision 3) instead of beside the source; the name, mode, verification and
+    no-overwrite rules are identical either way. The copy is written under a temporary name in
+    the destination, verified against its source, and only then renamed into place, so a name
+    that is already taken is never overwritten and an unverified copy never wears a backup name.
+    """
+    destination = path.parent if directory is None else directory
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") if stamp is None else stamp
+    name = f"{path.name}.{stamp}.v{source.schema_version}.bak"
+    backup = destination / name
+    temp = destination / f"{name}.tmp"
     if backup.exists():
         raise LedgerStoreError(f"a backup named {backup.name!r} already exists; a backup is never overwritten")
-    shutil.copy2(path, backup)
     try:
-        os.chmod(backup, _FILE_MODE)
-        verified = verify_ledger_file(backup, expect_version=source.schema_version)
-    except Exception:
-        backup.unlink(missing_ok=True)
+        shutil.copy2(path, temp)
+        os.chmod(temp, _FILE_MODE)
+        verified = verify_ledger_file(temp, expect_version=source.schema_version)
+        if (verified.sha256, verified.row_count, verified.record_digest) != (source.sha256, source.row_count, source.record_digest):
+            raise LedgerStoreError("the ledger backup does not match its source; the copy was discarded and the source is unchanged")
+        os.replace(temp, backup)
+    except BaseException:
+        temp.unlink(missing_ok=True)
         raise
-    if (verified.sha256, verified.row_count, verified.record_digest) != (source.sha256, source.row_count, source.record_digest):
-        backup.unlink(missing_ok=True)
-        raise LedgerStoreError("the ledger backup does not match its source; the copy was discarded and nothing was upgraded")
-    return verified
+    return verified.model_copy(update={"filename": backup.name})
 
 
 def _rebuild_to_v2(path: Path, *, expected: LedgerFileVerification) -> None:
@@ -946,8 +1022,120 @@ def compact_ledger(path: Path | None = None, *, apply: bool = False) -> LedgerCo
     )
 
 
+def export_verified_backup(output_dir: Path, path: Path | None = None, *, apply: bool = False) -> LedgerBackupReport:
+    """Export a verified exact-file copy into an operator-chosen private directory.
+
+    This is the manual local backup of ADR-0031 decision 3 and nothing more: a copy on the same
+    machine, taken in a no-writer window, accepted only after the five checks pass. There is no
+    scheduled, remote, encrypted or cloud export — that needs its own ADR before it is built —
+    and this function never prunes, deletes or overwrites a backup file.
+
+    Report-only by default: the source is verified and the plan is returned with **nothing
+    written** — no directory, no file, no temporary file, no journal. ``apply=True`` creates the
+    destination directory with ``0700`` when it is missing, copies under a temporary name in
+    that directory, verifies the copy against its source and only then renames it into place
+    with ``0600``; an existing backup name is never overwritten.
+
+    Refusals, all before the first write: the ledger is missing, is not a regular file, has a
+    rollback journal beside it, is locked by a live writer, is not a usable SQLite database, or
+    is of an unimplemented schema version (all from :func:`verify_ledger_file`); and the
+    destination is a symlink or exists as something other than a directory.
+    """
+    target = Path(path) if path is not None else portfolio_db_path()
+    destination = Path(output_dir)
+    source = verify_ledger_file(target)
+    if destination.is_symlink():
+        raise LedgerStoreError(f"the backup destination {destination.name!r} is a symlink; refusing to write a private copy through it")
+    exists = destination.exists()
+    if exists and not destination.is_dir():
+        raise LedgerStoreError(f"the backup destination {destination.name!r} is not a directory; refusing to write a private copy there")
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    planned = destination / f"{target.name}.{stamp}.v{source.schema_version}.bak"
+    if apply and planned.exists():
+        raise LedgerStoreError(f"a backup named {planned.name!r} already exists in the destination; a backup is never overwritten")
+    report = LedgerBackupReport(
+        filename=target.name,
+        directory=str(destination),
+        directory_exists=exists,
+        applied=False,
+        schema_version=source.schema_version,
+        row_count=source.row_count,
+        record_digest=source.record_digest,
+        sha256=source.sha256,
+        size_bytes=target.stat().st_size,
+    )
+    if not apply:
+        return report
+    if not exists:
+        destination.mkdir(parents=True, exist_ok=True, mode=_DIRECTORY_MODE)
+        os.chmod(destination, _DIRECTORY_MODE)
+    backup = _write_verified_backup(target, source=source, directory=destination, stamp=stamp)
+    logger.info("portfolio_ledger_backup_exported", rows=backup.row_count, names_version=backup.schema_version)
+    return report.model_copy(update={"applied": True, "directory_exists": True, "backup_filename": backup.filename, "backup_sha256": backup.sha256})
+
+
+def inventory_backups(directory: Path) -> LedgerBackupInventory:
+    """List the ``.bak`` candidates in one directory, read-only (ADR-0031 decision 3).
+
+    Every candidate is opened read-only through :func:`verify_ledger_file` (any supported schema
+    version: a pre-migration ``.v1.bak`` is a legitimate recovery point) and reported with its
+    name, size, modification time, schema version, row count, digest and verification result.
+    A candidate that fails verification is listed as refused, never repaired and never deleted.
+
+    Nothing here creates, follows, modifies or removes anything: a symlink — to a ledger, to
+    another directory or dangling — is reported as skipped and never opened, a non-regular file
+    is skipped, and a file whose name is not a ledger backup name is skipped unread. A missing
+    directory is reported as absent rather than created; a symlinked or non-directory path is
+    refused.
+    """
+    root = Path(directory)
+    if root.is_symlink():
+        raise LedgerStoreError(f"the backup directory {root.name!r} is a symlink; refusing to read a private listing through it")
+    if not root.exists():
+        return LedgerBackupInventory(directory=str(root), exists=False)
+    if not root.is_dir():
+        raise LedgerStoreError(f"the backup directory {root.name!r} is not a directory; nothing was read")
+    candidates: list[LedgerBackupCandidate] = []
+    skipped: list[LedgerBackupSkip] = []
+    for entry in sorted(root.iterdir(), key=lambda item: item.name):
+        if entry.is_symlink():
+            skipped.append(LedgerBackupSkip(filename=entry.name, reason="symlink; never followed or read"))
+            continue
+        if not entry.is_file():
+            skipped.append(LedgerBackupSkip(filename=entry.name, reason="not a regular file"))
+            continue
+        if not entry.name.endswith(".bak"):
+            skipped.append(LedgerBackupSkip(filename=entry.name, reason="not a ledger backup name"))
+            continue
+        stats = entry.stat()
+        modified_at = datetime.fromtimestamp(stats.st_mtime, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            verified = verify_ledger_file(entry)
+        except LedgerStoreError as exc:
+            candidates.append(
+                LedgerBackupCandidate(filename=entry.name, size_bytes=stats.st_size, modified_at=modified_at, verified=False, detail=str(exc))
+            )
+            continue
+        candidates.append(
+            LedgerBackupCandidate(
+                filename=entry.name,
+                size_bytes=stats.st_size,
+                modified_at=modified_at,
+                verified=True,
+                schema_version=verified.schema_version,
+                row_count=verified.row_count,
+                sha256=verified.sha256,
+            )
+        )
+    return LedgerBackupInventory(directory=str(root), exists=True, candidates=tuple(candidates), skipped=tuple(skipped))
+
+
 __all__ = [
     "AppendOutcome",
+    "LedgerBackupCandidate",
+    "LedgerBackupInventory",
+    "LedgerBackupReport",
+    "LedgerBackupSkip",
     "LedgerConflictError",
     "LedgerCompactionReport",
     "LedgerFileVerification",
@@ -958,6 +1146,8 @@ __all__ = [
     "PORTFOLIO_DB_FILENAME",
     "PORTFOLIO_SCHEMA_VERSION",
     "compact_ledger",
+    "export_verified_backup",
+    "inventory_backups",
     "migrate_ledger",
     "portfolio_db_path",
     "restore_ledger",

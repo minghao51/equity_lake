@@ -8,9 +8,9 @@ effective-date replay (:mod:`equity_lake.portfolio.projections`), stored raw
 book marks and as-of valuation (:mod:`equity_lake.portfolio.marks`) and
 canonical statement reconciliation (:mod:`equity_lake.portfolio.reconcile`).
 
-Deliberately absent: split accounting, FX, backup, migration, any operational
-mark producer or mark-import command, any write inside a read command, time- or
-money-weighted return claims, and the CLI surface itself. ML and signal policy
+Deliberately absent: split accounting, FX, any operational mark producer or
+mark-import command, any write inside a read command, time- or money-weighted
+return claims, and the CLI surface itself. ML and signal policy
 stay out of this package (ADR-0024); it also never imports ``cli/``,
 ``dashboard/``, ``sources/``, ``ml/`` or ``signals/``.
 """
