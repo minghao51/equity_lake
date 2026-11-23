@@ -1,4 +1,4 @@
-# Research Protocols (R00)
+# Research Protocols (R00) and R01 measured controls
 
 R00 freezes *what a research run may assume* before any feature, model or backtest
 executes. It is offline by construction: it does not ingest, fetch, fit, or write a
@@ -58,9 +58,58 @@ explicitly freezing a new dated protocol — a decision, not a fallback.
 matches its embedded protocol, so a tampered or corrupt record can never be read as
 evidence.
 
-## What R00 does not do
+## R01 — measured controls and scale (delivery status)
 
-R00 does not run a backtest, mint a backtest run manifest, produce a feature or
-write anything under `data/lake/` or `data/lake_real/`. Binding an E01 manifest
-(ADR-0025) and running features remain the gated R01/R02 stages; a Gold table in the
-real root still requires its own scoped authorization (ADR-0030 decision 10).
+R00 shipped *freeze/refuse* controls; R01 (residual plan §2.12, §5) turns them into *measured*
+controls under the same freeze machinery. Delivery status: **`verified`** for the frozen
+measurement set on its host — six of six leakage controls pass with killed mutants, the
+predeclared 100 null and 50 planted seeds completed inside the frozen ceiling, and the 5/50/200
+scale points ran under every ceiling with parity intact. Evidence, gate exit codes and the ledger
+entry live in [`docs/research/20261123-01-r01-report.md`](../../research/20261123-01-r01-report.md),
+the preregistration in
+[`docs/research/20261123-01-r01-preregistration.md`](../../research/20261123-01-r01-preregistration.md)
+and the machine-readable results in
+[`docs/research/20261123-01-r01-results.json`](../../research/20261123-01-r01-results.json).
+
+The frozen manifest for the stage is committed byte-for-byte at
+`docs/research/protocols/20261123T135029Z-42d13c802634.manifest.json` (protocol `42d13c80…`,
+prespecification `fb20a96c…`, frozen `2026-11-23T13:50:29Z`), because the run-side location
+`data/research/protocols/` is auxiliary storage (ADR-0006) and is absent in a fresh clone. Binding
+the committed copy is `require_frozen_r01(protocol_root=Path("docs"))`; nothing else can mint a
+freeze.
+
+### The controls/scale procedure
+
+1. **Preregister, then freeze.** `r01_spec()` holds the predeclared seed sets (`1729…1828`,
+   `11729…11778`), the planted effect size, the statistic and its one estimand, the
+   dependence-aware resampling rule, the pass/fail bounds, the scale sizes and the single-host
+   ceilings. Its digest is bound into the frozen protocol as `input_digests.r01_preregistration`,
+   so a changed prespecification refuses rather than silently reinterpreting a run.
+2. **One estimand.** The decision statistic is the **mean per-session net return**, never the
+   compounded net return (R02's archive showed they are different estimands); the compounded figure
+   is recorded beside it, labelled, and is never compared to the mean's interval.
+3. **Run the six leakage controls**, each with a fixed fixture, an expected result and one named
+   regression: append-after-cutoff invariance, delayed publication, another instrument's proof,
+   pending labels, missing/expired coverage, execution lag and horizon (`ml/r01_controls.py`).
+4. **Run the planted positive control and both null variants** over the predeclared seeds, then
+   apply the frozen one-sided Clopper-Pearson pair: null false-positive-rate upper bound `<= 10%`
+   and planted-power lower bound `>= 80%`. Individual null false positives are allowed; no seed is
+   required to lose.
+5. **Measure scale** with `python -m equity_lake.ml.r01_scale` — 5/50/200 instruments over the
+   three-year design, per-point wall time, peak RSS, I/O counters, decision counts and parity, each
+   point isolated in its own child process so its peak RSS belongs to that point alone.
+6. **Prove each refusal with a one-rule mutation** (`--mode mutations`): one rule removed at a time,
+   the named regression must fail, and the original bytes are restored from a `/tmp` copy verified
+   with `diff -q`.
+
+### What R01 refuses to claim
+
+- A missing or failing leakage control leaves the stage `unverified`; no seed count and no scale
+  point compensates for it.
+- A seed set or scale point that cannot complete inside the frozen ceilings is recorded `censored`
+  with the exact reason and the measured per-seed cost, and a censored set may never be read as a
+  passing power or scale claim. The budget is never widened: an exceeded ceiling refuses.
+- Unavailable I/O counters carry a **reason**, never an invented zero, and an unmonitorable peak RSS
+  aborts the run.
+- Control results are synthetic-fixture harness evidence, not evidence about markets, not a
+  promotion, not a point-in-time claim; computational scale is not economic capacity (spec §7).

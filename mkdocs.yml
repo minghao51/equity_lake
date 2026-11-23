@@ -69,7 +69,9 @@ nav:
       - Market Feasibility Packs:
           - cn_ashare (RS-M01): developer/architecture/market-cn-ashare-feasibility.md
       - Residual Specification and Implementation Plan: plans/20261122-01-residual-spec-and-implementation-plan.md
-      - Research Protocols (R00): developer/architecture/research-protocols.md
+      - Research Protocols (R00) and R01 Measured Controls: developer/architecture/research-protocols.md
+      - R01 Preregistration (frozen before the run): research/20261123-01-r01-preregistration.md
+      - R01 Controls and Scale Results: research/20261123-01-r01-report.md
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
       - Project Structure: developer-guide/project-structure.md
       - Developer Tools: developer-guide/devtools.md
