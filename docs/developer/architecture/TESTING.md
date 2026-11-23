@@ -165,8 +165,9 @@ touching structure:
 - **data-validation.yml** — on changes to `config/tickers.yaml`,
   `config/watchlist.yaml`, or `config/signals.yaml`, runs
   `uv run equity config validate --all`.
-- **catalog-check.yml / catalog-deploy.yml / pages.yml** — catalog and docs
-  site publishing.
+- **catalog-check.yml / catalog-site-build.yml / h00-publish.yml** — catalog drift
+  check, catalog site compile check, and the single manual (owner-approved)
+  publication path for the sanitized H00 artifact. Only `h00-publish.yml` can deploy.
 
 Local equivalents of the CI gate: `uv run ruff check .`,
 `uv run ruff format --check .`, `uv run mypy`, `uv run pytest`.

@@ -798,7 +798,7 @@ uv run equity catalog-generate -o /tmp.jsonl # custom output path
 - **JSONL format** (`data/catalog.jsonl`): 18 datasets, 52 nodes, 372 edges. Git-tracked (source of truth for the frontend). Never edit it directly — regenerate via `equity catalog-generate`.
 - **Astro frontend** (`docs/catalog/`): static site built at build time from `catalog.jsonl`, uses `@xyflow/react` v12 for DAG visualization.
 - `corporate_action_coverage` is a genuine cataloged Silver dataset at `data/lake/02_silver/corporate_action_coverage/`. Private watchlists, tracking SQLite state, event records, and the delivery outbox are auxiliary artifacts outside `data/lake/` and are not cataloged.
-- **GitHub Pages**: deployed via `.github/workflows/catalog-deploy.yml` (official `actions/deploy-pages`, base path `/equity_lake`).
+- **GitHub Pages**: no default publisher. The only publication path is `.github/workflows/h00-publish.yml` (manual dispatch, owner-approved, SHA-pinned) publishing the sanitized three-file H00 artifact; the catalog site workflow builds but no longer deploys (`catalog-site-build.yml`), and the former dashboard `pages.yml` is retired.
 - **Freshness CI** (`.github/workflows/catalog-check.yml`): on PRs touching `features/dag/**`, `catalog/**`, `core/schemas.py`, `core/paths.py`, `ingestion/writers.py`, or `data/catalog.jsonl`, regenerates the catalog and fails if `data/catalog.jsonl` would change — preventing stale catalogs from merging.
 
 ---

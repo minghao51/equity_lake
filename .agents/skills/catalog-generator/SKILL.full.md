@@ -219,15 +219,17 @@ Each page reads `data/catalog.jsonl` via `fs.readFileSync` at build time. The Re
 
 ## GitHub Action
 
-`.github/workflows/catalog-deploy.yml` triggers on push to `main` when `data/catalog.jsonl` or `docs/catalog/**` changes. It:
+`.github/workflows/catalog-site-build.yml` triggers on push to `main` when `data/catalog.jsonl` or `docs/catalog/**` changes. It:
 
 1. Checks out the repo
 2. Sets up Node.js 22
 3. `npm ci` (installs from lockfile)
 4. `npm run build` (Astro builds to `dist/`)
-5. Deploys `dist/` to `gh-pages` branch via `peaceiris/actions-gh-pages`
 
-The site is served at `https://minghao.github.io/equity_lake/catalog`.
+It is a compile check only and has no Pages permissions: its former 
+`actions/deploy-pages` job was retired in residual plan RS-H01 so that exactly one
+manual, owner-approved workflow (`.github/workflows/h00-publish.yml`) can publish.
+Nothing in this repository deploys the catalog site any more.
 
 ## Local Development
 

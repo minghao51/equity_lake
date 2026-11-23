@@ -429,7 +429,11 @@ class TestStaleness:
         payload = json.loads(built.payload_path.read_text(encoding="utf-8"))
         assert payload["stale"] is False
         assert payload["stale_banner"] is None
-        assert h00.STALE_BANNER not in built.index_path.read_text(encoding="utf-8")
+        # The banner *element* is always rendered (elapsed-time staleness needs it);
+        # only its initial visibility is a build-time decision.
+        html = built.index_path.read_text(encoding="utf-8")
+        assert h00.STALE_BANNER in html
+        assert f'id="{h00.STALE_ELEMENT_ID}"' in html
 
     def test_old_build_date_renders_the_stale_banner_and_last_build_date(self, demo_sandbox: Path, tmp_path: Path) -> None:
         now = datetime(2026, 11, 21, tzinfo=UTC)
@@ -454,6 +458,71 @@ class TestStaleness:
         now = datetime(2026, 11, 21, tzinfo=UTC)
         assert h00.is_stale(now - timedelta(days=29), now=now) is False
         assert h00.is_stale(now - timedelta(days=31), now=now) is True
+
+
+class TestStalenessSurvivesElapsedBrowserTime:
+    """Plan §2.3: the page goes stale by elapsed viewer time, not only at build time.
+
+    What these tests prove: the stale element, the embedded payload instant and the
+    30-day constant are always emitted, and a script in the page reads them and unhides
+    the banner past the threshold. What they do **not** prove: that a browser actually
+    runs that script. These are structural assertions over the rendered HTML/JS strings;
+    a real browser execution is not exercised here (no headless browser in this suite).
+    """
+
+    def test_a_fresh_page_ships_a_hidden_stale_banner(self, built: h00.H00Artifact) -> None:
+        # The build-time verdict is fresh, and the banner is still in the page — hidden
+        # only until the client-side age check says otherwise.
+        payload = json.loads(built.payload_path.read_text(encoding="utf-8"))
+        assert payload["stale"] is False
+        html = built.index_path.read_text(encoding="utf-8")
+        assert re.search(rf'<p class="banner stale" id="{h00.STALE_ELEMENT_ID}"[^>]* hidden>', html), (
+            "a fresh page must still carry the stale banner, hidden"
+        )
+        assert h00.STALE_BANNER in html
+        assert h00.last_build_date(built.built_at) in html
+
+    def test_the_age_check_is_bound_to_the_embedded_instant_and_the_thirty_day_constant(self, built: h00.H00Artifact) -> None:
+        payload = json.loads(built.payload_path.read_text(encoding="utf-8"))
+        html = built.index_path.read_text(encoding="utf-8")
+        assert f'data-built-at="{payload["built_at"]}"' in html
+        # Literal 30, not a derived expression: changing the embedded threshold must break
+        # this test (mutation-proved below), so it cannot be read back from the constant.
+        assert 'data-threshold-days="30"' in html
+        assert "Date.now()" in html
+        assert f'getElementById("{h00.STALE_ELEMENT_ID}")' in html
+        # The check reads the element's own attributes and fails open on a bad instant.
+        assert 'getAttribute("data-built-at")' in html
+        assert 'getAttribute("data-threshold-days")' in html
+        assert "isNaN(builtAt)" in html
+
+    def test_a_stale_build_renders_the_banner_visible(self, demo_sandbox: Path, tmp_path: Path) -> None:
+        now = datetime(2026, 11, 21, tzinfo=UTC)
+        old = now - timedelta(days=45)
+        artifact = h00.build_sanitized_page(
+            lake_dir=demo_sandbox / "data" / "lake",
+            allow_sandbox_root=True,
+            output_dir=tmp_path / "stale-visible-h00",
+            built_at=old,
+            now=now,
+        )
+        html = artifact.index_path.read_text(encoding="utf-8")
+        assert re.search(rf'<p class="banner stale" id="{h00.STALE_ELEMENT_ID}"[^>]* hidden>', html) is None
+        assert 'data-threshold-days="30"' in html
+        assert h00.last_build_date(old) in html
+
+    def test_the_stale_element_is_not_conditional_on_the_build_time_flag(self, built: h00.H00Artifact) -> None:
+        # Flip the build-time verdict on an otherwise identical payload: the element and
+        # the check are rendered either way, so staleness cannot hinge on build time only.
+        payload = json.loads(built.payload_path.read_text(encoding="utf-8"))
+        rendered_fresh = h00._render_html(payload)
+        rendered_stale = h00._render_html({**payload, "stale": True})
+        for html in (rendered_fresh, rendered_stale):
+            assert f'id="{h00.STALE_ELEMENT_ID}"' in html
+            assert "Date.now()" in html
+            assert 'data-threshold-days="30"' in html
+        assert "hidden>" not in rendered_stale
+        assert re.search(rf'id="{h00.STALE_ELEMENT_ID}"[^>]* hidden>', rendered_fresh)
 
 
 class TestLoopbackPreview:

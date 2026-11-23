@@ -1,0 +1,40 @@
+name: Build Catalog Site
+
+# Build/compile check only — this workflow does NOT publish.
+#
+# It used to run its own `actions/deploy-pages` against the same `github-pages`
+# environment as the dashboard workflow, so the two deployments silently replaced each
+# other. Deployment was retired in residual plan RS-H01 (§2.1): the only publication
+# path is `.github/workflows/h00-publish.yml`, which publishes the sanitized three-file
+# H00 artifact. This job keeps the catalog site compiling; it has no Pages permissions
+# and no Pages artifact upload.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "data/catalog.jsonl"
+      - "docs/catalog/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs/catalog
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/catalog/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build

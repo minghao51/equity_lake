@@ -110,7 +110,7 @@ Each line = one JSON object with `type` field:
 | `src/equity_lake/cli/commands/catalog.py` | CLI command |
 | `data/catalog.jsonl` | Generated artifact (git-tracked) |
 | `docs/catalog/` | Astro frontend |
-| `.github/workflows/catalog-deploy.yml` | GitHub Pages deployment |
+| `.github/workflows/catalog-site-build.yml` | Catalog site compile check (build only; it does **not** deploy) |
 
 ## CLI
 
