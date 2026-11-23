@@ -1,7 +1,7 @@
 # Equity EOD Data Pipeline - Makefile
 # Provides convenient commands for development and operation
 
-.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload refit-preload reset-lake
+.PHONY: help setup sync daily query pipeline monitor test test-unit test-integration test-slow test-network clean docker-up docker-down docker-logs lint lint-md lint-md-baseline format check generate-test-data fetch-macro news news-dry sentiment sentiment-dry test-backtest quick-test demo showcase preload refit-preload reset-lake
 
 # Sessions written by `make preload` (bounded Gold feature backfill).
 DAYS ?= 60
@@ -19,7 +19,8 @@ help:
 	@echo "  test       - Run offline, non-integration tests with coverage"
 	@echo "  test-network - Explicitly run network and integration tests"
 	@echo "  lint       - Run code linting (ruff)"
-	@echo "  lint-md    - Run Markdown linting"
+	@echo "  lint-md    - Run recursive Markdown linting against the reviewed baseline"
+	@echo "  lint-md-baseline - Explicitly rewrite the reviewed Markdown lint baseline"
 	@echo "  format     - Format code (ruff)"
 	@echo "  check      - Run type checking (mypy)"
 	@echo "  preload    - Preload N consecutive Gold sessions of features + labels (DAYS=60)"
@@ -148,8 +149,12 @@ lint:
 	uv run ruff check src/ tests/
 
 lint-md:
-	@echo "📝 Running Markdown linting..."
-	uv run pymarkdown -d md013 scan README.md docs
+	@echo "📝 Running recursive Markdown linting against the reviewed baseline..."
+	uv run python -m equity_lake.devtools.markdown_lint --check
+
+lint-md-baseline:
+	@echo "📝 Rewriting the reviewed Markdown lint baseline (review the diff)..."
+	uv run python -m equity_lake.devtools.markdown_lint --update-baseline
 
 format:
 	@echo "🎨 Formatting code..."
