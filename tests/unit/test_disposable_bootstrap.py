@@ -224,8 +224,8 @@ def test_clean_synthetic_lake_builds_exactly_the_three_allowlisted_files(tmp_pat
 
 def test_canary_path_and_secret_in_the_lake_are_refused_by_the_scan(tmp_path: Path) -> None:
     """The existing negative scan refuses composed bytes that carry a path/value canary."""
-    from equity_lake.dashboard.h00 import H00BuildError, build_sanitized_page  # type: ignore[import-untyped]
-    from equity_lake.storage.delta import read_delta, write_delta  # type: ignore[import-untyped]
+    from equity_lake.dashboard.h00 import H00BuildError, build_sanitized_page
+    from equity_lake.storage.delta import read_delta, write_delta
 
     lake = _sandbox_lake(tmp_path)
     frame = read_delta(TABLE, lake_dir=lake)
@@ -245,7 +245,7 @@ def test_canary_path_and_secret_in_the_lake_are_refused_by_the_scan(tmp_path: Pa
 
 def test_canary_dotenv_value_is_caught_by_the_absence_needles(tmp_path: Path) -> None:
     """The `.env`-value class is a real needle (proved with a private temporary dotenv)."""
-    from equity_lake.dashboard.h00 import forbidden_needles, scan_contents  # type: ignore[import-untyped]
+    from equity_lake.dashboard.h00 import forbidden_needles, scan_contents
 
     dotenv = tmp_path / ".env"
     dotenv.write_text("PROVIDER_API_KEY=CANARY-DOTENV-VALUE-1234\n", encoding="utf-8")
@@ -253,3 +253,16 @@ def test_canary_dotenv_value_is_caught_by_the_absence_needles(tmp_path: Path) ->
 
     assert scan_contents({"payload.json": '{"note": "CANARY-DOTENV-VALUE-1234"}'}, needles) == {"secrets": 1}
     assert scan_contents({"payload.json": '{"note": "synthetic demo"}'}, needles) == {}
+
+
+def test_default_allocation_is_a_fresh_os_temporary_directory() -> None:
+    """(a): by default the bootstrap allocates its own OS temp directory and disposes of it."""
+    import tempfile
+
+    result = bootstrap_disposable_lake(seed=42, end_date=END, years=0.05, tickers=["AAPL"], keep=False)
+
+    allocation = Path(result["allocation"])
+    assert allocation.name.startswith("equity-lake-bootstrap-")
+    assert allocation.is_relative_to(Path(tempfile.gettempdir()).resolve())
+    assert result["kept"] is False
+    assert not allocation.exists()
