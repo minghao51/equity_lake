@@ -127,6 +127,80 @@ records sanitized failure codes, and does not claim exactly-once receipt. A
 crash or ambiguous remote response can lead to a retry after the remote side
 accepted the prior request, so duplicate receipt cannot be ruled out.
 
+### Paper shadow (offline rehearsal)
+
+`equity tracking shadow` rehearses the delivery loop with a local in-memory sink.
+It records accepted deliveries in memory only: it constructs no HTTP sender,
+reads no webhook credential, opens no socket, enables no live channel, and
+activates no scheduler. The report prints the sink type, each bounded round's
+attempt/sent/failed/expired/pending counts, the delivered event IDs, any
+duplicate event IDs, the not-exactly-once disclosure, and
+`live_delivery_enabled: false` / `scheduler_activated: false`.
+
+```bash
+uv run equity tracking shadow --rounds 1
+uv run equity tracking shadow --no-scan --as-of 2026-10-16T17:30:00-04:00
+uv run equity tracking shadow --require-strict-coverage --lake-dir data/lake_real
+```
+
+Guard order is fixed:
+
+1. readiness (`watchlist_unreadable`, `history_corrupt`) before any scan;
+2. the optional live-scan strict-coverage gate (`--require-strict-coverage`);
+3. the operator kill switch;
+4. one bounded readiness-first scan of stored data (`--scan`, default on);
+5. readiness re-checked, then the kill switch and quiet hours re-checked per
+   round, while holding the same cross-process delivery lock the live seam uses
+   — an overlapping delivery or shadow run is refused, never queued;
+6. per event, delivery expiry, revalidation, then at most three bounded attempts.
+
+A blocked report exits non-zero and echoes its actionable refusal to stderr; a
+quiet-hours or kill-switch stop is a normal, non-sending outcome (`status:
+quiet_hours` / `kill_switch`) and exits zero.
+
+The paper shadow may rehearse on synthetic data. A live rule scan may not: it
+requires strict source coverage (`coverage_basis=source_clock`). A
+`vendor_events_no_clock` proof asserts vendor-event completeness only and carries
+no source clock, so the live readiness gate refuses it — as it refuses a watched
+identity with no stored proof at all — with a refusal naming the strict basis,
+before any scan or send.
+
+### Kill switch
+
+The operator emergency stop is a file marker beside the private ledger:
+`data/tracking/DELIVERY_DISABLED` (with `--data-dir`, that root's
+`tracking/DELIVERY_DISABLED`). While it exists, no send is attempted: the
+`deliver` command reports `status: kill_switch` and the paper shadow refuses to
+run a round, even when `--enable-live` is supplied. A marker that cannot be
+inspected fails closed. Create or remove the file to stop or resume delivery; no
+config change and no restart is needed. It is deliberately a local file, not an
+environment variable, so the switch is visible next to the ledger it protects.
+
+### Dedup expiry and removal
+
+Delivery dedup keys are event IDs, and they expire. A pending event stays
+deliverable only while its own stored session is at most five venue sessions
+behind the latest completed session of its instrument; older pending rows are
+marked `expired` with the value-free code `expired_out_of_window` instead of
+being delivered late. A missed session is therefore retired, never
+burst-delivered as if it were current. The window is derived from the event's
+own session, so expiry needs no outbox column, no ledger migration and no data
+rewrite.
+
+An operator may remove one pending row instead of abandoning it:
+`uv run equity tracking deliver --remove-event EVENT_ID`. That marks the row
+`expired` with the value-free reason `removed_by_operator` and reports
+`unsend_possible: false`. Removal and expiry only stop **future** sends. Un-sending
+is impossible: a request a receiver already accepted cannot be recalled, and an
+`expired` row is not evidence that the receiver never saw the event. Dedup keys
+are not, and are never described as, exactly-once delivery.
+
+Live activation remains outside this change. It still needs the operator's
+private endpoint/channel and a scheduler host, and it stays owner-gated. The
+intended scheduler shape is an external local cron or systemd job that invokes
+the readiness-first scan and then delivery on this host; it is never a public Pages
+job and never a secret-bearing GitHub Actions job.
+
 Opportunity delivery is distinct from health monitoring/webhooks. It is disabled
 unless the invocation includes `--enable-live`; only that explicit sending seam
 reads the raw `EQUITY_OPPORTUNITY_WEBHOOK_URL` environment variable. The URL is
@@ -161,6 +235,9 @@ user-authentication.
 - Readiness and stale-run warnings describe the stored local data; they do not
   guarantee completeness, future performance, or a calibrated probability of
   profit.
+- The paper shadow is an offline rehearsal of the delivery loop, not operational
+  readiness: it proves the guards behave, not that a channel, receiver, or
+  scheduler has been authorized or exercised.
 - Watchlist and scan commands make no live market-provider calls and do not
   refresh or backfill when an item is added. External source fetching, paid
   processing, live webhook sends, production migration/repair, retraining, and

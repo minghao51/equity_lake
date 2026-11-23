@@ -3,6 +3,23 @@
 This module never fetches market data. It reads only stored lake tables, requires
 verified split-adjustment coverage, and stores product state in a private local
 SQLite database outside the cataloged medallion lake.
+
+Delivery is **not exactly-once** (ADR-0018 decision 6). A dedup key (the event ID)
+identifies one event; it does not bound how many times a receiver sees it. An
+ambiguous or unknown receipt — a crash after the remote side accepted a request, a
+timeout, or a lost response — may be retried, and duplicate receipt cannot be ruled
+out. Dedup keys therefore expire: a pending event is deliverable only inside a
+bounded window derived from its own stored session, and older rows are marked
+``expired`` with a value-free reason (``expired_out_of_window``) instead of being
+delivered late. Expiry needs no outbox column and no ledger migration; a new column
+would need its own ADR. An operator may also remove one pending row
+(``removed_by_operator``). Expiring or removing a row only stops *future* sends: it
+cannot un-send a request a receiver already accepted, and an ``expired`` row is
+never proof that the receiver did not see the event.
+
+A bounded paper shadow rehearses this loop offline against an in-memory sink, behind
+the same readiness, overlap, quiet-hours, retry, expiry and kill-switch guards, and
+activates no scheduler and no live channel.
 """
 
 from __future__ import annotations
@@ -42,6 +59,38 @@ PRICE_BUY_DEVIATION = 0.02
 PRICE_SELL_DEVIATION = -0.01
 SMA_VALID_BARS = 20
 MAX_DELIVERY_ATTEMPTS = 3
+#: How many venue sessions behind the latest completed session a pending event may be
+#: and still be deliverable. The window is derived from ``signal_events.session`` so
+#: expiry needs no outbox/ledger column and no migration; a new column would need its
+#: own ADR. Older pending rows are marked ``expired`` instead of burst-delivered.
+DELIVERY_EXPIRY_SESSIONS = 5
+#: Bounded rounds a single paper-shadow invocation may rehearse; never a scheduler.
+MAX_SHADOW_ROUNDS = 30
+#: Value-free terminal reasons; exception text, payloads and credentials are never stored.
+EXPIRED_OUT_OF_WINDOW = "expired_out_of_window"
+REMOVED_BY_OPERATOR = "removed_by_operator"
+#: Operator kill switch: a file marker beside the private ledger, checked before any
+#: send, so an emergency stop needs no config-model change and no process restart.
+DELIVERY_KILL_SWITCH_FILENAME = "DELIVERY_DISABLED"
+#: ADR-0018's disclosure, kept in code, in ``format_schedule_plan`` and in the user guide.
+NOT_EXACTLY_ONCE_DISCLOSURE = (
+    "Delivery is not exactly-once (ADR-0018): a dedup key identifies one event and does not bound how many times a "
+    "receiver sees it. An ambiguous or unknown receipt (crash, timeout, lost response) may be retried, so duplicate "
+    "delivery cannot be ruled out, and an expired or removed outbox row is not proof the receiver never saw it."
+)
+#: One operator-facing refusal for a live rule scan on weak source coverage (ADR-0032).
+LIVE_SCAN_STRICT_COVERAGE_REFUSAL = (
+    "live rule scans require strict source coverage (coverage_basis=source_clock); a declared basis other than "
+    "source_clock (for example vendor_events_no_clock) asserts vendor-event completeness only and carries no source "
+    "clock, so it cannot establish a point-in-time decision (ADR-0032). Rebuild coverage with verified source "
+    "publication timestamps, or keep the rehearsal offline in the paper shadow."
+)
+#: The same strict requirement when no coverage proof exists for a watched identity.
+LIVE_SCAN_COVERAGE_MISSING_REFUSAL = (
+    "live rule scans require a stored strict source-coverage proof for every watched identity; no proof was found "
+    "for at least one of them, so a point-in-time decision cannot be established (ADR-0015). Build verified "
+    "coverage first, or keep the rehearsal offline in the paper shadow."
+)
 NEW_YORK = ZoneInfo("America/New_York")
 _MIC_CALENDAR = {"XNYS": "XNYS", "XNAS": "XNAS", "XSHG": "XSHG", "XSHE": "XSHG", "XHKG": "XHKG", "XSES": "XSES", "XTKS": "JPX", "XKRX": "XKRX"}
 _CONFIG_MARKETS = {"us": "us_equity", "cn": "cn_ashare", "hk": "hk_sg_equity", "sg": "hk_sg_equity", "jpx": "jpx_equity", "krx": "krx_equity"}
@@ -252,12 +301,120 @@ class PrivateTrackingSnapshot(_StrictModel):
 
 
 class DeliverySummary(_StrictModel):
-    status: Literal["disabled", "quiet_hours", "completed"]
+    status: Literal["disabled", "quiet_hours", "kill_switch", "completed"]
     attempted: int = 0
     sent: int = 0
     failed: int = 0
     expired: int = 0
     pending: int = 0
+
+
+class LiveScanReadiness(_StrictModel):
+    """Gate a bounded live rule scan must pass; the paper shadow does not need it.
+
+    Only ``source_clock`` coverage is point-in-time evidence (ADR-0032), so a weak
+    ``vendor_events_no_clock`` row or a missing proof is refused here, before any
+    scan. ``reason`` is value-free; ``refusal`` is the operator-facing text.
+    """
+
+    status: Literal["ready", "refused"]
+    basis: Literal["source_clock", "vendor_events_no_clock", "missing"]
+    reason: str
+    refusal: str | None = None
+
+
+class RemovalSummary(_StrictModel):
+    """Outcome of an operator removal: expiry only; un-sending an accepted request is impossible."""
+
+    event_id: str
+    status: Literal["expired"] = "expired"
+    reason: Literal["removed_by_operator"] = "removed_by_operator"
+    unsend_possible: Literal[False] = False
+
+
+class PaperReceipt(_StrictModel):
+    """One delivery a local in-memory sink accepted; never a remote acknowledgement."""
+
+    event_id: str
+    market: str
+    mic: str
+    symbol: str
+    session: date
+    action: Literal["BUY", "SELL"]
+    recorded_at: datetime
+
+
+class PaperShadowRound(_StrictModel):
+    """One bounded delivery round of the offline rehearsal."""
+
+    round: int = Field(ge=1)
+    clock: datetime
+    delivery_status: Literal["completed", "quiet_hours", "kill_switch"]
+    attempted: int = 0
+    sent: int = 0
+    failed: int = 0
+    expired: int = 0
+    pending: int = 0
+    receipts: int = 0
+
+
+class PaperShadowReport(_StrictModel):
+    """Offline rehearsal record; it activates no scheduler and enables no live channel."""
+
+    schema_version: Literal[1] = 1
+    status: Literal["completed", "quiet_hours", "kill_switch", "blocked"]
+    reason: str | None = None
+    refusal: str | None = None
+    scan_status: Literal["scanned", "skipped", "failed"] = "skipped"
+    sink: Literal["local_in_memory"] = "local_in_memory"
+    rounds_requested: int = Field(ge=1)
+    rounds_run: int = Field(ge=0)
+    rounds: list[PaperShadowRound] = Field(default_factory=list)
+    delivered_event_ids: list[str] = Field(default_factory=list)
+    duplicate_event_ids: list[str] = Field(default_factory=list)
+    disclosure: str = NOT_EXACTLY_ONCE_DISCLOSURE
+    live_delivery_enabled: Literal[False] = False
+    scheduler_activated: Literal[False] = False
+
+
+class PaperSink:
+    """Local fake sink: records accepted deliveries in memory, opens no socket, reads no credential.
+
+    A receipt is the local record of a call this sink accepted. It carries no remote
+    acknowledgement, so two receipts for one event ID are the disclosed
+    duplicate/unknown-receipt risk (ADR-0018), not a delivery guarantee.
+    """
+
+    def __init__(self) -> None:
+        self.receipts: list[PaperReceipt] = []
+
+    def __call__(self, payload: OpportunityWebhookPayload) -> None:
+        self.receipts.append(
+            PaperReceipt(
+                event_id=payload.event_id,
+                market=payload.market,
+                mic=payload.mic,
+                symbol=payload.symbol,
+                session=payload.session,
+                action=payload.action,
+                recorded_at=datetime.now(UTC),
+            )
+        )
+
+    @property
+    def event_ids(self) -> list[str]:
+        return [receipt.event_id for receipt in self.receipts]
+
+    @property
+    def duplicate_event_ids(self) -> list[str]:
+        """Event IDs this sink accepted more than once: the disclosed duplicate risk, observed."""
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for event_id in self.event_ids:
+            if event_id in seen and event_id not in duplicates:
+                duplicates.append(event_id)
+            seen.add(event_id)
+        return duplicates
 
 
 class DigestSummary(_StrictModel):
@@ -1686,19 +1843,51 @@ def _send_http(url: str, payload: OpportunityWebhookPayload) -> None:
 
 
 @contextmanager
-def _delivery_lock(data_dir: Path | None) -> Iterator[None]:
-    """Serialize local senders across processes; event creation and outbox remain SQLite-transactional."""
+def _delivery_lock(data_dir: Path | None, *, blocking: bool = True) -> Iterator[None]:
+    """Serialize local senders across processes; event creation and outbox remain SQLite-transactional.
+
+    ``blocking=False`` (used by the paper shadow) refuses with :class:`TrackingError`
+    instead of queueing behind an in-flight delivery or shadow run, so two local
+    loops can never overlap.
+    """
     database = tracking_db_path(data_dir)
     database.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_path = database.with_name(".delivery.lock")
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        with os.fdopen(descriptor, "r+") as lock_file:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+    with os.fdopen(descriptor, "r+") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX if blocking else fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise TrackingError("another delivery or paper-shadow run holds the local delivery lock") from exc
+        try:
             yield
+        finally:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-    except BaseException:
-        raise
+
+
+def delivery_kill_switch_path(data_dir: Path | None = None) -> Path:
+    """Operator kill switch: a documented file marker beside the private ledger."""
+    return tracking_db_path(data_dir).with_name(DELIVERY_KILL_SWITCH_FILENAME)
+
+
+def delivery_kill_switch_active(data_dir: Path | None = None) -> bool:
+    """True when the operator marker exists; an uninspectable marker fails closed."""
+    path = delivery_kill_switch_path(data_dir)
+    try:
+        return path.exists() or path.is_symlink()
+    except OSError:
+        return True
+
+
+def _delivery_gate(clock: datetime, *, enabled: bool, data_dir: Path | None) -> Literal["disabled", "kill_switch", "quiet_hours"] | None:
+    """Ordered pre-send gates shared by the live seam and the paper shadow."""
+    if not enabled:
+        return "disabled"
+    if delivery_kill_switch_active(data_dir):
+        return "kill_switch"
+    if in_quiet_hours(clock):
+        return "quiet_hours"
+    return None
 
 
 def deliver_pending(
@@ -1713,14 +1902,17 @@ def deliver_pending(
     data_dir: Path | None = None,
     signal_config_path: Path | None = None,
 ) -> DeliverySummary:
-    """Deliver a bounded pending batch; the live channel requires an explicit caller opt-in."""
+    """Deliver a bounded pending batch; the live channel requires an explicit caller opt-in.
+
+    Gate order: the explicit ``enabled`` opt-in, the operator kill switch, quiet
+    hours, then the cross-process delivery lock and per-event expiry/revalidation.
+    """
     clock = now or datetime.now(UTC)
     if clock.tzinfo is None or clock.utcoffset() is None:
         raise ValueError("delivery clock must be timezone-aware")
-    if not enabled:
-        return DeliverySummary(status="disabled", pending=_count_outbox("pending", data_dir))
-    if in_quiet_hours(clock):
-        return DeliverySummary(status="quiet_hours", pending=_count_outbox("pending", data_dir))
+    gate = _delivery_gate(clock, enabled=enabled, data_dir=data_dir)
+    if gate is not None:
+        return DeliverySummary(status=gate, pending=_count_outbox("pending", data_dir))
     if sender is None:
         if not webhook_url:
             raise TrackingError("opportunity webhook is enabled but EQUITY_OPPORTUNITY_WEBHOOK_URL is missing")
@@ -1741,6 +1933,25 @@ def deliver_pending(
             data_dir=data_dir,
             signal_config_path=signal_config_path,
         )
+
+
+def _delivery_window_reason(event: TrackingEvent, clock: datetime) -> str | None:
+    """Value-free reason when the event's own session has left the delivery window.
+
+    The window counts venue sessions between the event's stored session and the
+    latest completed session of its own instrument, so expiry needs no outbox column
+    and no ledger migration. A window that cannot be established fails closed.
+    """
+    try:
+        expected, _open_today = _latest_completed_session(event.instrument, clock)
+        if expected is None:
+            return EXPIRED_OUT_OF_WINDOW
+        calendar = xc.get_calendar(_MIC_CALENDAR[event.instrument.mic])
+        sessions = calendar.sessions_in_range(event.session.isoformat(), expected.isoformat())
+    except Exception:
+        logger.warning("tracking_delivery_window_unavailable", event_id=event.event_id)
+        return EXPIRED_OUT_OF_WINDOW
+    return EXPIRED_OUT_OF_WINDOW if len(sessions) > DELIVERY_EXPIRY_SESSIONS + 1 else None
 
 
 def _deliver_pending_locked(
@@ -1767,6 +1978,12 @@ def _deliver_pending_locked(
     attempted = sent = failed = expired = 0
     for row in rows:
         event, payload, previous_attempts, _state = _event_from_row(row)
+        window_reason = _delivery_window_reason(event, clock)
+        if window_reason is not None:
+            # A missed session is retired, never burst-delivered as if it were current.
+            _mark_delivery(data_dir, event.event_id, status="expired", error_code=window_reason)
+            expired += 1
+            continue
         if previous_attempts >= MAX_DELIVERY_ATTEMPTS:
             _mark_delivery(data_dir, event.event_id, status="failed", error_code="ambiguous_outcome_after_max_attempts")
             failed += 1
@@ -1812,6 +2029,202 @@ def _deliver_pending_locked(
     )
 
 
+def remove_pending_delivery(event_id: str, *, data_dir: Path | None = None) -> RemovalSummary:
+    """Expire one still-pending outbox row at operator request.
+
+    Removal only stops *future* sends. A request a receiver already accepted cannot be
+    un-sent, and the terminal row state is not evidence about what the receiver saw
+    (ADR-0018). Only a ``pending`` row can be removed; anything already sent, failed or
+    expired is left untouched. No outbox column is added and no ledger migration runs.
+    """
+    if not event_id.strip():
+        raise ValueError("event ID is required")
+    if not tracking_db_path(data_dir).exists():
+        raise TrackingError("private tracking database is missing; there is no pending outbox row to remove")
+    if not _mark_delivery(data_dir, event_id, status="expired", error_code=REMOVED_BY_OPERATOR):
+        raise TrackingError("outbox row is not pending; removal only expires a pending row and never un-sends a recorded delivery")
+    return RemovalSummary(event_id=event_id)
+
+
+def live_scan_readiness(
+    *,
+    watchlist_file: Path | None = None,
+    ticker_config_path: Path | None = None,
+    lake_dir: Path | None = None,
+) -> LiveScanReadiness:
+    """Refuse a live rule scan unless every watched identity's stored coverage is strict.
+
+    Only ``source_clock`` coverage is point-in-time evidence (ADR-0032 decision 5): a
+    ``vendor_events_no_clock`` row asserts vendor-event completeness only, and a
+    missing proof establishes nothing, so both are refused here before any scan. The
+    paper shadow does not call this gate and may rehearse on synthetic data.
+    """
+    watchlist = load_private_watchlist(watchlist_file, ticker_config_path)
+    identities = [item.instrument.tuple for item in watchlist.instruments]
+    root = lake_dir or LAKE_DIR
+    strict: set[tuple[str, str, str]] = set()
+    weak: set[tuple[str, str, str]] = set()
+    for market in sorted({instrument[0] for instrument in identities}):
+        try:
+            frame = read_delta(f"02_silver/corporate_action_coverage/{market}", lake_dir=root)
+        except Exception:
+            continue
+        if not {"market", "mic", "symbol"}.issubset(frame.columns):
+            continue
+        for row in frame.iter_rows(named=True):
+            key = (str(row["market"]), str(row["mic"]), str(row["symbol"]))
+            # A row without the stamp predates it and is the strict basis (ADR-0032).
+            if row.get("coverage_basis") in {None, "source_clock"}:
+                strict.add(key)
+            else:
+                weak.add(key)
+    if any(identity in weak for identity in identities):
+        return LiveScanReadiness(
+            status="refused", basis="vendor_events_no_clock", reason="weak_coverage_basis", refusal=LIVE_SCAN_STRICT_COVERAGE_REFUSAL
+        )
+    if any(identity not in strict for identity in identities):
+        return LiveScanReadiness(status="refused", basis="missing", reason="coverage_proof_missing", refusal=LIVE_SCAN_COVERAGE_MISSING_REFUSAL)
+    return LiveScanReadiness(status="ready", basis="source_clock", reason="strict_coverage_established")
+
+
+def _shadow_readiness_reason(*, watchlist_file: Path | None, ticker_config_path: Path | None, data_dir: Path | None) -> str | None:
+    """Value-free readiness reason; the paper shadow refuses instead of acting on unready local state."""
+    try:
+        load_private_watchlist(watchlist_file, ticker_config_path)
+    except Exception:
+        return "watchlist_unreadable"
+    connection = _open_database(data_dir, writable=False)
+    if connection is None:
+        return None
+    try:
+        _reports, report_state = _read_reports(connection)
+        _rows, outbox_state = _read_outbox(connection)
+    finally:
+        connection.close()
+    return "history_corrupt" if "corrupt" in {report_state, outbox_state} else None
+
+
+def _shadow_report(
+    *,
+    status: Literal["completed", "quiet_hours", "kill_switch", "blocked"],
+    rounds_requested: int,
+    rounds: list[PaperShadowRound],
+    scan_status: Literal["scanned", "skipped", "failed"],
+    sink: PaperSink,
+    reason: str | None = None,
+    refusal: str | None = None,
+) -> PaperShadowReport:
+    """Assemble one rehearsal record from the rounds that actually ran."""
+    return PaperShadowReport(
+        status=status,
+        reason=reason,
+        refusal=refusal,
+        scan_status=scan_status,
+        rounds_requested=rounds_requested,
+        rounds_run=len(rounds),
+        rounds=rounds,
+        delivered_event_ids=sorted(set(sink.event_ids)),
+        duplicate_event_ids=sink.duplicate_event_ids,
+    )
+
+
+def run_paper_shadow(
+    *,
+    now: datetime | None = None,
+    rounds: int = 1,
+    scan: bool = True,
+    require_strict_coverage: bool = False,
+    sink: PaperSink | None = None,
+    watchlist_file: Path | None = None,
+    ticker_config_path: Path | None = None,
+    signal_config_path: Path | None = None,
+    lake_dir: Path | None = None,
+    data_dir: Path | None = None,
+) -> PaperShadowReport:
+    """Rehearse the delivery loop offline with a local in-memory sink; never sends.
+
+    Guard order: readiness, then the optional live-scan strict-coverage gate, then the
+    operator kill switch, then the bounded scan, then the re-checked readiness, kill
+    switch and quiet-hours gates per round while holding the same cross-process
+    delivery lock the live seam uses. Delivery additionally revalidates each event and
+    expires any event whose own session left the delivery window, so a missed session
+    is retired with a value-free reason instead of burst-delivered. No HTTP sender is
+    constructed, no scheduler is activated, and live delivery stays disabled.
+    """
+    clock = now or datetime.now(UTC)
+    if clock.tzinfo is None or clock.utcoffset() is None:
+        raise ValueError("paper shadow clock must be timezone-aware")
+    if not 1 <= rounds <= MAX_SHADOW_ROUNDS:
+        raise ValueError(f"paper shadow rounds must be between 1 and {MAX_SHADOW_ROUNDS}")
+    recorder = sink if sink is not None else PaperSink()
+    scan_status: Literal["scanned", "skipped", "failed"] = "skipped"
+    if require_strict_coverage:
+        readiness = live_scan_readiness(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, lake_dir=lake_dir)
+        if readiness.status != "ready":
+            return _shadow_report(
+                status="blocked",
+                rounds_requested=rounds,
+                rounds=[],
+                scan_status=scan_status,
+                sink=recorder,
+                reason=readiness.reason,
+                refusal=readiness.refusal,
+            )
+    reason = _shadow_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
+    if reason is not None:
+        return _shadow_report(status="blocked", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason=reason)
+    if delivery_kill_switch_active(data_dir):
+        return _shadow_report(status="kill_switch", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason="kill_switch")
+    if scan:
+        try:
+            scan_private_watchlist(
+                now=clock,
+                watchlist_file=watchlist_file,
+                ticker_config_path=ticker_config_path,
+                signal_config_path=signal_config_path,
+                lake_dir=lake_dir,
+                data_dir=data_dir,
+            )
+            scan_status = "scanned"
+        except Exception:
+            logger.warning("paper_shadow_scan_failed")
+            scan_status = "failed"
+    with _delivery_lock(data_dir, blocking=False):
+        reason = _shadow_readiness_reason(watchlist_file=watchlist_file, ticker_config_path=ticker_config_path, data_dir=data_dir)
+        if reason is not None:
+            return _shadow_report(status="blocked", rounds_requested=rounds, rounds=[], scan_status=scan_status, sink=recorder, reason=reason)
+        rounds_run: list[PaperShadowRound] = []
+        for index in range(1, rounds + 1):
+            delivery_gate = _delivery_gate(clock, enabled=True, data_dir=data_dir)
+            if delivery_gate is not None:
+                stopped: Literal["quiet_hours", "kill_switch"] = "kill_switch" if delivery_gate == "kill_switch" else "quiet_hours"
+                rounds_run.append(PaperShadowRound(round=index, clock=clock, delivery_status=stopped, pending=_count_outbox("pending", data_dir)))
+                return _shadow_report(status=stopped, rounds_requested=rounds, rounds=rounds_run, scan_status=scan_status, sink=recorder)
+            summary = _deliver_pending_locked(
+                clock=clock,
+                sender=recorder,
+                watchlist_file=watchlist_file,
+                ticker_config_path=ticker_config_path,
+                lake_dir=lake_dir,
+                data_dir=data_dir,
+                signal_config_path=signal_config_path,
+            )
+            rounds_run.append(
+                PaperShadowRound(
+                    round=index,
+                    clock=clock,
+                    delivery_status="completed",
+                    attempted=summary.attempted,
+                    sent=summary.sent,
+                    failed=summary.failed,
+                    expired=summary.expired,
+                    pending=summary.pending,
+                    receipts=len(recorder.receipts),
+                )
+            )
+    return _shadow_report(status="completed", rounds_requested=rounds, rounds=rounds_run, scan_status=scan_status, sink=recorder)
+
+
 def _count_outbox(status: str, data_dir: Path | None) -> int:
     connection = _open_database(data_dir, writable=False)
     if connection is None:
@@ -1846,7 +2259,7 @@ def build_digest(*, now: datetime | None = None, data_dir: Path | None = None) -
     )
 
 
-def format_schedule_plan() -> dict[str, str | bool]:
+def format_schedule_plan() -> dict[str, str | bool | int]:
     """Describe DST-aware support without registering or activating a scheduler."""
     return {
         "readiness_first": True,
@@ -1856,19 +2269,35 @@ def format_schedule_plan() -> dict[str, str | bool]:
         "dst_aware": True,
         "scheduler_activated": False,
         "live_delivery_enabled": False,
+        "intended_scheduler": "external local cron/systemd job; never a public Pages job or a secret-bearing GitHub job",
+        "kill_switch_marker": DELIVERY_KILL_SWITCH_FILENAME,
+        "dedup_expiry_sessions": DELIVERY_EXPIRY_SESSIONS,
+        "paper_shadow_sink": "local_in_memory",
+        "not_exactly_once": NOT_EXACTLY_ONCE_DISCLOSURE,
     }
 
 
 __all__ = [
+    "DELIVERY_EXPIRY_SESSIONS",
+    "DELIVERY_KILL_SWITCH_FILENAME",
     "DeliverySummary",
+    "EXPIRED_OUT_OF_WINDOW",
     "InstrumentTrackingState",
     "DigestSummary",
+    "LiveScanReadiness",
+    "NOT_EXACTLY_ONCE_DISCLOSURE",
     "OpportunityWebhookPayload",
     "OutboxObservation",
+    "PaperReceipt",
+    "PaperShadowReport",
+    "PaperShadowRound",
+    "PaperSink",
     "PriceZone",
     "PrivateTrackingSnapshot",
     "PrivateWatchlist",
+    "REMOVED_BY_OPERATOR",
     "ReadinessObservation",
+    "RemovalSummary",
     "TrackedInstrument",
     "TrackingCandidate",
     "TrackingError",
@@ -1879,12 +2308,17 @@ __all__ = [
     "add_instrument",
     "build_digest",
     "deliver_pending",
+    "delivery_kill_switch_active",
+    "delivery_kill_switch_path",
     "format_schedule_plan",
     "in_quiet_hours",
+    "live_scan_readiness",
     "load_private_watchlist",
     "migrate_legacy_watchlist",
     "private_tracking_snapshot",
     "remove_instrument",
+    "remove_pending_delivery",
+    "run_paper_shadow",
     "scan_private_watchlist",
     "tracking_db_path",
     "update_instrument",
