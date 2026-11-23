@@ -184,6 +184,9 @@ MARKET_CONTRACTS: Final[Mapping[str, MarketContract]] = MappingProxyType(
     {
         "us_equity": _contract("us_equity", _US_CORPORATE_ACTIONS),
         "cn_ashare": _contract("cn_ashare", _unsupported_corporate_actions("cn_ashare")),
+        "hk_sg_equity": _contract("hk_sg_equity", _unsupported_corporate_actions("hk_sg_equity")),
+        "jpx_equity": _contract("jpx_equity", _unsupported_corporate_actions("jpx_equity")),
+        "krx_equity": _contract("krx_equity", _unsupported_corporate_actions("krx_equity")),
     }
 )
 
