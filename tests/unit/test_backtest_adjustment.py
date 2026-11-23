@@ -13,9 +13,10 @@ from typing import cast
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.data_loader import BacktestDataLoader  # type: ignore[import-untyped]
+from equity_lake.backtesting.data_loader import AdjustmentMode, BacktestDataLoader  # type: ignore[import-untyped]
 from equity_lake.backtesting.strategy.base import BaseStrategy  # type: ignore[import-untyped]
 from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    TOTAL_RETURN_UNAVAILABLE,
     ActionCoverageProof,
 )
 from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA  # type: ignore[import-untyped]
@@ -147,8 +148,45 @@ class TestLoaderAdjustment:
         _write_prices(tmp_lake, _price_frame())
         _write_actions(tmp_lake)
         loader = BacktestDataLoader()
-        with pytest.raises(ValueError, match="split-only"):
+        with pytest.raises(ValueError) as excinfo:
             loader.load(["AAPL"], date(2024, 1, 1), date(2024, 1, 2), markets=["us_equity"], adjust="total_return")
+        # The one shared refusal (RS-B01), not a per-session mask discovered mid-load.
+        assert str(excinfo.value) == TOTAL_RETURN_UNAVAILABLE
+        assert "split-only" in str(excinfo.value) and "ADR-0015" in str(excinfo.value)
+
+    def test_total_return_is_refused_before_any_read(self, tmp_lake: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        _write_prices(tmp_lake, _price_frame())
+        _write_actions(tmp_lake)
+        loader = BacktestDataLoader()
+        reads: list[str] = []
+
+        def _refuse_read(market: str, *args: object, **kwargs: object) -> pl.DataFrame:
+            reads.append(market)
+            raise AssertionError("no market read may start before the total_return refusal")
+
+        monkeypatch.setattr(loader, "_read_market", _refuse_read)
+        with pytest.raises(ValueError) as excinfo:
+            loader.load(["AAPL"], date(2024, 1, 1), date(2024, 1, 2), markets=["us_equity"], adjust="total_return")
+        assert str(excinfo.value) == TOTAL_RETURN_UNAVAILABLE
+        assert reads == []
+        assert loader.snapshots() == []
+        assert loader.price_origin_summaries() == []
+
+    def test_unknown_adjust_value_is_a_clear_error_not_a_key_error(self) -> None:
+        loader = BacktestDataLoader()
+        with pytest.raises(ValueError) as excinfo:
+            loader.load(["AAPL"], date(2024, 1, 1), date(2024, 1, 2), markets=["us_equity"], adjust=cast(AdjustmentMode, "crazy"))
+        assert not isinstance(excinfo.value, KeyError)
+        message = str(excinfo.value)
+        assert "Unknown adjustment mode" in message
+        for allowed in ("none", "splits", "total_return"):
+            assert allowed in message
+
+    def test_reader_defence_in_depth_raises_the_same_refusal(self) -> None:
+        # The shared transform keeps its own refusal even though every caller refuses first.
+        with pytest.raises(ValueError) as excinfo:
+            with_price_adjustment(pl.DataFrame(), pl.DataFrame(), method="total_return")
+        assert str(excinfo.value) == TOTAL_RETURN_UNAVAILABLE
 
 
 class TestEngineAndFactoryThreading:
@@ -202,6 +240,34 @@ class TestEngineAndFactoryThreading:
         )
         assert captured["adjust"] == "splits"
 
+    def test_engine_constructor_refuses_total_return(self) -> None:
+        from equity_lake.backtesting.engine import VectorBacktestEngine
+
+        with pytest.raises(ValueError) as excinfo:
+            VectorBacktestEngine(_PITThresholdStrategy(), ["AAPL"], date(2024, 1, 2), date(2024, 1, 5), adjust="total_return")
+        assert str(excinfo.value) == TOTAL_RETURN_UNAVAILABLE
+
+    def test_engine_unknown_adjust_value_is_not_a_key_error(self) -> None:
+        from equity_lake.backtesting.engine import VectorBacktestEngine
+
+        with pytest.raises(ValueError) as excinfo:
+            VectorBacktestEngine(_PITThresholdStrategy(), ["AAPL"], date(2024, 1, 2), date(2024, 1, 5), adjust=cast(AdjustmentMode, "crazy"))
+        assert not isinstance(excinfo.value, KeyError)
+        assert "Unknown adjustment mode" in str(excinfo.value)
+
+    def test_factory_refuses_total_return_with_the_same_error(self) -> None:
+        from equity_lake.backtesting.factory import STRATEGY_REGISTRY, build_backtest_engine
+
+        with pytest.raises(ValueError) as excinfo:
+            build_backtest_engine(
+                strategy=next(iter(STRATEGY_REGISTRY)),
+                tickers=["AAPL"],
+                start_date=date(2024, 1, 1),
+                end_date=date(2024, 1, 2),
+                adjust="total_return",
+            )
+        assert str(excinfo.value) == TOTAL_RETURN_UNAVAILABLE
+
 
 class TestCliFlag:
     def test_invalid_adjust_exits_1(self) -> None:
@@ -245,7 +311,7 @@ class TestCliFlag:
             ["backtest", "--start-date", "2024-01-01", "--end-date", "2024-02-01", "--adjust", "total_return"],
         )
         assert result.exit_code == 1
-        assert "--adjust total_return is unsupported" in result.output
+        assert TOTAL_RETURN_UNAVAILABLE in " ".join(result.output.split())
         assert engine_builds == []
 
 

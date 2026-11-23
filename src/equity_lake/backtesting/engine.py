@@ -10,7 +10,7 @@ from typing import Any, Literal, cast
 import polars as pl
 import structlog
 
-from equity_lake.backtesting.data_loader import _PIT_ACTION_CONTEXT, _PIT_RAW_COLUMNS, BacktestDataLoader
+from equity_lake.backtesting.data_loader import _PIT_ACTION_CONTEXT, _PIT_RAW_COLUMNS, BacktestDataLoader, resolve_adjustment_method
 from equity_lake.backtesting.metrics import DEFAULT_RISK_FREE_RATE, equity_curve_metrics
 from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy.base import BaseStrategy
@@ -128,6 +128,9 @@ class VectorBacktestEngine:
         self.markets = markets or ["us_equity", "cn_ashare", "hk_sg_equity"]
         self.config = config or {}
         self.preloaded_data = preloaded_data
+        # The documented entry point refuses an unsupported adjustment mode here, before
+        # any load or preloaded run starts (RS-B01): the same one error as the loader/CLI.
+        resolve_adjustment_method(adjust)
         self.adjust: Literal["none", "splits", "total_return"] = adjust
         #: The one lake root this engine reads (``None`` keeps the canonical lake) and the
         #: ADR-0032 basis its adjusted reads are admitted under. One root and one basis per

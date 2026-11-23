@@ -63,6 +63,7 @@ import structlog
 
 from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     COVERAGE_BASES,
+    TOTAL_RETURN_UNAVAILABLE,
     AvailabilityContractError,
     CoverageBasis,
 )
@@ -80,7 +81,7 @@ from equity_lake.core.price_provenance import (
 from equity_lake.core.schemas import ACTION_COVERAGE_SNAPSHOT_NAME_PREFIX, PRICE_PROVENANCE_VERSION
 from equity_lake.ingestion.types import MARKET_DIR_MAP
 from equity_lake.storage.delta import delta_table_path
-from equity_lake.storage.lake_reader import with_price_adjustment
+from equity_lake.storage.lake_reader import AdjustmentMethod, with_price_adjustment
 
 logger = structlog.get_logger(__name__)
 
@@ -135,6 +136,25 @@ _ADJUST_METHODS: dict[str, Literal["split_only", "total_return"]] = {
     "splits": "split_only",
     "total_return": "total_return",
 }
+
+
+def resolve_adjustment_method(adjust: str) -> AdjustmentMethod:
+    """Map an ``adjust`` mode to the reader method, refusing before any read (RS-B01).
+
+    ``total_return`` fails here with the one shared ADR-0015 message: cash-dividend
+    adjustment is not total return and this lake holds no vendor total-return series,
+    so the mode is refused identically at every entry path instead of being approximated
+    or failing mid-load. Nothing is read and no per-instrument work starts.
+
+    Raises:
+        ValueError: ``total_return`` (unsupported, ADR-0015) or any unknown value;
+            the message lists the allowed values, never a bare ``KeyError``.
+    """
+    if adjust == "total_return":
+        raise ValueError(TOTAL_RETURN_UNAVAILABLE)
+    if adjust not in _ADJUST_METHODS:
+        raise ValueError(f"Unknown adjustment mode: {adjust!r} (expected one of {', '.join(_ADJUST_METHODS)})")
+    return _ADJUST_METHODS[adjust]
 
 
 class BacktestDataLoader:
@@ -269,6 +289,9 @@ class BacktestDataLoader:
         call each snapshot name is recorded once, and distinct markets contribute
         distinct names.
         """
+        # ``adjust`` is resolved first (RS-B01): an unsupported mode fails here, before
+        # any read or per-instrument work, never from inside the adjustment loop.
+        resolve_adjustment_method(adjust)
         # Snapshot scope is the load, not the loader: reset before any read so a stale
         # entry can never be reported next to data this load fetched.
         self._snapshots.clear()
@@ -596,7 +619,7 @@ class BacktestDataLoader:
         """
         if not {"ticker", "date", "close", *IDENTITY_COLUMNS}.issubset(data.columns):
             raise InstrumentIdentityError("Adjusted backtest input is missing canonical identity/date/close columns")
-        method: Literal["split_only", "total_return"] = _ADJUST_METHODS[adjust]
+        method: AdjustmentMethod = resolve_adjustment_method(adjust)
         mark_parts: list[pl.DataFrame] = []
         excluded = 0
 

@@ -13,6 +13,7 @@ from equity_lake.core.availability import (  # pyright: ignore[reportMissingImpo
     AVAILABILITY_SCHEMA_VERSION,
     COVERAGE_BASES,
     PRICE_ADJUSTMENT_VERSION,
+    TOTAL_RETURN_UNAVAILABLE,
     ActionCoverageProof,
     AvailabilityContractError,
     CoverageBasis,
@@ -203,7 +204,7 @@ def with_price_adjustment(
     if method not in _METHODS:
         raise ValueError(f"Unknown adjustment method: {method!r} (expected one of {_METHODS})")
     if method == "total_return":
-        raise ValueError("ADR-0015 supports split-only adjustment; dividends are excluded")
+        raise ValueError(TOTAL_RETURN_UNAVAILABLE)
     if prices.is_empty():
         return prices.clone()
     if "price_adjustment_version" in prices.columns:

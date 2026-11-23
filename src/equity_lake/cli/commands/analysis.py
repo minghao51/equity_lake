@@ -42,12 +42,10 @@ def backtest_cmd(
     mixed in one run.
     """
     from equity_lake.backtesting.factory import build_backtest_engine
-    from equity_lake.core.availability import COVERAGE_BASES, CoverageBasis
+    from equity_lake.core.availability import COVERAGE_BASES, TOTAL_RETURN_UNAVAILABLE, CoverageBasis
 
     if adjust == "total_return":
-        typer.secho(
-            "--adjust total_return is unsupported; only point-in-time split-only adjustment is implemented (use --adjust splits)", fg=typer.colors.RED
-        )
+        typer.secho(TOTAL_RETURN_UNAVAILABLE, fg=typer.colors.RED)
         raise typer.Exit(1)
     if adjust not in ("none", "splits"):
         typer.secho(f"Unknown --adjust value: {adjust} (expected splits; none is a legacy split-only alias)", fg=typer.colors.RED)

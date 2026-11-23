@@ -26,6 +26,24 @@ flat `equity backtest` CLI takes no market-selection flag; its supported syntax
 is shown above. In Python, the market API accepts canonical keys only:
 `us_equity`, `cn_ashare`, `hk_sg_equity`, `jpx_equity`, and `krx_equity`.
 
+#### `total_return` is refused identically at every entry path
+
+Total return is **not** cash-dividend adjustment, and it is not available here:
+this lake implements point-in-time split-only adjustment only and holds no vendor
+total-return series. The one operator-facing message (ADR-0015) is
+
+```text
+total_return adjustment is unsupported (ADR-0015): only point-in-time split-only adjustment is implemented and no vendor total-return series exists in this lake; cash dividends are not a substitute for vendor-adjusted returns (use split-only adjustment)
+```
+
+raised as the same `ValueError` text by `equity backtest --adjust total_return`
+(exit 1, before any engine is built), by
+`BacktestDataLoader.load(..., adjust="total_return")` (before any read) and by
+`VectorBacktestEngine(..., adjust="total_return")` / `build_backtest_engine(...)`
+(at construction). An unknown `--adjust`/`adjust` value raises a distinct
+`ValueError` naming the allowed values — never a bare `KeyError` discovered
+mid-load. `split_only` results are unchanged.
+
 Every split-only point-in-time decision requires verified, source-scoped action
 coverage whose identity matches the instrument, source clock is mapped to its
 first observable venue session, and source-issued expiry reaches that session's
@@ -609,6 +627,32 @@ loader.close()
 - **Ignoring costs**: Transaction costs eat profits
 - **Overfitting**: Too complex for historical period
 - **Insufficient data**: Less than 3 years is risky
+
+## Future: a vendor total-return adapter (not scheduled)
+
+Nothing in this framework computes total return today. If a vendor total-return
+series is ever adopted, it is a **new schema and a new ADR**, implemented as a
+separate adapter path — not a re-interpretation of the split-only transform and
+not a change to ADR-0015:
+
+- **New schema/ADR first.** The series needs its own stored contract (identity,
+vendor revision and publication clock, coverage/expiry proof, its own adjustment
+version stamp) and an accepted decision record before any code is written.
+- **Never double-count cash dividends.** A vendor total-return series already
+folds distributions into its returns. Portfolio `CASH_DIVIDEND` book-income events
+must therefore never be added on top of vendor-adjusted returns in the same run;
+one basis per run, never mixed.
+- **Never conflate the two.** 100 → 90 with a 10 cash distribution is zero gross
+total return (not −10%), and a 2:1 split creates no wealth. Cash-dividend
+adjustment is not total return; a future cash-distribution backtest path also
+needs its own decision covering fee, tax, reinvestment and currency treatment.
+- **Strict reads keep failing on weak or unproven coverage.** A vendor total-return
+adapter inherits the same coverage discipline: missing, stale or unverified proof
+leaves the decision unavailable rather than silently priced, and the weak
+`vendor_events_no_clock` basis stays an explicit, disclosed research opt-in.
+
+Until such an ADR and schema exist, `total_return` is refused early and identically
+at the CLI, the loader and the engine (see above).
 
 ## Notebooks and Further Examples
 
