@@ -887,6 +887,7 @@ ticker text.
 | `--tickers`, `-t` | str | demo group | Comma-separated tickers (must be configured in `config/tickers.yaml`) |
 | `--real` | flag | off | Attempt live yfinance fetch (falls back to synthetic) |
 | `--seed` | int | `42` | Synthetic RNG seed |
+| `--end-date` | str | yesterday | Last synthetic day (`YYYY-MM-DD`). Pin it with `--seed` to make the seeded data identical on any wall-clock day; required for a reproducible CI bootstrap |
 | `--lake` | str | `data/sample` | Target lake root (`data/lake` requires confirmation) |
 | `--overwrite-production-lake` | flag | off | Skip the confirmation prompt for `--lake data/lake` (requires `--lake`) |
 | `--dry-run` | flag | off | Preview the seed summary without writing |
@@ -897,7 +898,15 @@ uv run equity demo seed --real
 uv run equity demo seed --dry-run
 uv run equity demo seed --lake data/lake --overwrite-production-lake   # destructive, logged
 uv run equity demo seed --years 5                                     # then: arena run --lake data/sample
+uv run equity demo seed --end-date 2026-11-20                         # reproducible window
 ```
+
+A fixed `--seed` alone is not reproducible: the window ends yesterday. Passing
+`--end-date` too makes the written frames identical on any wall-clock day. For the
+canonical synthetic CI/H00 lake, prefer the disposable bootstrap
+(`uv run python -m equity_lake.devtools.bootstrap --end-date …`), which seeds a
+throwaway checkout of the tracked source and refuses any operator lake; see the
+[quick start](../getting-started/quickstart.md#fresh-clone-profiles).
 
 Seeding or preloading the canonical lake (`data/lake/`) leaves synthetic rows in
 the same tables real ingestion uses. Bronze rows are not distinguishable

@@ -86,6 +86,58 @@ This quickstart intentionally contains no live-ingestion or deployment command.
 Use provider-fetching and production workflows only after separate owner
 authorization and review of their explicit scope.
 
+## Fresh-Clone Profiles
+
+A fresh clone has exactly three ways to get a lake. There is no implicit fourth path:
+nothing creates a lake on import, on test collection, from an environment flag such as
+`CI=true`, or from a marker file.
+
+### (a) Sample lake - the default
+
+`uv run equity demo seed` writes the synthetic demo to the auxiliary sample lake
+(`data/sample/`), offline and without provider credentials. This is the default and the
+safe first run above.
+
+### (b) Canonical synthetic CI lake - disposable
+
+H00 and CI need a canonical `data/lake/` whose rows carry the synthetic provenance
+envelope. Build it in a throwaway checkout of the **tracked** source instead of your
+own checkout:
+
+```bash
+uv run python -m equity_lake.devtools.bootstrap --end-date 2026-11-20 --keep
+```
+
+The command prints a JSON report: `allocation` is the fresh OS temporary directory it
+owns and `lake_dir` is that checkout's canonical `data/lake/`. `--end-date` is
+required because it pins the window; the same seed plus the same end date produces
+identical logical data on any wall-clock day (the seed otherwise ends yesterday). On an
+empty disposable runner the same guarantee is available directly with
+`uv run equity demo seed --lake data/lake --overwrite-production-lake --end-date
+2026-11-20`.
+
+The bootstrap refuses to run unless the destination is a fresh, empty directory
+resolving beneath its own allocation, the checkout contains tracked source only (no
+`.env`, no ignored runtime data), the importing module is that checkout, and the
+destination is not (and does not contain) the operator lake. Provider credentials are
+stripped from the child process; optional/provider-backed datasets are reported
+unavailable with a reason rather than stubbed. Build the H00 artifact from the reported
+allocation, then delete it:
+
+```bash
+ALLOC="<reported allocation>"
+PYTHONPATH="$ALLOC/checkout/src" uv run --project "$PWD" equity dashboard h00-build --output-dir "$ALLOC/h00"
+rm -rf "$ALLOC"
+```
+
+### (c) Real-root restore/re-land - operator only
+
+Re-landing real-source data is an explicit operator action, never implicit. It writes
+the sibling root `data/lake_real/`, which ADR-0030 allows to be selected only by an
+explicit `--lake-dir`: it is never cataloged, never mixed with the synthetic
+`data/lake/`, and never created implicitly. Nothing in this quickstart selects it; use
+the ADR-0028/0030 ingestion and re-land commands under their own authorization.
+
 ## Notes
 
 - A built-in dashboard ships with the repo. Use `equity dashboard build` for
