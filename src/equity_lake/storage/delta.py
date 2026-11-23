@@ -22,7 +22,7 @@ from deltalake.exceptions import CommitFailedError
 from deltalake.schema import Schema
 from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_none
 
-from equity_lake.core.paths import LAKE_DIR, price_dataset_market
+from equity_lake.core.paths import LAKE_DIR, price_dataset_market, refuse_cross_root_symlink
 from equity_lake.core.polars_utils import FrameLike, normalize_temporal_columns
 from equity_lake.core.price_provenance import PriceProvenanceError, prepare_price_provenance_frame
 
@@ -69,8 +69,15 @@ SchemaMode = Literal["merge", "overwrite"] | None
 
 
 def delta_table_path(table: str, lake_dir: Path | None = None) -> Path:
-    """Return the lake path for *table* (e.g. ``"04_platinum/predictions"``)."""
-    return (lake_dir or LAKE_DIR) / table
+    """Return the lake path for *table* (e.g. ``"04_platinum/predictions"``).
+
+    The join stays dumb — nothing is redirected, created or discovered — but a path
+    that reaches the other lake root (or leaves its own) through a symlink is refused
+    here, at the single resolution seam every reader and writer goes through (ADR-0030).
+    """
+    path = (lake_dir or LAKE_DIR) / table
+    refuse_cross_root_symlink(path)
+    return path
 
 
 def write_delta(

@@ -290,6 +290,45 @@ def resolve_lake_root(explicit: Path | str | None) -> Path | None:
     return root
 
 
+def _named_lake_root(path: Path) -> Path | None:
+    """The lake-root constant *path* names lexically, or ``None`` for any other path."""
+    for root in (LAKE_DIR, REAL_LAKE_DIR):
+        if path == root or path.is_relative_to(root):
+            return root
+    return None
+
+
+def refuse_cross_root_symlink(table_path: Path) -> None:
+    """Refuse a lake path that reaches another root through a symlink (ADR-0030, RS-D01).
+
+    The demo root and a real-source root are separate slices: a read or write is scoped
+    to the root its caller named. A symlink planted inside one root and pointing at the
+    other — ``data/lake_real/01_bronze`` -> ``data/lake/01_bronze``, or the reverse —
+    would otherwise let one root serve the other's data while every path still looks
+    locally contained. The same rule refuses a link that leaves its own root entirely.
+
+    Refusal only: the path is never rewritten or redirected, so
+    ``delta_table_path`` stays a plain join and no implicit redirection can hide in
+    storage. A path that is not lexically under a known lake root (a test-lake
+    ``--lake-dir``, for example) is returned untouched by the caller.
+
+    Raises:
+        ValueError: the path resolves into another lake root, or outside its own root.
+    """
+    named = _named_lake_root(table_path)
+    if named is None:
+        return
+    root = named.resolve()
+    target = table_path.resolve()
+    for other in (LAKE_DIR, REAL_LAKE_DIR):
+        if other == named:
+            continue
+        if target.is_relative_to(other.resolve()):
+            raise ValueError(f"lake path {table_path} resolves into {other.name}; the demo and real roots are never mixed through a symlink")
+    if target != root and not target.is_relative_to(root):
+        raise ValueError(f"lake path {table_path} resolves outside its root {named}; a symlink must not redirect a lake root")
+
+
 def is_real_source_root(lake_dir: Path | str | None) -> bool:
     """True when ``lake_dir`` selects a second, real-source root (ADR-0030).
 
@@ -371,6 +410,7 @@ __all__ = [
     "ensure_dirs",
     "is_real_source_root",
     "market_dir",
+    "refuse_cross_root_symlink",
     "price_dataset_market",
     "price_markets_for_root",
 ]

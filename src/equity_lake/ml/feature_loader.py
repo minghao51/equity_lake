@@ -26,6 +26,11 @@ from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImpor
 )
 from equity_lake.core.paths import GOLD_DIR, GOLD_FEATURES_DIR, LAKE_DIR
 from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.core.source_clock import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    SourceClockRecord,
+    SourceClockUnavailable,
+    require_qualified_source_clock,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -65,6 +70,8 @@ class FeatureLoader:
         *,
         require_available_by: date | None = None,
         trusted_legacy_provenance: Mapping[str, Sequence[InstrumentKey]] | None = None,
+        source_clock_source: str | None = None,
+        source_clock_records: Sequence[SourceClockRecord | Mapping[str, object]] | None = None,
     ) -> pl.DataFrame:
         """Read Gold features by canonical identity.
 
@@ -188,6 +195,17 @@ class FeatureLoader:
         except AvailabilityContractError as exc:
             raise AvailabilityContractError(f"Gold feature rows have unavailable action-coverage provenance: {exc}") from exc
 
+        if source_clock_source is not None or source_clock_records is not None:
+            if source_clock_source is None or source_clock_records is None:
+                raise SourceClockUnavailable("a qualified source clock needs both the source name and its append-only qualification records")
+            for instrument in frame.select(*IDENTITY_COLUMNS).unique().to_dicts():
+                require_qualified_source_clock(
+                    source=source_clock_source,
+                    market=str(instrument["market"]),
+                    series=str(instrument["symbol"]),
+                    as_of=end_date,
+                    records=source_clock_records,
+                )
         if require_available_by is not None:
             from equity_lake.features.labels import filter_as_of_available
 
