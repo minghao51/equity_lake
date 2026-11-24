@@ -1,12 +1,19 @@
 # Devtools
 
-`src/equity_lake/devtools/` holds developer-only helpers: demo/sample data
-seeding, the test-data generator, a release verifier, and a one-off
-corpus seeder. Nothing in the runtime pipeline imports this package — it
+`src/equity_lake/devtools/` holds developer-only helpers: the shared synthetic-seeding
+primitives (`seeding.py`), demo and sample data seeding (`seed_demo.py`, plus the
+`equity bootstrap sample` command in `cli/bootstrap.py`), the disposable synthetic-lake
+bootstrap (`bootstrap.py`), the test-data generator (`test_data.py`), two artifact
+verifiers (`verify_h00_release.py`, `verify_r02_artifacts.py`), the recursive Markdown
+lint gate (`markdown_lint.py`), a one-off corpus seeder (`seed_transcripts.py`), the lake
+reset (`reset_lake.py`) and the bounded preload helpers (`preload.py`,
+`refit_preload.py`). Nothing in the runtime pipeline imports this package — it
 exists so contributors can populate a lake, test the showcase flow, and keep
-CI configuration honest without touching production sources. Two of its
-tools are surfaced through the CLI (`equity demo`, `equity bootstrap`); two
-run as modules.
+CI configuration honest without touching production sources. `seed_demo` is surfaced
+through the CLI (`equity demo seed`); `bootstrap`, `verify_h00_release`,
+`verify_r02_artifacts`, `markdown_lint`, `seed_transcripts`, `test_data` and `reset_lake`
+run as modules (`python -m equity_lake.devtools.<name>`, several behind `make` targets),
+and `seeding` is a library the other generators share.
 
 ## Demo Lake — `equity demo seed` / `make demo`
 
@@ -62,6 +69,42 @@ market written with the canonical writer. Flags: `--days` (default 30),
 Use this for onboarding and dashboard checks; for unit tests prefer the
 polars fixtures in `tests/conftest.py`.
 
+## Synthetic seeding primitives — `devtools/seeding.py`
+
+`seeding.py` is the single polars home for the synthetic generation that
+`equity bootstrap sample`, `equity demo seed` and the sandbox test-data generator each
+used to implement separately: the random walk (`synthetic_ohlcv`), the Mon–Fri
+calendar helpers, the curated per-market universes and the config-derived identity
+resolver. Callers keep their own `OhlcvProfile` — the distribution parameters are
+per-tool tuning, not shared policy — but the walk, the calendar and the universes
+live here. It is a library: no CLI, no module entry point. The RS-R01 scale fixtures
+are generated with `synthetic_ohlcv` (`MARKET_CONFIGS` profile), which is fixture data,
+not market data.
+
+## Disposable synthetic lake — `devtools/bootstrap.py`
+
+`bootstrap.py` materialises a canonical synthetic `data/lake/` without ever touching
+the operator's checkout (RS-E01, profile (b) of the fresh-clone profiles in the
+[quickstart](../getting-started/quickstart.md)). `bootstrap_disposable_lake()` allocates
+a fresh OS temporary directory, extracts the tracked source from `git archive` (refusing
+`.env`, untracked runtime `data/` and symlink members), seeds that checkout's lake with
+the synthetic generator, and proves the isolation before anything is written: the
+checkout and the destination lake must both resolve beneath the allocation, the child
+process must report that it imported the disposable checkout's `equity_lake`, the target
+lake must be empty, and an operator lake is refused as a destination in either
+containment direction regardless of the legacy overwrite flag. Unseeded optional
+datasets are reported `available: false` with a reason — never stubbed with generated
+rows. `BootstrapRefused` marks a preflight refusal, `BootstrapError` a failure after
+allocation; the temporary checkout is disposed unless `--keep`.
+
+```bash
+uv run python -m equity_lake.devtools.bootstrap --end-date 2026-11-20
+uv run python -m equity_lake.devtools.bootstrap --end-date 2026-11-20 --keep --seed 42 --years 3 --tickers 10
+```
+
+Flags: `--end-date` (pins the synthetic window, as `equity demo seed --end-date` does),
+`--keep` (retain the allocation), `--seed`, `--years`, `--tickers`.
+
 ## Test data generator — `devtools/test_data.py`
 
 `TestDataGenerator` produces realistic OHLCV at scale for manual
@@ -111,6 +154,41 @@ logs cannot become the leak the scan prevents. Covered by
 The former `devtools/sync_schedule.py` (workflow-cron sync against
 `config/settings.yaml`) was retired with `.github/workflows/pages.yml`: no workflow
 publishes on a schedule any more, so there is no workflow cron to keep in sync.
+
+## R02 artifact verification — `devtools/verify_r02_artifacts.py`
+
+Read-only verifier for the archived R02 research artifacts (RS-R02-D1): it checks every
+archived file's sha256 against the tracked anchor
+([recovery receipt](../finding/20261123-01-r02-recovery-receipt.md)), re-derives the
+protocol↔prespecification digests from the frozen code, and recomputes every reported
+metric with `ml/experiment.py`'s own estimators — no model is fitted, so this is not a
+refit. It never opens a file for writing, so an in-place verification cannot mutate the
+evidence it verifies. Exit 0 = verified, 1 = tamper or mismatch, 2 = nothing to verify.
+With `--lake-dir` the economic metrics and their bootstrap intervals are recomputed too;
+without a lake root they are reported **UNVERIFIED** with that reason rather than
+assumed. It also reproduces the two estimands behind the −2.79 pp / [−0.42 pp,
++0.31 pp] pairing and reports the pairing as a finding (recovery receipt §4).
+
+```bash
+uv run python -m equity_lake.devtools.verify_r02_artifacts \
+  --research-dir data/research/r02 \
+  --anchor docs/finding/20261123-01-r02-recovery-receipt.md \
+  --lake-dir data/lake_real
+```
+
+## Markdown lint gate — `devtools/markdown_lint.py`
+
+The recursive Markdown gate behind `make lint-md`: `pymarkdown` scanned recursively so
+`docs/` subdirectories are covered, checked against the reviewed baseline at
+`config/markdown-lint-baseline.json`, which records preexisting findings as
+`file -> rule -> count` (314 findings across 35 files when recorded by RS-Q00,
+2026-11-23). `--check` fails on any finding absent from the baseline or any raised
+count — and also fails when a recorded finding no longer reproduces, so the baseline can
+only ratchet down through an explicit `make lint-md-baseline` (`--update-baseline`);
+the baseline is never edited to hide a finding. Disabled rules are recorded, not silent:
+the `disabled_rules` entries name the rule, a justification and the measured legacy cost
+(the MD013 exclusion is one), and the gate fails closed when the recorded set does not
+match its own. Coverage: `tests/unit/test_markdown_lint_gate.py`.
 
 ## Transcript corpus seeding — `devtools/seed_transcripts.py`
 
@@ -183,7 +261,9 @@ guard, and the provenance state on a test-owned lake).
 
 `devtools/` is a top-level package like any other (see
 [Project Structure](project-structure.md)), but it is developer-only: the
-runtime pipeline, dashboard, and CLI command paths never import it. Demo
+runtime pipeline and dashboard never import it, and the only CLI callers are
+`equity demo seed` and `equity bootstrap sample`, which import `seed_demo.py`
+and `seeding.py` (`cli/commands/demo.py:16`, `cli/bootstrap.py:18`). Demo
 and sample seeding write to the auxiliary sample lake (`data/sample/`);
 the test-data generator writes to `data/sandbox/test_data/`. Writing into
 the canonical lake (`data/lake/**`) is possible only through the explicit,
