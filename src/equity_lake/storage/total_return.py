@@ -308,7 +308,7 @@ def derive_total_return(prices: FrameLike, actions: FrameLike, *, basis: str) ->
                     f"{ticker} on {ex_date}: a second dividend row for the same session; one session reinvests once",
                 )
             close = closes[ticker].get(ex_date)
-            if close is None:
+            if ex_date not in closes[ticker]:
                 raise TotalReturnError(
                     "ex_date_without_price",
                     f"{ticker} on {ex_date}: no price row on the dividend ex-date, so there is no close to reinvest at",

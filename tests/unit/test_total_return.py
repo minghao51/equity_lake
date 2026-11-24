@@ -15,6 +15,7 @@ import pytest
 from equity_lake.storage.total_return import (
     NO_SOURCE_CLOCK,
     TOTAL_RETURN_BASIS,
+    TotalReturnError,
     TotalReturnSeries,
     derive_total_return,
 )
@@ -200,3 +201,131 @@ def test_derivation_is_deterministic_and_input_order_independent() -> None:
     assert shuffled_levels == pytest.approx(first_levels, rel=1e-12)
     # The base-100 index is anchored per instrument at its first session in the frame.
     assert first.frame.filter(pl.col("ticker") == "BBB")["total_return_index"].to_list() == pytest.approx([100.0, 100.0], rel=1e-12)
+
+
+# --- Refusals: each named, each tested, none a silent skip (ADR-0037 decision 5) ---------
+
+
+def _prices_with_close(rows: list[tuple[str, date, float | None]]) -> pl.DataFrame:
+    """Prices whose close may be null, which a stored vendor row can legitimately be."""
+    return pl.DataFrame(
+        {
+            "ticker": [row[0] for row in rows],
+            "date": [row[1] for row in rows],
+            "close": [row[2] for row in rows],
+        },
+        schema={"ticker": pl.String, "date": pl.Date, "close": pl.Float64},
+    )
+
+
+def _refusal(prices: pl.DataFrame, actions: pl.DataFrame, *, basis: str = RESEARCH) -> str:
+    with pytest.raises(TotalReturnError) as raised:
+        derive_total_return(prices, actions, basis=basis)
+    return raised.value.reason
+
+
+def test_refuses_a_dividend_ex_date_without_a_price_row() -> None:
+    """A reinvestment needs that session's close; a missing session is refused, not skipped."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 4), 100.0)])
+    actions = _actions([("AAA", date(2024, 1, 3), "dividend", 1.0)])
+
+    assert _refusal(prices, actions) == "ex_date_without_price"
+
+
+def test_refuses_a_dividend_ex_date_close_that_is_not_a_positive_price() -> None:
+    """A zero, negative or null ex-date close cannot carry a `1 + d/close` step."""
+    for close in (0.0, -5.0, None):
+        prices = _prices_with_close([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 3), close)])
+        actions = _actions([("AAA", date(2024, 1, 3), "dividend", 1.0)])
+        assert _refusal(prices, actions) == "non_positive_close"
+
+
+def test_refuses_an_unusable_first_session_close_for_the_index_base() -> None:
+    """The base-100 index divides by the first session's level, so that close must be usable."""
+    prices = _prices_with_close([("AAA", date(2024, 1, 2), 0.0), ("AAA", date(2024, 1, 3), 100.0)])
+
+    assert _refusal(prices, _actions([])) == "non_positive_close"
+
+
+def test_refuses_a_split_ratio_that_is_zero_negative_one_or_exactly_one() -> None:
+    """A stored split ratio must be a finite old/new ratio other than exactly 1."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 3), 50.0)])
+    for ratio in (0.0, -0.5, 1.0):
+        actions = _actions([("AAA", date(2024, 1, 3), "split", ratio)])
+        assert _refusal(prices, actions) == "invalid_split_ratio"
+
+
+def test_refuses_a_negative_or_non_finite_dividend_amount() -> None:
+    """Only the net cash actually stored is reinvested; a negative or NaN amount is refused."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 3), 100.0)])
+    for amount in (-1.0, float("nan")):
+        actions = _actions([("AAA", date(2024, 1, 3), "dividend", amount)])
+        assert _refusal(prices, actions) == "invalid_dividend_value"
+
+
+def test_refuses_an_unknown_action_value() -> None:
+    """A row that is neither dividend nor split cannot be applied or ignored silently."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 3), 100.0)])
+    actions = _actions([("AAA", date(2024, 1, 3), "spinoff", 1.0)])
+
+    assert _refusal(prices, actions) == "unknown_action"
+
+
+def test_refuses_a_duplicate_dividend_on_the_same_session() -> None:
+    """One session reinvests once; two dividend rows for it are contradictory input."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 3), 100.0)])
+    actions = _actions([("AAA", date(2024, 1, 3), "dividend", 1.0), ("AAA", date(2024, 1, 3), "dividend", 2.0)])
+
+    assert _refusal(prices, actions) == "duplicate_dividend"
+
+
+def test_refuses_actions_for_an_instrument_absent_from_the_price_frame() -> None:
+    """An unpriced instrument's factors would silently reach no row, so it is refused."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0)])
+    actions = _actions([("ZZZ", date(2024, 1, 2), "split", 0.5)])
+
+    assert _refusal(prices, actions) == "unknown_instrument"
+
+
+def test_refuses_a_ticker_spanning_more_than_one_market() -> None:
+    """One ticker over two markets is two instruments; partition by identity first."""
+    prices = pl.concat(
+        [
+            _prices([("AAA", date(2024, 1, 2), 100.0)]),
+            _prices([("AAA", date(2024, 1, 2), 200.0)]).with_columns(pl.lit("cn_ashare").alias("market")),
+        ]
+    )
+
+    assert _refusal(prices, _actions([])) == "ambiguous_identity"
+
+
+# --- The research-only entry point: a strict consumer cannot obtain the series -----------
+
+
+def test_refuses_the_strict_basis_and_every_other_basis() -> None:
+    """The only admitted basis is the research one; asking for `source_clock` raises."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0), ("AAA", date(2024, 1, 3), 90.0)])
+
+    assert _refusal(prices, _actions([]), basis="source_clock") == "strict_basis_required"
+    assert _refusal(prices, _actions([]), basis="vendor_stamped") == "strict_basis_required"
+    assert _refusal(prices, _actions([]), basis="") == "strict_basis_required"
+
+
+def test_basis_is_a_required_keyword_argument() -> None:
+    """A caller cannot reach the derived series without naming the basis it is getting."""
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0)])
+
+    with pytest.raises(TypeError):
+        derive_total_return(prices, _actions([]))  # type: ignore[call-arg]
+
+
+def test_the_split_only_reader_still_refuses_total_return() -> None:
+    """RS-B01's uniform refusal is untouched: the reader offers no total-return path at all."""
+    from equity_lake.core.availability import TOTAL_RETURN_UNAVAILABLE
+    from equity_lake.storage.lake_reader import with_price_adjustment
+
+    prices = _prices([("AAA", date(2024, 1, 2), 100.0)])
+
+    with pytest.raises(ValueError) as raised:
+        with_price_adjustment(prices, _actions([]), method="total_return")
+    assert str(raised.value) == TOTAL_RETURN_UNAVAILABLE
