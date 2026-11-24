@@ -33,18 +33,25 @@ page. Backup is **manual and verified** (P00-4, [ADR-0031](../decisions/0031-p00
 `equity portfolio migrate` writes a verified exact-file copy before it touches anything,
 `equity portfolio backup --apply` exports one into a private directory of your choice,
 `equity portfolio backups` inventories such a directory read-only, and
-`equity portfolio restore` / `equity portfolio compact` verify before they replace or rebuild.
-There is no automated, scheduled or remote backup, and none is authorized. All of them are
-report-only by default.
+`equity portfolio restore` / `equity portfolio compact` verify before they replace or rebuild,
+and `equity portfolio prune` collapses history only behind a verified backup
+([ADR-0036](../decisions/0036-ledger-event-retention-and-pruning.md)).
+There is no automated, scheduled or remote backup or prune, and none is authorized. All of
+them are report-only by default.
 
-## Retention invariant: everything is kept, nothing runs automatically
+## Retention: operator-invoked checkpoint collapse, nothing runs automatically
 
 This is the retention rule the ledger is built on, and it is not a policy that a later
 command may quietly change:
 
-- **Every ledger event is retained.** There is no retention window, no expiry, no pruning and
-  no deletion of events. A correction is an explicit reversal/repair event, never an edit or a
-  removal (ADR-0024 decision 5), and no command in this page deletes an event or a row.
+- **Normal operation never edits or deletes an event.** A correction is an explicit
+  reversal/repair event, never an edit or a removal (ADR-0024 decision 5). The one exception
+  is the explicit, operator-invoked `equity portfolio prune --before <instant> --apply`
+  (ADR-0036), which writes a checkpoint row-set for the state at the cut and then deletes only
+  the events **strictly before** the cut. It is irreversible in the ledger, requires a verified
+  backup whose sha256 is recorded, and refuses on any unmet precondition. There is still no
+  retention window, expiry, automatic or scheduled pruning, and bare deletion is never a
+  supported operation.
 - **Backup files are never pruned.** Exported `.bak` files accumulate until you remove one
   yourself. Automatic deletion, rotation, age-out or "keep the newest N" housekeeping is a
   **separate future housekeeping decision with its own ADR**; nothing implements it today, and
@@ -60,8 +67,8 @@ command may quietly change:
   place, positive exclusive-writer evidence, 2× free space) apply. Compaction is never a
   retention step: it preserves the record and deletes nothing.
 - **Nothing runs automatically.** No scheduler, timer, hook or background task backs up,
-  migrates, restores, compacts or deletes the ledger. Each mechanism needs an explicit command
-  and, for the private `--apply` form, your own instruction.
+  migrates, restores, compacts, prunes or deletes the ledger. Each mechanism needs an explicit
+  command and, for the private `--apply` form, your own instruction.
 
 ## Canonical CSV: the only accepted input
 
@@ -280,6 +287,55 @@ sha256sum <ledger>
 `tmp_path` only: a verified export restored into an empty isolated target reproduces the source
 SHA-256 and the replay fingerprint (cash, per-instrument quantities and the replayed event
 count), the restored copy appends new events, and the production-side ledger hash is unchanged.
+
+## Pruning history: checkpoint collapse (ADR-0036)
+
+Long histories can be reduced with `equity portfolio prune`. Pruning is **checkpoint collapse,
+never bare deletion**: the accounting state at the cut is written as an `OPENING` row-set (one
+cash row plus one row per open position, because `OPENING` carries at most one instrument per
+row), and only then are the events strictly before the cut deleted — in one transaction on a
+verified copy that replaces the ledger atomically.
+
+```bash
+# Plan only: verifies, replays to the cut, prints the ids to delete, the checkpoint and the
+# planned manifest fields. This is the default and writes nothing at all.
+uv run equity portfolio prune --before 2024-01-04T00:00:00Z
+
+# Apply: writes a verified exact-file backup first unless you supply one, then the prune.
+uv run equity portfolio prune --before 2024-01-04T00:00:00Z --apply
+
+# Supply an existing verified backup of this exact ledger instead of writing a new one.
+uv run equity portfolio prune --before 2024-01-04T00:00:00Z --apply --backup <verified>.bak
+```
+
+Pruning is **irreversible**: the pre-cut events no longer exist in the ledger, so old statements
+and marks can no longer be reconciled against that window. The verified backup is the reversal;
+`--apply` either re-verifies a supplied backup and refuses a mismatch, or writes and verifies an
+exact-file copy beside the ledger first and records its sha256. A prune refuses when the ledger
+is missing, unverifiable or not schema v2; the target is not the configured private ledger; the
+cut is naive or not strictly in the past; no event is strictly before the cut; the ledger holds
+more than one account label; the checkpoint would carry negative cash; there is no
+source-sequence room before the earliest retained event; the supplied backup does not match; or
+replay of the pruned ledger does not reproduce the pre-prune book at the cut and at a later
+instant.
+
+What is preserved **exactly** at and after the cut: cash, per-position quantity, basis, marked
+value and NAV. An explicitly `UNKNOWN` basis stays unknown and is never back-filled. What is
+**not** preserved: the historical breakdown of deposits, withdrawals, standalone fees, net
+dividend income and realized gain before the cut — those sums are collapsed into the checkpoint
+and cannot be reconstructed from the ledger. `equity portfolio summary` and `equity portfolio
+positions` therefore print a **PRUNED HISTORY** disclosure and mark the affected lines as
+excluding pre-cut events, instead of showing an unexplained zero.
+
+Every applied prune writes a Pydantic-validated JSON manifest under
+`data/portfolio/prune/` (auxiliary and git-ignored, like the ledger itself). It records the cut,
+the sorted pruned event ids, the record digest before and after, the backup sha256, the tool
+version, a UTC timestamp and the checkpoint external ids. Running the same cut again is a no-op
+that reports the existing checkpoint and writes nothing; it never produces a second checkpoint.
+
+> Related record: [ADR-0036](../decisions/0036-ledger-event-retention-and-pruning.md) amends
+> ADR-0024 decision 3 and ADR-0031 decision 6 for operator-invoked checkpoint-collapse pruning
+> only. It does not authorize backup-file pruning, off-host export, or automatic retention.
 
 ## What `--dry-run` guarantees
 
@@ -528,9 +584,10 @@ they are not the Bronze price-source provenance of ADR-0027.
   `equity portfolio backup` (verified local export into a private directory you choose),
   `equity portfolio backups` (read-only inventory of such a directory),
   `equity portfolio restore` (verify candidate, back up the current file, atomic replace,
-  re-verify) and `equity portfolio compact` (`VACUUM INTO`, record-preserving post-conditions) —
-  all P00-4/ADR-0031, and nothing is ever backed up, migrated, compacted or deleted
-  automatically.
+  re-verify), `equity portfolio compact` (`VACUUM INTO`, record-preserving post-conditions) and
+  `equity portfolio prune` (verified backup, checkpoint collapse, replay-equality proof,
+  manifest) — P00-4/ADR-0031 plus ADR-0036 — and nothing is ever backed up, migrated,
+  compacted, pruned or deleted automatically.
 - No encrypted, off-host, remote or cloud export or drill, and no backup-file pruning: the
   local verified copy and the read-only inventory above are the whole in-contract posture
   (RS-P02). Off-host/encrypted export needs a new ADR and a real destination first; backup-file
@@ -544,5 +601,7 @@ Related records: [ADR-0024](../decisions/0024-private-portfolio-ledger-and-accou
 (private portfolio ledger and book accounting),
 [ADR-0026](../decisions/0026-portfolio-projection-precision-marks-and-reconciliation.md)
 (projection precision, marks and reconciliation), ADR-0006 (auxiliary data paths
-and Pydantic write boundaries), ADR-0016 (canonical instrument identity) and
-ADR-0018 (loopback-only private surfaces).
+and Pydantic write boundaries), ADR-0016 (canonical instrument identity),
+ADR-0018 (loopback-only private surfaces) and
+[ADR-0036](../decisions/0036-ledger-event-retention-and-pruning.md) (operator-invoked
+checkpoint-collapse pruning).

@@ -1,19 +1,19 @@
 # ADR-0036 — Ledger event retention and pruning: checkpoint collapse
 
-**Status:** Accepted (2026-11-24) by the owner. **Not implemented** — this record precedes the
-code on purpose. The intended command shape `equity portfolio prune --before <instant>
-[--apply]` is the plan for a future implementation, **not an existing command**; nothing in the
-repository prunes, deletes or checkpoints a ledger event today. Acceptance authorizes nothing to
-be run against a real ledger.
+**Status:** Accepted (2026-11-24) by the owner. **Implemented as a mechanism** (2026-11-24):
+`equity portfolio prune --before <instant> [--apply] [--backup <path>]` now exists,
+report-only by default, with the preconditions, checkpoint row-set, manifest, replay-equality
+proof and read-surface disclosure below. Implementing the mechanism authorizes **no run against
+a real ledger**; an actual prune still needs its own owner instruction.
 
 **Recorded:** 2026-11-24
 
-**Accepted:** 2026-11-24 by the owner as a decision record only. What it settles: retention
-stays operator-invoked, pruning means checkpoint collapse rather than row deletion, the
-preconditions under which a prune is lawful, exactly what a prune preserves and what it
-discards, the manifest every prune must write, and idempotence. What it does not settle: the
-implementation, its tests, and any instruction to actually prune a ledger — each of those is a
-later act.
+**Accepted:** 2026-11-24 by the owner as a decision record. What it settles: retention stays
+operator-invoked, pruning means checkpoint collapse rather than row deletion, the preconditions
+under which a prune is lawful, exactly what a prune preserves and what it discards, the manifest
+every prune must write, and idempotence. What it did not settle at acceptance — now delivered as
+the mechanism, with its tests — was the implementation; an instruction to actually prune a
+ledger remains a separate later act.
 
 **Scope:** closes the retention question ADR-0024 decision 3 and ADR-0031 decision 6 left
 unwritten ("deletion and retention remain unauthorized"; "a future retention decision needs its
@@ -58,9 +58,15 @@ preserve the accounting state exactly, and must prove it, or refuse.
    (c) a replay of the ledger to the cut instant, producing the accounting state — cash and,
    for every open position, quantity and basis exactly as the replay derives them (an
    explicitly unknown basis stays unknown and is never back-filled: ADR-0024 decision 6);
-   (d) **one** `OPENING` checkpoint event written at the cut instant carrying that state
+   (d) **one `OPENING` checkpoint row-set** written at the cut instant carrying that state
    (the `OPENING` kind of ADR-0024 decision 4, which already carries cash and/or positions
-   with basis);
+   with basis). The kind carries at most one instrument per row, so the checkpoint is one
+   cash `OPENING` row plus one `OPENING` row per open position — a row-set, not a single
+   event. Every row shares `external_source="prune-checkpoint"` and external ids derived
+   deterministically from the cut (which is what makes decision 6's re-run a no-op), and the
+   row-set's `effective_at` is one microsecond before the cut so it sorts before every
+   retained event (all at or after the cut) in the ledger's logical order; the manifest
+   records that instant and the row-set layout;
    (e) deletion of the events **strictly before** the cut — never the checkpoint, never an
    event at or after the cut.
 
