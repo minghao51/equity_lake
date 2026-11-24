@@ -35,6 +35,7 @@ from equity_lake.portfolio import (
     parse_marks_text,
     replay_ledger,
 )
+from equity_lake.portfolio.marks import value_positions
 from equity_lake.portfolio.store import (
     PRUNE_CHECKPOINT_SOURCE,
     LedgerPruneManifest,
@@ -43,7 +44,6 @@ from equity_lake.portfolio.store import (
     prune_ledger,
     verify_ledger_file,
 )
-from equity_lake.portfolio.marks import value_positions
 
 runner = CliRunner()
 
