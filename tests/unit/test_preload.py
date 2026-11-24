@@ -15,8 +15,8 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.devtools.preload import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.devtools.preload import (
     BRONZE_PRICE_TABLE,
     DEFAULT_PRELOAD_TICKERS,
     MAX_PRELOAD_SESSIONS,
@@ -25,7 +25,7 @@ from equity_lake.devtools.preload import (  # type: ignore[import-untyped]
     observed_sessions,
     preload_features,
 )
-from equity_lake.features import NoFeatureHistoryError  # type: ignore[import-untyped]
+from equity_lake.features import NoFeatureHistoryError
 
 _DAYS = [date(2026, 8, 3) + timedelta(days=offset) for offset in range(10)]
 

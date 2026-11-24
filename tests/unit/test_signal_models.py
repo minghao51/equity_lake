@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from equity_lake.signals.models import Signal, SignalConfig, Watchlist  # type: ignore[import-untyped]
+from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 
 
 def test_signal_creation_valid() -> None:

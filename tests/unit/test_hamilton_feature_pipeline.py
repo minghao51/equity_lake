@@ -9,8 +9,8 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.features.pipeline import FeaturePipeline  # type: ignore[import-untyped]
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.features.pipeline import FeaturePipeline
 
 
 def _sample_frame(n: int = 80) -> pd.DataFrame:
@@ -104,7 +104,7 @@ class TestConnectedValidation:
     def test_invalid_open_fails_public_compute(self) -> None:
         frame = _sample_frame()
         frame.loc[0, "open"] = 0.0
-        from equity_lake.features.dag.clean_02 import OHLCVValidationError  # type: ignore[import-untyped]
+        from equity_lake.features.dag.clean_02 import OHLCVValidationError
 
         with pytest.raises(OHLCVValidationError, match="strictly positive"):
             FeaturePipeline().compute_technical(frame)
@@ -213,7 +213,7 @@ def _flatten(items: Iterable[Any]) -> Iterator[Any]:
 
 def test_gold_boundary_node_rejects_infinite_output(monkeypatch: pytest.MonkeyPatch) -> None:
     """If an indicator produced inf, the Gold boundary node rejects the frame."""
-    import equity_lake.features.dag.features_03 as features_03  # type: ignore[import-untyped]
+    import equity_lake.features.dag.features_03 as features_03
     from equity_lake.features.dag.features_03 import FeatureOutputValidationError
 
     original = features_03.validate_emitted_frame

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.signals.config import load_signal_config, load_watchlist  # type: ignore[import-untyped]
+from equity_lake.signals.config import load_signal_config, load_watchlist
 
 
 def _ticker_config(path: Path, *, duplicate_market: bool = False, inactive_us: bool = False) -> Path:

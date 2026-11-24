@@ -7,11 +7,11 @@ from typing import Any, cast
 import polars as pl
 import pytest
 
-from equity_lake import pipeline  # type: ignore[import-untyped]
-from equity_lake.core.config import MarketConfig, TickerConfig, TickerMetadata  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentIdentityError, InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.ingestion.types import SourceOutcome, SourceStatus  # type: ignore[import-untyped]
-from equity_lake.pipeline import _resolve_configured_tickers, execute_eod_pipeline  # type: ignore[import-untyped]
+from equity_lake import pipeline
+from equity_lake.core.config import MarketConfig, TickerConfig, TickerMetadata
+from equity_lake.core.instruments import InstrumentIdentityError, InstrumentKey
+from equity_lake.ingestion.types import SourceOutcome, SourceStatus
+from equity_lake.pipeline import _resolve_configured_tickers, execute_eod_pipeline
 
 _HK_SG_TICKERS = ["0700.HK", "0005.HK", "C6L.SI"]
 
@@ -118,7 +118,7 @@ def test_fully_closed_hk_sg_session_skips_features_and_ml(monkeypatch: pytest.Mo
 
 
 def test_pipeline_passes_explicit_source_date_market_instrument_scopes_to_both_processors(monkeypatch: pytest.MonkeyPatch) -> None:
-    from equity_lake.ingestion import bronze_silver, sec_processor  # type: ignore[import-untyped]
+    from equity_lake.ingestion import bronze_silver, sec_processor
 
     captured_articles: list[Any] = []
     captured_sec: list[Any] = []
@@ -257,7 +257,7 @@ def test_synthetic_normal_pipeline_preserves_provider_identity_through_ml(monkey
 
     from equity_lake.core.instruments import InstrumentKey
     from equity_lake.ingestion import router
-    from equity_lake.sources.base import MarketDataFetcher  # type: ignore[import-untyped]
+    from equity_lake.sources.base import MarketDataFetcher
 
     target = date(2024, 1, 4)
     config = TickerConfig(
@@ -338,11 +338,11 @@ def test_synthetic_normal_pipeline_preserves_provider_identity_through_ml(monkey
     monkeypatch.setattr("equity_lake.features.engineering.LAKE_DIR", tmp_path)
     from deltalake import write_deltalake
 
-    from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
         ACTION_COVERAGE_SCHEMA_VERSION,
         ActionCoverageProof,
     )
-    from equity_lake.core.schemas import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    from equity_lake.core.schemas import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
         CORPORATE_ACTION_SCHEMA,
     )
 
@@ -372,7 +372,7 @@ def test_synthetic_normal_pipeline_preserves_provider_identity_through_ml(monkey
         ml_calls.append(kwargs)
         return True, {}
 
-    from equity_lake.validation.schemas import PriceDataSchema  # type: ignore[import-untyped]
+    from equity_lake.validation.schemas import PriceDataSchema
 
     actual_price_validation = PriceDataSchema.validate
 

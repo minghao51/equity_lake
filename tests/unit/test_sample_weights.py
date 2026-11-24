@@ -9,9 +9,9 @@ from runpy import run_path
 import numpy as np
 import pandas as pd
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.ml.labeling import apply_triple_barrier_labels  # type: ignore[import-untyped]
-from equity_lake.ml.sample_weights import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.ml.labeling import apply_triple_barrier_labels
+from equity_lake.ml.sample_weights import (
     compute_sample_uniqueness,
     compute_uniqueness_weights,
 )

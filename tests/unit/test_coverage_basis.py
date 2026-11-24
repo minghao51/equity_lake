@@ -17,7 +17,7 @@ from typing import Any, cast
 import polars as pl
 import pytest
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ACTION_COVERAGE_SCHEMA_VERSION,
     AVAILABILITY_SCHEMA_VERSION,
     ActionCoverageProof,
@@ -30,14 +30,14 @@ from equity_lake.core.availability import (  # type: ignore[import-untyped]  # p
     validate_feature_action_coverage,
     validate_weak_feature_action_coverage,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentKey,
 )
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.schemas import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     FEATURE_SCHEMA_VERSION,
     SYNTHETIC_COVERAGE_SOURCE,
 )
-from equity_lake.storage.lake_reader import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.storage.lake_reader import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     with_price_adjustment,
 )
 
@@ -310,7 +310,7 @@ class TestClocklessFetchIssuesWeakProofs:
     def _fetcher(monkeypatch: pytest.MonkeyPatch, *, configured: bool = True) -> Any:
         import pandas as pd
 
-        from equity_lake.sources.base import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.sources.base import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             YFinanceBaseFetcher,
         )
 
@@ -364,11 +364,11 @@ class TestClocklessFetchIssuesWeakProofs:
         assert fetcher.action_coverage_proofs == ()
 
     def test_ingest_persists_weak_coverage_with_typed_null_clocks(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        from equity_lake.ingestion.corporate_actions import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.ingestion.corporate_actions import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             corporate_action_coverage_table,
             ingest_corporate_actions,
         )
-        from equity_lake.storage.delta import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.storage.delta import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             read_delta,
         )
 
@@ -400,7 +400,7 @@ class TestLandedSliceReciprocalVerification:
         return prices, actions
 
     def _adjusted(self) -> pl.DataFrame:
-        from equity_lake.storage.delta import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.storage.delta import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             read_delta,
         )
 
@@ -508,7 +508,7 @@ class TestFeatureWriterRouting:
         return pl.DataFrame([row], schema_overrides={"date": pl.Date})
 
     def test_strict_frame_passes_the_writer(self) -> None:
-        from equity_lake.ingestion.writers import validate_schema  # type: ignore[import-untyped]
+        from equity_lake.ingestion.writers import validate_schema
 
         assert validate_schema(self._frame(basis=STRICT_BASIS, age=0), "03_gold/features") is True
 
@@ -587,7 +587,7 @@ class TestFeaturePathOptIn:
         return prices, actions, coverage, days[0], days[-1]
 
     def _compute(self, basis: CoverageBasis, *, weak_actions: bool, weak_coverage: bool) -> pl.DataFrame:
-        from equity_lake.features.engineering import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.features.engineering import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             FeatureEngineer,
         )
 
@@ -638,7 +638,7 @@ class TestCorporateActionsIngestWiring:
 
     def test_factory_path_receives_the_current_ticker_config(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA
-        from equity_lake.ingestion import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.ingestion import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             router,
         )
         from equity_lake.ingestion.corporate_actions import ingest_corporate_actions

@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from equity_lake.cli._app import api_app  # type: ignore[import-untyped]
-from equity_lake.cli.commands import api as api_command  # type: ignore[import-untyped]  # noqa: F401
+from equity_lake.cli._app import api_app
+from equity_lake.cli.commands import api as api_command  # noqa: F401
 
 
 def test_api_defaults_to_loopback_without_confirmation() -> None:

@@ -11,9 +11,9 @@ from datetime import date, datetime, timedelta
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import CORPORATE_ACTION_REQUIRED_COLUMNS  # type: ignore[import-untyped]
-from equity_lake.ingestion import writers  # type: ignore[import-untyped]
-from equity_lake.validation.schemas import SCHEMA_REGISTRY, CorporateActionSchema  # type: ignore[import-untyped]
+from equity_lake.core.schemas import CORPORATE_ACTION_REQUIRED_COLUMNS
+from equity_lake.ingestion import writers
+from equity_lake.validation.schemas import SCHEMA_REGISTRY, CorporateActionSchema
 
 _CORPORATE_ACTION_MARKETS = ("corporate_actions", "01_bronze/corporate_actions", "02_silver/corporate_actions")
 

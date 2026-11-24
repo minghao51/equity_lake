@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.dashboard import h00  # type: ignore[import-untyped]
-from equity_lake.devtools import verify_h00_release as verify  # type: ignore[import-untyped]
+from equity_lake.dashboard import h00
+from equity_lake.devtools import verify_h00_release as verify
 
 CANARY = "CANARY-RELEASE-SECRET-4c1f"
 DIGEST_CANARY = "b" * 64
@@ -182,7 +182,7 @@ class TestBuilderArtifactIsVerifiable:
     """The real composed artifact passes, so the workflow step is not vacuous."""
 
     def test_a_built_artifact_passes_verification(self, tmp_path: Path) -> None:
-        from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
+        from equity_lake.devtools.seed_demo import seed_demo
 
         lake = tmp_path / "sandbox" / "data" / "lake"
         seed_demo(years=0.1, tickers=["AAPL"], lake_dir=lake)
@@ -190,7 +190,7 @@ class TestBuilderArtifactIsVerifiable:
         assert verify.verify_release(artifact.directory)["files"] == 3
 
     def test_a_copied_artifact_with_a_canary_still_fails(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
+        from equity_lake.devtools.seed_demo import seed_demo
 
         dotenv = tmp_path / ".env"
         dotenv.write_text(f"WANDB_ENTITY={CANARY}\n", encoding="utf-8")

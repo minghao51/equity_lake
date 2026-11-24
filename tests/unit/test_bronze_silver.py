@@ -10,8 +10,8 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.bronze_silver import MARKET_WIDE_INSTRUMENT, _get_processed_ids, _write_silver_generic  # type: ignore[import-untyped]
-from equity_lake.ingestion.replay import PaidWorkBudget, ReplayBatchResult, ReplayItem, ReplayScope  # type: ignore[import-untyped]
+from equity_lake.ingestion.bronze_silver import MARKET_WIDE_INSTRUMENT, _get_processed_ids, _write_silver_generic
+from equity_lake.ingestion.replay import PaidWorkBudget, ReplayBatchResult, ReplayItem, ReplayScope
 
 
 def _silver_article_row(**overrides: Any) -> dict[str, Any]:

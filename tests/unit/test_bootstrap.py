@@ -38,7 +38,7 @@ class TestCmdSampleWrite:
 
     def test_synthetic_dates_follow_each_market_calendar(self, tmp_path: Path) -> None:
         """Each written market gets its own exchange sessions, not the Mon–Fri union (R2/F11)."""
-        from equity_lake.core.calendar import trading_days_between  # type: ignore[import-untyped]
+        from equity_lake.core.calendar import trading_days_between
         from equity_lake.storage.delta import read_delta
 
         fake_dirs = {market: tmp_path / f"absent_{market}" for market in SAMPLE_TICKERS}
@@ -59,7 +59,7 @@ class TestCmdSampleWrite:
         from datetime import date  # noqa: PLC0415
 
         from equity_lake.core.calendar import is_instrument_trading_day, trading_days_between
-        from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+        from equity_lake.core.instruments import InstrumentKey
         from equity_lake.storage.delta import read_delta
 
         fake_dirs = {market: tmp_path / f"absent_{market}" for market in SAMPLE_TICKERS}

@@ -14,8 +14,8 @@ from deltalake import write_deltalake
 from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     AvailabilityContractError,
 )
-from equity_lake.core.calendar import instrument_sessions_between, is_instrument_trading_day, is_trading_day  # type: ignore[import-untyped]
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.calendar import instrument_sessions_between, is_instrument_trading_day, is_trading_day
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_SCHEMA_VERSION,
     InstrumentIdentityError,
     InstrumentKey,
@@ -24,10 +24,10 @@ from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # py
     normalize_identity_frame,
     prepare_source_identity_frame,
 )
-from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
-from equity_lake.features.labels import AVAILABILITY_COLUMN, add_label_availability  # type: ignore[import-untyped]
-from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import PriceForecaster  # type: ignore[import-untyped]
+from equity_lake.features.engineering import FeatureEngineer
+from equity_lake.features.labels import AVAILABILITY_COLUMN, add_label_availability
+from equity_lake.ml.feature_loader import FeatureLoader
+from equity_lake.ml.forecasting import PriceForecaster
 
 
 def test_exchange_mapping_and_historical_legacy_resolution_are_explicit() -> None:
@@ -81,10 +81,10 @@ def test_new_price_identity_requires_explicit_venue_provenance() -> None:
 
 
 def test_price_source_preserves_provider_exchange_and_uses_only_exact_current_config() -> None:
-    from equity_lake.core.config import TickerConfig  # type: ignore[import-untyped]
-    from equity_lake.core.config_models import MarketConfig, TickerMetadata  # type: ignore[import-untyped]
-    from equity_lake.sources.base import STANDARD_COLUMNS, standardize_columns  # type: ignore[import-untyped]
-    from equity_lake.sources.us import USEquityFetcher  # type: ignore[import-untyped]
+    from equity_lake.core.config import TickerConfig
+    from equity_lake.core.config_models import MarketConfig, TickerMetadata
+    from equity_lake.sources.base import STANDARD_COLUMNS, standardize_columns
+    from equity_lake.sources.us import USEquityFetcher
 
     config = TickerConfig(
         markets={
@@ -127,7 +127,7 @@ def test_cn_source_szse_alias_uses_xshe_and_unresolved_venues_fail_closed(monkey
 
     from equity_lake.core.config import TickerConfig
     from equity_lake.core.config_models import MarketConfig, TickerMetadata
-    from equity_lake.sources.cn import CNAshareFetcher  # type: ignore[import-untyped]
+    from equity_lake.sources.cn import CNAshareFetcher
 
     config = TickerConfig(
         markets={
@@ -160,7 +160,7 @@ def test_cn_source_szse_alias_uses_xshe_and_unresolved_venues_fail_closed(monkey
     with pytest.raises(InstrumentIdentityError, match="no configured MIC mapping"):
         fetcher._attach_source_identity(unknown_venue)
 
-    from equity_lake.sources.hk_sg import HKSGEquityFetcher  # type: ignore[import-untyped]
+    from equity_lake.sources.hk_sg import HKSGEquityFetcher
 
     ambiguous_config = TickerConfig(
         markets={
@@ -176,8 +176,8 @@ def test_cn_source_szse_alias_uses_xshe_and_unresolved_venues_fail_closed(monkey
 def test_efinance_and_hybrid_fetches_attach_config_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     from equity_lake.core.config import TickerConfig
     from equity_lake.core.config_models import MarketConfig, TickerMetadata
-    from equity_lake.sources.cn_efinance import CNEfinanceFetcher  # type: ignore[import-untyped]
-    from equity_lake.sources.cn_hybrid import CNHybridFetcher  # type: ignore[import-untyped]
+    from equity_lake.sources.cn_efinance import CNEfinanceFetcher
+    from equity_lake.sources.cn_hybrid import CNHybridFetcher
 
     config = TickerConfig(
         markets={

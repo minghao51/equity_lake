@@ -27,10 +27,10 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-import equity_lake.portfolio.store as store_module  # type: ignore[import-untyped]
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.portfolio import LedgerStore, LedgerStoreError, parse_csv_text, replay_ledger  # type: ignore[import-untyped]
-from equity_lake.portfolio.store import (  # type: ignore[import-untyped]
+import equity_lake.portfolio.store as store_module
+from equity_lake.cli.__main__ import app
+from equity_lake.portfolio import LedgerStore, LedgerStoreError, parse_csv_text, replay_ledger
+from equity_lake.portfolio.store import (
     export_verified_backup,
     inventory_backups,
     portfolio_db_path,

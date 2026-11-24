@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from equity_lake.catalog.builder import _is_hamilton_internal, build_catalog  # type: ignore[import-untyped]
-from equity_lake.catalog.models import Catalog  # type: ignore[import-untyped]
+from equity_lake.catalog.builder import _is_hamilton_internal, build_catalog
+from equity_lake.catalog.models import Catalog
 
 
 @pytest.fixture(scope="module")
@@ -116,8 +116,8 @@ class TestCatalogDrift:
     """
 
     def test_committed_jsonl_matches_builder_output(self) -> None:
-        from equity_lake.catalog.writer import catalog_to_jsonl  # type: ignore[import-untyped]
-        from equity_lake.core.paths import PROJECT_ROOT  # type: ignore[import-untyped]
+        from equity_lake.catalog.writer import catalog_to_jsonl
+        from equity_lake.core.paths import PROJECT_ROOT
 
         on_disk = (PROJECT_ROOT / "data" / "catalog.jsonl").read_text(encoding="utf-8")
         assert on_disk == catalog_to_jsonl(build_catalog()), (
@@ -167,7 +167,7 @@ class TestDatasetLineage:
 
     def test_lineage_does_not_mutate_static_definitions(self) -> None:
         """The static ALL_DATASETS must remain unpopulated after build_catalog()."""
-        from equity_lake.catalog.datasets import ALL_DATASETS  # type: ignore[import-untyped]
+        from equity_lake.catalog.datasets import ALL_DATASETS
 
         for ds in ALL_DATASETS:
             assert ds.upstream == [], f"Static dataset {ds.name} was mutated: upstream={ds.upstream}"

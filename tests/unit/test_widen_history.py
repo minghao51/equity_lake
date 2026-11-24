@@ -14,7 +14,7 @@ from typing import Any, cast
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.backfill import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.ingestion.backfill import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     widen_history_range,
 )
 
@@ -35,7 +35,7 @@ def _actions(rows: list[tuple[str, date]]) -> pl.DataFrame:
 
 
 def test_each_ticker_is_clamped_to_its_coverage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from equity_lake.ingestion import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    from equity_lake.ingestion import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
         corporate_actions,
         orchestrator,
         router,
@@ -133,7 +133,7 @@ class _Meta:
         self._symbol = symbol
 
     def instrument_key(self, market: str) -> Any:
-        from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             InstrumentKey,
         )
 

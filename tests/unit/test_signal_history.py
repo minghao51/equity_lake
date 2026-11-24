@@ -11,8 +11,8 @@ from typing import Literal
 import polars as pl
 import pytest
 
-from equity_lake.signals.history import load_signals, save_signals  # type: ignore[import-untyped]
-from equity_lake.signals.models import Signal  # type: ignore[import-untyped]
+from equity_lake.signals.history import load_signals, save_signals
+from equity_lake.signals.models import Signal
 
 
 @pytest.fixture

@@ -35,9 +35,9 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable
 
-from equity_lake.backtesting.arena import ArenaOutcome, ArenaRun, equal_weight_buyhold  # type: ignore[import-untyped]
-from equity_lake.backtesting.data_loader import BacktestDataLoader  # type: ignore[import-untyped]
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import ArenaOutcome, ArenaRun, equal_weight_buyhold
+from equity_lake.backtesting.data_loader import BacktestDataLoader
+from equity_lake.backtesting.evidence import (
     MANIFEST_NAME,
     RUN_PROTOCOL,
     CodeIdentity,
@@ -52,21 +52,21 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     universe_basis_for,
     validate_run_directory,
 )
-from equity_lake.backtesting.report import write_arena_artifacts_with_evidence  # type: ignore[import-untyped]
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.price_provenance import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.report import write_arena_artifacts_with_evidence
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey
+from equity_lake.core.price_provenance import (
     PriceProvenanceError,
     envelope_projection_digest,
 )
-from equity_lake.ingestion.corporate_actions import (  # type: ignore[import-untyped]
+from equity_lake.ingestion.corporate_actions import (
     corporate_action_coverage_table,
     corporate_actions_table,
     load_corporate_action_inputs,
     load_corporate_action_inputs_with_versions,
 )
-from equity_lake.ingestion.types import MARKET_DIR_MAP  # type: ignore[import-untyped]
-from equity_lake.storage.delta import (  # type: ignore[import-untyped]
+from equity_lake.ingestion.types import MARKET_DIR_MAP
+from equity_lake.storage.delta import (
     DeltaReadError,
     _read_delta_frame,
     read_delta,

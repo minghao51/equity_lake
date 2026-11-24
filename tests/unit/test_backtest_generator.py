@@ -8,10 +8,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-import equity_lake.ingestion.corporate_actions as corporate_actions  # type: ignore[import-untyped]
-from equity_lake.core.availability import ActionCoverageProof  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.generators.backtest import BacktestSignalGenerator  # type: ignore[import-untyped]
+import equity_lake.ingestion.corporate_actions as corporate_actions
+from equity_lake.core.availability import ActionCoverageProof
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.generators.backtest import BacktestSignalGenerator
 
 TARGET = date(2024, 1, 5)
 INSTRUMENT = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")

@@ -9,8 +9,8 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.bronze_silver import MARKET_WIDE_INSTRUMENT, process_unstructured_to_silver  # type: ignore[import-untyped]
-from equity_lake.ingestion.replay import ReplayBatchResult, ReplayScope  # type: ignore[import-untyped]
+from equity_lake.ingestion.bronze_silver import MARKET_WIDE_INSTRUMENT, process_unstructured_to_silver
+from equity_lake.ingestion.replay import ReplayBatchResult, ReplayScope
 
 _TRADING_DATE = date(2026, 6, 14)
 

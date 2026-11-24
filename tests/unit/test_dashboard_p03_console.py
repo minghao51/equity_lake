@@ -24,7 +24,7 @@ import pytest
 
 pytest.importorskip("streamlit", reason="private dashboard tests require the optional dashboard dependency group")
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]  # noqa: E402
+from equity_lake.core.instruments import InstrumentKey  # noqa: E402
 
 streamlit_app = import_module("equity_lake.dashboard.streamlit_app")
 panels = import_module("equity_lake.dashboard.panels")
@@ -808,13 +808,13 @@ def _research_lake(tmp_path: Path) -> Any:
     """A finalized run written by the real writer (immutable evidence, not a stub)."""
     import polars as pl
 
-    from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+    from equity_lake.backtesting.evidence import (
         CodeIdentity,
         CostApplication,
         RunScope,
         finalise_run,
     )
-    from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
+    from equity_lake.backtesting.result import BacktestResult
 
     result = BacktestResult(
         strategy_name="stub",

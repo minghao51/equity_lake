@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.signals.config import load_signal_config, load_watchlist  # type: ignore[import-untyped]
+from equity_lake.signals.config import load_signal_config, load_watchlist
 
 
 def test_load_watchlist() -> None:
@@ -30,7 +30,7 @@ def test_load_signal_config() -> None:
 
 def test_default_config_paths_are_project_root_anchored() -> None:
     """B4: defaults must not depend on the current working directory."""
-    from equity_lake.core.paths import PROJECT_ROOT  # type: ignore[import-untyped]
+    from equity_lake.core.paths import PROJECT_ROOT
     from equity_lake.signals.config import DEFAULT_SIGNALS_PATH, DEFAULT_WATCHLIST_PATH
 
     assert DEFAULT_WATCHLIST_PATH == PROJECT_ROOT / "config" / "watchlist.yaml"
@@ -53,7 +53,7 @@ def test_signal_scan_missing_config_exits_cleanly() -> None:
     """B4: a missing watchlist/config must exit 1 with a clean error, not a traceback."""
     from typer.testing import CliRunner
 
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+    from equity_lake.cli.__main__ import app
 
     runner = CliRunner()
     result = runner.invoke(app, ["signal", "scan", "--watchlist", "nonexistent.yaml", "--market", "us_equity"])

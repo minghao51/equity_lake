@@ -11,14 +11,14 @@ import polars as pl
 import pytest
 from fastapi.testclient import TestClient
 
-from equity_lake.api import deps  # type: ignore[import-untyped]
-from equity_lake.api.main import create_app  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.api import deps
+from equity_lake.api.main import create_app
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
 )
-from equity_lake.core.dates import resolve_trading_date  # type: ignore[import-untyped]
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+from equity_lake.core.dates import resolve_trading_date
+from equity_lake.core.schemas import (
     FEATURE_SCHEMA_VERSION,
     FORECAST_PROVENANCE_COLUMNS,
     FORECAST_PROVENANCE_VERSION,
@@ -26,8 +26,8 @@ from equity_lake.core.schemas import (  # type: ignore[import-untyped]
     PREDICTION_TARGET_CANDIDATE_EXECUTE,
     PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
 )
-from equity_lake.findings.models import FindingCard  # type: ignore[import-untyped]
-from equity_lake.storage.delta import (  # type: ignore[import-untyped]
+from equity_lake.findings.models import FindingCard
+from equity_lake.storage.delta import (
     DeltaReadError,
     string_view_columns,
     update_delta_columns,

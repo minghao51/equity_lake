@@ -20,13 +20,13 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.backtesting.protocol import ProtocolError, load_frozen_protocols, protocols_root  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.protocol import ProtocolError, load_frozen_protocols, protocols_root
+from equity_lake.core.availability import (
     VENDOR_EVENTS_NO_CLOCK_DISCLOSURE,
 )
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.ml import experiment as r02  # type: ignore[import-untyped]
-from equity_lake.ml.experiment import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.ml import experiment as r02
+from equity_lake.ml.experiment import (
     R02_BASIS,
     R02_DISCLOSURE,
     R02_FEATURES,

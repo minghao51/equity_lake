@@ -12,23 +12,23 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_SCHEMA_VERSION,
     InstrumentKey,
 )
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.ml.candidates import build_candidate_frame  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.ml.candidates import build_candidate_frame
+from equity_lake.ml.forecasting import (
     MODEL_PROVENANCE_VERSION,
     ModelIncompatibleError,
     ModelProvenanceError,
     PriceForecaster,
 )
-from equity_lake.ml.labeling import apply_triple_barrier_labels  # type: ignore[import-untyped]
+from equity_lake.ml.labeling import apply_triple_barrier_labels
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 synthetic_feature_proof_columns = _pit_fixtures["synthetic_feature_proof_columns"]
@@ -140,7 +140,7 @@ def test_backtest_fits_with_training_scale_pos_weight(monkeypatch: pytest.Monkey
     """A3 (handoff 08): ``backtest()`` retrains must use the same
     ``scale_pos_weight`` semantics as ``train_model`` (class-weighted fit),
     not an unweighted estimator."""
-    from equity_lake.ml.backends import build_estimator as real_build_estimator  # type: ignore[import-untyped]
+    from equity_lake.ml.backends import build_estimator as real_build_estimator
 
     monkeypatch.setattr("equity_lake.ml.feature_loader.FeatureLoader.__init__", _noop_feature_loader_init)
 

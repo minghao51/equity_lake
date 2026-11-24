@@ -29,7 +29,7 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence import (
     MANIFEST_NAME,
     RUN_PROTOCOL,
     RUN_PROTOCOL_V3,
@@ -49,12 +49,12 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     universe_basis_for,
     validate_run_directory,
 )
-from equity_lake.backtesting.evidence_view import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence_view import (
     latest_success_by_slug,
     validated_runs,
 )
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.core.schemas import (
     PRICE_ORIGIN_UNKNOWN_REASONS,
     PRICE_SNAPSHOT_NAME_PREFIX,
     PRICE_SOURCE_PATTERN,

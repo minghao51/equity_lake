@@ -60,7 +60,7 @@ def test_core_has_no_cli_or_provider_deps(module_name: str) -> None:
 def test_domain_tree_does_not_exist() -> None:
     from pathlib import Path
 
-    import equity_lake  # type: ignore[import-untyped]
+    import equity_lake
 
     pkg_path = getattr(equity_lake, "__path__", [])
     for p in pkg_path if isinstance(pkg_path, list) else [pkg_path]:

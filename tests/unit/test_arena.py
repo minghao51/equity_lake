@@ -11,7 +11,7 @@ import numpy as np
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import (
     BENCHMARK_MISSING_MARK_POLICY,
     BENCHMARK_POLICY,
     COST_REGIMES,
@@ -24,19 +24,19 @@ from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
     equal_weight_buyhold,
     run_arena,
 )
-from equity_lake.backtesting.attempts import BENCHMARK_ATTEMPT_ARTIFACT  # type: ignore[import-untyped]
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE  # type: ignore[import-untyped]
-from equity_lake.backtesting.evidence_view import latest_attempt  # type: ignore[import-untyped]
-from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.attempts import BENCHMARK_ATTEMPT_ARTIFACT
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE
+from equity_lake.backtesting.evidence_view import latest_attempt
+from equity_lake.backtesting.report import (
     build_finding_cards,
     drawdown_series,
     write_arena_artifacts,
 )
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ActionCoverageProof,
 )
-from equity_lake.findings import load_finding_cards  # type: ignore[import-untyped]
+from equity_lake.findings import load_finding_cards
 
 pytestmark = pytest.mark.slow
 

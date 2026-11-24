@@ -8,15 +8,15 @@ from typing import Any
 
 import pytest
 
-import equity_lake.signals.generators.meta_label as meta_label_module  # type: ignore[import-untyped]
-import equity_lake.signals.generators.ml as ml_module  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import ModelMissingError, ModelUnavailableError  # type: ignore[import-untyped]
-from equity_lake.signals.config import load_signal_config  # type: ignore[import-untyped]
+import equity_lake.signals.generators.meta_label as meta_label_module
+import equity_lake.signals.generators.ml as ml_module
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.ml.forecasting import ModelMissingError, ModelUnavailableError
+from equity_lake.signals.config import load_signal_config
 from equity_lake.signals.generators.meta_label import MetaLabelSignalGenerator
 from equity_lake.signals.generators.ml import MLPredictionSignalGenerator
-from equity_lake.signals.models import SignalConfig, SignalRecord, Watchlist  # type: ignore[import-untyped]
-from equity_lake.signals.scanner import SignalScanner  # type: ignore[import-untyped]
+from equity_lake.signals.models import SignalConfig, SignalRecord, Watchlist
+from equity_lake.signals.scanner import SignalScanner
 
 
 def _write_config(path: Path, ml_block: str, backtest_block: str | None = None) -> Path:

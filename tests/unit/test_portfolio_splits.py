@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.portfolio import (  # type: ignore[import-untyped]
+from equity_lake.portfolio import (
     BasisStatus,
     LedgerEvent,
     LedgerEventType,

@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 import polars as pl
 import pytest
 
-from equity_lake.core.config_models import MarketConfig, TickerMetadata  # type: ignore[import-untyped]
-from equity_lake.ingestion import bronze_silver, replay  # type: ignore[import-untyped]
-from equity_lake.ingestion.replay import ReplayBatchResult, ReplayScope  # type: ignore[import-untyped]
+from equity_lake.core.config_models import MarketConfig, TickerMetadata
+from equity_lake.ingestion import bronze_silver, replay
+from equity_lake.ingestion.replay import ReplayBatchResult, ReplayScope
 
 _TRADING_DATE = date(2026, 6, 14)
 
@@ -437,7 +437,7 @@ def test_write_error_stays_distinct_from_read_failures(monkeypatch: pytest.Monke
 
 
 def test_real_article_processor_requires_paid_authorization_before_provider_call(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from equity_lake.ingestion.bronze_silver import process_bronze_to_silver  # type: ignore[import-untyped]
+    from equity_lake.ingestion.bronze_silver import process_bronze_to_silver
 
     bronze_path = tmp_path / "bronze"
     _write_bronze(bronze_path)
@@ -472,8 +472,8 @@ def test_real_article_processor_requires_paid_authorization_before_provider_call
 def test_sec_processor_uses_shared_zero_paid_replay_gate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import json
 
-    import equity_lake.core.paths as paths  # type: ignore[import-untyped]
-    from equity_lake.ingestion.sec_processor import process_sec_bronze_to_silver  # type: ignore[import-untyped]
+    import equity_lake.core.paths as paths
+    from equity_lake.ingestion.sec_processor import process_sec_bronze_to_silver
 
     bronze_path = tmp_path / "sec-bronze"
     bronze_path.mkdir()

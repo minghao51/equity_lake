@@ -19,7 +19,7 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from equity_lake.core.calendar import (  # type: ignore[import-untyped]
+from equity_lake.core.calendar import (
     classify_market_sessions,
     instrument_session_close,
     is_instrument_trading_day,
@@ -27,24 +27,24 @@ from equity_lake.core.calendar import (  # type: ignore[import-untyped]
     market_timezone,
     trading_days_between,
 )
-from equity_lake.core.config import TickerConfig  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.market_contracts import (  # type: ignore[import-untyped]
+from equity_lake.core.config import TickerConfig
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.core.market_contracts import (
     CONTRACT_CAPABILITIES,
     MarketContractUnavailable,
     market_contract,
     require_capability,
 )
-from equity_lake.core.paths import (  # type: ignore[import-untyped]
+from equity_lake.core.paths import (
     PRICE_DATASET_PATHS,
     REAL_ROOT_PRICE_MARKETS,
     canonical_market,
     market_dir,
 )
-from equity_lake.ingestion.corporate_actions import ingest_corporate_actions  # type: ignore[import-untyped]
-from equity_lake.ingestion.router import MARKET_REGISTRY  # type: ignore[import-untyped]
-from equity_lake.ingestion.types import MARKET_DIR_MAP, PRICE_MARKET_CONFIG_KEYS, VALID_MARKETS  # type: ignore[import-untyped]
-from equity_lake.ingestion.writers import validate_schema  # type: ignore[import-untyped]
+from equity_lake.ingestion.corporate_actions import ingest_corporate_actions
+from equity_lake.ingestion.router import MARKET_REGISTRY
+from equity_lake.ingestion.types import MARKET_DIR_MAP, PRICE_MARKET_CONFIG_KEYS, VALID_MARKETS
+from equity_lake.ingestion.writers import validate_schema
 
 _pack = run_path(str(Path(__file__).with_name("_market_fixture_pack.py")))
 fixture_digest = _pack["fixture_digest"]

@@ -11,8 +11,8 @@ import pytest
 from hamilton import base, driver
 from hamilton.plugins import h_polars
 
-from equity_lake.features.dag import enrichments_04  # type: ignore[import-untyped]
-from equity_lake.features.dag.enrichments_04 import (  # type: ignore[import-untyped]
+from equity_lake.features.dag import enrichments_04
+from equity_lake.features.dag.enrichments_04 import (
     _add_cross_modal,
     _merge_news_sentiment,
     _merge_social_sentiment,

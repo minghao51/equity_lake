@@ -24,7 +24,7 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable
 
-from equity_lake.core.price_provenance import (  # type: ignore[import-untyped]
+from equity_lake.core.price_provenance import (
     PRICE_SOURCE_EVIDENCE_SCHEMA,
     PriceProvenanceError,
     canonical_decimal,
@@ -36,13 +36,13 @@ from equity_lake.core.price_provenance import (  # type: ignore[import-untyped]
     stamp_absent_provenance,
     validate_price_provenance,
 )
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import (
     PRICE_PROVENANCE_COLUMNS,
     PRICE_PROVENANCE_SCHEMA,
     PRICE_PROVENANCE_VERSION,
 )
-from equity_lake.ingestion import writers  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta, read_delta, write_delta  # type: ignore[import-untyped]
+from equity_lake.ingestion import writers
+from equity_lake.storage.delta import merge_delta, read_delta, write_delta
 
 D0, D1 = date(2024, 1, 3), date(2024, 1, 4)
 MIC = "XNAS"

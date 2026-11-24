@@ -16,8 +16,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from equity_lake.core import paths  # type: ignore[import-untyped]
-from equity_lake.devtools.bootstrap import (  # type: ignore[import-untyped]
+from equity_lake.core import paths
+from equity_lake.devtools.bootstrap import (
     BootstrapError,
     BootstrapRefused,
     _validate_members,
@@ -25,7 +25,7 @@ from equity_lake.devtools.bootstrap import (  # type: ignore[import-untyped]
     bootstrap_disposable_lake,
     unavailable_datasets,
 )
-from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
+from equity_lake.devtools.seed_demo import seed_demo
 
 pytestmark = pytest.mark.slow
 
@@ -42,8 +42,8 @@ def _snapshot(root: Path) -> dict[str, str]:
 
 def test_disposable_bootstrap_seeds_only_its_own_checkout(tmp_path: Path) -> None:
     """(a)-(d): fresh allocation, tracked-source checkout, canonical lake, own module."""
-    from equity_lake.core.calendar import is_trading_day  # type: ignore[import-untyped]
-    from equity_lake.storage.delta import read_delta  # type: ignore[import-untyped]
+    from equity_lake.core.calendar import is_trading_day
+    from equity_lake.storage.delta import read_delta
 
     assert is_trading_day("us_equity", END)
     allocation = tmp_path / "allocation"
@@ -211,7 +211,7 @@ def _sandbox_lake(tmp_path: Path) -> Path:
 
 
 def test_clean_synthetic_lake_builds_exactly_the_three_allowlisted_files(tmp_path: Path) -> None:
-    from equity_lake.dashboard.h00 import ARTIFACT_FILENAMES, build_sanitized_page  # type: ignore[import-untyped]
+    from equity_lake.dashboard.h00 import ARTIFACT_FILENAMES, build_sanitized_page
 
     artifact = build_sanitized_page(lake_dir=_sandbox_lake(tmp_path), output_dir=tmp_path / "artifact", allow_sandbox_root=True)
 

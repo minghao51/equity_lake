@@ -33,24 +33,24 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
     ActionCoverageProof,
     action_coverage_feature_fields,
     source_observable_session,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import (
     IDENTITY_SCHEMA_VERSION,
     InstrumentKey,
 )
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import (
     FEATURE_SCHEMA_VERSION,
     FORECAST_PROVENANCE_VERSION,
     PREDICTION_SEMANTICS_VERSION,
     PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
 )
-from equity_lake.devtools.refit_preload import (  # type: ignore[import-untyped]
+from equity_lake.devtools.refit_preload import (
     MAX_REFITS,
     NO_VALIDATION_STATE_REASON,
     RefitPreloadError,
@@ -59,13 +59,13 @@ from equity_lake.devtools.refit_preload import (  # type: ignore[import-untyped]
     refit_boundaries,
     refit_preload,
 )
-from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
+from equity_lake.ml.forecasting import (
     DEFAULT_MAX_MODEL_AGE_DAYS,
     MISSING_VALUE_POLICY,
     MODEL_PROVENANCE_VERSION,
     PriceForecaster,
 )
-from equity_lake.storage.delta import read_delta  # type: ignore[import-untyped]
+from equity_lake.storage.delta import read_delta
 
 _DAYS = [date(2026, 8, 3) + timedelta(days=offset) for offset in range(10)]
 _ARTIFACT_SHA256 = "0123456789abcdef" * 4

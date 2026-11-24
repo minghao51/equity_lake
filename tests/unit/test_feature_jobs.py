@@ -12,9 +12,9 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.features import NoFeatureHistoryError, run_feature_job  # type: ignore[import-untyped]
+from equity_lake.features import NoFeatureHistoryError, run_feature_job
 from equity_lake.features import engineering as engineering_module
-from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
+from equity_lake.features.engineering import FeatureEngineer
 
 
 def _fake_output_window(today: date) -> pl.DataFrame:
@@ -205,7 +205,7 @@ def test_run_feature_job_reports_coverage_when_output_window_is_empty(price_lake
 
 def test_run_feature_job_does_not_compute_without_action_coverage(price_lake: dict[str, object], monkeypatch: pytest.MonkeyPatch) -> None:
     """Unproven action history prevents technical computation and output."""
-    from equity_lake.features.pipeline import FeaturePipeline  # type: ignore[import-untyped]
+    from equity_lake.features.pipeline import FeaturePipeline
 
     original = FeaturePipeline.compute_technical
 

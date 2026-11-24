@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from equity_lake.sources.cn_hybrid import CNHybridFetcher  # type: ignore[import-untyped]
+from equity_lake.sources.cn_hybrid import CNHybridFetcher
 
 
 def _fallback_fetcher() -> CNHybridFetcher:

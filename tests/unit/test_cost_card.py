@@ -24,16 +24,16 @@ from pathlib import Path
 
 import polars as pl
 
-from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import (
     BENCHMARK_MISSING_MARK_POLICY,
     BENCHMARK_POLICY,
     ArenaOutcome,
     ArenaRun,
     equal_weight_buyhold,
 )
-from equity_lake.backtesting.report import _COST_DELTA_TOLERANCE, _MANDATORY_SCOPE_KEYS, build_finding_cards  # type: ignore[import-untyped]
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.findings import FindingCard, load_finding_cards, write_finding_card  # type: ignore[import-untyped]
+from equity_lake.backtesting.report import _COST_DELTA_TOLERANCE, _MANDATORY_SCOPE_KEYS, build_finding_cards
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.findings import FindingCard, load_finding_cards, write_finding_card
 
 _D1, _D2, _D3 = date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4)
 

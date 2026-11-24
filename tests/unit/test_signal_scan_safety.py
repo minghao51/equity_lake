@@ -13,10 +13,10 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.models import Signal, SignalConfig, Watchlist  # type: ignore[import-untyped]
-from equity_lake.signals.scanner import SignalScanner  # type: ignore[import-untyped]
+from equity_lake.cli.__main__ import app
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.models import Signal, SignalConfig, Watchlist
+from equity_lake.signals.scanner import SignalScanner
 
 
 def _configs(tmp_path: Path) -> tuple[Path, Path]:
@@ -103,7 +103,7 @@ def test_dry_run_preserves_existing_output(tmp_path: Path, monkeypatch: pytest.M
 
 
 def test_signal_scan_defaults_to_canonical_managed_watchlist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from equity_lake.signals.tracking import PrivateWatchlist, TrackedInstrument  # type: ignore[import-untyped]
+    from equity_lake.signals.tracking import PrivateWatchlist, TrackedInstrument
 
     _legacy_watchlist, config = _configs(tmp_path)
     managed = PrivateWatchlist(

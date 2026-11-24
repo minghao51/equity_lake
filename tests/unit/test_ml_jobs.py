@@ -13,11 +13,11 @@ import pytest
 import structlog
 from structlog.testing import capture_logs
 
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentKey,
 )
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.ml import run_prediction_job, validate_predictions  # type: ignore[import-untyped]
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.ml import run_prediction_job, validate_predictions
 
 
 class _FakeForecaster:

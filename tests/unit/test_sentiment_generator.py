@@ -4,8 +4,8 @@ from datetime import date
 from typing import Any
 from unittest.mock import patch
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.generators.sentiment import SentimentSignalGenerator  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
 
 
 def _instrument(symbol: str) -> InstrumentKey:

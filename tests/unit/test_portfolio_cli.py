@@ -27,14 +27,14 @@ from click.testing import Result
 from structlog.testing import capture_logs
 from typer.testing import CliRunner
 
-from equity_lake.cli import _app as cli_app  # type: ignore[import-untyped]
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.cli._app import portfolio_app  # type: ignore[import-untyped]
-from equity_lake.core import paths as core_paths  # type: ignore[import-untyped]
-from equity_lake.core.paths import PORTFOLIO_DIR  # type: ignore[import-untyped]
-from equity_lake.portfolio import store as portfolio_store  # type: ignore[import-untyped]
-from equity_lake.portfolio.csv_import import CANONICAL_CSV_COLUMNS  # type: ignore[import-untyped]
-from equity_lake.portfolio.store import LedgerStore, portfolio_db_path  # type: ignore[import-untyped]
+from equity_lake.cli import _app as cli_app
+from equity_lake.cli.__main__ import app
+from equity_lake.cli._app import portfolio_app
+from equity_lake.core import paths as core_paths
+from equity_lake.core.paths import PORTFOLIO_DIR
+from equity_lake.portfolio import store as portfolio_store
+from equity_lake.portfolio.csv_import import CANONICAL_CSV_COLUMNS
+from equity_lake.portfolio.store import LedgerStore, portfolio_db_path
 
 runner = CliRunner()
 

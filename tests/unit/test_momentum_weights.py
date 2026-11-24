@@ -26,12 +26,12 @@ from typing import Any, cast
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine
+from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ActionCoverageProof,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentIdentityError,
 )
 

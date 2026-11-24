@@ -12,20 +12,20 @@ import numpy as np
 import polars as pl
 import pytest
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
     ActionCoverageProof,
     action_coverage_feature_fields,
     source_observable_session,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_SCHEMA_VERSION,
     InstrumentKey,
 )
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.ml import run_prediction_job  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.ml import run_prediction_job
+from equity_lake.ml.forecasting import (
     DEFAULT_MAX_MODEL_AGE_DAYS,
     DEFAULT_V2_SETTINGS,
     MISSING_VALUE_POLICY,
@@ -372,7 +372,7 @@ def test_training_rejects_unverifiable_action_proof_before_estimator_build(
 
 
 def test_gold_feature_writer_rejects_expired_proof_even_when_stamps_and_age_are_current() -> None:
-    from equity_lake.ingestion.writers import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    from equity_lake.ingestion.writers import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
         validate_schema,
     )
 

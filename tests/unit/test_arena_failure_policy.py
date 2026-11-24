@@ -29,7 +29,7 @@ import polars as pl
 import pytest
 from typer.testing import CliRunner
 
-import equity_lake.backtesting.arena as arena_module  # type: ignore[import-untyped]
+import equity_lake.backtesting.arena as arena_module
 from equity_lake.backtesting.arena import (
     STRATEGY_REGISTRY,
     ArenaFailure,
@@ -38,13 +38,13 @@ from equity_lake.backtesting.arena import (
     equal_weight_buyhold,
     run_arena,
 )
-from equity_lake.backtesting.attempts import validate_attempt_directory  # type: ignore[import-untyped]
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE  # type: ignore[import-untyped]
-from equity_lake.backtesting.report import ArenaEvidenceSummary, build_finding_cards  # type: ignore[import-untyped]
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
-from equity_lake.devtools.seeding import trailing_business_days  # type: ignore[import-untyped]
+from equity_lake.backtesting.attempts import validate_attempt_directory
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE
+from equity_lake.backtesting.report import ArenaEvidenceSummary, build_finding_cards
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.cli.__main__ import app
+from equity_lake.devtools.seed_demo import seed_demo
+from equity_lake.devtools.seeding import trailing_business_days
 
 runner = CliRunner()
 

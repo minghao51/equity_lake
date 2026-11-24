@@ -20,13 +20,13 @@ import polars as pl
 import pytest
 from typer.testing import CliRunner
 
-from equity_lake.core import paths  # type: ignore[import-untyped]
-from equity_lake.core.paths import LAKE_DIR, REAL_LAKE_DIR, resolve_lake_root  # type: ignore[import-untyped]
-from equity_lake.ingestion import orchestrator  # type: ignore[import-untyped]
-from equity_lake.ingestion.orchestrator import run_daily_ingestion  # type: ignore[import-untyped]
-from equity_lake.ingestion.types import SourceStatus  # type: ignore[import-untyped]
-from equity_lake.monitoring.health import GOLD_FEATURES_DIR, PipelineMonitor, _price_market_paths  # type: ignore[import-untyped]
-from equity_lake.storage.delta import delta_table_path, merge_delta, read_delta  # type: ignore[import-untyped]
+from equity_lake.core import paths
+from equity_lake.core.paths import LAKE_DIR, REAL_LAKE_DIR, resolve_lake_root
+from equity_lake.ingestion import orchestrator
+from equity_lake.ingestion.orchestrator import run_daily_ingestion
+from equity_lake.ingestion.types import SourceStatus
+from equity_lake.monitoring.health import GOLD_FEATURES_DIR, PipelineMonitor, _price_market_paths
+from equity_lake.storage.delta import delta_table_path, merge_delta, read_delta
 
 TABLE = "01_bronze/market_data/us_equity"
 
@@ -158,7 +158,7 @@ def test_a_real_root_refuses_out_of_scope_markets(tmp_path: Path, monkeypatch: p
     """
     import typer
 
-    from equity_lake.cli._app import _require_real_root_scope  # type: ignore[import-untyped]
+    from equity_lake.cli._app import _require_real_root_scope
 
     root = tmp_path / "lake_real"
     _require_real_root_scope(["us_equity"], root)  # in scope: no raise
@@ -190,7 +190,7 @@ def test_upsert_dataset_threads_the_root_and_never_defaults_it(tmp_path: Path, m
     Falsified by: substituting ``LAKE_DIR`` for ``None`` inside the writer, which would
     hide the canonical default from callers and defeat the "explicit only" contract.
     """
-    import equity_lake.storage.delta as delta_module  # type: ignore[import-untyped]
+    import equity_lake.storage.delta as delta_module
 
     seen: list[Path | None] = []
 
@@ -199,7 +199,7 @@ def test_upsert_dataset_threads_the_root_and_never_defaults_it(tmp_path: Path, m
         return True
 
     monkeypatch.setattr(delta_module, "merge_delta", _fake_merge)
-    from equity_lake.ingestion.writers import upsert_dataset  # type: ignore[import-untyped]
+    from equity_lake.ingestion.writers import upsert_dataset
 
     frame = pl.DataFrame(
         {
@@ -229,7 +229,7 @@ def test_the_orchestrator_reads_the_selected_root(tmp_path: Path, monkeypatch: p
     """
     import duckdb
 
-    from equity_lake.storage.lake_reader import ensure_delta_extension  # type: ignore[import-untyped]
+    from equity_lake.storage.lake_reader import ensure_delta_extension
 
     canonical = tmp_path / "lake"
     real = tmp_path / "lake_real"
@@ -311,7 +311,7 @@ def test_the_ingest_commands_expose_lake_dir_and_reject_a_foreign_root(tmp_path:
     Falsified by: accepting the flag without validating it, or omitting it from a
     command that can write to the lake.
     """
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+    from equity_lake.cli.__main__ import app
 
     monkeypatch.setattr(paths, "DATA_DIR", tmp_path)
     runner = CliRunner()

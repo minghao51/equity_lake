@@ -22,20 +22,20 @@ import polars as pl
 import pytest
 from typer.testing import CliRunner
 
-from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import (
     MARKET_COST_DEFAULTS,
     ArenaOutcome,
     ArenaRun,
     _resolve_regime_costs,
     equal_weight_buyhold,
 )
-from equity_lake.backtesting.engine import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.engine import (
     POLARS_BACKTEST_AVAILABLE,
     UNDATED_EQUITY_WARNING,
     VectorBacktestEngine,
     _warn_if_undated,
 )
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence import (
     DRAWDOWN_ARTIFACT,
     EQUITY_ARTIFACT,
     MANIFEST_NAME,
@@ -56,17 +56,17 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     snapshot_from_file,
     validate_run_directory,
 )
-from equity_lake.backtesting.evidence_view import latest_attempt as latest_evidence_attempt  # type: ignore[import-untyped]
-from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence_view import latest_attempt as latest_evidence_attempt
+from equity_lake.backtesting.report import (
     APPLIED_COSTS_NOT_RECORDED_SKIP_REASON,
     UNDATED_RUN_EVIDENCE_SKIP_REASON,
     write_arena_artifacts,
     write_arena_artifacts_with_evidence,
     write_backtest_report,
 )
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.findings import FindingCard, write_finding_card  # type: ignore[import-untyped]
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.core.instruments import IDENTITY_COLUMNS, InstrumentKey
+from equity_lake.findings import FindingCard, write_finding_card
 
 requires_engine = pytest.mark.skipif(not POLARS_BACKTEST_AVAILABLE, reason="polars-backtest not installed")
 
@@ -369,7 +369,7 @@ def test_scope_identical_invocations_coexist(tmp_path: Path) -> None:
 
 def test_failed_finalisation_leaves_no_run_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A mid-write failure removes the temporary directory and finalizes nothing."""
-    import equity_lake.backtesting.evidence as evidence  # type: ignore[import-untyped]  # noqa: PLC0415 - patch target
+    import equity_lake.backtesting.evidence as evidence  # noqa: PLC0415 - patch target
 
     def _explode(result: BacktestResult, out_dir: Path, **kwargs: object) -> dict[str, Path]:
         (out_dir / "half-written.parquet").write_bytes(b"partial")
@@ -1156,7 +1156,7 @@ def test_cli_arena_run_exits_one_when_the_evidence_writer_raises(tmp_path: Path)
     visible message, no success banner), not what the writer does internally.
     """
     from equity_lake.backtesting.arena import ArenaOutcome, ArenaRun  # noqa: PLC0415 - CLI seam
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]  # noqa: PLC0415 - CLI seam
+    from equity_lake.cli.__main__ import app  # noqa: PLC0415 - CLI seam
 
     outcome = ArenaOutcome(
         runs=[ArenaRun(strategy="trend_following", cost_regime="realistic", result=_result())],

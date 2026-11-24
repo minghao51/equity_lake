@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from equity_lake.ml.validation import PurgedEmbargoedWalkForwardSplitter, run_purged_walk_forward_validation  # type: ignore[import-untyped]
+from equity_lake.ml.validation import PurgedEmbargoedWalkForwardSplitter, run_purged_walk_forward_validation
 
 
 def test_purged_embargoed_splitter_avoids_overlap() -> None:

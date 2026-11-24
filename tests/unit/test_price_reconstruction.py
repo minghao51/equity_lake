@@ -16,15 +16,15 @@ from typing import Any
 import polars as pl
 import pytest
 
-from equity_lake.core import paths  # type: ignore[import-untyped]
-from equity_lake.core.polars_utils import FrameLike, ensure_polars  # type: ignore[import-untyped]
-from equity_lake.ingestion import orchestrator  # type: ignore[import-untyped]
-from equity_lake.ingestion.corporate_actions import corporate_actions_table  # type: ignore[import-untyped]
-from equity_lake.ingestion.price_reconstruction import (  # type: ignore[import-untyped]
+from equity_lake.core import paths
+from equity_lake.core.polars_utils import FrameLike, ensure_polars
+from equity_lake.ingestion import orchestrator
+from equity_lake.ingestion.corporate_actions import corporate_actions_table
+from equity_lake.ingestion.price_reconstruction import (
     SplitReconstructionError,
     reconstruct_vendor_prices,
 )
-from equity_lake.ingestion.writers import upsert_dataset  # type: ignore[import-untyped]
+from equity_lake.ingestion.writers import upsert_dataset
 
 SPLIT_EX_DATE = date(2024, 6, 10)
 SPLIT_VALUE = 0.5  # lake convention old/new for a 2-for-1 split
@@ -346,7 +346,7 @@ class TestProvenEmptyActionScope:
 
     def test_a_strict_clock_proof_cannot_prove_emptiness(self) -> None:
         from equity_lake.core.availability import (
-            ActionCoverageProof,  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+            ActionCoverageProof,  # pyright: ignore[reportMissingImports] -- source import verified by uv
         )
 
         strict = ActionCoverageProof(

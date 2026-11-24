@@ -19,24 +19,24 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from equity_lake.api.main import create_app  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.api.main import create_app
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_SCHEMA_VERSION,
     InstrumentKey,
 )
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import (
     FEATURE_SCHEMA_VERSION,
     FORECAST_PROVENANCE_COLUMNS,
     FORECAST_PROVENANCE_VERSION,
     PREDICTION_SEMANTICS_VERSION,
     PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
 )
-from equity_lake.ml import run_prediction_job  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
+from equity_lake.ml import run_prediction_job
+from equity_lake.ml.forecasting import (
     DEFAULT_MAX_MODEL_AGE_DAYS,
     MISSING_VALUE_POLICY,
     MODEL_PROVENANCE_VERSION,

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import polars as pl
 
-from equity_lake.devtools.seed_transcripts import main, seed_transcripts_silver  # type: ignore[import-untyped]
+from equity_lake.devtools.seed_transcripts import main, seed_transcripts_silver
 
 
 def _hf_frame() -> pl.DataFrame:

@@ -23,13 +23,13 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import (
     ArenaFailure,
     ArenaOutcome,
     ArenaRun,
     equal_weight_buyhold,
 )
-from equity_lake.backtesting.attempts import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.attempts import (
     ATTEMPT_FIELD_ORDER,
     ATTEMPT_MANIFEST_NAME,
     ATTEMPT_PROTOCOL,
@@ -48,7 +48,7 @@ from equity_lake.backtesting.attempts import (  # type: ignore[import-untyped]
     validate_attempt_directory,
     write_attempt_record,
 )
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence import (
     CodeIdentity,
     CostApplication,
     FinalisedRun,
@@ -56,9 +56,9 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
     finalise_run,
     validate_run_directory,
 )
-from equity_lake.backtesting.report import write_arena_artifacts, write_arena_artifacts_with_evidence  # type: ignore[import-untyped]
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.findings import FindingCard  # type: ignore[import-untyped]
+from equity_lake.backtesting.report import write_arena_artifacts, write_arena_artifacts_with_evidence
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.findings import FindingCard
 
 IRREGULAR_DATES = [
     date(2022, 1, 3),
@@ -780,7 +780,7 @@ def test_run_evidence_failure_publishes_write_failed_and_still_raises(tmp_path: 
     terminal) or if the exception were swallowed (the CLI would report success). The
     attempt must record ``write_failed`` with the runs that did finalise.
     """
-    import equity_lake.backtesting.evidence as evidence  # type: ignore[import-untyped]  # noqa: PLC0415 - patch target
+    import equity_lake.backtesting.evidence as evidence  # noqa: PLC0415 - patch target
 
     original = evidence.finalise_run
 
@@ -859,7 +859,7 @@ def test_zero_completion_cli_publishes_an_attempt_and_no_run(tmp_path: Path) -> 
     or if nothing durable recorded that every requested pair failed: the failure would
     then live only in the terminal output.
     """
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]  # noqa: PLC0415 - CLI seam
+    from equity_lake.cli.__main__ import app  # noqa: PLC0415 - CLI seam
 
     outcome = ArenaOutcome(
         runs=[],

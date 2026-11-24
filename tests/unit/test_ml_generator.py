@@ -6,8 +6,8 @@ from datetime import date
 from typing import Any
 from unittest.mock import patch
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.generators.ml import MLPredictionSignalGenerator  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.generators.ml import MLPredictionSignalGenerator
 
 _INSTRUMENT = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
 _IDENTITY = {"market": "us_equity", "mic": "XNAS", "ticker": "AAPL"}

@@ -14,10 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.portfolio.models import BasisStatus, LedgerEvent, LedgerEventType  # type: ignore[import-untyped]
-from equity_lake.portfolio.projections import LedgerProjection, replay_ledger  # type: ignore[import-untyped]
-from equity_lake.portfolio.reconcile import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.portfolio.models import BasisStatus, LedgerEvent, LedgerEventType
+from equity_lake.portfolio.projections import LedgerProjection, replay_ledger
+from equity_lake.portfolio.reconcile import (
     CASH_TOLERANCE,
     QUANTITY_TOLERANCE,
     REASON_SNAPSHOT,

@@ -17,8 +17,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from equity_lake.portfolio import LedgerStore, LedgerStoreError, parse_csv_text  # type: ignore[import-untyped]
-from equity_lake.portfolio.store import (  # type: ignore[import-untyped]
+from equity_lake.portfolio import LedgerStore, LedgerStoreError, parse_csv_text
+from equity_lake.portfolio.store import (
     PORTFOLIO_SCHEMA_VERSION,
     compact_ledger,
     restore_ledger,
@@ -251,7 +251,7 @@ class TestCliSurface:
     def test_restore_without_a_ledger_exits_non_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A refusal is a non-zero exit with the reason, never a traceback."""
         import equity_lake.portfolio.store as store_module
-        from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+        from equity_lake.cli.__main__ import app
 
         monkeypatch.setattr(store_module, "PORTFOLIO_DB_PATH", tmp_path / "portfolio" / "portfolio.sqlite3")
         candidate = tmp_path / "nothing.sqlite3"

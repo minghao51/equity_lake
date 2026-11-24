@@ -22,12 +22,12 @@ from typing import Any, cast
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.arena import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import (
     ArenaOutcome,
     ArenaRun,
     equal_weight_buyhold,
 )
-from equity_lake.backtesting.attempts import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.attempts import (
     ATTEMPT_MANIFEST_NAME,
     BENCHMARK_ATTEMPT_ARTIFACT,
     PairOutcome,
@@ -35,7 +35,7 @@ from equity_lake.backtesting.attempts import (  # type: ignore[import-untyped]
     attempts_root_for,
     write_attempt_record,
 )
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence import (
     MANIFEST_NAME,
     METRICS_ARTIFACT,
     CodeIdentity,
@@ -46,7 +46,7 @@ from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]  
     iter_run_directories,
     validate_run_directory,
 )
-from equity_lake.backtesting.evidence_view import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence_view import (
     attempt_history,
     backtest_rows,
     finding_cards,
@@ -58,12 +58,12 @@ from equity_lake.backtesting.evidence_view import (  # type: ignore[import-untyp
     validated_attempts,
     validated_runs,
 )
-from equity_lake.backtesting.report import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.report import (
     write_arena_artifacts_with_evidence,
     write_backtest_report,
 )
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.findings import FindingCard, write_finding_card  # type: ignore[import-untyped]
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.findings import FindingCard, write_finding_card
 
 #: Irregular backend sessions (weekend, holiday-sized and month gaps) so a stored
 #: curve is provably not a length-derived calendar.

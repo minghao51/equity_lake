@@ -7,15 +7,15 @@ from typing import Any
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.data_loader import BacktestDataLoader  # type: ignore[import-untyped]
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine, _join_strategy_weights  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.base import BaseStrategy  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.data_loader import BacktestDataLoader
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine, _join_strategy_weights
+from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ActionCoverageProof,
     AvailabilityContractError,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentIdentityError,
     InstrumentKey,
     LegacyIdentityUnavailableError,

@@ -23,9 +23,9 @@ from typing import cast
 
 import polars as pl
 
-from equity_lake.ingestion.types import MARKET_DIR_MAP  # type: ignore[import-untyped]
-from equity_lake.ingestion.writers import upsert_dataset, validate_schema  # type: ignore[import-untyped]
-from equity_lake.storage.delta import read_delta  # type: ignore[import-untyped]
+from equity_lake.ingestion.types import MARKET_DIR_MAP
+from equity_lake.ingestion.writers import upsert_dataset, validate_schema
+from equity_lake.storage.delta import read_delta
 
 #: Committed pack root (``tests/fixtures/markets``).
 PACK_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "markets"

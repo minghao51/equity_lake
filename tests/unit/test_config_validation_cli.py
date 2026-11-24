@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from equity_lake.cli._app import config_app  # type: ignore[import-untyped]
-from equity_lake.cli.commands import admin as admin_commands  # type: ignore[import-untyped]  # noqa: F401
+from equity_lake.cli._app import config_app
+from equity_lake.cli.commands import admin as admin_commands  # noqa: F401
 
 
 def _write_ticker_config(path: Path) -> Path:

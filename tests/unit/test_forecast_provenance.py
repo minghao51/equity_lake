@@ -17,15 +17,15 @@ import polars as pl
 import pytest
 from structlog.testing import capture_logs
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     IDENTITY_SCHEMA_VERSION,
     InstrumentKey,
 )
-from equity_lake.core.schemas import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import (
     FEATURE_SCHEMA_VERSION,
     FORECAST_PROVENANCE_COLUMNS,
     FORECAST_PROVENANCE_VERSION,
@@ -33,8 +33,8 @@ from equity_lake.core.schemas import (  # type: ignore[import-untyped]
     PREDICTION_TARGET_CANDIDATE_EXECUTE,
     PREDICTION_TARGET_NEXT_SESSION_RETURN_POSITIVE,
 )
-from equity_lake.ml import run_prediction_job, validate_predictions  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import (  # type: ignore[import-untyped]
+from equity_lake.ml import run_prediction_job, validate_predictions
+from equity_lake.ml.forecasting import (
     DEFAULT_MAX_MODEL_AGE_DAYS,
     MISSING_VALUE_POLICY,
     MODEL_PROVENANCE_VERSION,

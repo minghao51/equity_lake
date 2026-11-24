@@ -32,10 +32,10 @@ from typing import Any
 import polars as pl
 import pytest
 
-from equity_lake.core import paths  # type: ignore[import-untyped]
-from equity_lake.dashboard import h00  # type: ignore[import-untyped]
-from equity_lake.dashboard.exporter import DashboardExporter  # type: ignore[import-untyped]
-from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
+from equity_lake.core import paths
+from equity_lake.dashboard import h00
+from equity_lake.dashboard.exporter import DashboardExporter
+from equity_lake.devtools.seed_demo import seed_demo
 
 #: Canaries that exist on disk in the sandbox and must never appear in the artifact.
 LEDGER_CANARY = "CANARYLEDGERACCOUNT"
@@ -564,7 +564,7 @@ class TestCli:
     def test_dashboard_h00_commands_are_registered(self) -> None:
         from typer.testing import CliRunner
 
-        from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+        from equity_lake.cli.__main__ import app
 
         runner = CliRunner()
         listing = runner.invoke(app, ["dashboard", "--help"])

@@ -23,32 +23,32 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.backtesting.data_loader import BacktestDataLoader  # type: ignore[import-untyped]
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine  # type: ignore[import-untyped]
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.data_loader import BacktestDataLoader
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine
+from equity_lake.backtesting.evidence import (
     RUN_PROTOCOL_V4,
     CostApplication,
     InputSnapshot,
     RunManifest,
     RunScope,
 )
-from equity_lake.backtesting.strategy.base import BaseStrategy  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ActionCoverageProof,
     AvailabilityContractError,
     CoverageBasis,
     VendorEventCoverageProof,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentKey,
 )
-from equity_lake.ingestion.corporate_actions import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.ingestion.corporate_actions import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     corporate_action_coverage_table,
     corporate_actions_table,
     load_corporate_action_inputs,
 )
-from equity_lake.storage.delta import merge_delta, write_delta  # type: ignore[import-untyped]
-from equity_lake.storage.lake_reader import with_price_adjustment  # type: ignore[import-untyped]
+from equity_lake.storage.delta import merge_delta, write_delta
+from equity_lake.storage.lake_reader import with_price_adjustment
 
 MARKET = "us_equity"
 MIC = "XNYS"
@@ -413,7 +413,7 @@ class TestBacktestCli:
     def test_help_lists_lake_dir_and_coverage_basis(self) -> None:
         from typer.testing import CliRunner
 
-        from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+        from equity_lake.cli.__main__ import app
 
         result = CliRunner().invoke(app, ["backtest", "--help"], env={"COLUMNS": "220"})
         assert result.exit_code == 0
@@ -437,7 +437,7 @@ class TestBacktestCli:
     def test_a_lake_root_outside_data_exits_non_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         from typer.testing import CliRunner
 
-        import equity_lake.core.paths as paths  # type: ignore[import-untyped]
+        import equity_lake.core.paths as paths
         from equity_lake.cli.__main__ import app
 
         monkeypatch.setattr(paths, "DATA_DIR", tmp_path)

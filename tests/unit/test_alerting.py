@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from equity_lake.monitoring.alerting import CompositeAlerter, ConsoleAlerter, WebhookAlerter, build_alerter  # type: ignore[import-untyped]
+from equity_lake.monitoring.alerting import CompositeAlerter, ConsoleAlerter, WebhookAlerter, build_alerter
 
 
 class TestConsoleAlerter:

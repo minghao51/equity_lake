@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.catalog.builder import build_catalog  # type: ignore[import-untyped]
-from equity_lake.catalog.models import Catalog  # type: ignore[import-untyped]
-from equity_lake.catalog.writer import catalog_to_jsonl, write_catalog_jsonl  # type: ignore[import-untyped]
+from equity_lake.catalog.builder import build_catalog
+from equity_lake.catalog.models import Catalog
+from equity_lake.catalog.writer import catalog_to_jsonl, write_catalog_jsonl
 
 
 class TestJsonlFormat:

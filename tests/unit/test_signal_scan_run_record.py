@@ -10,15 +10,15 @@ from uuid import uuid4
 import pytest
 from typer.testing import CliRunner
 
-import equity_lake.core.paths as paths_module  # type: ignore[import-untyped]
-import equity_lake.signals.config as config_module  # type: ignore[import-untyped]
-import equity_lake.signals.history as history_module  # type: ignore[import-untyped]
-import equity_lake.signals.scanner as scanner_module  # type: ignore[import-untyped]
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.generators.base import GenerationOutcome  # type: ignore[import-untyped]
+import equity_lake.core.paths as paths_module
+import equity_lake.signals.config as config_module
+import equity_lake.signals.history as history_module
+import equity_lake.signals.scanner as scanner_module
+from equity_lake.cli.__main__ import app
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.generators.base import GenerationOutcome
 from equity_lake.signals.history import save_scan_report
-from equity_lake.signals.models import Signal, SignalOutcomeStatus, SignalScanOutcome, SignalScanReport  # type: ignore[import-untyped]
+from equity_lake.signals.models import Signal, SignalOutcomeStatus, SignalScanOutcome, SignalScanReport
 
 
 def _write_configs(tmp_path: Path) -> tuple[Path, Path, Path]:

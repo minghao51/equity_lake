@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import polars as pl
 
-from equity_lake.monitoring.health import (  # type: ignore[import-untyped]
+from equity_lake.monitoring.health import (
     CHECK_NOT_APPLICABLE,
     CHECK_PASS,
     PipelineMonitor,

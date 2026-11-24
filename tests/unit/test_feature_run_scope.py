@@ -25,14 +25,14 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import (
     ActionCoverageProof,
     AvailabilityContractError,
     VendorEventCoverageProof,
 )
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.features import run_feature_job, scope_action_inputs  # type: ignore[import-untyped]
-from equity_lake.ingestion.corporate_actions import coverage_frame_for_write  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.features import run_feature_job, scope_action_inputs
+from equity_lake.ingestion.corporate_actions import coverage_frame_for_write
 
 AAPL = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAPL")
 JPM = InstrumentKey(market="us_equity", mic="XNYS", symbol="JPM")
@@ -129,7 +129,7 @@ def build_lake(
 
 def test_engineer_reads_only_the_explicit_lake_root(tmp_path: Path) -> None:
     """Requirement 1: price sources come from the selected root, never ``LAKE_DIR``."""
-    from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
+    from equity_lake.features.engineering import FeatureEngineer
 
     root = tmp_path / "lake_scope"
     build_lake(root, proof=_weak_proof(start=date(2024, 1, 1), end=date(2024, 6, 30)))
@@ -144,8 +144,8 @@ def test_engineer_reads_only_the_explicit_lake_root(tmp_path: Path) -> None:
 
 def test_action_fallback_read_uses_the_explicit_lake_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Requirement 1: the all-market action read (no ``action_inputs``) shares the root."""
-    from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
-    from equity_lake.ingestion import corporate_actions as corporate_actions_module  # type: ignore[import-untyped]
+    from equity_lake.features.engineering import FeatureEngineer
+    from equity_lake.ingestion import corporate_actions as corporate_actions_module
 
     root = tmp_path / "lake_scope"
     days = build_lake(

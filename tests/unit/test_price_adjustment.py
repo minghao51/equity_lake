@@ -12,11 +12,11 @@ from typing import Any, Literal, cast
 import polars as pl
 import pytest
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     ActionCoverageProof,
     AvailabilityContractError,
 )
-from equity_lake.storage.lake_reader import factor_snapshot  # type: ignore[import-untyped]
+from equity_lake.storage.lake_reader import factor_snapshot
 from equity_lake.storage.lake_reader import with_price_adjustment as _strict_with_price_adjustment
 
 _SOURCE_TIME = datetime(2023, 12, 29, 20, 0, tzinfo=UTC)

@@ -11,11 +11,11 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from equity_lake.cli.commands.admin import config_export, config_get, config_show  # type: ignore[import-untyped]
-from equity_lake.core.logging import redact_secrets, setup_structured_logging  # type: ignore[import-untyped]
-from equity_lake.core.settings import AlertingSettings, Settings  # type: ignore[import-untyped]
-from equity_lake.dashboard.exporter import DashboardExporter  # type: ignore[import-untyped]
-from equity_lake.monitoring.alerting import WebhookAlerter  # type: ignore[import-untyped]
+from equity_lake.cli.commands.admin import config_export, config_get, config_show
+from equity_lake.core.logging import redact_secrets, setup_structured_logging
+from equity_lake.core.settings import AlertingSettings, Settings
+from equity_lake.dashboard.exporter import DashboardExporter
+from equity_lake.monitoring.alerting import WebhookAlerter
 
 _SYNTHETIC_WEBHOOK_URL = "https://hooks.example.test/services/R01-SYNTHETIC?signature=secret-r01"
 _REDACTED = "***REDACTED***"

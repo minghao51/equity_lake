@@ -13,23 +13,23 @@ from typing import cast
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.data_loader import AdjustmentMode, BacktestDataLoader  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.base import BaseStrategy  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.data_loader import AdjustmentMode, BacktestDataLoader
+from equity_lake.backtesting.strategy.base import BaseStrategy
+from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     TOTAL_RETURN_UNAVAILABLE,
     ActionCoverageProof,
 )
-from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta  # type: ignore[import-untyped]
-from equity_lake.storage.lake_reader import with_price_adjustment  # type: ignore[import-untyped]
+from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA
+from equity_lake.storage.delta import merge_delta
+from equity_lake.storage.lake_reader import with_price_adjustment
 
 
 @pytest.fixture()
 def tmp_lake(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Tmp price + corporate-actions lake wired through the patched constants."""
     tmp = tmp_path_factory.mktemp("lake")
-    import equity_lake.core.paths as paths  # type: ignore[import-untyped]
-    import equity_lake.storage.delta as delta  # type: ignore[import-untyped]
+    import equity_lake.core.paths as paths
+    import equity_lake.storage.delta as delta
 
     us = tmp / "01_bronze" / "market_data" / "us_equity"
     monkeypatch.setattr(paths, "US_EQUITY_DIR", us)
@@ -191,7 +191,7 @@ class TestLoaderAdjustment:
 
 class TestEngineAndFactoryThreading:
     def test_engine_defaults_to_none_and_forwards(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from equity_lake.backtesting.engine import VectorBacktestEngine  # type: ignore[import-untyped]
+        from equity_lake.backtesting.engine import VectorBacktestEngine
 
         class _Stub(BaseStrategy):
             name = "stub"
@@ -219,7 +219,7 @@ class TestEngineAndFactoryThreading:
         assert default_eng.adjust == "splits"
 
     def test_factory_forwards_adjust(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import equity_lake.backtesting as bt  # type: ignore[import-untyped]
+        import equity_lake.backtesting as bt
 
         captured: dict = {}
 
@@ -228,7 +228,7 @@ class TestEngineAndFactoryThreading:
                 captured.update(kwargs)
 
         monkeypatch.setattr(bt, "VectorBacktestEngine", _FakeEngine)
-        from equity_lake.backtesting.factory import STRATEGY_REGISTRY, build_backtest_engine  # type: ignore[import-untyped]
+        from equity_lake.backtesting.factory import STRATEGY_REGISTRY, build_backtest_engine
 
         strategy = next(iter(STRATEGY_REGISTRY))
         build_backtest_engine(
@@ -273,7 +273,7 @@ class TestCliFlag:
     def test_invalid_adjust_exits_1(self) -> None:
         from typer.testing import CliRunner
 
-        from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+        from equity_lake.cli.__main__ import app
 
         # --start-date/--end-date are required; validation of --adjust fires first.
         runner = CliRunner()
@@ -317,7 +317,7 @@ class TestCliFlag:
 
 def _point_in_time_loaded_data(*, with_split: bool, source_valid_until: datetime = datetime(2024, 1, 10, 23, 0, tzinfo=UTC)) -> pl.DataFrame:
     """Build loader handoff with a split published after the first two decisions."""
-    from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+    from equity_lake.core.instruments import InstrumentKey
 
     instrument = InstrumentKey(market="us_equity", mic="XNYS", symbol="AAPL")
     dates = [date(2024, 1, 2), date(2024, 1, 3), date(2024, 1, 4), date(2024, 1, 5)]

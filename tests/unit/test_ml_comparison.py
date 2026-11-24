@@ -10,9 +10,9 @@ from typing import cast
 import polars as pl
 import pytest
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.findings.writer import load_finding_cards  # type: ignore[import-untyped]
-from equity_lake.ml.comparison import run_comparison  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.findings.writer import load_finding_cards
+from equity_lake.ml.comparison import run_comparison
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]

@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-import equity_lake  # type: ignore[import-untyped]
-from equity_lake.dashboard.components import (  # type: ignore[import-untyped]
+import equity_lake
+from equity_lake.dashboard.components import (
     Notice,
     css_modifier,
     notice_class,

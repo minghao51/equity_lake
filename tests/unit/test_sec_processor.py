@@ -8,9 +8,9 @@ from unittest.mock import patch
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import SEC_EXTRACTION_COLUMNS  # type: ignore[import-untyped]
-from equity_lake.ingestion.replay import ReplayAuthorizationError  # type: ignore[import-untyped]
-from equity_lake.ingestion.sec_processor import SECSectionExtraction, SECSectionProcessor, run_sec_processing  # type: ignore[import-untyped]
+from equity_lake.core.schemas import SEC_EXTRACTION_COLUMNS
+from equity_lake.ingestion.replay import ReplayAuthorizationError
+from equity_lake.ingestion.sec_processor import SECSectionExtraction, SECSectionProcessor, run_sec_processing
 
 
 @pytest.fixture

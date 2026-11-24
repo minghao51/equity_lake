@@ -6,8 +6,8 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-import equity_lake.cli.commands.data as data_commands  # type: ignore[import-untyped]
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+import equity_lake.cli.commands.data as data_commands
+from equity_lake.cli.__main__ import app
 
 runner = CliRunner()
 
@@ -38,7 +38,7 @@ def test_resolves_named_routes_and_safe_lake_relative_paths(identifier: str, exp
 
 
 def test_preserves_every_mapped_dataset_identifier(tmp_path: Path) -> None:
-    from equity_lake.ingestion.types import MARKET_DIR_MAP  # type: ignore[import-untyped]
+    from equity_lake.ingestion.types import MARKET_DIR_MAP
 
     lake_root = tmp_path / "lake"
     lake_root.mkdir()

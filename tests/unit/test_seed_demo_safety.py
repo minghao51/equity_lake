@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from equity_lake.core import paths  # type: ignore[import-untyped]
-from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
+from equity_lake.core import paths
+from equity_lake.devtools.seed_demo import seed_demo
 
 pytestmark = pytest.mark.slow
 

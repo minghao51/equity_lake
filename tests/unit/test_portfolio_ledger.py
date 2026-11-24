@@ -19,8 +19,8 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.portfolio.models import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.portfolio.models import (
     BasisStatus,
     LedgerEvent,
     LedgerEventType,
@@ -29,7 +29,7 @@ from equity_lake.portfolio.models import (  # type: ignore[import-untyped]
     redacted_validation_message,
     validate_batch,
 )
-from equity_lake.portfolio.store import (  # type: ignore[import-untyped]
+from equity_lake.portfolio.store import (
     AppendOutcome,
     LedgerConflictError,
     LedgerStore,

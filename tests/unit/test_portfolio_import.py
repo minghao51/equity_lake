@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.portfolio.csv_import import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.portfolio.csv_import import (
     CANONICAL_CSV_COLUMNS,
     CANONICAL_CSV_PARSER_VERSION,
     ImportPreview,
@@ -25,8 +25,8 @@ from equity_lake.portfolio.csv_import import (  # type: ignore[import-untyped]
     parse_csv_text,
     preview_events,
 )
-from equity_lake.portfolio.models import LedgerEventType, LedgerValidationError  # type: ignore[import-untyped]
-from equity_lake.portfolio.store import AppendOutcome, LedgerStore, LedgerStoreError, portfolio_db_path  # type: ignore[import-untyped]
+from equity_lake.portfolio.models import LedgerEventType, LedgerValidationError
+from equity_lake.portfolio.store import AppendOutcome, LedgerStore, LedgerStoreError, portfolio_db_path
 
 ACCOUNT = "acct-synth-01"
 SYNT = InstrumentKey(market="us_equity", mic="XNAS", symbol="SYNT")

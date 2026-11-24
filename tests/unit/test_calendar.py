@@ -5,7 +5,7 @@ from datetime import date
 import exchange_calendars as xc
 import pytest
 
-from equity_lake.core.calendar import (  # type: ignore[import-untyped]
+from equity_lake.core.calendar import (
     count_trading_days,
     instrument_session_close,
     instrument_sessions_between,
@@ -15,7 +15,7 @@ from equity_lake.core.calendar import (  # type: ignore[import-untyped]
     market_timezone,
     trading_days_between,
 )
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
 
 
 class TestIsTradingDay:
@@ -177,7 +177,7 @@ class TestResolveTradingDateGuard:
     """
 
     def test_unknown_market_raises_instead_of_hanging(self) -> None:
-        from equity_lake.core.dates import resolve_trading_date  # type: ignore[import-untyped]
+        from equity_lake.core.dates import resolve_trading_date
 
         with pytest.raises(ValueError, match="Unknown price market"):
             resolve_trading_date(None, days_back=1, today=date(2026, 6, 2), market="cn_ashar")

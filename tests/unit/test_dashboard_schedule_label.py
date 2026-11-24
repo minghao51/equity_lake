@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from typing import Any, cast
 
-from equity_lake.dashboard.exporter import DashboardExporter  # type: ignore[import-untyped]
+from equity_lake.dashboard.exporter import DashboardExporter
 
 
 def test_overview_labels_github_actions_schedule_as_utc() -> None:

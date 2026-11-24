@@ -5,8 +5,8 @@ fast in unit tests — the drift guard that makes the Tier-1 derivation
 (ADR-0012) safe.
 """
 
-from equity_lake.ingestion.router import MARKET_REGISTRY  # type: ignore[import-untyped]
-from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS  # type: ignore[import-untyped]
+from equity_lake.ingestion.router import MARKET_REGISTRY
+from equity_lake.ingestion.types import MARKET_DIR_MAP, VALID_MARKETS
 
 
 def test_market_registry_covers_valid_markets() -> None:

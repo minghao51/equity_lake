@@ -10,15 +10,15 @@ import numpy as np
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine  # type: ignore[import-untyped]
-from equity_lake.backtesting.metrics import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine
+from equity_lake.backtesting.metrics import (
     DEFAULT_RISK_FREE_RATE,
     TRADING_DAYS_PER_YEAR,
     equity_curve_metrics,
     sharpe_ratio,
 )
-from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy
+from equity_lake.core.instruments import InstrumentKey
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 prepare_preloaded_backtest_data = _pit_fixtures["prepare_preloaded_backtest_data"]
@@ -166,7 +166,7 @@ def test_engine_stats_failure_goes_to_warnings_list_not_metrics(monkeypatch: pyt
 
 def test_engine_install_message_says_group_not_extra(monkeypatch: pytest.MonkeyPatch) -> None:
     """The ImportError install hint must match the uv dependency-group reality."""
-    import equity_lake.backtesting.engine as engine_mod  # type: ignore[import-untyped]
+    import equity_lake.backtesting.engine as engine_mod
 
     monkeypatch.setattr(engine_mod, "POLARS_BACKTEST_AVAILABLE", False)
     engine = VectorBacktestEngine(

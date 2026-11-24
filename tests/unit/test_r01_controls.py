@@ -19,8 +19,8 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.backtesting.protocol import ProtocolError, conformance_violations, require_frozen_protocol  # type: ignore[import-untyped]
-from equity_lake.ml.r01_controls import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.protocol import ProtocolError, conformance_violations, require_frozen_protocol
+from equity_lake.ml.r01_controls import (
     AGGREGATE_CEILING_SECONDS,
     CONTROL_UNIVERSE,
     FPR_UPPER_BOUND_MAX,

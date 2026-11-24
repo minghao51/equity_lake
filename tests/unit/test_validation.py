@@ -11,14 +11,14 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from equity_lake.validation import (  # type: ignore[import-untyped]
+from equity_lake.validation import (
     ArticleDataSchema,
     MacroDataSchema,
     NewsDataSchema,
     PriceDataSchema,
     ValidationPipeline,
 )
-from equity_lake.validation.profiling import DataProfiler, DriftReport  # type: ignore[import-untyped]
+from equity_lake.validation.profiling import DataProfiler, DriftReport
 
 _OHLCV_SCHEMA = {
     "ticker": pl.Utf8,
@@ -251,7 +251,7 @@ def test_news_schema_valid() -> None:
 
 def test_social_schema_valid() -> None:
     """W01/F20: real social-sentiment rows pass the dedicated schema."""
-    from equity_lake.validation.schemas import SocialSentimentSchema  # type: ignore[import-untyped]
+    from equity_lake.validation.schemas import SocialSentimentSchema
 
     df = pl.DataFrame(
         {
@@ -437,7 +437,7 @@ def test_profiler_quality_metrics(tmp_path: Path, sample_ohlcv_data: pl.DataFram
 
 def test_profiler_default_storage_is_auxiliary_profiles_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """DataProfiler defaults to DATA_DIR / "profiles" (ADR-0006), never CWD-relative."""
-    from equity_lake.core import paths as core_paths  # type: ignore[import-untyped]
+    from equity_lake.core import paths as core_paths
     from equity_lake.validation import profiling
 
     monkeypatch.setattr(profiling, "PROFILES_DIR", tmp_path / "profiles")
@@ -447,7 +447,7 @@ def test_profiler_default_storage_is_auxiliary_profiles_dir(tmp_path: Path, monk
 
 
 def test_profiler_default_is_data_dir_profiles_without_patch() -> None:
-    from equity_lake.core.paths import DATA_DIR, PROFILES_DIR  # type: ignore[import-untyped]
+    from equity_lake.core.paths import DATA_DIR, PROFILES_DIR
 
     assert DataProfiler().storage_path == PROFILES_DIR
     assert PROFILES_DIR == DATA_DIR / "profiles"
@@ -466,7 +466,7 @@ def test_profile_persist_flag_controls_disk_writes(tmp_path: Path, sample_ohlcv_
 
 def _partitioned_price_table(root: Path) -> Path:
     """Write a canonical date-partitioned bronze price table and return its path."""
-    from equity_lake.storage.delta import write_delta  # type: ignore[import-untyped]
+    from equity_lake.storage.delta import write_delta
 
     frame = pl.DataFrame(
         {
@@ -486,7 +486,7 @@ def _partitioned_price_table(root: Path) -> Path:
 
 def test_load_parquet_preserves_hive_date_partition_column(tmp_path: Path) -> None:
     """Directory reads must keep ``date=`` partitions; per-file reads silently dropped them."""
-    from equity_lake.cli.commands.admin import _load_parquet  # type: ignore[import-untyped]
+    from equity_lake.cli.commands.admin import _load_parquet
 
     table = _partitioned_price_table(tmp_path)
     loaded = _load_parquet(str(table))
@@ -499,7 +499,7 @@ def test_validate_check_passes_on_partitioned_lake_table(tmp_path: Path) -> None
     """The canonical layout must not produce a false schema failure in ``validate check``."""
     from typer.testing import CliRunner
 
-    from equity_lake.cli._app import validate_app  # type: ignore[import-untyped]
+    from equity_lake.cli._app import validate_app
 
     table = _partitioned_price_table(tmp_path)
     result = CliRunner().invoke(validate_app, ["check", str(table)])

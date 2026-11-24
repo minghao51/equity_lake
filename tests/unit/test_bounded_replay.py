@@ -21,7 +21,7 @@ import pytest
 from deltalake import DeltaTable
 from pydantic import ValidationError
 
-from equity_lake.storage.delta import merge_delta, read_delta  # type: ignore[import-untyped]
+from equity_lake.storage.delta import merge_delta, read_delta
 
 replay = import_module("equity_lake.ingestion.replay")
 _TEST_STATE_NAMESPACE = "bounded-replay-test-silver"

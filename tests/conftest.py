@@ -22,7 +22,7 @@ def pytest_configure(config: pytest.Config) -> None:
     """Redirect runtime data, model, and log paths before tests are imported."""
     global _TEST_RUNTIME_ROOT
 
-    from equity_lake.core import paths  # type: ignore[import-untyped]
+    from equity_lake.core import paths
 
     # Catalog entries derive checkout-relative paths at import time. Load those
     # pure definitions before redirecting the runtime roots.

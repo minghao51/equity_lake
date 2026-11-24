@@ -14,8 +14,8 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA  # type: ignore[import-untyped]
-from equity_lake.storage.delta import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA
+from equity_lake.storage.delta import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     merge_delta,
     read_delta,
 )
@@ -62,7 +62,7 @@ def _actions_pandas(rows: list[tuple[date, float, float]], *, split_column: str 
 
 
 def _make_fetcher(monkeypatch: pytest.MonkeyPatch, factory: _FakeTickerFactory, tickers: list[str]) -> Any:
-    from equity_lake.sources.base import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    from equity_lake.sources.base import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
         YFinanceBaseFetcher,
     )
 
@@ -163,8 +163,8 @@ class TestFetchCorporateActions:
 def tmp_actions_lake(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory) -> Path:
     """Point the corporate-actions dataset roots and the delta lake at a tmp dir."""
     tmp = tmp_path_factory.mktemp("lake")
-    import equity_lake.core.paths as paths  # type: ignore[import-untyped]
-    import equity_lake.storage.delta as delta  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    import equity_lake.core.paths as paths
+    import equity_lake.storage.delta as delta  # pyright: ignore[reportMissingImports] -- source import verified by uv
 
     monkeypatch.setattr(paths, "BRONZE_CORPORATE_ACTIONS_DIR", tmp / "01_bronze" / "corporate_actions")
     monkeypatch.setattr(paths, "SILVER_CORPORATE_ACTIONS_DIR", tmp / "02_silver" / "corporate_actions")
@@ -174,7 +174,7 @@ def tmp_actions_lake(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.T
 
 class TestWatermarkAndIngest:
     def test_max_stored_ex_date_missing_table(self, tmp_actions_lake: Path) -> None:
-        from equity_lake.ingestion.corporate_actions import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.ingestion.corporate_actions import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             max_stored_ex_date,
         )
 
@@ -467,12 +467,12 @@ class TestSimultaneousEventRoundTrip:
         the two-event frame exactly as production does (review finding)."""
         from unittest.mock import patch
 
-        from equity_lake.core.availability import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.core.availability import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             ActionCoverageProof,
             AvailabilityContractError,
         )
-        from equity_lake.ingestion.writers import upsert_dataset  # type: ignore[import-untyped]
-        from equity_lake.storage.lake_reader import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+        from equity_lake.ingestion.writers import upsert_dataset
+        from equity_lake.storage.lake_reader import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
             with_price_adjustment,
         )
 

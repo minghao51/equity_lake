@@ -11,9 +11,9 @@ import pytest
 from click.testing import Result
 from typer.testing import CliRunner
 
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.monitoring import health as health_module  # type: ignore[import-untyped]
-from equity_lake.monitoring.health import PipelineMonitor as HealthPipelineMonitor  # type: ignore[import-untyped]
+from equity_lake.cli.__main__ import app
+from equity_lake.monitoring import health as health_module
+from equity_lake.monitoring.health import PipelineMonitor as HealthPipelineMonitor
 
 runner = CliRunner()
 MonitorInvoker = Callable[..., tuple[Result, MagicMock]]
@@ -22,7 +22,7 @@ MonitorInvoker = Callable[..., tuple[Result, MagicMock]]
 @pytest.fixture
 def monitor_cli(monkeypatch: pytest.MonkeyPatch) -> MonitorInvoker:
     """Invoke the CLI with settings, alerter, and monitor construction isolated."""
-    from equity_lake.cli.commands import analysis  # type: ignore[import-untyped]
+    from equity_lake.cli.commands import analysis
 
     settings = SimpleNamespace(
         monitoring=SimpleNamespace(

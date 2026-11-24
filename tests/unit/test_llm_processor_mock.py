@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, patch
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.llm_processor import DeepSeekBatchProcessor, run_llm_processing  # type: ignore[import-untyped]
-from equity_lake.ingestion.replay import ReplayAuthorizationError  # type: ignore[import-untyped]
+from equity_lake.ingestion.llm_processor import DeepSeekBatchProcessor, run_llm_processing
+from equity_lake.ingestion.replay import ReplayAuthorizationError
 
 
 def _bronze_frame() -> pl.DataFrame:

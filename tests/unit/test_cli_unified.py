@@ -13,9 +13,9 @@ import typer
 from click.testing import Result
 from typer.testing import CliRunner
 
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.core.paths import LAKE_DIR  # type: ignore[import-untyped]
-from equity_lake.ingestion.types import SourceOutcome, SourceStatus  # type: ignore[import-untyped]
+from equity_lake.cli.__main__ import app
+from equity_lake.core.paths import LAKE_DIR
+from equity_lake.ingestion.types import SourceOutcome, SourceStatus
 
 runner = CliRunner()
 
@@ -361,7 +361,7 @@ class TestNativeCommands:
         log ``all_markets_up_to_date`` and return ``{}`` — a silent no-op reported
         as success.
         """
-        from equity_lake.core.config import get_settings  # type: ignore[import-untyped]
+        from equity_lake.core.config import get_settings
 
         expected = list(get_settings().ingestion.default_markets)
         assert expected, "settings.ingestion.default_markets must be non-empty for this test to be meaningful"
@@ -806,7 +806,7 @@ class TestIngestIdentityResolution:
         from pathlib import Path as _Path
 
         from equity_lake.core.config import TickerConfig, get_settings
-        from equity_lake.sources.us import USEquityFetcher  # type: ignore[import-untyped]
+        from equity_lake.sources.us import USEquityFetcher
 
         config = TickerConfig(config_path=_Path(get_settings().ingestion.ticker_config_path))
         fetcher = USEquityFetcher(tickers=["AAPL"], ticker_config=config, retry_attempts=1, retry_delay=0.0)
@@ -831,7 +831,7 @@ class TestBackfillScope:
 
     @staticmethod
     def _result() -> object:
-        from equity_lake.ingestion.backfill import BackfillResult  # type: ignore[import-untyped]
+        from equity_lake.ingestion.backfill import BackfillResult
 
         return BackfillResult(
             start_date=date(2024, 1, 2),
@@ -1167,7 +1167,7 @@ class TestQueryErrorContract:
         return patch("equity_lake.storage.duckdb.EquityDataDB")
 
     def test_query_unknown_name_exits_1(self) -> None:
-        from equity_lake.storage.duckdb import QueryError  # type: ignore[import-untyped]
+        from equity_lake.storage.duckdb import QueryError
 
         with self._patched_db() as db_cls:
             db_cls.return_value.__enter__.return_value.run_named_query.side_effect = QueryError(
@@ -1210,7 +1210,7 @@ class TestDefaultWindows:
     """
 
     def test_ml_compare_ablate_lookback_is_730(self) -> None:
-        from equity_lake.cli.commands import ml as ml_cmd  # type: ignore[import-untyped]
+        from equity_lake.cli.commands import ml as ml_cmd
 
         assert ml_cmd._COMPARE_LOOKBACK_DAYS == 730
         start, end = ml_cmd._compare_default_window()
@@ -1245,7 +1245,7 @@ class TestDefaultWindows:
     def test_shared_default_window_shape(self) -> None:
         from datetime import date, timedelta
 
-        from equity_lake.cli._app import _default_window  # type: ignore[import-untyped]
+        from equity_lake.cli._app import _default_window
 
         start, end = _default_window(365)
         assert end == date.today()
@@ -1478,7 +1478,7 @@ class TestFeaturesCommand:
 
     def test_features_propagates_a_coverage_refusal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A run-level refusal (strict basis vs weak-only evidence) exits non-zero."""
-        from equity_lake.core.availability import AvailabilityContractError  # type: ignore[import-untyped]
+        from equity_lake.core.availability import AvailabilityContractError
 
         def _refuse(**_: object) -> dict[object, object]:
             raise AvailabilityContractError("us_equity/XNAS/AAPL: point-in-time source_clock coverage is unavailable")

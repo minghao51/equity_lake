@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import httpx
 
-from equity_lake.core.retry import build_retry_decorator  # type: ignore[import-untyped]
+from equity_lake.core.retry import build_retry_decorator
 
 
 def test_retry_logs_type_attempt_and_wait_without_exception_message() -> None:

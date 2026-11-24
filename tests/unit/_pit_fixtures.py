@@ -14,8 +14,8 @@ from typing import Any, cast
 import exchange_calendars as xc
 import polars as pl
 
-from equity_lake.backtesting.data_loader import BacktestDataLoader  # type: ignore[import-untyped]
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.data_loader import BacktestDataLoader
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
     ActionCoverageProof,
@@ -24,7 +24,7 @@ from equity_lake.core.availability import (  # type: ignore[import-untyped]
     source_observable_session,
     validate_feature_action_coverage,
 )
-from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey
 
 _SYNTHETIC_ACTION_SOURCE = "synthetic-test-source-issued-action-coverage"
 

@@ -130,10 +130,10 @@ def test_real_pytest_marker_override_deselects_network() -> None:
 
 def test_runtime_path_isolation_probe() -> None:
     """Verify default Delta, model, and market paths point outside repository data."""
-    from equity_lake.core import paths  # type: ignore[import-untyped]
-    from equity_lake.ingestion import types as ingestion_types  # type: ignore[import-untyped]
-    from equity_lake.ml import forecasting  # type: ignore[import-untyped]
-    from equity_lake.storage import delta as delta_storage  # type: ignore[import-untyped]
+    from equity_lake.core import paths
+    from equity_lake.ingestion import types as ingestion_types
+    from equity_lake.ml import forecasting
+    from equity_lake.storage import delta as delta_storage
 
     repository_data = paths.PROJECT_ROOT / "data"
     repository_logs = paths.PROJECT_ROOT / "logs"

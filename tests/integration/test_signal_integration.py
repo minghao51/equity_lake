@@ -8,13 +8,13 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-import equity_lake.signals.generators.backtest as backtest_module  # type: ignore[import-untyped]
-import equity_lake.signals.history as history_module  # type: ignore[import-untyped]
-from equity_lake.core.availability import ActionCoverageProof  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+import equity_lake.signals.generators.backtest as backtest_module
+import equity_lake.signals.history as history_module
+from equity_lake.core.availability import ActionCoverageProof
+from equity_lake.core.instruments import InstrumentKey
 from equity_lake.signals.generators.backtest import BacktestSignalGenerator
-from equity_lake.signals.models import SignalConfig, Watchlist  # type: ignore[import-untyped]
-from equity_lake.signals.scanner import SignalScanner  # type: ignore[import-untyped]
+from equity_lake.signals.models import SignalConfig, Watchlist
+from equity_lake.signals.scanner import SignalScanner
 
 TARGET_DATE = date(2024, 1, 5)
 

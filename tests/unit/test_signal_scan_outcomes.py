@@ -9,12 +9,12 @@ from pathlib import Path
 import duckdb
 import pytest
 
-import equity_lake.signals.generators.sentiment as sentiment_module  # type: ignore[import-untyped]
-import equity_lake.signals.scanner as scanner_module  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.generators.base import GenerationOutcome  # type: ignore[import-untyped]
+import equity_lake.signals.generators.sentiment as sentiment_module
+import equity_lake.signals.scanner as scanner_module
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.generators.base import GenerationOutcome
 from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
-from equity_lake.signals.models import Signal, SignalConfig, Watchlist  # type: ignore[import-untyped]
+from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 from equity_lake.signals.scanner import SignalScanner
 
 TARGET = date(2024, 12, 2)

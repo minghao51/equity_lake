@@ -26,9 +26,9 @@ from pathlib import Path
 
 import pytest
 
-import equity_lake  # type: ignore[import-untyped]
-from equity_lake.dashboard.exporter import _STATIC_RENDERERS, NAV_LINKS, DashboardExporter  # type: ignore[import-untyped]
-from equity_lake.dashboard.pages import (  # type: ignore[import-untyped]
+import equity_lake
+from equity_lake.dashboard.exporter import _STATIC_RENDERERS, NAV_LINKS, DashboardExporter
+from equity_lake.dashboard.pages import (
     PAGE_LABELS,
     PAGE_SPECS,
     STATIC_PAGES,

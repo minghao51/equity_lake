@@ -16,11 +16,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.evidence import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     CodeIdentity,
     CostApplication,
 )
-from equity_lake.backtesting.protocol import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.backtesting.protocol import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     PROTOCOL_FIELD_ORDER,
     PROTOCOL_SCHEMA,
     FrozenProtocol,

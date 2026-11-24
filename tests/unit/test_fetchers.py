@@ -18,14 +18,14 @@ import polars as pl
 import pytest
 import requests
 
-from equity_lake.core.config import MarketConfig, TickerConfig, TickerMetadata  # type: ignore[import-untyped]
-from equity_lake.sources import (  # type: ignore[import-untyped]
+from equity_lake.core.config import MarketConfig, TickerConfig, TickerMetadata
+from equity_lake.sources import (
     CNAshareFetcher,
     CNEfinanceFetcher,
     CNHybridFetcher,
     USEquityFetcher,
 )
-from equity_lake.sources.base import TransientError  # type: ignore[import-untyped]
+from equity_lake.sources.base import TransientError
 
 US_FIXTURE_EXCHANGES = {
     "AAPL": "NASDAQ",

@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-import equity_lake.signals.generators.meta_label as meta_label_module  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.generators.backtest import BacktestSignalGenerator  # type: ignore[import-untyped]
+import equity_lake.signals.generators.meta_label as meta_label_module
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.generators.backtest import BacktestSignalGenerator
 from equity_lake.signals.generators.meta_label import MetaLabelSignalGenerator
-from equity_lake.signals.models import Signal, SignalConfig, Watchlist  # type: ignore[import-untyped]
-from equity_lake.signals.scanner import SignalScanner  # type: ignore[import-untyped]
+from equity_lake.signals.models import Signal, SignalConfig, Watchlist
+from equity_lake.signals.scanner import SignalScanner
 
 
 def test_scanner_initialization(monkeypatch: pytest.MonkeyPatch, temp_partitioned_parquet: Path) -> None:

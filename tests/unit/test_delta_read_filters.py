@@ -16,7 +16,7 @@ import polars as pl
 import pytest
 from deltalake import DeltaTable
 
-from equity_lake.storage.delta import (  # type: ignore[import-untyped]
+from equity_lake.storage.delta import (
     DeltaReadError,
     _split_filters,
     merge_delta,

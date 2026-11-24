@@ -12,9 +12,9 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from equity_lake.core.paths import BRONZE_DIR, GOLD_DIR, LAKE_DIR, MODELS_DIR, PLATINUM_PREDICTIONS_DIR, SILVER_DIR  # type: ignore[import-untyped]
-from equity_lake.devtools.reset_lake import RESETTABLE_STATES, main, reset_lake, reset_targets  # type: ignore[import-untyped]
-from equity_lake.storage.delta import write_delta  # type: ignore[import-untyped]
+from equity_lake.core.paths import BRONZE_DIR, GOLD_DIR, LAKE_DIR, MODELS_DIR, PLATINUM_PREDICTIONS_DIR, SILVER_DIR
+from equity_lake.devtools.reset_lake import RESETTABLE_STATES, main, reset_lake, reset_targets
+from equity_lake.storage.delta import write_delta
 
 _DOCUMENTED_LABELS = ["01_bronze", "02_silver", "03_gold", "04_platinum/predictions", "models"]
 

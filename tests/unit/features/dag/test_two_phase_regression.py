@@ -8,8 +8,8 @@ import duckdb
 import polars as pl
 import pytest
 
-from equity_lake.features.pipeline import FeaturePipeline  # type: ignore[import-untyped]
-from equity_lake.storage.lake_reader import ensure_delta_extension  # type: ignore[import-untyped]
+from equity_lake.features.pipeline import FeaturePipeline
+from equity_lake.storage.lake_reader import ensure_delta_extension
 
 
 def _business_days(start: date, count: int) -> list[date]:

@@ -17,17 +17,17 @@ import polars as pl
 import pytest
 from deltalake import write_deltalake
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import (
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
     AvailabilityContractError,
 )
-from equity_lake.core.instruments import (  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+from equity_lake.core.instruments import (  # pyright: ignore[reportMissingImports] -- source import verified by uv
     InstrumentKey,
     LegacyIdentityUnavailableError,
 )
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.features.labels import (  # type: ignore[import-untyped]
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.features.labels import (
     AVAILABILITY_COLUMN,
     TARGET_COLUMN,
     apply_label_repair,
@@ -35,7 +35,7 @@ from equity_lake.features.labels import (  # type: ignore[import-untyped]
     finalize_preceding_labels,
     scan_label_repair,
 )
-from equity_lake.storage.delta import DeltaMergeError, read_delta, update_delta_columns  # type: ignore[import-untyped]
+from equity_lake.storage.delta import DeltaMergeError, read_delta, update_delta_columns
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]
@@ -46,7 +46,7 @@ with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]
 
 
 def _weekdays_ending(end: date, n: int) -> list[date]:
-    from equity_lake.core.calendar import is_trading_day  # type: ignore[import-untyped]
+    from equity_lake.core.calendar import is_trading_day
 
     days: list[date] = []
     current = end
@@ -82,7 +82,7 @@ def _prepare_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frames: list[
     import exchange_calendars as xc
 
     from equity_lake.core.availability import ActionCoverageProof  # pyright: ignore[reportMissingImports] -- source import verified by uv
-    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table  # type: ignore[import-untyped]
+    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table
     from equity_lake.storage.delta import merge_delta
 
     market_dir = tmp_path / "01_bronze" / "market_data" / "us_equity"
@@ -119,7 +119,7 @@ def _prepare_lake(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frames: list[
 
 
 def _run_job(day: date, tickers: list[str]) -> tuple[pl.DataFrame, dict[str, object]]:
-    from equity_lake.features import run_feature_job  # type: ignore[import-untyped]
+    from equity_lake.features import run_feature_job
 
     diagnostics: dict[str, object] = {}
     frame = run_feature_job(
@@ -356,7 +356,7 @@ def test_filter_as_of_available_excludes_later_and_unknown_availability() -> Non
 
 
 def test_feature_loader_enforces_as_of_cutoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
+    from equity_lake.ml.feature_loader import FeatureLoader
 
     gold_dir = tmp_path / "03_gold" / "features"
     gold_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -420,7 +420,7 @@ def test_feature_loader_marks_legacy_source_expiry_unavailable(tmp_path: Path, m
 
 
 def test_model_feature_list_excludes_availability_metadata() -> None:
-    from equity_lake.ml.forecasting import NON_FEATURE_COLUMNS, PriceForecaster  # type: ignore[import-untyped]
+    from equity_lake.ml.forecasting import NON_FEATURE_COLUMNS, PriceForecaster
 
     assert AVAILABILITY_COLUMN in NON_FEATURE_COLUMNS
     frame = pl.DataFrame(
@@ -567,7 +567,7 @@ def test_scan_reports_pending_when_next_bar_missing(tmp_path: Path, monkeypatch:
 def test_cli_label_repair_is_report_only_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from typer.testing import CliRunner
 
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+    from equity_lake.cli.__main__ import app
 
     days = _weekdays_ending(date(2024, 3, 6), 80)
     s0, s1 = days[-2], days[-1]

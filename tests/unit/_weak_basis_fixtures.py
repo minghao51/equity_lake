@@ -19,16 +19,16 @@ from typing import Any
 import numpy as np
 import polars as pl
 
-from equity_lake.core.availability import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import (
     ACTION_COVERAGE_SCHEMA_VERSION,
     AVAILABILITY_SCHEMA_VERSION,
     PRICE_ADJUSTMENT_VERSION,
     VendorEventCoverageProof,
     action_coverage_feature_fields,
 )
-from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta  # type: ignore[import-untyped]
+from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, InstrumentKey
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.storage.delta import merge_delta
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]

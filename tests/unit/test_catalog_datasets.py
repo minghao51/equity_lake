@@ -6,7 +6,7 @@ import runpy
 
 import pytest
 
-from equity_lake.catalog.datasets import (  # type: ignore[import-untyped]
+from equity_lake.catalog.datasets import (
     ALL_DATASETS,
     BRONZE_DATASETS,
     GOLD_DATASETS,
@@ -14,7 +14,7 @@ from equity_lake.catalog.datasets import (  # type: ignore[import-untyped]
     PLATINUM_DATASETS,
     SILVER_DATASETS,
 )
-from equity_lake.catalog.models import DatasetEntry  # type: ignore[import-untyped]
+from equity_lake.catalog.models import DatasetEntry
 
 VALID_LAYERS = {"bronze", "silver", "gold", "platinum"}
 
@@ -64,7 +64,7 @@ class TestPathConventions:
         # canonical definitions without reloading or unisolating runtime paths.
         from pathlib import Path
 
-        from equity_lake.core import paths as runtime_paths  # type: ignore[import-untyped]
+        from equity_lake.core import paths as runtime_paths
 
         source_paths = runpy.run_path(str(Path(runtime_paths.__file__).resolve()))
         project_root = source_paths["PROJECT_ROOT"]
@@ -139,7 +139,7 @@ class TestDatasetContent:
         assert columns["action_coverage_schema_version"] == "int8"
 
     def test_gold_catalog_includes_all_action_proof_columns_and_identity(self) -> None:
-        from equity_lake.core.availability import FEATURE_ACTION_COVERAGE_PROOF_COLUMNS  # type: ignore[import-untyped]
+        from equity_lake.core.availability import FEATURE_ACTION_COVERAGE_PROOF_COLUMNS
 
         dataset = next(ds for ds in ALL_DATASETS if ds.name == "technical_features")
         catalog_columns = {column.name for column in dataset.columns}

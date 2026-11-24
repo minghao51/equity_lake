@@ -23,25 +23,25 @@ import pytest
 from click.testing import Result
 from typer.testing import CliRunner
 
-from equity_lake.backtesting.arena import equal_weight_buyhold  # type: ignore[import-untyped]
-from equity_lake.backtesting.attempts import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import equal_weight_buyhold
+from equity_lake.backtesting.attempts import (
     ATTEMPT_MANIFEST_NAME,
     validate_attempt_directory,
 )
-from equity_lake.backtesting.engine import VectorBacktestEngine, universe_size  # type: ignore[import-untyped]
-from equity_lake.backtesting.evidence import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.engine import VectorBacktestEngine, universe_size
+from equity_lake.backtesting.evidence import (
     MANIFEST_NAME,
     digest_non_secret_config,
     validate_run_directory,
 )
-from equity_lake.backtesting.evidence_view import (  # type: ignore[import-untyped]
+from equity_lake.backtesting.evidence_view import (
     backtest_rows,
     latest_success_by_slug,
 )
-from equity_lake.backtesting.result import BacktestResult  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy  # type: ignore[import-untyped]
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+from equity_lake.backtesting.result import BacktestResult
+from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy
+from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy
+from equity_lake.cli.__main__ import app
 
 runner = CliRunner()
 
@@ -625,7 +625,7 @@ def _frozen(tmp_path: Path, **overrides: Any) -> Any:
     requested tickers (``ticker_only``) — the frozen universe is stated the same way.
     """
     from equity_lake.backtesting.evidence import CostApplication
-    from equity_lake.backtesting.protocol import (  # type: ignore[import-untyped]
+    from equity_lake.backtesting.protocol import (
         ResearchProtocol,
         ResourceBudget,
         freeze_protocol,
@@ -672,7 +672,7 @@ class TestReportBacktestRootAndBasis:
 
     def test_the_root_and_basis_reach_the_engine_construction(self, tmp_path: Path) -> None:
         """Falsified by: the command keeping the canonical root or the strict basis."""
-        from equity_lake.core.paths import DATA_DIR  # type: ignore[import-untyped]
+        from equity_lake.core.paths import DATA_DIR
 
         captured: dict[str, Any] = {}
 

@@ -36,11 +36,11 @@ import pytest
 from click.testing import Result
 from typer.testing import CliRunner
 
-from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
-from equity_lake.core.paths import PORTFOLIO_DIR  # type: ignore[import-untyped]
-from equity_lake.portfolio import LedgerStore, replay_ledger, verify_ledger_file  # type: ignore[import-untyped]
+from equity_lake.cli.__main__ import app
+from equity_lake.core.paths import PORTFOLIO_DIR
+from equity_lake.portfolio import LedgerStore, replay_ledger, verify_ledger_file
 from equity_lake.portfolio import store as portfolio_store
-from equity_lake.portfolio.store import PORTFOLIO_SCHEMA_VERSION, portfolio_db_path  # type: ignore[import-untyped]
+from equity_lake.portfolio.store import PORTFOLIO_SCHEMA_VERSION, portfolio_db_path
 
 runner = CliRunner()
 

@@ -14,8 +14,8 @@ import polars as pl
 import pytest
 from deltalake.exceptions import CommitFailedError, SchemaMismatchError
 
-from equity_lake.storage import delta as delta_storage  # type: ignore[import-untyped]
-from equity_lake.storage.delta import DeltaMergeError, merge_delta, read_delta, write_delta  # type: ignore[import-untyped]
+from equity_lake.storage import delta as delta_storage
+from equity_lake.storage.delta import DeltaMergeError, merge_delta, read_delta, write_delta
 
 _TRADING_DATE = date(2026, 10, 17)
 

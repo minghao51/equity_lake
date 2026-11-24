@@ -12,11 +12,11 @@ import polars as pl
 import pytest
 
 from equity_lake.core.instruments import (
-    InstrumentKey,  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    InstrumentKey,  # pyright: ignore[reportMissingImports] -- source import verified by uv
 )
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import PriceForecaster  # type: ignore[import-untyped]
-from equity_lake.ml.labeling import apply_triple_barrier_labels  # type: ignore[import-untyped]
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.ml.forecasting import PriceForecaster
+from equity_lake.ml.labeling import apply_triple_barrier_labels
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]

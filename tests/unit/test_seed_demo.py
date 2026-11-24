@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from equity_lake.core.availability import (
-    ACTION_COVERAGE_SCHEMA_VERSION,  # type: ignore[import-untyped]  # pyright: ignore[reportMissingImports] -- source import verified by uv
+    ACTION_COVERAGE_SCHEMA_VERSION,  # pyright: ignore[reportMissingImports] -- source import verified by uv
 )
-from equity_lake.devtools.seed_demo import DEMO_UNIVERSE, resolve_universe, seed_demo  # type: ignore[import-untyped]
+from equity_lake.devtools.seed_demo import DEMO_UNIVERSE, resolve_universe, seed_demo
 
 pytestmark = pytest.mark.slow
 
@@ -22,7 +22,7 @@ _KNOWN_CLOSURES = (date(2026, 7, 3), date(2026, 9, 7))
 
 def _seeded_dates(tmp_path: Path) -> list[date]:
     """Seed a 2y single-ticker sample lake and return its distinct Bronze dates."""
-    from equity_lake.storage.delta import read_delta  # type: ignore[import-untyped]
+    from equity_lake.storage.delta import read_delta
 
     seed_demo(years=2, tickers=["AAPL"], seed=17, lake_dir=tmp_path)
     return sorted(set(read_delta(_TABLE, lake_dir=tmp_path)["date"].to_list()))
@@ -59,7 +59,7 @@ def test_seed_demo_data_is_readable(tmp_path) -> None:  # type: ignore[no-untype
 
 def test_seed_demo_stamps_canonical_identity(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """Seeded Bronze rows must satisfy the same identity contract real ingestion writes."""
-    from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, normalize_identity_frame  # type: ignore[import-untyped]
+    from equity_lake.core.instruments import IDENTITY_SCHEMA_VERSION, normalize_identity_frame
     from equity_lake.storage.delta import read_delta
 
     seed_demo(years=1, tickers=["AAPL", "MSFT"], seed=3, lake_dir=tmp_path)
@@ -77,7 +77,7 @@ def test_seed_demo_stamps_canonical_identity(tmp_path) -> None:  # type: ignore[
 
 def test_seed_demo_writes_action_coverage_proofs(tmp_path) -> None:  # type: ignore[no-untyped-def]
     """ADR-0015 requires a coverage proof; empty action data alone is not proof."""
-    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table, load_corporate_action_inputs  # type: ignore[import-untyped]
+    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table, load_corporate_action_inputs
 
     seed_demo(years=1, tickers=["AAPL", "MSFT"], seed=5, lake_dir=tmp_path)
     actions, coverage = load_corporate_action_inputs("us_equity", lake_dir=tmp_path)
@@ -114,7 +114,7 @@ def test_demo_universe_matches_config_size() -> None:
 
 
 def test_seeded_dates_follow_exchange_calendar(tmp_path: Path) -> None:
-    from equity_lake.core.calendar import is_trading_day  # type: ignore[import-untyped]
+    from equity_lake.core.calendar import is_trading_day
 
     dates = _seeded_dates(tmp_path)
     # Calendar sanity for the known closures the defect used to seed.
@@ -146,8 +146,8 @@ def test_label_chain_finalizes_on_next_open_session(tmp_path: Path, monkeypatch:
 
     from equity_lake.core.calendar import is_trading_day
     from equity_lake.core.instruments import InstrumentKey
-    from equity_lake.features import run_feature_job  # type: ignore[import-untyped]
-    from equity_lake.features.labels import AVAILABILITY_COLUMN  # type: ignore[import-untyped]
+    from equity_lake.features import run_feature_job
+    from equity_lake.features.labels import AVAILABILITY_COLUMN
     from equity_lake.storage.delta import read_delta
 
     closure = date(2026, 7, 3)
@@ -187,7 +187,7 @@ def test_seeded_rows_carry_a_recomputable_synthetic_origin_claim(tmp_path: Path)
     claiming a different profile/seed/revision than it generated with, or stamping only
     some rows.
     """
-    from equity_lake.core.price_provenance import (  # type: ignore[import-untyped]
+    from equity_lake.core.price_provenance import (
         generator_evidence_digest,
         generator_evidence_payload,
         price_batch_digest,
@@ -242,7 +242,7 @@ def test_cli_demo_seed_help_documents_end_date() -> None:
     """The new reproducibility option is in the command's own help text."""
     from typer.testing import CliRunner
 
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+    from equity_lake.cli.__main__ import app
 
     result = CliRunner().invoke(app, ["demo", "seed", "--help"])
     assert result.exit_code == 0, result.output
@@ -258,7 +258,7 @@ def test_same_seed_and_end_date_are_identical_on_two_wall_clock_days(tmp_path: P
     """
     from equity_lake.core.calendar import is_trading_day
     from equity_lake.core.price_provenance import price_batch_digest
-    from equity_lake.devtools import seeding  # type: ignore[import-untyped]
+    from equity_lake.devtools import seeding
     from equity_lake.storage.delta import read_delta
 
     assert is_trading_day("us_equity", _PINNED_END)
@@ -281,7 +281,7 @@ def test_same_seed_and_end_date_are_identical_on_two_wall_clock_days(tmp_path: P
 def test_without_end_date_the_window_follows_the_wall_clock_day(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Control for the test above: the simulated day really moves an unpinned window."""
     from equity_lake.core.price_provenance import price_batch_digest
-    from equity_lake.devtools import seeding  # type: ignore[import-untyped]
+    from equity_lake.devtools import seeding
     from equity_lake.storage.delta import read_delta
 
     roots = (tmp_path / "day-one", tmp_path / "day-two")

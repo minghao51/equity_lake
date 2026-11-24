@@ -13,11 +13,11 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-import equity_lake.signals.readiness as readiness  # type: ignore[import-untyped]
-from equity_lake.cli.commands import tracking  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.signals.models import Signal, SignalScanOutcome, SignalScanReport  # type: ignore[import-untyped]
-from equity_lake.storage.delta import update_delta_columns, write_delta  # type: ignore[import-untyped]
+import equity_lake.signals.readiness as readiness
+from equity_lake.cli.commands import tracking
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.signals.models import Signal, SignalScanOutcome, SignalScanReport
+from equity_lake.storage.delta import update_delta_columns, write_delta
 
 
 def _write_configs(tmp_path: Path) -> tuple[Path, Path]:
@@ -897,7 +897,7 @@ def test_doctor_caps_the_reported_table_list_and_keeps_exact_totals(tmp_path: Pa
 
 def test_synthetic_marker_tables_match_the_canonical_writers() -> None:
     """The marker tables must be the Silver/Gold tables the writers actually write."""
-    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table  # type: ignore[import-untyped]
+    from equity_lake.ingestion.corporate_actions import corporate_action_coverage_table
 
     for market in ("us_equity", "cn_ashare", "hk_sg_equity", "jpx_equity", "krx_equity"):
         assert readiness.COVERAGE_TABLE_TEMPLATE.format(market=market) == corporate_action_coverage_table(market)

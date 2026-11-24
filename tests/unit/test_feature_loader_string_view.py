@@ -18,11 +18,11 @@ import polars as pl
 import pyarrow.parquet as pq
 import pytest
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
-from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta, read_delta, update_delta_columns  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.features.engineering import FeatureEngineer
+from equity_lake.ml.feature_loader import FeatureLoader
+from equity_lake.storage.delta import merge_delta, read_delta, update_delta_columns
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 with_synthetic_feature_proof = _pit_fixtures["with_synthetic_feature_proof"]

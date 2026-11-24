@@ -15,11 +15,11 @@ from typing import Any, cast
 import polars as pl
 import pytest
 
-from equity_lake.core.availability import AvailabilityContractError, CoverageBasis  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.paths import PROJECT_ROOT  # type: ignore[import-untyped]
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
+from equity_lake.core.availability import AvailabilityContractError, CoverageBasis
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.core.paths import PROJECT_ROOT
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.ml.feature_loader import FeatureLoader
 
 _fixtures = run_path(str(Path(__file__).with_name("_weak_basis_fixtures.py")))
 us_equity_session_dates = _fixtures["us_equity_session_dates"]

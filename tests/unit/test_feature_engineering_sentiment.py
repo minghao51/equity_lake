@@ -8,7 +8,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.features.engineering import FeatureEngineer  # type: ignore[import-untyped]
+from equity_lake.features.engineering import FeatureEngineer
 
 
 def test_zscore_cross_sectional_normalizes_per_date() -> None:

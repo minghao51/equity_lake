@@ -15,10 +15,10 @@ from runpy import run_path
 import polars as pl
 import pytest
 
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy  # type: ignore[import-untyped]
-from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE, VectorBacktestEngine
+from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy
+from equity_lake.backtesting.strategy.trend_following import SMACrossoverStrategy
+from equity_lake.core.instruments import InstrumentKey
 
 _pit_fixtures = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 prepare_preloaded_backtest_data = _pit_fixtures["prepare_preloaded_backtest_data"]

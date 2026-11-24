@@ -13,10 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.backtesting.arena import run_arena  # type: ignore[import-untyped]
-from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE  # type: ignore[import-untyped]
-from equity_lake.devtools.seed_demo import seed_demo  # type: ignore[import-untyped]
-from equity_lake.devtools.seeding import trailing_business_days  # type: ignore[import-untyped]
+from equity_lake.backtesting.arena import run_arena
+from equity_lake.backtesting.engine import POLARS_BACKTEST_AVAILABLE
+from equity_lake.devtools.seed_demo import seed_demo
+from equity_lake.devtools.seeding import trailing_business_days
 
 pytestmark = [
     pytest.mark.slow,

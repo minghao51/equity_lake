@@ -9,7 +9,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.ingestion import writers  # type: ignore[import-untyped]
+from equity_lake.ingestion import writers
 
 
 def _valid_ohlcv(ticker: str = "AAPL", trading_date: date = date(2026, 6, 2)) -> pl.DataFrame:
@@ -115,7 +115,7 @@ def test_new_price_write_rejects_missing_venue_provenance(tmp_path: Path) -> Non
 
 # B2: dry-run must be side-effect free.
 def test_dry_run_with_quality_validation_persists_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from equity_lake.validation import pipeline as validation_pipeline  # type: ignore[import-untyped]
+    from equity_lake.validation import pipeline as validation_pipeline
     from equity_lake.validation import profiling
 
     monkeypatch.setattr("equity_lake.storage.delta.LAKE_DIR", tmp_path / "lake")
@@ -139,7 +139,7 @@ def test_upsert_dataset_refuses_quality_failures_by_default(tmp_path: Path) -> N
 def test_price_write_invokes_real_pointblank_gate_before_delta_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from typing import Any, cast
 
-    from equity_lake.validation.pipeline import ValidationPipeline  # type: ignore[import-untyped]
+    from equity_lake.validation.pipeline import ValidationPipeline
 
     original_validate = cast(Any, ValidationPipeline.validate)
     calls: list[tuple[str, str | None]] = []
@@ -392,7 +392,7 @@ def _coverage_proof(
 ) -> dict[str, object]:
     from typing import cast
 
-    from equity_lake.core.availability import ActionCoverageProof  # type: ignore[import-untyped]
+    from equity_lake.core.availability import ActionCoverageProof
 
     available_at = available or datetime(2026, 5, 29, 20, 0, tzinfo=UTC)
     proof = ActionCoverageProof(

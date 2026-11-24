@@ -15,9 +15,9 @@ from typing import Any, cast
 
 import pytest
 
-from equity_lake.cli.commands.intelligence import _format_training_summary  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.ml.forecasting import PriceForecaster  # type: ignore[import-untyped]
+from equity_lake.cli.commands.intelligence import _format_training_summary
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.ml.forecasting import PriceForecaster
 
 
 @pytest.fixture()

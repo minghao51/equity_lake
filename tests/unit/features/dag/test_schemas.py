@@ -8,8 +8,8 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
-from equity_lake.features.dag.schemas import FeatureModel, OHLCVCleanModel  # type: ignore[import-untyped]
-from equity_lake.ml import validate_predictions  # type: ignore[import-untyped]
+from equity_lake.features.dag.schemas import FeatureModel, OHLCVCleanModel
+from equity_lake.ml import validate_predictions
 
 # ---------------------------------------------------------------------------
 # OHLCVCleanModel (Silver boundary)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.dashboard.exporter import DashboardExporter  # type: ignore[import-untyped]
+from equity_lake.dashboard.exporter import DashboardExporter
 
 
 def test_dashboard_exporter_writes_static_files(tmp_path: Path) -> None:

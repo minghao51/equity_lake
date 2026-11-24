@@ -10,13 +10,13 @@ from typing import cast
 import polars as pl
 import pytest
 
-from equity_lake.core.availability import ActionCoverageProof  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.paths import US_NEWS_DIR  # type: ignore[import-untyped]
-from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA  # type: ignore[import-untyped]
-from equity_lake.storage import lake_reader  # type: ignore[import-untyped]
-from equity_lake.storage.delta import write_delta  # type: ignore[import-untyped]
-from equity_lake.storage.lake_reader import AdjustmentMethod  # type: ignore[import-untyped]
+from equity_lake.core.availability import ActionCoverageProof
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.core.paths import US_NEWS_DIR
+from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA
+from equity_lake.storage import lake_reader
+from equity_lake.storage.delta import write_delta
+from equity_lake.storage.lake_reader import AdjustmentMethod
 
 
 class TestA3CallSitesUseLakeReader:
@@ -82,7 +82,7 @@ class TestA3CallSitesUseLakeReader:
             pytest.fail("strict Delta backtest loading must not fall back to raw Parquet")
 
         monkeypatch.setattr(pl, "read_parquet", reject_raw_parquet)
-        from equity_lake.signals.generators.backtest import BacktestSignalGenerator  # type: ignore[import-untyped]
+        from equity_lake.signals.generators.backtest import BacktestSignalGenerator
 
         generator = BacktestSignalGenerator(
             {
@@ -119,7 +119,7 @@ class TestA3CallSitesUseLakeReader:
             return "read_parquet('/dev/null')"
 
         monkeypatch.setattr("equity_lake.signals.generators.sentiment.duckdb_scan_for", fake_scan)
-        from equity_lake.signals.generators.sentiment import SentimentSignalGenerator  # type: ignore[import-untyped]
+        from equity_lake.signals.generators.sentiment import SentimentSignalGenerator
 
         SentimentSignalGenerator({})
         assert calls and calls[0] == US_NEWS_DIR

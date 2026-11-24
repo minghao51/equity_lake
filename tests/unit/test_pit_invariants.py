@@ -24,16 +24,16 @@ import polars as pl
 import pytest
 from polars.testing import assert_frame_equal
 
-from equity_lake.core.availability import AvailabilityContractError  # type: ignore[import-untyped]
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION  # type: ignore[import-untyped]
-from equity_lake.core.source_clock import (  # type: ignore[import-untyped]
+from equity_lake.core.availability import AvailabilityContractError
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.core.schemas import FEATURE_SCHEMA_VERSION
+from equity_lake.core.source_clock import (
     SourceClockRecord,
     SourceClockUnavailable,
 )
-from equity_lake.features.labels import filter_as_of_available  # type: ignore[import-untyped]
-from equity_lake.ml.feature_loader import FeatureLoader  # type: ignore[import-untyped]
-from equity_lake.storage.delta import merge_delta  # type: ignore[import-untyped]
+from equity_lake.features.labels import filter_as_of_available
+from equity_lake.ml.feature_loader import FeatureLoader
+from equity_lake.storage.delta import merge_delta
 
 _pit = run_path(str(Path(__file__).with_name("_pit_fixtures.py")))
 us_equity_session_dates = _pit["us_equity_session_dates"]

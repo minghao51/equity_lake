@@ -9,10 +9,10 @@ import pandas as pd
 import polars as pl
 import pytest
 
-from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion  # type: ignore[import-untyped]
-from equity_lake.ingestion.types import SourceStatus  # type: ignore[import-untyped]
-from equity_lake.ingestion.writers import upsert_dataset, validate_schema  # type: ignore[import-untyped]
-from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher  # type: ignore[import-untyped]
+from equity_lake.ingestion.orchestrator import fetch_market_data, run_daily_ingestion
+from equity_lake.ingestion.types import SourceStatus
+from equity_lake.ingestion.writers import upsert_dataset, validate_schema
+from equity_lake.sources import CNAshareFetcher, HKSGEquityFetcher, USEquityFetcher
 
 # =============================================================================
 # Test Market Data Fetchers
@@ -328,7 +328,7 @@ class TestPipelineIntegration:
         """
         # ``us`` already has the date -> skipped as already-present.
         # ``cn`` is missing -> fetched (we return sample data so the write succeeds).
-        from equity_lake.core.config import TickerConfig  # type: ignore[import-untyped]
+        from equity_lake.core.config import TickerConfig
 
         us_tickers = set(TickerConfig().get_tickers_for_market("us", active_only=True))
 
@@ -541,7 +541,7 @@ class TestExplicitScopeOrchestration:
     def test_ambiguous_multi_market_rejects_before_any_fetch(self, tmp_path: Path) -> None:
         """W03/F04: an ambiguous multi-market ticker raises and performs no fetch."""
         from equity_lake.core.config import TickerConfig
-        from equity_lake.core.config_models import MarketConfig, TickerMetadata  # type: ignore[import-untyped]
+        from equity_lake.core.config_models import MarketConfig, TickerMetadata
 
         def meta(symbol: str) -> TickerMetadata:
             return TickerMetadata(symbol=symbol, name=symbol, exchange="TEST", sector="Tech")

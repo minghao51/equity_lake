@@ -21,8 +21,8 @@ from pathlib import Path
 
 import pytest
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.portfolio.marks import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.portfolio.marks import (
     DEFAULT_MAX_STALE_SESSIONS,
     MAX_SUPPORTED_STALE_SESSIONS,
     STRICT_MAX_STALE_SESSIONS,
@@ -38,8 +38,8 @@ from equity_lake.portfolio.marks import (  # type: ignore[import-untyped]
     parse_marks_text,
     value_positions,
 )
-from equity_lake.portfolio.models import BasisStatus, LedgerEvent, LedgerEventType  # type: ignore[import-untyped]
-from equity_lake.portfolio.projections import LedgerProjection, replay_ledger  # type: ignore[import-untyped]
+from equity_lake.portfolio.models import BasisStatus, LedgerEvent, LedgerEventType
+from equity_lake.portfolio.projections import LedgerProjection, replay_ledger
 
 ACCOUNT = "main"
 INSTRUMENT = InstrumentKey(market="us_equity", mic="XNAS", symbol="AAA")

@@ -13,8 +13,8 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from equity_lake.cli.commands import tracking  # type: ignore[import-untyped]
-from equity_lake.signals.readiness import HistoryState, SignalHistoryObservation  # type: ignore[import-untyped]
+from equity_lake.cli.commands import tracking
+from equity_lake.signals.readiness import HistoryState, SignalHistoryObservation
 
 runner = CliRunner()
 

@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-import equity_lake.portfolio.store as store_module  # type: ignore[import-untyped]
+import equity_lake.portfolio.store as store_module
 from equity_lake.portfolio import (
     LedgerStore,
     LedgerStoreError,
@@ -473,7 +473,7 @@ def test_verification_refuses_a_damaged_copy(tmp_path: Path) -> None:
 
 def test_the_migrate_command_reports_then_upgrades(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``portfolio migrate`` is report-only by default and upgrades only with ``--apply``."""
-    from equity_lake.cli.__main__ import app  # type: ignore[import-untyped]
+    from equity_lake.cli.__main__ import app
 
     path = _write_v1_ledger(tmp_path / "portfolio" / "portfolio.sqlite3")
     monkeypatch.setattr(store_module, "PORTFOLIO_DB_PATH", path)

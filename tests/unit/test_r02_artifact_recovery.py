@@ -22,9 +22,9 @@ from typing import cast
 import polars as pl
 import pytest
 
-from equity_lake.core.instruments import InstrumentKey  # type: ignore[import-untyped]
-from equity_lake.devtools import verify_r02_artifacts as verify_module  # type: ignore[import-untyped]
-from equity_lake.devtools.verify_r02_artifacts import (  # type: ignore[import-untyped]
+from equity_lake.core.instruments import InstrumentKey
+from equity_lake.devtools import verify_r02_artifacts as verify_module
+from equity_lake.devtools.verify_r02_artifacts import (
     ARTIFACT_NAMES,
     DEFAULT_ANCHOR,
     ArtifactsAbsent,
@@ -34,7 +34,7 @@ from equity_lake.devtools.verify_r02_artifacts import (  # type: ignore[import-u
     sha256_file,
     verify,
 )
-from equity_lake.ml.experiment import (  # type: ignore[import-untyped]
+from equity_lake.ml.experiment import (
     R02_FEATURES,
     R02_UNIVERSE,
     freeze_r02_protocol,
