@@ -11,6 +11,7 @@ from uuid import uuid4
 import polars as pl
 import pytest
 import typer
+from deltalake import DeltaTable
 from typer.testing import CliRunner
 
 import equity_lake.signals.readiness as readiness
@@ -416,7 +417,7 @@ def test_existing_delta_history_is_read_without_migration_or_writes(tmp_path: Pa
         reads.append((table, lake_dir))
         return _history_frame()
 
-    monkeypatch.setattr(readiness.DeltaTable, "is_deltatable", lambda _path: True)
+    monkeypatch.setattr(DeltaTable, "is_deltatable", lambda _path: True)
     monkeypatch.setattr(readiness, "read_delta", read_delta)
 
     state, frame = readiness._read_history_frame(tmp_path)
@@ -440,7 +441,7 @@ def test_unknown_files_beside_delta_state_fail_closed(tmp_path: Path, monkeypatc
     (history_path / "_delta_log" / "00000000000000000000.json").write_text("{}", encoding="utf-8")
     (history_path / "part-000.parquet").touch()
     (history_path / "unexpected.csv").write_text("not a table", encoding="utf-8")
-    monkeypatch.setattr(readiness.DeltaTable, "is_deltatable", lambda _path: True)
+    monkeypatch.setattr(DeltaTable, "is_deltatable", lambda _path: True)
     monkeypatch.setattr(readiness, "read_delta", lambda *_args, **_kwargs: pytest.fail("corrupt layout must not be read"))
 
     table_result = readiness._read_table_dates(table_path, "01_bronze/market_data/us_equity", date(2024, 12, 4))
@@ -672,7 +673,6 @@ def test_doctor_never_reports_an_unmarked_populated_lake_as_real(tmp_path: Path)
     assert observation.rows == 4
     assert observation.marked_rows == 0
     assert observation.state == "unknown"
-    assert observation.state != "real"
     assert observation.earliest_marked_date is None
     assert "cannot prove real ingestion" in observation.reason
     assert {row.state for row in observation.tables} >= {"unmarked", "missing"}
@@ -686,8 +686,6 @@ def test_doctor_reports_a_bronze_only_lake_as_unknown_not_empty(tmp_path: Path) 
     observation = readiness.observe_synthetic_provenance(lake_dir=lake)
 
     assert observation.state == "unknown"
-    assert observation.state != "empty"
-    assert observation.state != "real"
     assert (observation.rows, observation.marked_rows) == (2, 0)
     by_table = {row.table: row for row in observation.tables}
     bronze = by_table["01_bronze/market_data/us_equity"]
@@ -708,7 +706,6 @@ def test_doctor_counts_a_row_only_predictions_table_as_rows(tmp_path: Path) -> N
     observation = readiness.observe_synthetic_provenance(lake_dir=lake)
 
     assert observation.state == "unknown"
-    assert observation.state != "empty"
     assert observation.rows == 1
     predictions = {row.table: row for row in observation.tables}["04_platinum/predictions"]
     # Row-only: no marker column is invented, and the state stays unmarked.
@@ -813,7 +810,6 @@ def test_doctor_counts_an_unenumerated_silver_dataset_as_rows(tmp_path: Path) ->
     observation = readiness.observe_synthetic_provenance(lake_dir=lake)
 
     assert observation.state == "unknown"
-    assert observation.state != "empty"
     assert (observation.rows, observation.marked_rows) == (2, 0)
     news = {row.table: row for row in observation.tables}["02_silver/news_sentiment"]
     # Discovered generically: row-only, no marker column invented.
@@ -836,7 +832,6 @@ def test_doctor_never_reports_empty_when_non_delta_data_files_remain(tmp_path: P
     observation = readiness.observe_synthetic_provenance(lake_dir=lake)
 
     assert observation.state == "unknown"
-    assert observation.state != "empty"
     assert (observation.rows, observation.marked_rows) == (0, 0)
     assert "02_silver/news_sentiment/part-0.parquet" in observation.reason
     assert "cannot be counted" in observation.reason
@@ -850,7 +845,6 @@ def test_doctor_counts_an_unenumerated_bronze_dataset_as_rows(tmp_path: Path) ->
     observation = readiness.observe_synthetic_provenance(lake_dir=lake)
 
     assert observation.state == "unknown"
-    assert observation.state != "empty"
     assert (observation.rows, observation.marked_rows) == (2, 0)
     macro = {row.table: row for row in observation.tables}["01_bronze/macro"]
     assert (macro.state, macro.column, macro.rows) == ("unmarked", "", 2)
