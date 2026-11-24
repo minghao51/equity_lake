@@ -75,6 +75,8 @@ nav:
       - Research Protocols (R00) and R01 Measured Controls: developer/architecture/research-protocols.md
       - R01 Preregistration (frozen before the run): research/20261123-01-r01-preregistration.md
       - R01 Controls and Scale Results: research/20261123-01-r01-report.md
+      - R02-D2 Preregistration Plan (planned, blocked on qualified data): research/20261124-01-r02-d2-preregistration-plan.md
+      - Vendor Total-Return Options (planning input only): finding/20261124-01-vendor-total-return-options.md
       - ML Analytics Platform: developer/architecture/ml-analytics-platform.md
       - Project Structure: developer-guide/project-structure.md
       - Developer Tools: developer-guide/devtools.md
@@ -114,6 +116,7 @@ nav:
           - 'ADR-0033: Proven-empty corporate-action scopes': decisions/0033-proven-empty-corporate-action-scopes.md
           - 'ADR-0034: Vendor-stamped ML research with disclosure': decisions/0034-vendor-stamped-ml-research-with-disclosure.md
           - 'ADR-0035: H00 owns the sole public root': decisions/0035-h00-sole-public-root.md
+          - 'ADR-0036: Ledger event retention and pruning': decisions/0036-ledger-event-retention-and-pruning.md
 
 plugins:
   - search

@@ -258,7 +258,7 @@ class TestReleaseReceiptAndRollback:
         """A workflow_dispatch input is string data; it reaches the shell through env only."""
         text = _code(PUBLISHER.read_text(encoding="utf-8"))
 
-        assert 'ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}' in text
+        assert "ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}" in text
         assert '"$ROLLBACK_RUN_ID"' in text
         assert '"${{ inputs.rollback_run_id }}"' not in text
 
