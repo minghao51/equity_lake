@@ -344,14 +344,17 @@ Residuals left and next eligible stage:
 
 ## 8. Operator inputs required
 
-1. Repository Pages access and the publication authorization record required by the existing human release gate. The sole-H00-root layout is already chosen in §2.1; a route ADR must codify that design before implementation.
-2. Platform Pages environment-protection settings evidence (required reviewers).
-3. Real ledger: canonical CSV + statements/marks (RS-P01).
-4. Off-host backup/drill destination + acceptance of the NEW ADR that must precede it (RS-P02).
-5. Per-market source/license/input packet + ADR-0030 amendment acceptance (RS-M01..04).
-6. Live endpoint/channel + scheduler host + kill-switch owner (RS-S01 live step).
-7. Runtime hardware capacity and measurement availability for the already chosen RS-R01 protocol defaults (§2.12); insufficient capacity yields censored evidence, not silent budget expansion.
-8. Optional: vendor total-return series decision (opens the RS-B01 follow-up schema/ADR).
+Statuses follow the owner decisions of 2026-11-24 (§11, "Owner decisions"): `outstanding`,
+`backlog`, `not required now`, or discharged where the work already ran.
+
+1. Repository Pages access and the publication authorization record required by the existing human release gate. The sole-H00-root layout is already chosen in §2.1; a route ADR must codify that design before implementation. — Publication is **approved by the owner** (2026-11-24); the route ADR and the push/dispatch wiring remain **outstanding**.
+2. Platform Pages environment-protection settings evidence (required reviewers). — **outstanding**.
+3. Real ledger: canonical CSV + statements/marks (RS-P01). — **outstanding** (`blocked-input`).
+4. Off-host backup/drill destination + acceptance of the NEW ADR that must precede it (RS-P02). — **not required now** (2026-11-24).
+5. Per-market source/license/input packet + ADR-0030 amendment acceptance (RS-M01..04). — **not required now** (2026-11-24; real non-US market slices).
+6. Live endpoint/channel + scheduler host + kill-switch owner (RS-S01 live step). — **backlog** (2026-11-24: live notification delivery moves to the backlog).
+7. Runtime hardware capacity and measurement availability for the already chosen RS-R01 protocol defaults (§2.12); insufficient capacity yields censored evidence, not silent budget expansion. — discharged: RS-R01 ran on this host with capacity available (§11).
+8. Optional: vendor total-return series decision (opens the RS-B01 follow-up schema/ADR). — **planning only** approved (2026-11-24, [options note](../finding/20261124-01-vendor-total-return-options.md)); an actual series and its licence remain operator input if pursued.
 
 ## 9. What this document is not
 
@@ -588,3 +591,12 @@ The independent review of the accumulated diff returned FAIL with four blocking 
 5. New PIT invariant in `core/source_clock.py`: evidence the source had not published by the `as_of` date can no longer qualify that read (look-ahead refusal). Mutation proof: removing the check made `test_clock_evidence_published_after_the_as_of_date_never_qualifies_it` fail (exit 1); restored with `diff -q` exit 0 and identical sha256, test green.
 Also fixed during this pass: `src/equity_lake/py.typed` added (the package is mypy-strict clean over 200 files, but every isolated per-file analysis reported first-party imports as untyped); repo-convention `# pyright: ignore[reportMissingImports]` added to the two optional `wandb` imports in `ml/registry.py`. Pre-existing stale `# type: ignore[import-untyped]` comments remain in ~140 test files (611 occurrences) and are recorded as debt rather than mass-edited here.
 Gates after the fixes: `uv run ruff check .` 0, `uv run ruff format --check .` 0, `uv run mypy` 0 (200 files), `make lint-md` 0 (314/35), and the touched test modules green.
+
+### Owner decisions — 2026-11-24
+
+- Publication is **approved by the owner**, with platform reviewer protection, the route ADR and the push/dispatch still outstanding.
+- **Event pruning is approved** and now has [ADR-0036](../decisions/0036-ledger-event-retention-and-pruning.md) — the plan's earlier `deferred-invariant` disposition for event deletion is superseded by that ADR.
+- **A second ML experiment is approved for planning only** (see [the D2 preregistration plan](../research/20261124-01-r02-d2-preregistration-plan.md); still blocked on qualified data).
+- **A vendor total-return adapter is approved for planning only** (see [the vendor total-return options note](../finding/20261124-01-vendor-total-return-options.md)).
+- **Live notification delivery moves to the backlog** — the paper shadow is done, activation is not required now.
+- Off-host/encrypted backup, real non-US market slices, cash-dividend backtest, backup-file pruning and in-place `VACUUM` remain **not required now**.
