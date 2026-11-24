@@ -401,12 +401,12 @@ def test_changed_content_for_the_same_external_id_fails_and_changes_nothing(tmp_
 
     conflicting = _buy(sequence=2, quantity="6", cash="-725.00")
 
-    with pytest.raises(LedgerValidationError) as excinfo:
+    with pytest.raises(LedgerValidationError) as invalid:
         validate_batch(store.load_events(), [conflicting])
-    assert "different content" in str(excinfo.value)
-    with pytest.raises(LedgerConflictError) as excinfo:
+    assert "different content" in str(invalid.value)
+    with pytest.raises(LedgerConflictError) as conflict:
         store.append([conflicting])
-    assert "different content" in str(excinfo.value)
+    assert "different content" in str(conflict.value)
     assert _stored_rows(store.path) == before
 
 
@@ -645,11 +645,25 @@ def test_correction_event_appends_without_mutating_earlier_rows(tmp_path: Path) 
 
 
 def test_store_exposes_no_in_place_update_path() -> None:
+    """The ledger stays append-only except for the one authorised prune deletion.
+
+    ADR-0036 allows exactly one destructive statement: the prune path removes events it has
+    already collapsed into a checkpoint. Everything else about append-only still holds, so
+    the guard is narrowed rather than removed — no row is ever rewritten, and the single
+    delete is enumerated per event inside the prune copy, never a range predicate.
+    """
     for name in ("update", "update_event", "replace", "delete", "rewrite", "amend"):
         assert not hasattr(LedgerStore, name)
     source = inspect.getsource(portfolio_store)
     assert re.search(r"\bUPDATE\s+\w+\s+SET\b", source, re.IGNORECASE) is None
-    assert re.search(r"\bDELETE\s+FROM\b", source, re.IGNORECASE) is None
+
+    deletes = re.findall(r"\bDELETE\s+FROM\b", source, re.IGNORECASE)
+    assert len(deletes) == 1, "only the ADR-0036 prune path may delete ledger rows"
+    assert re.search(r"DELETE\s+FROM\s+ledger_events\s+WHERE\s+account\s*=\s*\?\s+AND\s+external_id\s*=\s*\?", source, re.IGNORECASE) is not None, (
+        "the prune delete must name each event explicitly, never a date range"
+    )
+    prune_copy = inspect.getsource(portfolio_store._apply_prune_to_copy)
+    assert "DELETE FROM" in prune_copy, "the only delete must live in the prune copy step"
 
 
 def test_private_directory_and_database_permissions(tmp_path: Path) -> None:
