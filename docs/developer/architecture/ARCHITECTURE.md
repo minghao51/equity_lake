@@ -126,6 +126,29 @@ action, a split ratio cannot be inverted, or the store's watermark predates the 
 `adj_close` stays as fetched, the origin envelope stays `unknown`, and no schema, catalog,
 reader or `price_adjustment_version` changes.
 
+**Derived total return (ADR-0037) — research-grade, beside the split-only read.** The
+split-only adjusted read excludes cash dividends on purpose (ADR-0015 decision 1), and no
+vendor total-return series is stored or ingested. A total-return series is instead *derived
+locally* from the rows the lake already holds (`storage/total_return.py`): each stored cash
+dividend `d` is reinvested at its ex-date close (step `1 + d/close_t`, applied to every
+session at or after `t`), and each stored split ratio — the ADR-0011 `old/new` convention,
+e.g. `0.1` for a 10-for-1 — multiplies every session strictly before the split session. A
+split and a dividend on the same session resolve **split first, then dividend**: the split's
+own session is already post-split, so the dividend step uses that post-split close, and the
+two act on disjoint session sets. The result is a pure function of `(prices, actions)`
+(Float64, nothing rounded) that fails closed on an unpriced dividend ex-date, a non-positive
+close, an unusable split ratio, an unknown action, a duplicate dividend, an unpriced
+instrument or an ambiguous identity.
+
+Every stored action row has a null `source_available_at`, so this series carries ADR-0032's
+`vendor_events_no_clock` weakness and is stamped `total_return_basis` on every row: it is
+research-grade only. `derive_total_return` requires an explicit `basis` argument whose only
+admitted value is `vendor_events_no_clock` — a strict consumer asking for `source_clock` is
+refused — and it is deliberately *not* wired into `with_price_adjustment` or
+`AdjustmentMode`, which keep refusing the `total_return` literal (RS-B01). Tax/withholding,
+non-USD instruments, payment-date reinvestment and index-level distribution treatment are
+out of scope and need their own decision.
+
 All cataloged tables are date-partitioned Delta tables whose data files are
 Parquet (ADR-0001). Path constants live in `core/paths.py`; market-data
 constants (`US_EQUITY_DIR`, …) point directly at their medallion locations,

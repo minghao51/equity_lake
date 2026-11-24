@@ -70,6 +70,58 @@ a substitute for either.
    evidence — the same rule the D2 plan records
    ([D2 preregistration plan](../research/20261124-01-r02-d2-preregistration-plan.md) §7).
 
+## 3a. Chosen cheap path (2026-11-24): derive total return locally — ADR-0037
+
+The owner asked "can we just use yfinance for total return?". The answer accepted in
+[ADR-0037](../decisions/0037-derived-total-return-from-stored-distributions.md) is yes — and the
+right way is the one this note's §3 point 3 nearly rules out: **do not take a vendor-adjusted
+series at all**. yfinance keeps supplying raw prices (`auto_adjust=False`) and the vendor's own
+dividend/split rows, which the lake already stores; `storage/total_return.py` then derives the
+total-return series locally by reinvesting each stored cash dividend at its ex-date close and
+applying the stored split ratios to earlier sessions.
+
+Why this beats every option in §2 for a research-grade number:
+
+- **Zero data cost and no new source row.** No router, schema, config, licence or spend gate; the
+  inputs are rows the lake already holds (381 dividends and 17 splits on the landed slice).
+- **Reproducible from row-backed provenance.** The series is a pure function of `(prices,
+  actions)`, so it can be re-derived and audited row by row; a vendor-adjusted close cannot (its
+  adjustment vintage is not stored anywhere — §3 point 3, ADR-0029 decision 3).
+- **No double counting.** The distributions are the stored events, not folded into a price, so
+  residual plan §2.10's rule holds by construction: 100 → 90 plus a 10 cash distribution is 0%
+  gross total return, which is pinned as an oracle.
+- **No contract damage.** Nothing is switched to `auto_adjust=True`, no vendor-adjusted value is
+  stored, `adj_close` stays a cross-check column only, and RS-B01's uniform `total_return`
+  refusal in the reader/loader/CLI is untouched.
+
+What it cannot be: the derived series inherits the **`vendor_events_no_clock`** weakness — every
+stored action row has a null `source_available_at` — so it is research-grade only, never a strict
+or point-in-time read, never a live signal, and its entry point refuses any basis other than
+`vendor_events_no_clock`. Tax/withholding, non-USD instruments, payment-date reinvestment and
+index-level distribution treatment beyond the same per-share rule are out of scope and need their
+own decision (ADR-0037 decision 3).
+
+### Manual cross-check against a vendor adjusted series (research-only)
+
+Optional, at a human's discretion, **not** part of any module, test, stage or CI path — there is
+no network call in `src/` or `tests/` and none may be added for this. Nothing fetched here is
+stored, ingested, committed or asserted:
+
+1. Fetch the raw inputs with `auto_adjust=False` plus `Ticker.dividends` / `Ticker.splits`, and
+   the vendor's adjusted series separately (`yf.download(..., auto_adjust=True)`).
+2. Derive the local series with `derive_total_return(prices, actions, basis="vendor_events_no_clock")`
+   using exactly those raw closes and events.
+3. Compare **session-over-session returns**, not price levels (the vendor's base is arbitrary):
+   `level.pct_change()` on the derived series against the adjusted close's returns.
+4. Expect agreement within the vendor's own rounding except across sessions where the vendor
+   applies a treatment ADR-0037 excludes (payment-date timing, withholding). Any disagreement is
+   a question to investigate — never a passing assertion and never a licence to store the
+   vendor's adjusted values.
+
+This cross-check validates arithmetic only. It proves no clock, no licence right and no
+point-in-time property; the strict path stays closed on its own evidence rules (ADR-0015,
+ADR-0032).
+
 ## 4. Recommendation ordering
 
 Recommendation, not a decision — each line is the reason it ranks where it does:
