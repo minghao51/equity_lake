@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
-from typing import Any, cast
+from typing import Any
 
 import exchange_calendars as xc
 import polars as pl
@@ -184,7 +184,7 @@ def prepare_preloaded_backtest_data(raw_prices: pl.DataFrame, instrument: Instru
     coverage = pl.DataFrame([proof.model_dump()])
     loader = BacktestDataLoader(action_inputs={instrument.tuple: (actions, coverage)})
     with_context = loader._attach_point_in_time_context(prices, [instrument.market])
-    return cast(pl.DataFrame, loader._point_in_time_marks(with_context, [instrument.market], "splits"))
+    return loader._point_in_time_marks(with_context, [instrument.market], "splits")
 
 
 __all__ = [

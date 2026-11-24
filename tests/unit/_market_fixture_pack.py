@@ -85,4 +85,4 @@ def round_trip_ohlcv(frame: pl.DataFrame, market: str, lake_dir: Path) -> pl.Dat
     table = MARKET_DIR_MAP[market]
     trading_date = cast(date, frame["date"].max())
     assert upsert_dataset(frame, table, trading_date, lake_dir=lake_dir) is True
-    return cast(pl.DataFrame, read_delta(table, lake_dir=lake_dir))
+    return read_delta(table, lake_dir=lake_dir)
