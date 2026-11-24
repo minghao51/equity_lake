@@ -1595,9 +1595,14 @@ def prune_ledger(path: Path | None = None, *, before: datetime, apply: bool = Fa
 
     copy = target.with_name(f"{target.name}.prune-{stamp}.tmp")
     try:
-        shutil.copy2(target, copy)
-        os.chmod(copy, _FILE_MODE)
-        _apply_prune_to_copy(copy, plan)
+        try:
+            shutil.copy2(target, copy)
+            os.chmod(copy, _FILE_MODE)
+            _apply_prune_to_copy(copy, plan)
+        except (OSError, sqlite3.Error) as exc:
+            raise LedgerStoreError(
+                f"the prune could not be written to the verified copy ({type(exc).__name__}); the ledger was not replaced"
+            ) from exc
         pruned_file = verify_ledger_file(copy, expect_version=PORTFOLIO_SCHEMA_VERSION)
         if (pruned_file.row_count, pruned_file.record_digest) != (plan.row_count_after, plan.record_digest_after):
             raise LedgerStoreError("the pruned copy disagrees with the planned record (row count or record digest); the ledger was not replaced")
