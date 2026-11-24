@@ -475,6 +475,111 @@ def portfolio_backups(
         raise typer.Exit(1)
 
 
+# --- checkpoint-collapse pruning (ADR-0036) -----------------------------------------
+
+
+@portfolio_app.command("prune")
+def portfolio_prune(
+    before: Annotated[
+        str | None,
+        typer.Option(
+            "--before",
+            help="Required timezone-aware UTC cut instant; events strictly before it are collapsed into one checkpoint",
+        ),
+    ] = None,
+    apply: Annotated[
+        bool,
+        typer.Option(
+            "--apply/--report-only",
+            help="Take the verified backup, write the checkpoint and manifest; the default reports the plan and writes nothing",
+        ),
+    ] = False,
+    backup: Annotated[
+        Path | None,
+        typer.Option(
+            "--backup",
+            help="Existing verified backup of this exact ledger to re-verify and record instead of writing a new one",
+        ),
+    ] = None,
+) -> None:
+    """Collapse ledger history before an instant into a verified checkpoint (ADR-0036).
+
+    Report-only by default: it verifies the ledger, replays it to the cut, prints the events
+    that would be deleted, the checkpoint row-set it would write, the planned record digest
+    and manifest fields, and writes nothing at all — no backup, no copy, no manifest, no
+    directory, no journal.
+
+    Pruning is **checkpoint collapse**, never bare deletion: the accounting state at the cut
+    is written as an `OPENING` row-set (one cash row plus one row per open position, because
+    `OPENING` carries at most one instrument per row), then every event strictly before the
+    cut is deleted in the same transaction. Cash, per-position quantity, basis and NAV at and
+    after the cut are preserved exactly; deposits, withdrawals, standalone fees, net dividend
+    income and realized gain before the cut are collapsed and can no longer be reconstructed
+    from the ledger. `summary` and `positions` therefore disclose that they present a pruned
+    history.
+
+    `--apply` requires a verified backup whose sha256 is recorded. With `--backup` the named
+    file is re-verified and must be this exact ledger; without it a verified exact-file copy
+    is written beside the ledger first. The prune is refused when the ledger is missing,
+    unverifiable or not schema v2; the target is not the configured private ledger; the cut
+    is naive or not strictly in the past; no event is strictly before the cut; the ledger
+    holds more than one account label; the checkpoint would carry negative cash; there is no
+    source-sequence room before the earliest retained event; the supplied backup does not
+    match; or replay of the pruned ledger does not reproduce the pre-prune book at the cut
+    and at a later instant. Running it again for the same cut is a no-op that writes nothing.
+
+    The manifest is written under `data/portfolio/prune/` and records the cut, the sorted
+    pruned event ids, the record digest before and after, the backup sha256, the tool version,
+    a UTC timestamp and the checkpoint external ids.
+
+    Exit codes: 0 when a report is produced, the cut was already pruned, or the prune
+    completes and re-verifies; 1 on any refusal or failed check. Refusals go to stderr
+    without naming a stored amount, quantity, price or instrument.
+    """
+    from equity_lake.portfolio.store import LedgerStoreError, prune_ledger
+
+    instant = _parse_as_of("prune", before)
+    try:
+        report = prune_ledger(before=instant, apply=apply, backup=Path(backup) if backup is not None else None)
+    except LedgerStoreError as exc:
+        typer.secho(f"portfolio prune: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+
+    if report.already_pruned:
+        typer.echo(f"Ledger {report.filename} has already been pruned at {report.cut.isoformat()}; nothing to do.")
+        typer.echo(f"  checkpoint cash {report.checkpoint_cash}, {report.checkpoint_position_count} position row(s)")
+        typer.echo(f"  checkpoint external ids: {', '.join(report.checkpoint_external_ids)}")
+        typer.echo("Nothing was written: a prune for this cut is a no-op and never produces a second checkpoint.")
+        return
+
+    typer.echo(f"Ledger {report.filename}: prune cut {report.cut.isoformat()}")
+    typer.echo(f"  events strictly before the cut (to delete): {report.pruned_event_count}")
+    typer.echo(f"    ids: {', '.join(report.pruned_event_external_ids)}")
+    typer.echo(f"  retained events at or after the cut: {report.retained_event_count}")
+    typer.echo(f"  checkpoint row-set: one cash row + {report.checkpoint_position_count} position row(s); cash {report.checkpoint_cash}")
+    typer.echo(f"  checkpoint effective instant: {report.checkpoint_effective_at.isoformat()} (one microsecond before the cut, so it sorts first)")
+    typer.echo(f"  checkpoint external ids: {', '.join(report.checkpoint_external_ids)}")
+    typer.echo(f"  rows {report.row_count_before} -> {report.row_count_after}")
+    typer.echo(f"  record digest {report.record_digest_before} -> {report.record_digest_after}")
+    if report.backup_source == "supplied":
+        typer.echo(f"  backup: supplied and re-verified: {report.backup_filename} (sha256 {report.backup_sha256})")
+    elif report.backup_source == "created":
+        typer.echo(f"  backup: created and verified: {report.backup_filename} (sha256 {report.backup_sha256})")
+    else:
+        typer.echo("  backup: --apply writes a verified exact-file copy beside the ledger first (no --backup supplied)")
+    if not report.applied:
+        typer.echo(f"  manifest: {report.manifest_directory}/<utc>.json (written by --apply)")
+        typer.echo("Report only: nothing was written (no backup, no copy, no manifest, no directory, no journal).")
+        return
+    typer.echo(f"  manifest: {report.manifest_filename} under {report.manifest_directory}")
+    typer.secho(
+        f"Pruned {report.filename}: {report.pruned_event_count} event(s) collapsed into the checkpoint; the book at and after the cut is unchanged.",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo("  irreversible: the pre-cut events no longer exist in the ledger; the verified backup is the reversal.")
+    typer.echo("  summary and positions now disclose that they present a pruned history.")
+
+
 # --- read commands (P02) -------------------------------------------------------------
 
 _MONEY_NOTE: Final[str] = "money is displayed in cents, half-even; quantities are shown exactly"
@@ -532,6 +637,13 @@ def _load_stored_events(command: str) -> tuple[LedgerEvent, ...]:
         )
 
 
+def _pruned_history_cut(events: tuple[LedgerEvent, ...]) -> datetime | None:
+    """The checkpoint cut a read report must disclose, or ``None`` for an unpruned ledger."""
+    from equity_lake.portfolio.store import prune_checkpoint_cut
+
+    return prune_checkpoint_cut(events)
+
+
 def _reject_projection(command: str) -> NoReturn:
     """Refuse an unusable stored timeline without repeating any ledger text.
 
@@ -550,13 +662,13 @@ def _reject_projection(command: str) -> NoReturn:
     )
 
 
-def _projection(command: str, account: str, as_of: str | None) -> LedgerProjection:
+def _projection(command: str, account: str, as_of: str | None) -> tuple[LedgerProjection, tuple[LedgerEvent, ...]]:
     from equity_lake.portfolio import ProjectionError, replay_ledger
 
     instant = _parse_as_of(command, as_of)
     events = _load_stored_events(command)
     try:
-        return replay_ledger(events, account=account, as_of=instant)
+        return replay_ledger(events, account=account, as_of=instant), events
     except ProjectionError:
         _reject_projection(command)
 
@@ -713,11 +825,18 @@ def portfolio_positions(
     if not label:
         _reject_read("positions", "--account must be a non-empty neutral label", ["use a short local identifier such as main"])
 
-    projection = _projection("positions", label, as_of)
+    projection, events = _projection("positions", label, as_of)
     valuation = _valuation("positions", projection, marks, max_stale_sessions)
 
     typer.echo(f"portfolio positions as of {projection.as_of.isoformat()} (account {label})")
     typer.echo(f"  {projection.replayed_event_count} replayed event(s); effective-date reconstruction, not a historical-knowledge proof")
+    pruned_cut = _pruned_history_cut(events)
+    if pruned_cut is not None:
+        typer.echo(
+            f"  PRUNED HISTORY: this ledger contains a prune checkpoint at {pruned_cut.isoformat()}; quantities and basis "
+            "are carried by that checkpoint, but realized gain and every event-level detail before the cut cannot be "
+            "reconstructed from this ledger (an unavailable realized gain is not zero)"
+        )
     for position in valuation.positions:
         _echo_position_block(position)
     typer.echo(f"  cash {_money(valuation.cash)}")
@@ -784,25 +903,34 @@ def portfolio_summary(
     if not label:
         _reject_read("summary", "--account must be a non-empty neutral label", ["use a short local identifier such as main"])
 
-    projection = _projection("summary", label, as_of)
+    projection, events = _projection("summary", label, as_of)
     valuation = _valuation("summary", projection, marks, max_stale_sessions)
 
     from equity_lake.portfolio import DIVIDEND_BREAKDOWN_UNAVAILABLE
 
     typer.echo(f"portfolio summary as of {projection.as_of.isoformat()} (account {label})")
     typer.echo(f"  {projection.replayed_event_count} replayed event(s); effective-date reconstruction, not a historical-knowledge proof")
+    pruned_cut = _pruned_history_cut(events)
+    pruned_note = ""
+    if pruned_cut is not None:
+        pruned_note = " [pruned history: excludes events before the checkpoint cut; not an account total]"
+        typer.echo(
+            f"  PRUNED HISTORY: this ledger contains a prune checkpoint at {pruned_cut.isoformat()}; deposits, withdrawals, "
+            "standalone fees, net dividend income and realized gain before that cut were collapsed into the checkpoint and "
+            "cannot be reconstructed from this ledger (those collapsed sums are not zero)"
+        )
     typer.echo(f"  cash {_money(valuation.cash)}")
     typer.echo(
         f"  external flows: deposits {_money(projection.deposits)}, withdrawals {_money(projection.withdrawals)}, "
-        f"net {_money(projection.net_external_flow)} (external flows, never profit)"
+        f"net {_money(projection.net_external_flow)} (external flows, never profit){pruned_note}"
     )
     typer.echo(
         f"  fees counted once: embedded {_money(projection.embedded_fees)}, standalone {_money(projection.standalone_fees)}"
-        " (embedded purchase/sale fees are already inside realized and unrealized gain)"
+        f" (embedded purchase/sale fees are already inside realized and unrealized gain){pruned_note}"
     )
-    typer.echo(f"  net dividend income {_money(valuation.net_dividend_income)}")
+    typer.echo(f"  net dividend income {_money(valuation.net_dividend_income)}{pruned_note}")
     typer.echo(f"  gross dividend income and withholding {DIVIDEND_BREAKDOWN_UNAVAILABLE}")
-    typer.echo(f"  realized gain {_optional_money(valuation.realized_gain)}")
+    typer.echo(f"  realized gain {_optional_money(valuation.realized_gain)}{pruned_note}")
     typer.echo(f"  marked position value {_money(valuation.marked_position_value)} (valid marks only)")
     if valuation.complete:
         typer.echo(f"  NAV {_optional_money(valuation.nav)}")
@@ -896,6 +1024,13 @@ def portfolio_reconcile(
         projection = replay_ledger(events, account=label, as_of=instant)
     except ProjectionError:
         _reject_projection("reconcile")
+    # Reconciliation compares supplied statements against ledger events; a pruned window no
+    # longer holds them, so the report says so instead of implying a complete comparison.
+    pruned_cut = _pruned_history_cut(events)
+    if pruned_cut is not None:
+        typer.echo(
+            f"  PRUNED HISTORY: events before the checkpoint cut {pruned_cut.isoformat()} were collapsed and are not available to reconciliation"
+        )
     try:
         parsed = parse_statement_file(path)
     except StatementError as exc:

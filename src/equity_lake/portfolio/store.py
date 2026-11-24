@@ -28,20 +28,23 @@ both inside a single transaction.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import sqlite3
 import stat
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 from urllib.parse import quote
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from equity_lake import __version__ as TOOL_VERSION
 from equity_lake.core.instruments import InstrumentKey
 from equity_lake.core.paths import PORTFOLIO_DB_PATH
 from equity_lake.portfolio.models import (
@@ -51,6 +54,7 @@ from equity_lake.portfolio.models import (
     PortfolioLedgerError,
     redacted_validation_message,
 )
+from equity_lake.portfolio.projections import LedgerProjection, ProjectionError, replay_ledger
 
 logger = structlog.get_logger(__name__)
 
@@ -58,6 +62,13 @@ PORTFOLIO_SCHEMA_VERSION: Final[int] = 2
 #: The only version an upgrade accepts, and the only version this build can rebuild from.
 _PORTFOLIO_LEGACY_SCHEMA_VERSION: Final[int] = 1
 PORTFOLIO_DB_FILENAME: Final[str] = "portfolio.sqlite3"
+#: Checkpoint rows a prune leaves behind carry this external source (ADR-0036 decision 5).
+PRUNE_CHECKPOINT_SOURCE: Final[str] = "prune-checkpoint"
+_PRUNE_CHECKPOINT_PARSER_VERSION: Final[str] = "prune-checkpoint-v1"
+#: The checkpoint manifest is an auxiliary artifact under ``DATA_DIR/portfolio/prune``.
+_PRUNE_MANIFEST_DIRNAME: Final[str] = "prune"
+_PRUNE_MANIFEST_SCHEMA_VERSION: Final[Literal[1]] = 1
+_PRUNE_CHECKPOINT_LAYOUT: Final[str] = "row-set: one cash OPENING row plus one OPENING row per open position"
 _DIRECTORY_MODE: Final[int] = 0o700
 _FILE_MODE: Final[int] = 0o600
 _CONNECT_TIMEOUT_SECONDS: Final[float] = 10.0
@@ -543,6 +554,69 @@ class LedgerBackupInventory(BaseModel):
     exists: bool
     candidates: tuple[LedgerBackupCandidate, ...] = ()
     skipped: tuple[LedgerBackupSkip, ...] = ()
+
+
+class LedgerPruneManifest(BaseModel):
+    """The audit trail one applied prune writes (ADR-0036 decision 5).
+
+    This is an auxiliary artifact under ``DATA_DIR/portfolio/prune`` with no catalog row
+    (ADR-0006). It names counters, digests and deterministic checkpoint external IDs, never a
+    stored amount or instrument. ``checkpoint_effective_at`` is the checkpoint rows' effective
+    instant, one microsecond before ``cut``, so the checkpoint sorts before every retained
+    event even when a retained event falls exactly on the cut.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    manifest_schema_version: Literal[1] = _PRUNE_MANIFEST_SCHEMA_VERSION
+    filename: str
+    cut: datetime
+    checkpoint_effective_at: datetime
+    checkpoint_layout: str
+    pruned_event_external_ids: tuple[str, ...]
+    pruned_event_count: int = Field(ge=0)
+    retained_event_count: int = Field(ge=0)
+    record_digest_before: str = Field(pattern=r"^[0-9a-f]{64}$")
+    record_digest_after: str = Field(pattern=r"^[0-9a-f]{64}$")
+    backup_filename: str
+    backup_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    checkpoint_external_ids: tuple[str, ...]
+    tool_version: str
+    created_at: datetime
+
+
+class LedgerPruneReport(BaseModel):
+    """What one ``prune_ledger`` invocation found and would do or did (ADR-0036 decision 8).
+
+    Report-only runs populate the same counters with the planned post-prune record digest and
+    write nothing: ``applied`` stays ``False`` and ``manifest_filename`` stays ``None``. The
+    checkpoint is a row-set rather than one event because ``OPENING`` carries at most one
+    instrument per row (ADR-0036 decision 2(d)); ``checkpoint_position_count`` counts the
+    position rows and one cash row is always present.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    filename: str
+    cut: datetime
+    applied: bool
+    already_pruned: bool
+    pruned_event_count: int = Field(ge=0)
+    retained_event_count: int = Field(ge=0)
+    row_count_before: int = Field(ge=0)
+    row_count_after: int = Field(ge=0)
+    record_digest_before: str = Field(pattern=r"^[0-9a-f]{64}$")
+    record_digest_after: str = Field(pattern=r"^[0-9a-f]{64}$")
+    checkpoint_cash: Decimal
+    checkpoint_position_count: int = Field(ge=0)
+    checkpoint_effective_at: datetime
+    checkpoint_external_ids: tuple[str, ...]
+    pruned_event_external_ids: tuple[str, ...]
+    backup_source: Literal["supplied", "created", "none"]
+    backup_filename: str | None = None
+    backup_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    manifest_filename: str | None = None
+    manifest_directory: str
 
 
 def _sha256_file(path: Path) -> str:
@@ -1130,6 +1204,461 @@ def inventory_backups(directory: Path) -> LedgerBackupInventory:
     return LedgerBackupInventory(directory=str(root), exists=True, candidates=tuple(candidates), skipped=tuple(skipped))
 
 
+# --- checkpoint-collapse pruning (ADR-0036) -----------------------------------------
+
+
+def prune_checkpoint_cut(events: Sequence[LedgerEvent]) -> datetime | None:
+    """The cut an existing prune checkpoint records, or ``None`` when the ledger is unpruned.
+
+    Read surfaces use this only to disclose that they present a *pruned* history (ADR-0036
+    decision 4); it never changes a projection. Checkpoint rows share one effective instant,
+    one microsecond before the cut, so the cut is that instant plus a microsecond.
+    """
+    checkpoint = [event for event in events if event.external_source == PRUNE_CHECKPOINT_SOURCE]
+    if not checkpoint:
+        return None
+    return max(event.effective_at for event in checkpoint) + timedelta(microseconds=1)
+
+
+def _checkpoint_root(cut: datetime) -> str:
+    """Deterministic checkpoint ID prefix from the cut: idempotence depends on this."""
+    token = hashlib.sha256(cut.astimezone(UTC).isoformat().encode()).hexdigest()[:16]
+    return f"prune-{token}"
+
+
+def _checkpoint_source_digest(external_id: str) -> str:
+    """A deterministic provenance digest for one checkpoint row (never a stored value)."""
+    return hashlib.sha256(f"{_PRUNE_CHECKPOINT_PARSER_VERSION}\x00{external_id}".encode()).hexdigest()
+
+
+def _checkpoint_events(projection: LedgerProjection, *, account: str, cut: datetime, sequences: Sequence[int]) -> tuple[LedgerEvent, ...]:
+    """Build the checkpoint row-set: one cash row plus one row per open position.
+
+    ``OPENING`` carries at most one instrument per row, so the accounting state of the cut
+    cannot be one event when more than one instrument is open. Every row shares
+    ``external_source=prune-checkpoint`` and ids derived deterministically from the cut, which
+    is what makes a second run for the same cut a no-op. An ``UNKNOWN`` basis stays unknown:
+    a ``None`` projection basis becomes ``basis_status=UNKNOWN`` and is never back-filled.
+    Negative checkpoint cash is refused because an ``OPENING`` row cannot express it.
+    """
+    if projection.cash < 0:
+        raise LedgerStoreError(
+            "the checkpoint would carry negative cash, which an OPENING row cannot express; the ledger refuses a "
+            "prune whose book at the cut is negative (margin and short states are not supported)"
+        )
+    positions = sorted(projection.positions, key=lambda position: position.instrument.tuple)
+    if len(sequences) != 1 + len(positions):
+        raise ValueError("the checkpoint sequences must cover the cash row and every open position")
+    root = _checkpoint_root(cut)
+    checkpoint_at = cut - timedelta(microseconds=1)
+
+    def _row(
+        external_id: str,
+        sequence: int,
+        *,
+        instrument: InstrumentKey | None,
+        quantity: Decimal | None,
+        cash: Decimal,
+        basis: Decimal | None,
+    ) -> LedgerEvent:
+        return LedgerEvent(
+            parser_version=_PRUNE_CHECKPOINT_PARSER_VERSION,
+            source_digest=_checkpoint_source_digest(external_id),
+            account=account,
+            external_source=PRUNE_CHECKPOINT_SOURCE,
+            external_id=external_id,
+            event_type=LedgerEventType.OPENING,
+            effective_at=checkpoint_at,
+            received_at=cut,
+            sequence=sequence,
+            instrument=instrument,
+            currency="USD",
+            cash_effect=cash,
+            quantity=quantity,
+            basis=basis,
+            basis_status=BasisStatus.KNOWN if basis is not None or quantity is None else BasisStatus.UNKNOWN,
+        )
+
+    rows = [_row(f"{root}-cash", sequences[0], instrument=None, quantity=None, cash=projection.cash, basis=None)]
+    for index, position in enumerate(positions, start=1):
+        rows.append(
+            _row(
+                f"{root}-p{index:02d}",
+                sequences[index],
+                instrument=position.instrument,
+                quantity=position.quantity,
+                cash=Decimal("0"),
+                basis=position.basis,
+            )
+        )
+    return tuple(rows)
+
+
+def _book_fingerprint(projection: LedgerProjection) -> tuple[object, ...]:
+    """The book a prune must preserve exactly, and the inputs valuation reads.
+
+    Cash, per-position quantity and basis, and the split list (a pre-split mark is refused from
+    it) are compared. Collapsed categories — deposits, withdrawals, standalone fees, dividend
+    income and realized gain before the cut — are deliberately excluded: ADR-0036 decision 4
+    says they are not preserved.
+    """
+    positions = tuple(sorted((position.instrument.tuple, position.quantity, position.basis) for position in projection.positions))
+    splits = tuple(sorted((split.instrument.tuple, split.ex_date, split.ratio) for split in projection.splits))
+    return (projection.cash, positions, splits)
+
+
+def _record_digest_of(records: Sequence[tuple[str, str, str]]) -> str:
+    """The store's record digest over ``(account, external_id, content_digest)`` triples."""
+    digest = hashlib.sha256()
+    for account, external_id, content_digest in sorted(records):
+        digest.update(f"{account}\x00{external_id}\x00{content_digest}\n".encode())
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class _PrunePlan:
+    """Everything a report-only run can compute without writing anything."""
+
+    target: Path
+    source: LedgerFileVerification
+    account: str
+    cut: datetime
+    checkpoint_at: datetime
+    pruned: tuple[LedgerEvent, ...]
+    retained: tuple[LedgerEvent, ...]
+    checkpoint: tuple[LedgerEvent, ...]
+    pre_at_checkpoint: LedgerProjection
+    pre_at_cut: LedgerProjection
+    pre_at_later: LedgerProjection
+    later_at: datetime
+    record_digest_after: str
+    row_count_after: int
+
+
+def _prune_inputs(target: Path, before: datetime) -> tuple[LedgerFileVerification, datetime, tuple[LedgerEvent, ...]]:
+    """Verify the target and normalise the cut; every refusal here happens before any write."""
+    canonical = portfolio_db_path()
+    if target.resolve() != canonical.resolve():
+        # Checkable: the configured private ledger path is the only legal target. What is not
+        # checkable is whether the file at that path is a fixture the operator copied there.
+        raise LedgerStoreError(
+            "the prune target is not the configured private ledger path; a prune never runs against a fixture, demo, "
+            "sample or copied file, so nothing was changed"
+        )
+    source = verify_ledger_file(target, expect_version=PORTFOLIO_SCHEMA_VERSION)
+    if before.tzinfo is None or before.utcoffset() is None:
+        raise LedgerStoreError(
+            "the prune cut must be a timezone-aware instant; a naive timestamp has no ledger time and is refused (ADR-0024 decision 4)"
+        )
+    cut = before.astimezone(UTC)
+    if cut >= datetime.now(UTC):
+        raise LedgerStoreError("the prune cut must be strictly in the past; a present or future cut is refused")
+    events = LedgerStore(path=target).load_events()
+    labels = {event.account for event in events}
+    if not labels:
+        raise LedgerStoreError("the private ledger holds no events; there is nothing to prune")
+    if len(labels) > 1:
+        raise LedgerStoreError(
+            "the private ledger holds more than one account label; one private book holds exactly one account "
+            "(ADR-0024 decision 1), so nothing was pruned"
+        )
+    return source, cut, events
+
+
+def _plan_prune(target: Path, source: LedgerFileVerification, cut: datetime, events: tuple[LedgerEvent, ...]) -> _PrunePlan:
+    """Replay to the cut, build the checkpoint and plan the exact post-prune record."""
+    account = events[0].account
+    pruned = tuple(event for event in events if event.effective_at < cut)
+    retained = tuple(event for event in events if event.effective_at >= cut)
+    if not pruned:
+        raise LedgerStoreError("no event is strictly before the cut; there is nothing to prune")
+    checkpoint_at = cut - timedelta(microseconds=1)
+    try:
+        pre_at_checkpoint = replay_ledger(events, account=account, as_of=checkpoint_at)
+        pre_at_cut = replay_ledger(events, account=account, as_of=cut)
+        later_at = max((event.effective_at for event in retained), default=cut)
+        pre_at_later = replay_ledger(events, account=account, as_of=later_at)
+    except ProjectionError as exc:
+        raise LedgerStoreError(
+            f"the ledger cannot be replayed to the prune cut ({type(exc).__name__}); a prune is never applied to a book "
+            "that does not replay, and nothing was changed"
+        ) from exc
+
+    # The checkpoint sorts before every retained event in source-sequence order too, because
+    # replay orders by (account, sequence, external_id) and requires nondecreasing effective
+    # time. Slots below the earliest retained sequence are the only safe place for it.
+    available = (min(event.sequence for event in retained) - 1) if retained else len(pruned)
+    needed = 1 + len(pre_at_checkpoint.positions)
+    if needed > available:
+        raise LedgerStoreError(
+            "no deterministic source-sequence room before the earliest retained event for the checkpoint row-set; "
+            "re-writing a retained sequence is not allowed and nothing was changed"
+        )
+    checkpoint = _checkpoint_events(pre_at_checkpoint, account=account, cut=cut, sequences=tuple(range(1, needed + 1)))
+    records = [(event.account, event.external_id, event.content_digest) for event in (*checkpoint, *retained)]
+    return _PrunePlan(
+        target=target,
+        source=source,
+        account=account,
+        cut=cut,
+        checkpoint_at=checkpoint_at,
+        pruned=pruned,
+        retained=retained,
+        checkpoint=checkpoint,
+        pre_at_checkpoint=pre_at_checkpoint,
+        pre_at_cut=pre_at_cut,
+        pre_at_later=pre_at_later,
+        later_at=later_at,
+        record_digest_after=_record_digest_of(records),
+        row_count_after=len(checkpoint) + len(retained),
+    )
+
+
+def _already_pruned_report(
+    target: Path,
+    source: LedgerFileVerification,
+    cut: datetime,
+    events: tuple[LedgerEvent, ...],
+    checkpoint: Sequence[LedgerEvent],
+) -> LedgerPruneReport:
+    """The no-op report for a cut this ledger has already pruned (ADR-0036 decision 6)."""
+    checkpoint_at = max(event.effective_at for event in checkpoint)
+    cash = sum((event.cash_effect for event in checkpoint if event.quantity is None), Decimal("0"))
+    return LedgerPruneReport(
+        filename=target.name,
+        cut=cut,
+        applied=False,
+        already_pruned=True,
+        pruned_event_count=0,
+        retained_event_count=len(events),
+        row_count_before=source.row_count,
+        row_count_after=source.row_count,
+        record_digest_before=source.record_digest,
+        record_digest_after=source.record_digest,
+        checkpoint_cash=cash,
+        checkpoint_position_count=sum(1 for event in checkpoint if event.quantity is not None),
+        checkpoint_effective_at=checkpoint_at,
+        checkpoint_external_ids=tuple(sorted(event.external_id for event in checkpoint)),
+        pruned_event_external_ids=(),
+        backup_source="none",
+        manifest_directory=str(target.parent / _PRUNE_MANIFEST_DIRNAME),
+    )
+
+
+def _apply_prune_to_copy(copy: Path, plan: _PrunePlan) -> None:
+    """Delete the pre-cut events and write the checkpoint in one transaction on the copy."""
+    connection = sqlite3.connect(copy, timeout=_CONNECT_TIMEOUT_SECONDS, isolation_level=None)
+    try:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=10000")
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("BEGIN IMMEDIATE")
+        for event in plan.pruned:
+            connection.execute("DELETE FROM ledger_events WHERE account = ? AND external_id = ?", (event.account, event.external_id))
+        recorded_at = datetime.now(UTC).isoformat()
+        for event in plan.checkpoint:
+            connection.execute(
+                "INSERT INTO ledger_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                _row_values(event, recorded_at),
+            )
+        connection.execute("COMMIT")
+    except Exception:
+        if connection.in_transaction:
+            connection.execute("ROLLBACK")
+        raise
+    finally:
+        _restrict_permissions(copy)
+        connection.close()
+
+
+def _prove_replay_equality(copy: Path, plan: _PrunePlan) -> None:
+    """ADR-0036 decision 7: the pruned ledger must replay to the same book, or refuse."""
+    copy_events = LedgerStore(path=copy).load_events()
+    for instant, expected in (
+        (plan.checkpoint_at, plan.pre_at_checkpoint),
+        (plan.cut, plan.pre_at_cut),
+        (plan.later_at, plan.pre_at_later),
+    ):
+        try:
+            actual = replay_ledger(copy_events, account=plan.account, as_of=instant)
+        except ProjectionError as exc:
+            raise LedgerStoreError(
+                f"the pruned checkpoint cannot be replayed at {instant.isoformat()} ({type(exc).__name__}); nothing was changed"
+            ) from exc
+        if _book_fingerprint(actual) != _book_fingerprint(expected):
+            raise LedgerStoreError(
+                f"the pruned checkpoint does not reproduce the same book at {instant.isoformat()} (cash, per-position "
+                "quantity/basis or valuation inputs differ); the prune is refused and nothing was changed"
+            )
+
+
+def _write_prune_manifest(target: Path, manifest: LedgerPruneManifest) -> str:
+    """Write the manifest atomically under ``DATA_DIR/portfolio/prune`` (ADR-0006 boundary)."""
+    directory = target.parent / _PRUNE_MANIFEST_DIRNAME
+    directory.mkdir(parents=True, exist_ok=True, mode=_DIRECTORY_MODE)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    name = f"prune-{stamp}.json"
+    path = directory / name
+    if path.exists():
+        raise LedgerStoreError(f"a prune manifest named {name!r} already exists; a manifest is never overwritten")
+    temp = directory / f"{name}.tmp"
+    try:
+        temp.write_text(json.dumps(manifest.model_dump(mode="json"), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(temp, _FILE_MODE)
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    return name
+
+
+def prune_ledger(path: Path | None = None, *, before: datetime, apply: bool = False, backup: Path | None = None) -> LedgerPruneReport:
+    """Collapse ledger history before ``before`` into a verified checkpoint (ADR-0036).
+
+    Report-only by default: the plan is computed and returned and **nothing is written** — no
+    backup, no copy, no manifest, no directory, no journal. ``apply=True`` first obtains a
+    verified backup whose sha256 it records (a supplied ``backup`` is re-verified and must be
+    this exact file; otherwise one is written with the verified-backup helper), then copies the
+    ledger, deletes every event strictly before the cut and writes the checkpoint row-set in one
+    transaction on the copy, verifies the copy, proves replay equality at the cut and at a later
+    instant, and only then replaces the ledger atomically.
+
+    Refusals (all named, none a best effort): the ledger is missing, unverifiable or not schema
+    v2; the target is not the configured private ledger; the cut is naive or not strictly in
+    the past; no event is strictly before the cut; the ledger holds more than one account; the
+    checkpoint would carry negative cash; there is no sequence room before the earliest
+    retained event; a supplied backup does not match the ledger; or replay of the pruned ledger
+    does not equal the pre-prune book. A cut already pruned is a no-op that writes nothing.
+    """
+    target = Path(path) if path is not None else portfolio_db_path()
+    source, cut, events = _prune_inputs(target, before)
+    root = _checkpoint_root(cut)
+    existing = tuple(event for event in events if event.external_source == PRUNE_CHECKPOINT_SOURCE and event.external_id.startswith(f"{root}-"))
+    if existing:
+        logger.info("portfolio_ledger_prune_already_applied", rows=source.row_count)
+        return _already_pruned_report(target, source, cut, events, existing)
+
+    plan = _plan_prune(target, source, cut, events)
+    backup_source: Literal["supplied", "created", "none"] = "none"
+    backup_filename: str | None = None
+    backup_sha256: str | None = None
+    if backup is not None:
+        backup_path = Path(backup)
+        if backup_path.resolve() == target.resolve():
+            raise LedgerStoreError("--backup names the ledger itself; a prune needs a separate verified copy")
+        supplied = verify_ledger_file(backup_path, expect_version=source.schema_version)
+        if (supplied.sha256, supplied.row_count, supplied.record_digest) != (
+            source.sha256,
+            source.row_count,
+            source.record_digest,
+        ):
+            raise LedgerStoreError(
+                "the supplied --backup does not match the current ledger (sha256, row count or record digest); a prune "
+                "requires the verified backup of this exact file, and nothing was changed"
+            )
+        backup_source = "supplied"
+        backup_filename = supplied.filename
+        backup_sha256 = supplied.sha256
+
+    manifest_directory = str(target.parent / _PRUNE_MANIFEST_DIRNAME)
+    report = LedgerPruneReport(
+        filename=target.name,
+        cut=plan.cut,
+        applied=False,
+        already_pruned=False,
+        pruned_event_count=len(plan.pruned),
+        retained_event_count=len(plan.retained),
+        row_count_before=plan.source.row_count,
+        row_count_after=plan.row_count_after,
+        record_digest_before=plan.source.record_digest,
+        record_digest_after=plan.record_digest_after,
+        checkpoint_cash=plan.pre_at_checkpoint.cash,
+        checkpoint_position_count=len(plan.pre_at_checkpoint.positions),
+        checkpoint_effective_at=plan.checkpoint_at,
+        checkpoint_external_ids=tuple(event.external_id for event in plan.checkpoint),
+        pruned_event_external_ids=tuple(sorted(event.external_id for event in plan.pruned)),
+        backup_source=backup_source,
+        backup_filename=backup_filename,
+        backup_sha256=backup_sha256,
+        manifest_directory=manifest_directory,
+    )
+    if not apply:
+        return report
+
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    if backup is None:
+        created = _write_verified_backup(target, source=source, stamp=stamp)
+        backup_source = "created"
+        backup_filename = created.filename
+        backup_sha256 = created.sha256
+
+    copy = target.with_name(f"{target.name}.prune-{stamp}.tmp")
+    try:
+        try:
+            shutil.copy2(target, copy)
+            os.chmod(copy, _FILE_MODE)
+            _apply_prune_to_copy(copy, plan)
+        except (OSError, sqlite3.Error) as exc:
+            raise LedgerStoreError(
+                f"the prune could not be written to the verified copy ({type(exc).__name__}); the ledger was not replaced"
+            ) from exc
+        pruned_file = verify_ledger_file(copy, expect_version=PORTFOLIO_SCHEMA_VERSION)
+        if (pruned_file.row_count, pruned_file.record_digest) != (plan.row_count_after, plan.record_digest_after):
+            raise LedgerStoreError("the pruned copy disagrees with the planned record (row count or record digest); the ledger was not replaced")
+        _prove_replay_equality(copy, plan)
+        replaced = _replace_atomically(copy, target, expected=pruned_file)
+    except LedgerStoreError as exc:
+        if backup_source == "created" and backup_filename is not None:
+            raise LedgerStoreError(f"{exc} The verified backup is {backup_filename}.") from exc
+        raise
+    finally:
+        copy.unlink(missing_ok=True)
+
+    manifest = LedgerPruneManifest(
+        filename=target.name,
+        cut=plan.cut,
+        checkpoint_effective_at=plan.checkpoint_at,
+        checkpoint_layout=_PRUNE_CHECKPOINT_LAYOUT,
+        pruned_event_external_ids=report.pruned_event_external_ids,
+        pruned_event_count=len(plan.pruned),
+        retained_event_count=len(plan.retained),
+        record_digest_before=plan.source.record_digest,
+        record_digest_after=plan.record_digest_after,
+        backup_filename=backup_filename or "",
+        backup_sha256=backup_sha256 or "",
+        checkpoint_external_ids=tuple(sorted(event.external_id for event in plan.checkpoint)),
+        tool_version=TOOL_VERSION,
+        created_at=datetime.now(UTC),
+    )
+    try:
+        manifest_filename = _write_prune_manifest(target, manifest)
+    except OSError as exc:
+        raise LedgerStoreError(
+            f"the ledger was pruned but the prune manifest could not be written under {manifest_directory} "
+            f"({type(exc).__name__}); record the manifest fields before relying on the pruned ledger"
+        ) from exc
+
+    logger.info(
+        "portfolio_ledger_pruned",
+        pruned=len(plan.pruned),
+        retained=len(plan.retained),
+        checkpoint_rows=len(plan.checkpoint),
+        backup=backup_filename,
+    )
+    return report.model_copy(
+        update={
+            "applied": True,
+            "row_count_after": replaced.row_count,
+            "record_digest_after": replaced.record_digest,
+            "backup_source": backup_source,
+            "backup_filename": backup_filename,
+            "backup_sha256": backup_sha256,
+            "manifest_filename": manifest_filename,
+        }
+    )
+
+
 __all__ = [
     "AppendOutcome",
     "LedgerBackupCandidate",
@@ -1140,16 +1669,21 @@ __all__ = [
     "LedgerCompactionReport",
     "LedgerFileVerification",
     "LedgerMigrationReport",
+    "LedgerPruneManifest",
+    "LedgerPruneReport",
     "LedgerRestoreReport",
     "LedgerStore",
     "LedgerStoreError",
     "PORTFOLIO_DB_FILENAME",
     "PORTFOLIO_SCHEMA_VERSION",
+    "PRUNE_CHECKPOINT_SOURCE",
     "compact_ledger",
     "export_verified_backup",
     "inventory_backups",
     "migrate_ledger",
     "portfolio_db_path",
+    "prune_checkpoint_cut",
+    "prune_ledger",
     "restore_ledger",
     "verify_ledger_file",
 ]
