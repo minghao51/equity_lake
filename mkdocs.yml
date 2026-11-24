@@ -113,6 +113,7 @@ nav:
           - 'ADR-0032: Adjusted-read coverage basis for vendor-sourced slices': decisions/0032-adjusted-read-basis-for-vendor-sourced-slices.md
           - 'ADR-0033: Proven-empty corporate-action scopes': decisions/0033-proven-empty-corporate-action-scopes.md
           - 'ADR-0034: Vendor-stamped ML research with disclosure': decisions/0034-vendor-stamped-ml-research-with-disclosure.md
+          - 'ADR-0035: H00 owns the sole public root': decisions/0035-h00-sole-public-root.md
 
 plugins:
   - search

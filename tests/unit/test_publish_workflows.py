@@ -139,7 +139,11 @@ class TestSinglePublicationPath:
             if job_name == "deploy":
                 assert permissions == {"pages": "write", "id-token": "write"}
             else:
-                assert permissions is None, f"job {job_name} scopes permissions it does not need"
+                # The build job may read this repository's artifacts so the rollback path
+                # can download a retained bundle; it must never hold deployment rights.
+                assert permissions == {"contents": "read", "actions": "read"}, f"job {job_name} scopes permissions it does not need"
+                assert "pages: write" not in permissions
+                assert "id-token: write" not in permissions
         assert "environment" in document["jobs"]["deploy"], "the deploy job must declare the protected environment"
         assert document["jobs"]["deploy"]["environment"]["name"] == PAGES_CONCURRENCY_GROUP
         for name, text in _workflow_texts().items():
@@ -167,10 +171,11 @@ class TestPublisherBuild:
         upload_index = next(index for index, step in enumerate(steps) if "upload-pages-artifact" in str(step.get("uses", "")))
         assert build_index < verify_index < upload_index, "verification must run on the bytes that are about to be uploaded"
 
-    def test_it_uploads_only_the_verified_directory_with_short_retention(self) -> None:
+    def test_it_uploads_only_the_verified_directory_as_the_retained_bundle(self) -> None:
+        """The uploaded public bytes are the verified ones, retained for rollback (90 days)."""
         upload = next(step for step in _load(PUBLISHER)["jobs"]["build"]["steps"] if "upload-pages-artifact" in str(step.get("uses", "")))
         assert upload["with"]["path"] == "dist"
-        assert int(upload["with"]["retention-days"]) <= 7
+        assert int(upload["with"]["retention-days"]) == 90
 
 
 class TestLegacyDeployersRetired:
@@ -224,3 +229,41 @@ class TestDocsLintGate:
 def test_workflow_file_is_non_empty_and_has_a_name(workflow: str) -> None:
     document = _load(WORKFLOW_DIR / workflow)
     assert isinstance(document.get("name"), str) and document["name"].strip()
+
+
+class TestReleaseReceiptAndRollback:
+    """The publisher keeps a private receipt and a retained bundle, and can roll back to one."""
+
+    def test_the_bundle_and_the_pages_artifact_are_retained_for_ninety_days(self) -> None:
+        text = _code(PUBLISHER.read_text(encoding="utf-8"))
+
+        assert text.count("retention-days: 90") == 2, text
+        assert "retention-days: 3" not in text
+
+    def test_a_private_receipt_is_written_outside_the_public_three_files(self) -> None:
+        text = _code(PUBLISHER.read_text(encoding="utf-8"))
+
+        assert "--receipt-out release/receipt.json" in text
+        assert "--receipt-out dist/" not in text
+        assert "name: h00-release-bundle" in text
+
+    def test_rollback_downloads_and_reverifies_a_previous_bundle(self) -> None:
+        text = _code(PUBLISHER.read_text(encoding="utf-8"))
+
+        assert "rollback_run_id" in text
+        assert "gh run download" in text
+        assert "--check-receipt release/receipt.json" in text
+
+    def test_a_dispatch_input_is_never_interpolated_into_a_shell_command(self) -> None:
+        """A workflow_dispatch input is string data; it reaches the shell through env only."""
+        text = _code(PUBLISHER.read_text(encoding="utf-8"))
+
+        assert 'ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}' in text
+        assert '"$ROLLBACK_RUN_ID"' in text
+        assert '"${{ inputs.rollback_run_id }}"' not in text
+
+    def test_the_build_job_does_not_persist_checkout_credentials(self) -> None:
+        """Artifact-uploading jobs must not keep a token in the workspace."""
+        text = _code(PUBLISHER.read_text(encoding="utf-8"))
+
+        assert "persist-credentials: false" in text

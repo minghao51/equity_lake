@@ -49,10 +49,19 @@ publish anything. It:
    `uv run python -m equity_lake.devtools.verify_h00_release --dir dist` — exact
    allowlist, no symlinks, size bounds, path containment, and a fresh negative rescan
    reusing the builder's needles, so a canary inserted after the build fails the job;
-4. uploads only `dist` with short artifact retention, and deploys from a `deploy` job
-   that is the only holder of `pages: write` / `id-token: write`;
-5. pins every `uses:` to a full commit SHA with a version comment, and joins the single
+4. writes a **private deployment receipt** (`release/receipt.json`) binding each file's
+   sha256 and the commit to the artifact, and stages the three verified files beside it;
+5. uploads the Pages artifact from `dist` and a separate `h00-release-bundle` artifact,
+   both retained for 90 days, and deploys from a `deploy` job that is the only holder of
+   `pages: write` / `id-token: write`;
+6. pins every `uses:` to a full commit SHA with a version comment, and joins the single
    shared `github-pages` concurrency group with `cancel-in-progress: false`.
+
+Dispatching it with a `rollback_run_id` skips the build: the job downloads that run's
+`h00-release-bundle`, verifies the bytes against the recorded receipt (including its commit
+binding) and deploys only then. A bundle whose bytes no longer match its receipt is refused,
+so a rollback can never deploy a re-typed substitute. GitHub retains artifacts by age rather
+than count, so pruning down to the last three bundles is an operator action, not automation.
 
 Two legacy deployers are **retired** and cannot publish:
 
@@ -80,14 +89,18 @@ workflow cron to keep in sync because **no workflow deploys on a schedule**.
   owner's standing condition (owner decision 3, 2026-11-21) is that build and preview
   stay local; dispatching the publisher is a separate, deliberate act by the owner.
 - **A route change needs an ADR first.** H00 owning the sole Pages root — and the catalog
-  site and dashboard no longer appearing there — is a public-route change: it requires
-  an accepted ADR recorded *before* the first publish. No ADR is created or accepted by
-  this stage.
+  site and dashboard no longer appearing there — is a public-route change, recorded as
+  accepted in [ADR-0035](../decisions/0035-h00-sole-public-root.md) before the first publish.
+  A further route change needs its own ADR.
 - **Prerequisites still open.** The publisher builds from the canonical synthetic demo
   lake (`data/lake/`), which a fresh checkout does not have, so it fails closed until the
-  disposable-bootstrap stage seeds it in the job. Rollback bundles (the last three
-  verified sanitized releases kept in access-controlled storage, plus the private
-  artifact↔commit deployment receipt) are also not implemented yet.
+  disposable-bootstrap stage seeds it in the job. Rollback bundles and the deployment
+  receipt are implemented; what remains is exercising them against a real publication,
+  which has not happened yet.
+- **Withdrawal is manual.** If no clean recoverable bundle exists, withdraw the site by
+  disabling Pages for the repository rather than redeploying an unverified artifact. No
+  workflow automates withdrawal, and none should: an automated deletion of a live site is
+  a worse failure mode than a stale page.
 
 ## Notes
 

@@ -169,7 +169,7 @@ class TestMutationProof:
     def test_neutralising_the_rescan_lets_the_canary_through(self, release: Path, canary_dotenv: str, monkeypatch: pytest.MonkeyPatch) -> None:
         index = release / h00.INDEX_FILENAME
         index.write_text(index.read_text(encoding="utf-8") + f"<!-- {canary_dotenv} -->\n", encoding="utf-8")
-        monkeypatch.setattr(verify.h00, "scan_contents", lambda contents, *groups: {})
+        monkeypatch.setattr(h00, "scan_contents", lambda contents, *groups: {})
         assert verify.verify_release(release)["files"] == 3
 
     def test_neutralising_the_allowlist_lets_an_extra_file_through(self, release: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,3 +203,60 @@ class TestBuilderArtifactIsVerifiable:
         index = tampered / h00.INDEX_FILENAME
         index.write_text(index.read_text(encoding="utf-8").replace("</main>", f"<p>{CANARY}</p></main>"), encoding="utf-8")
         _refuses(tampered, "forbidden classes")
+
+
+class TestDeploymentReceipt:
+    """The private receipt binds a verified bundle to a commit without entering the public three."""
+
+    def test_a_receipt_records_every_file_and_reverifies(self, release: Path, tmp_path: Path) -> None:
+        """The receipt hashes the verified bytes, and checking it re-proves the same bundle."""
+        receipt = verify.build_receipt(release, commit="a" * 40)
+        path = verify.write_receipt(receipt, tmp_path / "release" / "receipt.json", release_dir=release)
+
+        assert {entry.name for entry in receipt.files} == set(h00.ARTIFACT_FILENAMES)
+        assert receipt.commit == "a" * 40
+        assert receipt.total_bytes == sum(entry.size for entry in receipt.files)
+        summary = verify.verify_receipt(release, path, expect_commit="a" * 40)
+        assert summary["files"] == 3
+
+    def test_a_receipt_is_refused_inside_the_public_release_directory(self, release: Path) -> None:
+        """Writing the receipt into the artifact would break the three-file allowlist."""
+        receipt = verify.build_receipt(release, commit=None)
+
+        with pytest.raises(verify.ReleaseVerificationError, match="may not be written inside the public release"):
+            verify.write_receipt(receipt, release / "receipt.json", release_dir=release)
+
+    def test_a_tampered_file_no_longer_matches_the_receipt(self, release: Path, tmp_path: Path) -> None:
+        """A changed byte invalidates the recorded digest, so a rollback refuses it."""
+        path = verify.write_receipt(verify.build_receipt(release), tmp_path / "receipt.json", release_dir=release)
+        (release / h00.INDEX_FILENAME).write_text("<!doctype html><html><body>tampered</body></html>\n", encoding="utf-8")
+
+        with pytest.raises(verify.ReleaseVerificationError, match="does not match the receipt"):
+            verify.verify_receipt(release, path)
+
+    def test_a_receipt_bound_to_another_commit_refuses(self, release: Path, tmp_path: Path) -> None:
+        """The artifact-to-commit binding is checked when the caller states the commit."""
+        path = verify.write_receipt(verify.build_receipt(release, commit="a" * 40), tmp_path / "receipt.json", release_dir=release)
+
+        with pytest.raises(verify.ReleaseVerificationError, match="bound to a different commit"):
+            verify.verify_receipt(release, path, expect_commit="c" * 40)
+
+    def test_a_missing_receipt_refuses(self, release: Path, tmp_path: Path) -> None:
+        """A rollback without its receipt has no evidence, so it is refused."""
+        with pytest.raises(verify.ReleaseVerificationError, match="receipt is missing"):
+            verify.verify_receipt(release, tmp_path / "absent.json")
+
+    def test_a_malformed_receipt_refuses(self, release: Path, tmp_path: Path) -> None:
+        """A hand-written or truncated receipt is not a receipt."""
+        bad = tmp_path / "receipt.json"
+        bad.write_text('{"artifact": "h00-sanitized-demo-lake"}', encoding="utf-8")
+
+        with pytest.raises(verify.ReleaseVerificationError, match="not a valid receipt document"):
+            verify.verify_receipt(release, bad)
+
+    def test_a_receipt_cannot_attest_bytes_that_fail_the_verifier(self, release: Path, canary_dotenv: str) -> None:
+        """Building a receipt re-verifies, so a canary can never be receipted."""
+        (release / h00.INDEX_FILENAME).write_text(f"<!doctype html><html><body>{CANARY}</body></html>\n", encoding="utf-8")
+
+        with pytest.raises(verify.ReleaseVerificationError):
+            verify.build_receipt(release)

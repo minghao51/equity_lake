@@ -1,34 +1,50 @@
 name: Publish H00 Sanitized Page
 
-# The ONE publication path for this repository (residual plan RS-H01, §2.1/§2.4).
+# The ONE publication path for this repository (residual plan RS-H01, §2.1/§2.4,
+# ADR-0035).
 #
 # * Manual dispatch only. There is no `push:` and no `schedule:` trigger anywhere, so
 #   nothing here can publish on a merge or on a cron. Publication stays an explicit,
 #   owner-approved act: build and preview remain local until the owner dispatches this
 #   workflow deliberately. No default schedule is deployed by this repository.
 # * Least privilege. The workflow is `contents: read`; `pages: write` and
-#   `id-token: write` exist only on the `deploy` job, and this file holds the only
-#   `actions/deploy-pages` step in the repository (the legacy `pages.yml` and the
-#   catalog deployer are retired — see docs/user-guide/20260406-dashboard-hosting.md).
+#   `id-token: write` exist only on the `deploy` job, and `actions: read` exists only on
+#   `build` because the rollback path downloads a previous verified bundle from this
+#   repository's own artifacts. This file holds the only `actions/deploy-pages` step in
+#   the repository (the legacy `pages.yml` and the catalog deployer are retired — see
+#   docs/user-guide/20260406-dashboard-hosting.md).
 # * Environment protection is platform-side, not YAML. `environment: github-pages`
 #   records which environment the job runs in; it does NOT by itself prove that the
 #   environment has required reviewers. That protection must be verified in the
 #   repository settings and the evidence recorded in the stage ledger. This file is
 #   not evidence of protection.
 # * Every `uses:` is pinned to a full commit SHA with the resolved version in a
-#   trailing comment; the pins are the ones this repository already used and had
-#   verified, not new floating tags.
-# * Only the sanitized three-file H00 artifact is built and uploaded. No dashboard, no
-#   health report, no catalog site, no private or real data is composed here.
+#   trailing comment. `actions/upload-artifact` was resolved from its `v4.6.2` tag when
+#   the private-bundle step was added.
+# * Only the sanitized three-file H00 artifact is ever public. The deployment receipt
+#   and the retained bundle are PRIVATE CI artifacts: the receipt is deliberately never
+#   written into `dist/`, because the public allowlist is exactly `index.html`,
+#   `payload.json` and `sanitization-report.json`.
+# * Rollback. Dispatching with `rollback_run_id` skips the build, downloads that run's
+#   `h00-release-bundle`, verifies the bytes against the recorded receipt (and the
+#   receipt's commit binding), and deploys those bytes. A bundle that no longer matches
+#   its receipt is refused, so a rollback can never deploy a re-typed substitute.
+#   GitHub retains artifacts by AGE, not count: 90-day retention is configured here,
+#   but pruning down to "the last three" is an operator action, not automation.
 # * Prerequisite (RS-E01, not satisfied by this workflow): the build reads the
 #   canonical synthetic demo lake, which a fresh checkout does not have. Until the
 #   disposable bootstrap seeds it, `equity dashboard h00-build` refuses and this
 #   workflow fails closed — it never publishes a substitute artifact.
-# * Any change to the published route (currently H00 owning the sole Pages root)
-#   requires its own ADR accepted before implementation; this workflow adds none.
+# * Any change to the published route (currently H00 owning the sole Pages root) is
+#   governed by ADR-0035; a further route change needs its own ADR.
 
 on:
   workflow_dispatch:
+    inputs:
+      rollback_run_id:
+        description: "Optional: deploy the verified bundle from this run id instead of building (rollback)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -43,8 +59,13 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read  # rollback downloads this repository's own retained bundle
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
@@ -58,16 +79,56 @@ jobs:
         run: uv sync --group dev
 
       - name: Build the sanitized H00 artifact
+        if: inputs.rollback_run_id == ''
         run: uv run equity dashboard h00-build -o dist
 
       - name: Verify the release artifact before upload
+        if: inputs.rollback_run_id == ''
         run: uv run python -m equity_lake.devtools.verify_h00_release --dir dist
+
+      - name: Write the private deployment receipt
+        if: inputs.rollback_run_id == ''
+        run: uv run python -m equity_lake.devtools.verify_h00_release --dir dist --receipt-out release/receipt.json --commit "${{ github.sha }}"
+
+      - name: Stage the verified bundle for retention
+        if: inputs.rollback_run_id == ''
+        run: |
+          cp dist/index.html dist/payload.json dist/sanitization-report.json release/
+          ls -l release
+
+      - name: Download the rollback bundle
+        if: inputs.rollback_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}
+        # The run id is passed through the environment, never interpolated into the
+        # shell text: a dispatch input is attacker-shaped string data.
+        run: gh run download "$ROLLBACK_RUN_ID" -n h00-release-bundle -D release
+
+      - name: Verify the rollback bundle against its receipt
+        if: inputs.rollback_run_id != ''
+        run: uv run python -m equity_lake.devtools.verify_h00_release --dir release --check-receipt release/receipt.json
+
+      - name: Stage the rollback bytes for Pages
+        if: inputs.rollback_run_id != ''
+        run: |
+          mkdir -p dist
+          cp release/index.html release/payload.json release/sanitization-report.json dist/
+          uv run python -m equity_lake.devtools.verify_h00_release --dir dist
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa  # v3
         with:
           path: dist
-          retention-days: 3
+          retention-days: 90
+
+      - name: Upload the retained release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: h00-release-bundle
+          path: release
+          retention-days: 90
+          if-no-files-found: error
 
   deploy:
     needs: build

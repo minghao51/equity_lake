@@ -24,10 +24,15 @@ this job must not become the leak the scan exists to prevent.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from equity_lake.dashboard import h00
 
@@ -38,6 +43,8 @@ ALLOWED_FILENAMES: Final = frozenset(h00.ARTIFACT_FILENAMES)
 MAX_FILE_BYTES: Final = 4 * 1024 * 1024
 MAX_TOTAL_BYTES: Final = 8 * 1024 * 1024
 MIN_FILE_BYTES: Final = 2
+#: The private deployment receipt is versioned so a future field addition is explicit.
+RECEIPT_VERSION: Final = 1
 
 
 class ReleaseVerificationError(RuntimeError):
@@ -134,6 +141,113 @@ def _check_report(texts: dict[str, str]) -> None:
         raise _refuse("the sanitization report does not carry the current forbidden classes")
 
 
+class ReceiptFile(BaseModel):
+    """One allowlisted file's identity in a deployment receipt."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    name: str
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0)
+
+
+class ReleaseReceipt(BaseModel):
+    """The private deployment receipt binding a verified bundle to a commit (plan §2.1).
+
+    It lives OUTSIDE the public artifact: the public allowlist is exactly the three H00
+    files, so the receipt is uploaded as a separate private CI artifact and never into
+    the release directory itself.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    receipt_version: int = Field(default=RECEIPT_VERSION, ge=1)
+    artifact: str
+    allowlist: list[str]
+    files: list[ReceiptFile]
+    total_bytes: int = Field(ge=0)
+    built_at: str
+    commit: str | None = None
+    verifier: str
+    recorded_at: str
+
+
+def _sha256(path: Path) -> str:
+    """Digest one file's bytes."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_receipt(directory: Path | str, *, commit: str | None = None) -> ReleaseReceipt:
+    """Build the receipt for an already-verified release directory.
+
+    The directory is re-verified here rather than trusted from the caller, so a receipt
+    can never attest bytes that failed the allowlist, containment, size or scan checks.
+    """
+    verify_release(directory)
+    root = Path(directory).expanduser()
+    entries = _check_entries(root)
+    texts = _read_texts(entries)
+    payload = _load_json(texts, h00.PAYLOAD_FILENAME, 0)
+    files = [ReceiptFile(name=name, sha256=_sha256(path), size=path.stat().st_size) for name, path in entries.items()]
+    return ReleaseReceipt(
+        artifact=h00.ARTIFACT_NAME,
+        allowlist=list(h00.ARTIFACT_FILENAMES),
+        files=files,
+        total_bytes=sum(entry.size for entry in files),
+        built_at=str(payload.get("built_at", "")),
+        commit=commit,
+        verifier="verify_h00_release/1",
+        recorded_at=datetime.now(UTC).isoformat(),
+    )
+
+
+def write_receipt(receipt: ReleaseReceipt, path: Path | str, *, release_dir: Path | str) -> Path:
+    """Write the receipt, refusing to place it inside the public release directory."""
+    target = Path(path).expanduser()
+    release = Path(release_dir).expanduser().resolve()
+    if target.resolve() == release or release in target.resolve().parents:
+        raise _refuse("the receipt may not be written inside the public release directory")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(receipt.model_dump(mode="json"), indent=2) + "\n", encoding="utf-8")
+    return target
+
+
+def verify_receipt(directory: Path | str, receipt_path: Path | str, *, expect_commit: str | None = None) -> dict[str, Any]:
+    """Verify a release directory against a recorded receipt, and the commit binding.
+
+    Used by the rollback path: a previously published bundle is only redeployed when its
+    bytes still match the receipt recorded when it was first verified.
+    """
+    root = Path(directory).expanduser()
+    receipt_file = Path(receipt_path).expanduser()
+    if not receipt_file.is_file():
+        raise _refuse("the release receipt is missing")
+    try:
+        receipt = ReleaseReceipt.model_validate_json(receipt_file.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise _refuse("the release receipt is not a valid receipt document") from exc
+    if receipt.artifact != h00.ARTIFACT_NAME:
+        raise _refuse("the release receipt names a different artifact")
+    if list(receipt.allowlist) != list(h00.ARTIFACT_FILENAMES):
+        raise _refuse("the release receipt records a different allowlist")
+    if expect_commit is not None and (receipt.commit or "") != expect_commit:
+        raise _refuse("the release receipt is bound to a different commit")
+    entries = _check_entries(root)
+    recorded = {entry.name: entry for entry in receipt.files}
+    if set(entries) != set(recorded):
+        raise _refuse("the release directory does not match the receipt's file set")
+    for name, path in entries.items():
+        entry = recorded[name]
+        if path.stat().st_size != entry.size or _sha256(path) != entry.sha256:
+            raise _refuse(f"release entry {name!r} does not match the receipt")
+    summary = verify_release(root)
+    return {**summary, "commit": receipt.commit, "built_at": receipt.built_at}
+
+
 def verify_release(directory: Path | str) -> dict[str, Any]:
     """Verify one composed release directory; raise :class:`ReleaseVerificationError`.
 
@@ -158,6 +272,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Verify the composed H00 release artifact before upload")
     parser.add_argument("--dir", required=True, help="Release directory to verify (the artifact to be uploaded)")
+    parser.add_argument("--receipt-out", help="Write the private deployment receipt to this path (never inside --dir)")
+    parser.add_argument("--check-receipt", help="Verify --dir against this recorded receipt instead of only verifying the bytes")
+    parser.add_argument("--expect-commit", help="With --check-receipt: refuse a receipt bound to a different commit")
+    parser.add_argument("--commit", help="Commit SHA to bind into a written receipt (default: $GITHUB_SHA)")
     return parser.parse_args(argv)
 
 
@@ -165,7 +283,19 @@ def main(argv: list[str] | None = None) -> None:
     """CLI entrypoint: exit 1 on any violation, with a value-free message."""
     args = parse_args(argv)
     try:
+        if args.check_receipt:
+            summary = verify_receipt(args.dir, args.check_receipt, expect_commit=args.expect_commit)
+            print(
+                "release receipt verification passed: "
+                f"{summary['files']} allowlisted files, {summary['bytes']} bytes, commit {summary['commit'] or 'unrecorded'}"
+            )
+            return
         summary = verify_release(args.dir)
+        if args.receipt_out:
+            commit = args.commit or os.getenv("GITHUB_SHA") or None
+            receipt = build_receipt(args.dir, commit=commit)
+            written = write_receipt(receipt, args.receipt_out, release_dir=args.dir)
+            print(f"wrote deployment receipt {written} for commit {receipt.commit or 'unrecorded'}")
     except ReleaseVerificationError as exc:
         print(str(exc), file=sys.stderr)
         sys.exit(1)
