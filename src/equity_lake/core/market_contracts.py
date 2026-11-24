@@ -28,7 +28,7 @@ from types import MappingProxyType
 from typing import Final, Literal
 
 from equity_lake.core.instruments import MARKET_MICS
-from equity_lake.core.paths import PRICE_MARKETS, canonical_market
+from equity_lake.core.paths import CANONICAL_PRICE_MARKETS, canonical_market
 
 CapabilityState = Literal["present", "unknown"]
 
@@ -168,7 +168,7 @@ def _unsupported_corporate_actions(market: str) -> Capability:
 
 
 def _contract(market: str, corporate_actions: Capability) -> MarketContract:
-    entry = PRICE_MARKETS[market]
+    entry = CANONICAL_PRICE_MARKETS[market]
     return MarketContract(
         market=market,
         mics=MARKET_MICS[market],

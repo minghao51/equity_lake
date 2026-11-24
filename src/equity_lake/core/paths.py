@@ -160,6 +160,14 @@ PRICE_MARKETS: dict[str, PriceMarket] = {
     )
 }
 
+#: The canonical market vocabulary exactly as this module defines it. Consumers that need
+#: the DECLARED markets — static contract tables, per-market declarations — read this
+#: rather than :data:`PRICE_MARKETS`, which tests legitimately narrow to scope a temporary
+#: lake. Reading the patchable global at import time made a module's declarations depend on
+#: whether a test had already patched it (a table missing ``cn_ashare`` and raising
+#: ``KeyError`` only in a single-module test run).
+CANONICAL_PRICE_MARKETS: dict[str, PriceMarket] = dict(PRICE_MARKETS)
+
 # Derived alias maps — never hand-maintained (ADR-0010 Decision 2).
 LONG_TO_SHORT: dict[str, str] = {entry.market: entry.alias for entry in PRICE_MARKETS.values()}
 SHORT_TO_LONG: dict[str, str] = {entry.alias: entry.market for entry in PRICE_MARKETS.values()}
