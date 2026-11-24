@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+#: ``app`` is re-exported deliberately: tests and the console script import it from here so
+#: that importing this module wires every sub-app and command module (see the imports at the
+#: bottom of the file). Declaring it keeps that re-export explicit for type checkers.
+__all__ = ["app"]
+
 import subprocess
 import sys
 from pathlib import Path

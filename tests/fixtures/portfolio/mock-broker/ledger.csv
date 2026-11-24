@@ -1,0 +1,11 @@
+account,external_source,external_id,event_type,effective_at,received_at,sequence,market,mic,symbol,currency,cash_effect,quantity,price,fees,basis,basis_status,reverses_external_id
+main,mock-broker,mock-0001,OPENING,2024-01-02T15:00:00Z,2024-01-02T21:00:00Z,1,,,,USD,25000.00,,,0.00,,KNOWN,
+main,mock-broker,mock-0002,OPENING,2024-01-02T15:00:00Z,2024-01-02T21:00:00Z,2,us_equity,XNAS,AAPL,USD,0.00,100,150.00,0.00,15000.00,KNOWN,
+main,mock-broker,mock-0003,OPENING,2024-01-02T15:00:00Z,2024-01-02T21:00:00Z,3,us_equity,XNAS,MSFT,USD,0.00,50,350.00,0.00,17500.00,KNOWN,
+main,mock-broker,mock-0004,BUY,2024-02-15T15:00:00Z,2024-02-15T21:00:00Z,4,us_equity,XNAS,NVDA,USD,-24005.00,40,600.00,5.00,,KNOWN,
+main,mock-broker,mock-0005,CASH_DIVIDEND,2024-03-15T15:00:00Z,2024-03-15T21:00:00Z,5,us_equity,XNAS,AAPL,USD,24.00,,,0.00,,KNOWN,
+main,mock-broker,mock-0006,DEPOSIT,2024-04-01T14:00:00Z,2024-04-01T20:00:00Z,6,,,,USD,10000.00,,,0.00,,KNOWN,
+main,mock-broker,mock-0007,SELL,2024-05-10T15:00:00Z,2024-05-10T21:00:00Z,7,us_equity,XNAS,MSFT,USD,18990.50,50,380.00,9.50,,KNOWN,
+main,mock-broker,mock-0008,SPLIT,2024-06-10T13:30:00Z,2024-06-10T21:00:00Z,8,us_equity,XNAS,AAPL,USD,0.00,4,,0.00,,KNOWN,
+main,mock-broker,mock-0009,FEE,2024-06-12T14:00:00Z,2024-06-12T20:00:00Z,9,,,,USD,-35.00,,,0.00,,KNOWN,
+main,mock-broker,mock-0010,WITHDRAWAL,2024-06-20T14:00:00Z,2024-06-20T20:00:00Z,10,,,,USD,-2500.00,,,0.00,,KNOWN,

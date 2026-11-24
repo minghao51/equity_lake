@@ -1,0 +1,4 @@
+account,as_of,line_type,market,mic,symbol,currency,quantity,cash
+main,2024-06-14T21:00:00Z,CASH,,,,USD,,29974.50
+main,2024-06-14T21:00:00Z,POSITION,us_equity,XNAS,AAPL,USD,400,
+main,2024-06-14T21:00:00Z,POSITION,us_equity,XNAS,NVDA,USD,40,

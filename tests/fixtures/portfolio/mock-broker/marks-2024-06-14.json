@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "marks": [
+    {
+      "market": "us_equity",
+      "mic": "XNAS",
+      "symbol": "AAPL",
+      "currency": "USD",
+      "price": "212.00",
+      "session": "2024-06-14",
+      "as_of": "2024-06-14T20:00:00Z",
+      "source": "mock-broker",
+      "price_basis": "unadjusted",
+      "provenance": "synthetic"
+    },
+    {
+      "market": "us_equity",
+      "mic": "XNAS",
+      "symbol": "NVDA",
+      "currency": "USD",
+      "price": "131.00",
+      "session": "2024-06-14",
+      "as_of": "2024-06-14T20:00:00Z",
+      "source": "mock-broker",
+      "price_basis": "unadjusted",
+      "provenance": "synthetic"
+    }
+  ],
+  "valuation_blocks": []
+}
