@@ -517,9 +517,10 @@ def test_import_help_states_the_frozen_exit_contract() -> None:
 
 
 def test_only_import_the_read_reports_and_the_explicit_ledger_mechanisms_are_registered() -> None:
-    """The frozen surface: import, the three P02 read reports and the four explicit
-    ledger mechanisms (migrate, restore, compact — ADR-0031 decisions 2, 4 and 5 — and
-    backup/backups — ADR-0031 decision 3, authorized by the residual plan's RS-P02).
+    """The frozen surface: import, the three P02 read reports and the five explicit
+    ledger mechanisms (migrate, restore, compact — ADR-0031 decisions 2, 4 and 5 —
+    backup/backups — ADR-0031 decision 3, authorized by the residual plan's RS-P02 —
+    and prune — ADR-0036, the owner's 2026-11-24 event-retention decision).
 
     The two backup commands are added here deliberately, not by convenience: ADR-0031
     decision 3 requires a manual, locally verified backup export with manual retention and
@@ -527,11 +528,16 @@ def test_only_import_the_read_reports_and_the_explicit_ledger_mechanisms_are_reg
     that in-contract posture (a report-only inventory plus the manual export) and forbids
     backup-file pruning and off-host/encrypted export, which need their own new ADR.
 
-    Falsified by: adding a portfolio command that is not one of these nine; mechanisms are
+    ``prune`` is added here deliberately too: ADR-0036 authorizes operator-invoked
+    checkpoint collapse only (never bare deletion, never automatic), requires a verified
+    backup whose sha256 is recorded, and makes report-only the default. It does not
+    authorize backup-file pruning, which still needs its own decision.
+
+    Falsified by: adding a portfolio command that is not one of these ten; mechanisms are
     added by a decision, never by convenience.
     """
     registered = {command.name for command in portfolio_app.registered_commands}
-    expected = {"import", "positions", "summary", "reconcile", "migrate", "restore", "compact", "backup", "backups"}
+    expected = {"import", "positions", "summary", "reconcile", "migrate", "restore", "compact", "backup", "backups", "prune"}
     assert registered == expected
     assert portfolio_app.registered_groups == []
 
