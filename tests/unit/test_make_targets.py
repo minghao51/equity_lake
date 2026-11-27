@@ -100,9 +100,30 @@ def test_reset_lake_target_maps_dry_and_invokes_the_maintained_helper() -> None:
     assert "equity ingest" not in default
 
 
-def test_reset_lake_dry_run_is_non_destructive_and_lists_the_documented_paths() -> None:
-    """R7 acceptance: `make reset-lake DRY=1` lists exactly the artifact set, writes nothing."""
+def test_reset_lake_dry_run_is_non_destructive_and_lists_the_documented_paths(tmp_path: Path) -> None:
+    """R7 acceptance: `make reset-lake DRY=1` lists exactly the artifact set, writes nothing.
+
+    `uv` is stubbed on PATH so the target cannot re-create the project environment.
+    A real `uv run` resolves its own interpreter, and on a matrix leg where that
+    differs from the running one it deletes `.venv` and rebuilds it mid-session,
+    which pulls the live interpreter's `site-packages` out from under the suite.
+    The stub forwards the same command to the interpreter running this test.
+    """
     before = {str(path): _fingerprint(path) for path in _RESET_TARGETS}
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "uv"
+    stub.write_text(
+        '#!/bin/sh\nshift  # drop "run"\n[ "$1" = "python" ] && shift\nexec "$PROJECT_PYTHON" "$@"\n',
+        encoding="utf-8",
+    )
+    stub.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        "PROJECT_PYTHON": sys.executable,
+    }
 
     result = subprocess.run(
         ["make", "--no-print-directory", "reset-lake", "DRY=1"],
@@ -110,6 +131,7 @@ def test_reset_lake_dry_run_is_non_destructive_and_lists_the_documented_paths() 
         capture_output=True,
         check=False,
         text=True,
+        env=env,
     )
 
     assert result.returncode == 0, result.stderr

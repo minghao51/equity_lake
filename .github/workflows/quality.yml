@@ -29,8 +29,6 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
-          # Bumped when a cache entry is believed corrupt so a fresh key is written.
-          cache-suffix: v2
 
       - name: Install dependencies
         run: uv sync --python "${{ matrix.python-version }}" --group dev
@@ -63,16 +61,16 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
-          # Bumped when a cache entry is believed corrupt so a fresh key is written.
-          cache-suffix: v2
 
       - name: Install dependencies
         run: uv sync --python "${{ matrix.python-version }}" --group dev --group backtesting
 
-      # A partially written uv cache drops data files and submodules from installed
-      # wheels, which surfaces as confusing missing-file errors deep inside
-      # pandas/pyarrow/vaderSentiment/certifi. Name the three known failure modes
-      # here so the next occurrence points at its own cause.
+      # Prove the interpreter that is about to run the suite really has the data files
+      # and extension submodules the tests load lazily (vader's lexicon, certifi's CA
+      # bundle, pandas' parquet engine). This step passing while individual tests still
+      # report missing files means the environment was changed *during* the session, not
+      # installed wrong — which is how RS-Q00's mid-suite `.venv` rebuild was found. It
+      # also turns a damaged install into one named failure instead of ~30 confusing ones.
       - name: Verify installed dependencies
         run: |
           uv run --python "${{ matrix.python-version }}" python - <<'PY'
@@ -130,8 +128,6 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
-          # Bumped when a cache entry is believed corrupt so a fresh key is written.
-          cache-suffix: v2
 
       - name: Install documentation dependencies
         run: uv sync --group dev --group docs
@@ -167,8 +163,6 @@ jobs:
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
-          # Bumped when a cache entry is believed corrupt so a fresh key is written.
-          cache-suffix: v2
 
       - name: Install dependencies
         run: uv sync --group dev
