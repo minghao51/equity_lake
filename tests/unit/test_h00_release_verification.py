@@ -219,6 +219,36 @@ class TestDeploymentReceipt:
         summary = verify.verify_receipt(release, path, expect_commit="a" * 40)
         assert summary["files"] == 3
 
+    def test_the_retained_bundle_reverifies_only_after_the_receipt_leaves(self, release: Path, tmp_path: Path) -> None:
+        """Rehearse the rollback download: one private artifact, four entries.
+
+        `h00-release-bundle` holds the three public files *and* the receipt, so a rollback
+        downloads a directory the published allowlist rejects. `h00-publish.yml` moves the
+        receipt out before verifying; both halves of that sequence are pinned here.
+        """
+        receipt = verify.write_receipt(verify.build_receipt(release, commit="a" * 40), tmp_path / "receipt.json", release_dir=release)
+        shutil.copy2(receipt, release / "receipt.json")  # the bundle as it is retained and downloaded
+
+        with pytest.raises(verify.ReleaseVerificationError, match="not the allowlist"):
+            verify.verify_release(release)
+
+        moved = tmp_path / "rollback-receipt.json"
+        shutil.move(str(release / "receipt.json"), moved)
+        summary = verify.verify_receipt(release, moved, expect_commit="a" * 40)
+        assert summary["files"] == len(h00.ARTIFACT_FILENAMES)
+
+    def test_the_rollback_workflow_separates_the_receipt_before_verifying(self) -> None:
+        """The download step must move the receipt out of the allowlisted directory.
+
+        A rollback only works if the published directory holds exactly three entries, so
+        the workflow — not the verifier — has to separate the private receipt first.
+        """
+        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/h00-publish.yml").read_text(encoding="utf-8")
+
+        assert "mv release/receipt.json rollback-receipt.json" in workflow
+        assert "--check-receipt rollback-receipt.json" in workflow
+        assert "--check-receipt release/receipt.json" not in workflow
+
     def test_a_receipt_is_refused_inside_the_public_release_directory(self, release: Path) -> None:
         """Writing the receipt into the artifact would break the three-file allowlist."""
         receipt = verify.build_receipt(release, commit=None)

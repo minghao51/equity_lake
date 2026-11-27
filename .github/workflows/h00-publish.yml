@@ -126,11 +126,19 @@ jobs:
           ROLLBACK_RUN_ID: ${{ inputs.rollback_run_id }}
         # The run id is passed through the environment, never interpolated into the
         # shell text: a dispatch input is attacker-shaped string data.
-        run: gh run download "$ROLLBACK_RUN_ID" -n h00-release-bundle -D release
+        #
+        # `h00-release-bundle` is ONE private artifact: the three public files plus the
+        # receipt. The published allowlist is exactly those three files and the verifier
+        # refuses a fourth entry, so the receipt leaves the directory that is checked
+        # against the allowlist before verification runs — the same rule `write_receipt`
+        # enforces at build time. Without this move the rollback can never verify.
+        run: |
+          gh run download "$ROLLBACK_RUN_ID" -n h00-release-bundle -D release
+          mv release/receipt.json rollback-receipt.json
 
       - name: Verify the rollback bundle against its receipt
         if: inputs.rollback_run_id != ''
-        run: uv run python -m equity_lake.devtools.verify_h00_release --dir release --check-receipt release/receipt.json
+        run: uv run python -m equity_lake.devtools.verify_h00_release --dir release --check-receipt rollback-receipt.json
 
       - name: Stage the rollback bytes for Pages
         if: inputs.rollback_run_id != ''
