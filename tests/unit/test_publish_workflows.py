@@ -267,3 +267,45 @@ class TestReleaseReceiptAndRollback:
         text = _code(PUBLISHER.read_text(encoding="utf-8"))
 
         assert "persist-credentials: false" in text
+
+
+class TestPublisherSeedsItsOwnLake:
+    """The build reads a canonical lake a fresh checkout does not have, so the job seeds it."""
+
+    def test_the_lake_is_seeded_before_the_build_runs(self) -> None:
+        steps = _load(PUBLISHER)["jobs"]["build"]["steps"]
+        names = [str(step.get("name", "")) for step in steps]
+
+        seed = next(index for index, name in enumerate(names) if "Seed the disposable synthetic lake" in name)
+        place = next(index for index, name in enumerate(names) if "Place the seeded lake" in name)
+        build = next(index for index, name in enumerate(names) if "Build the sanitized H00 artifact" in name)
+
+        assert seed < place < build, "the lake must be seeded and placed before anything builds"
+
+    def test_the_synthetic_window_is_pinned_rather_than_computed(self) -> None:
+        """A computed date would make the seeded lake irreproducible run to run."""
+        document = _load(PUBLISHER)
+        assert document["env"]["FROZEN_LAKE_END_DATE"] == "2026-06-30"
+        seed = next(step for step in document["jobs"]["build"]["steps"] if "Seed the disposable synthetic lake" in str(step.get("name", "")))
+        assert '--end-date "$FROZEN_LAKE_END_DATE"' in seed["run"]
+        assert "date -u" not in seed["run"] and "$(date" not in seed["run"]
+
+    def test_the_seeded_path_reaches_the_shell_through_the_environment(self) -> None:
+        """A step output is still string data; the path is exported, not interpolated."""
+        document = _load(PUBLISHER)
+        seed = next(step for step in document["jobs"]["build"]["steps"] if "Seed the disposable synthetic lake" in str(step.get("name", "")))
+        place = next(step for step in document["jobs"]["build"]["steps"] if "Place the seeded lake" in str(step.get("name", "")))
+
+        assert 'echo "LAKE_DIR=' in seed["run"]
+        assert '"$LAKE_DIR/."' in place["run"]
+        assert "${{ steps." not in place["run"], "the seeded path must not be interpolated into the shell"
+
+    def test_a_rollback_run_skips_seeding_and_building(self) -> None:
+        document = _load(PUBLISHER)
+        for name in (
+            "Seed the disposable synthetic lake",
+            "Place the seeded lake where the builder reads it",
+            "Build the sanitized H00 artifact",
+        ):
+            step = next(step for step in document["jobs"]["build"]["steps"] if str(step.get("name", "")) == name)
+            assert step["if"] == "inputs.rollback_run_id == ''", name

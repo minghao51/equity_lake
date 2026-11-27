@@ -31,10 +31,11 @@ name: Publish H00 Sanitized Page
 #   its receipt is refused, so a rollback can never deploy a re-typed substitute.
 #   GitHub retains artifacts by AGE, not count: 90-day retention is configured here,
 #   but pruning down to "the last three" is an operator action, not automation.
-# * Prerequisite (RS-E01, not satisfied by this workflow): the build reads the
-#   canonical synthetic demo lake, which a fresh checkout does not have. Until the
-#   disposable bootstrap seeds it, `equity dashboard h00-build` refuses and this
-#   workflow fails closed — it never publishes a substitute artifact.
+# * The canonical synthetic lake is seeded by the job itself (RS-E01): the disposable
+#   bootstrap materialises a tracked-source checkout, seeds it with a pinned end date,
+#   and the seeded lake is copied where the builder reads it. Without that step
+#   `equity dashboard h00-build` refuses, so the job fails closed rather than
+#   publishing a substitute artifact. Rollback runs skip it and deploy retained bytes.
 # * Any change to the published route (currently H00 owning the sole Pages root) is
 #   governed by ADR-0035; a further route change needs its own ADR.
 
@@ -45,6 +46,11 @@ on:
         description: "Optional: deploy the verified bundle from this run id instead of building (rollback)"
         required: false
         default: ""
+
+# The synthetic window is pinned so the seeded lake is reproducible run to run: the same
+# seed and end date produce the same rows and the same price digest.
+env:
+  FROZEN_LAKE_END_DATE: "2026-06-30"
 
 permissions:
   contents: read
@@ -77,6 +83,23 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --group dev
+
+      - name: Seed the disposable synthetic lake
+        if: inputs.rollback_run_id == ''
+        run: |
+          set -euo pipefail
+          uv run python -m equity_lake.devtools.bootstrap --end-date "$FROZEN_LAKE_END_DATE" --keep > "$RUNNER_TEMP/bootstrap.json"
+          cat "$RUNNER_TEMP/bootstrap.json"
+          lake_dir="$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["lake_dir"])' "$RUNNER_TEMP/bootstrap.json")"
+          echo "LAKE_DIR=$lake_dir" >> "$GITHUB_ENV"
+
+      - name: Place the seeded lake where the builder reads it
+        if: inputs.rollback_run_id == ''
+        run: |
+          set -euo pipefail
+          mkdir -p data/lake
+          cp -a "$LAKE_DIR/." data/lake/
+          du -sh data/lake
 
       - name: Build the sanitized H00 artifact
         if: inputs.rollback_run_id == ''

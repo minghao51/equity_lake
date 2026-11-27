@@ -20,6 +20,8 @@ single manual H00 publisher, verified local backup export, source-clock qualific
 non-US offline market packs, the paper-shadow delivery loop, the recursive lint ratchet, the `total_return` refusal,
 the R02 archival recomputation, and R00's frozen controls and scale measurements.
 
+Since then the ledger gained an operator-invoked **prune** (ADR-0036: checkpoint collapse, verified-backup precondition, a disclosed pruned history) and a **derived total return** (ADR-0037: reinvest stored dividends at the ex-date close, research-grade only, no vendor-adjusted series stored), and publication is fixed by ADR-0035 as the three-file sanitized H00 page behind one manual, reviewer-gated workflow.
+
 **Nothing is `operated`.** No publication, no live delivery, no real-ledger rehearsal, no data acquisition and no
 model promotion happened. What remains needs an operator: H00 publication (platform reviewer-protection evidence, an
 owners approval and a route ADR), a real-ledger rehearsal, a live delivery endpoint and scheduler host, an off-host
