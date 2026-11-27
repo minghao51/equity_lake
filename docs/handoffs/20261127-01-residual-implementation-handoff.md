@@ -3,7 +3,8 @@
 **Recorded:** 2026-11-27
 
 **Result: every residual stage of the [2026-11-22 residual plan](../plans/20261122-01-residual-spec-and-implementation-plan.md)
-is implemented, independently reviewed and pushed — `main` = `origin/main` = `be0a12f`, 66 commits since `fc589d1`.
+is implemented, independently reviewed and pushed — 66 commits since `fc589d1`, with `be0a12f` the last
+implementation commit (the handoff and its count correction follow on top; trust `git log`, not this line).
 The only thing between here and a live H00 page is one owner click: approve the pending deployment of
 [run 45980611891](https://github.com/minghao51/equity_lake/actions/runs/45980611891).**
 
@@ -19,7 +20,7 @@ Read in this order: [residual plan §11](../plans/20261122-01-residual-spec-and-
 
 | Fact | Value |
 | --- | --- |
-| Branch | `main` = `origin/main` = `be0a12f` on github.com:minghao51/equity_lake (public); 66 commits since `fc589d1` |
+| Branch | `main` = `origin/main` on github.com:minghao51/equity_lake (public); 66 implementation commits since `fc589d1`, last one `be0a12f` |
 | Serial suite | `uv run pytest` → 3157 passed, 16 skipped, 0 failed (`--junitxml=/tmp/final-junit4.xml`, 683 s) |
 | Lint / format / typing | `ruff check`, `ruff format --check`, `uv run mypy` (201 files) all clean |
 | Markdown | `make lint-md`: 314 preexisting findings in 35 files, 0 new (reviewed-baseline ratchet) |
