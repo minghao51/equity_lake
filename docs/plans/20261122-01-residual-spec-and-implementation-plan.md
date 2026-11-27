@@ -396,8 +396,9 @@ Summary of what is genuinely closed and what is not:
 - **`deferred-invariant`, each needs its own ADR:** event deletion or pruning, backup-file pruning, in-place `VACUUM`,
   a cash-distribution backtest path, a vendor total-return adapter, R02 promotion/refit.
 - **Named residual from the post-implementation review:** the H00 deployment receipt, retained rollback bundles and
-  90-day bundle retention are documented in the hosting guide as *not implemented*; ~140 test files still carry
-  pre-existing `# type: ignore[import-untyped]` comments that are now redundant (recorded debt, not mass-edited).
+  90-day bundle retention were documented in the hosting guide as *not implemented* at that point (both are now
+  implemented and exercised by the first dispatch); 132 test files carried pre-existing
+  `# type: ignore[import-untyped]` comments that `py.typed` made redundant — all were removed in `bfaaa8c`.
 
 Post-implementation review: the independent review of the accumulated diff returned FAIL with four blocking findings
 (overstated source-clock integrity claim, MD013 disabled without an auditable record, paper-shadow scan/delivery lock ordering,
@@ -589,7 +590,7 @@ The independent review of the accumulated diff returned FAIL with four blocking 
 3. `signals/tracking.py` — the paper-shadow scan moved INSIDE the non-blocking delivery lock (readiness -> scan -> deliver), so two local runs cannot overlap in the scan phase; new regression `test_the_scan_cannot_overlap_another_shadow_run` proves a competing run never reaches the scan, and the readiness-recheck test now asserts the plan's order (scan skipped on refusal).
 4. `devtools/markdown_lint.py` — baseline write/load go through `LintBaseline` (extra="forbid", positive counts, total must equal the recorded findings); two new tests cover a mismatched disable set and a missing disable set.
 5. New PIT invariant in `core/source_clock.py`: evidence the source had not published by the `as_of` date can no longer qualify that read (look-ahead refusal). Mutation proof: removing the check made `test_clock_evidence_published_after_the_as_of_date_never_qualifies_it` fail (exit 1); restored with `diff -q` exit 0 and identical sha256, test green.
-Also fixed during this pass: `src/equity_lake/py.typed` added (the package is mypy-strict clean over 200 files, but every isolated per-file analysis reported first-party imports as untyped); repo-convention `# pyright: ignore[reportMissingImports]` added to the two optional `wandb` imports in `ml/registry.py`. Pre-existing stale `# type: ignore[import-untyped]` comments remain in ~140 test files (611 occurrences) and are recorded as debt rather than mass-edited here.
+Also fixed during this pass: `src/equity_lake/py.typed` added (the package is mypy-strict clean over 200 files, but every isolated per-file analysis reported first-party imports as untyped); repo-convention `# pyright: ignore[reportMissingImports]` added to the two optional `wandb` imports in `ml/registry.py`. Pre-existing stale `# type: ignore[import-untyped]` comments existed in 132 test files (604 occurrences); they were swept in a later mechanical commit (`bfaaa8c`) once `py.typed` landed, and none remain.
 Gates after the fixes: `uv run ruff check .` 0, `uv run ruff format --check .` 0, `uv run mypy` 0 (200 files), `make lint-md` 0 (314/35), and the touched test modules green.
 
 ### Owner decisions — 2026-11-24

@@ -103,7 +103,7 @@ Decisions recorded:
   (`inputs.rollback_run_id`) has ever been dispatched.
 - R01's power clears its floor by only 2.6 pp and is synthetic-fixture evidence
   ([R01 report](../research/20261123-01-r01-report.md)).
-- ~140 test files lost their now-redundant `# type: ignore[import-untyped]` comments after `py.typed` was
+- 132 test files lost their now-redundant `# type: ignore[import-untyped]` comments (604 occurrences) after `py.typed` was
   added — measured: the removal commit `bfaaa8c` touched 132 files and zero such comments remain (the
   plan §11 "~140 … still carry" line predates that removal).
 
