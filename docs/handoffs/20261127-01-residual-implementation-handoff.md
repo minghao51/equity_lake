@@ -107,7 +107,8 @@ Decisions recorded:
   `rollback_run_id` dispatch that downloaded run 46011953819's retained bundle, verified it against its
   receipt and redeployed it. The first rollback attempt (46020397986) failed closed: `h00-release-bundle`
   carries the private receipt inside the directory that is verified against the three-file allowlist, so
-  `--check-receipt` refused it with "unexpected entries: 1". The workflow now moves the receipt out before
+  `--check-receipt` refused it with "unexpected entries: 1"; the guard in
+  `tests/unit/test_publish_workflows.py` had been asserting that broken form. The workflow now moves the receipt out before
   verifying, and `tests/unit/test_h00_release_verification.py` pins both halves plus the workflow step.
   Nothing in this area is untested-but-claimed any more; bundle pruning remains the open operator action.
 - R01's power clears its floor by only 2.6 pp and is synthetic-fixture evidence
