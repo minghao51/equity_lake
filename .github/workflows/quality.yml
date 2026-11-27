@@ -16,17 +16,21 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
+          # Bumped when a cache entry is believed corrupt so a fresh key is written.
+          cache-suffix: v2
 
       - name: Install dependencies
         run: uv sync --python "${{ matrix.python-version }}" --group dev
@@ -46,20 +50,62 @@ jobs:
       matrix:
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
+          # Bumped when a cache entry is believed corrupt so a fresh key is written.
+          cache-suffix: v2
 
       - name: Install dependencies
         run: uv sync --python "${{ matrix.python-version }}" --group dev --group backtesting
+
+      # A partially written uv cache drops data files and submodules from installed
+      # wheels, which surfaces as confusing missing-file errors deep inside
+      # pandas/pyarrow/vaderSentiment/certifi. Name the three known failure modes
+      # here so the next occurrence points at its own cause.
+      - name: Verify installed dependencies
+        run: |
+          uv run --python "${{ matrix.python-version }}" python - <<'PY'
+          import tempfile
+          from pathlib import Path
+
+          import certifi, httpx, pandas, pandas.core.arrays.arrow.extension_types, polars, pyarrow, pyarrow.parquet
+          import vaderSentiment.vaderSentiment as vader_module
+          from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+
+          # 1. SentimentIntensityAnalyzer opens vader_lexicon.txt from the installed
+          #    package on construction; a missing data file raises FileNotFoundError.
+          lexicon = Path(vader_module.__file__).with_name("vader_lexicon.txt")
+          assert lexicon.is_file() and lexicon.stat().st_size > 0, lexicon
+          SentimentIntensityAnalyzer()
+
+          # 2. httpx builds its TLS context from certifi.where(); a missing cacert.pem
+          #    fails inside httpx._config.create_ssl_context for every LLM call.
+          cacert = Path(certifi.where())
+          assert cacert.is_file() and cacert.stat().st_size > 0, cacert
+          httpx.Client().close()
+
+          # 3. pandas' parquet engine imports this exact pyarrow submodule, and a real
+          #    write/read proves the engine, not just the Arrow layer, loads.
+          frame = pandas.DataFrame({"a": [1]})
+          assert pyarrow.Table.from_pandas(frame).to_pandas()["a"].tolist() == [1]
+          assert polars.DataFrame({"a": [1]}).to_pandas()["a"].tolist() == [1]
+          with tempfile.TemporaryDirectory() as tmp:
+              parquet_path = Path(tmp) / "smoke.parquet"
+              frame.to_parquet(parquet_path, engine="pyarrow")
+              assert pandas.read_parquet(parquet_path)["a"].tolist() == [1]
+          print("dependency smoke check ok")
+          PY
 
       - name: Pytest
         run: uv run --python "${{ matrix.python-version }}" pytest -q -m "not network and not integration"
@@ -71,17 +117,21 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
+          # Bumped when a cache entry is believed corrupt so a fresh key is written.
+          cache-suffix: v2
 
       - name: Install documentation dependencies
         run: uv sync --group dev --group docs
@@ -104,17 +154,21 @@ jobs:
   cli-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v8.2.0
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39  # v8.2.0
         with:
           enable-cache: true
+          # Bumped when a cache entry is believed corrupt so a fresh key is written.
+          cache-suffix: v2
 
       - name: Install dependencies
         run: uv sync --group dev
