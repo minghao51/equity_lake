@@ -115,8 +115,10 @@ Decisions recorded:
 
 A Quality run on `main` was red before the fixes. All three causes were test-infrastructure bugs, not
 product regressions, and all three are fixed. Quality run
-[46010374519](https://github.com/minghao51/equity_lake/actions/runs/46010374519) on `d1f507d` is the first
-green run in this series: all six jobs pass, including both `test` legs (3.12 in 8m3s, 3.13 in 8m44s).
+[46010374519](https://github.com/minghao51/equity_lake/actions/runs/46010374519) is the first green run in
+this series: all six jobs pass, including both `test` legs (3.12 in 8m3s, 3.13 in 8m44s). Cited by run id,
+not by commit, because that commit's message was later reworded (a `DRI=1` typo for `DRY=1`) and its sha
+changed; the run ids are immutable.
 
 - **A — ANSI escapes inside the option name.** `typer/rich_utils.py` computes
   `FORCE_TERMINAL = True if getenv("GITHUB_ACTIONS") or getenv("FORCE_COLOR") or getenv("PY_COLORS") else None`.
