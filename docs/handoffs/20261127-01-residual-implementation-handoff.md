@@ -5,8 +5,8 @@
 **Result: every residual stage of the [2026-11-22 residual plan](../plans/20261122-01-residual-spec-and-implementation-plan.md)
 is implemented, independently reviewed and pushed — 66 commits since `fc589d1`, with `be0a12f` the last
 implementation commit (the handoff and its count correction follow on top; trust `git log`, not this line).
-The only thing between here and a live H00 page is one owner click: approve the pending deployment of
-[run 45980611891](https://github.com/minghao51/equity_lake/actions/runs/45980611891).**
+The pending deployment of [run 45980611891](https://github.com/minghao51/equity_lake/actions/runs/45980611891)
+has since been approved and deployed — the page is live (§3 bucket 1).**
 
 ## Start here
 
@@ -21,7 +21,7 @@ Read in this order: [residual plan §11](../plans/20261122-01-residual-spec-and-
 | Fact | Value |
 | --- | --- |
 | Branch | `main` = `origin/main` on github.com:minghao51/equity_lake (public); 66 implementation commits since `fc589d1`, last one `be0a12f` |
-| Serial suite | `uv run pytest` → 3157 passed, 16 skipped, 0 failed (`--junitxml=/tmp/final-junit4.xml`, 683 s) |
+| Serial suite | green on 3.12 and 3.13 (both with `GITHUB_ACTIONS=true`); serial, ~11-12 min. The old 3157 passed / 16 skipped count predates the §5 fixes and is not re-measured |
 | Lint / format / typing | `ruff check`, `ruff format --check`, `uv run mypy` (201 files) all clean |
 | Markdown | `make lint-md`: 314 preexisting findings in 35 files, 0 new (reviewed-baseline ratchet) |
 | Docs | `uv run mkdocs build` passes with only the four pre-existing warnings |
@@ -61,17 +61,19 @@ Decisions recorded:
 
 ## 3. What remains
 
-### Bucket 1 — owner/platform: the only thing between here and a live page
+### Bucket 1 — owner/platform: deployment approved and live, one optional check left
 
-1. **Approve the pending deployment** at
-   [run 45980611891](https://github.com/minghao51/equity_lake/actions/runs/45980611891) (`h00-publish.yml`,
-   dispatched 2026-11-27). The build job completed successfully in CI — bootstrap seeding, H00 build, release
-   verification, private receipt and both artifact uploads all ran — and the deploy job is **waiting** for
-   required-reviewer approval on the `github-pages` environment. The gate now exists and is enforced: the
+1. **The pending deployment was approved and deployed (2026-11-27).**
+   [Run 45980611891](https://github.com/minghao51/equity_lake/actions/runs/45980611891) (`h00-publish.yml`,
+   dispatched 2026-11-27) was approved, `deploy` succeeded in 12 s, and
+   `https://minghao51.github.io/equity_lake/` returns 200. The gate is real and enforced: the `github-pages`
    environment has required reviewers (`minghao51`, `prevent_self_review=false`, `can_admins_bypass=false`)
    with the existing `main`-only branch policy preserved. This was set through the GitHub API, and the API
    response — `protection_rules` now includes `required_reviewers` plus `branch_policy` — is the platform
-   evidence.
+   evidence. **Awaiting the next dispatch: the footer fix.** The published page's footer claimed it "is not
+   a published page" — false for the deployed bytes; fixed in `src/equity_lake/dashboard/h00.py` with a
+   regression test in `tests/unit/test_h00_sanitized_page.py`, and the live page will carry the corrected
+   footer at the next `h00-publish.yml` dispatch.
 2. **Optionally inspect the live page once in a browser** to confirm the stale banner behaves. Staleness is
    proven by structural tests and mutation (`tests/unit/test_h00_sanitized_page.py`), not by a real browser.
 
@@ -99,30 +101,66 @@ Decisions recorded:
   split, so `_book_fingerprint`/`_prove_replay_equality` (`src/equity_lake/portfolio/store.py`) refuse and
   nothing changes; there is no separate named early pre-check for it. The sequence-room refusal is named at
   `store.py:1394` ("no deterministic source-sequence room before the earliest retained event").
-- The publish receipt and rollback path are tested (`tests/unit/test_h00_release_verification.py`) but have
-  NOT been exercised by a real publication: the deploy job is still waiting, and no rollback run
-  (`inputs.rollback_run_id`) has ever been dispatched.
+- The publish receipt and rollback path are tested (`tests/unit/test_h00_release_verification.py`) and were
+  exercised for the first time by the real publication of run 45980611891 (build → verify → receipt → bundle
+  upload → deploy). No rollback run (`inputs.rollback_run_id`) has ever been dispatched, so the rollback half
+  remains tested but unexercised.
 - R01's power clears its floor by only 2.6 pp and is synthetic-fixture evidence
   ([R01 report](../research/20261123-01-r01-report.md)).
 - 132 test files lost their now-redundant `# type: ignore[import-untyped]` comments (604 occurrences) after `py.typed` was
   added — measured: the removal commit `bfaaa8c` touched 132 files and zero such comments remain (the
   plan §11 "~140 … still carry" line predates that removal).
 
-## 5. Known CI issue — read before trusting a red run
+## 5. Why CI was red — three causes, all fixed (2026-11-27)
 
-The Quality workflow was already failing on `main` before this work. The cause is an assertion-width
-fragility in the help-scan tests, not a product regression: typer/rich wraps long option names in CI, so
-help assertions like `"--allow-unauthenticated-exposure" in result.output`
-(`tests/unit/test_api_cli_safety.py:68`) fail there while passing locally. Suggested fix: normalise
-whitespace/ANSI before asserting, or force a wide `COLUMNS` for help invocations. The repository is public,
-so GitHub Actions minutes are not a constraint and Quality runs on push. When a run is red, compare against
-the pre-existing failure list rather than assuming new breakage.
+A Quality run on `main` was red before the fixes. All three causes were test-infrastructure bugs, not
+product regressions, and all three are fixed. Quality run
+[46010374519](https://github.com/minghao51/equity_lake/actions/runs/46010374519) on `d1f507d` is the first
+green run in this series: all six jobs pass, including both `test` legs (3.12 in 8m3s, 3.13 in 8m44s).
+
+- **A — ANSI escapes inside the option name.** `typer/rich_utils.py` computes
+  `FORCE_TERMINAL = True if getenv("GITHUB_ACTIONS") or getenv("FORCE_COLOR") or getenv("PY_COLORS") else None`.
+  GitHub Actions sets `GITHUB_ACTIONS=true`, so Rich styles a single option name across spans — the rendered
+  text is `ESC[1;36m-ESC[0mESC[1;36m-lake-ESC[0m` where a plain `--lake` was expected — and
+  `assert "--flag" in result.stdout` passed locally and failed on CI. Terminal width is NOT the variable:
+  `COLUMNS` and Typer's `TERMINAL_WIDTH` change nothing, and the ANSI-stripped output is byte-identical
+  between a local run and CI. Fix: `tests/helpers/cli.py` (`strip_ansi`, `help_text`) and every help
+  assertion now runs on stripped output. `TERM=dumb` was removed from one `help_env` because a dumb terminal
+  pins Rich to 80 columns and truncates long option names with an ellipsis.
+- **B — a unit test rebuilt `.venv` under the running suite.**
+  `tests/unit/test_make_targets.py::test_reset_lake_dry_run_is_non_destructive_and_lists_the_documented_paths`
+  executed `make reset-lake DRY=1` for real. That target runs a bare
+  `uv run python -m equity_lake.devtools.reset_lake`, and a bare `uv run` resolves its own interpreter. On
+  the 3.13 matrix leg uv therefore deleted `.venv` and rebuilt it with 3.12 mid-session, so every later lazy
+  file open and lazy submodule import addressed a path that no longer existed: `vaderSentiment/vader_lexicon.txt`,
+  certifi's `cacert.pem` (surfacing inside `httpx` TLS setup via `llm_base.build_chat_client`) and
+  `pandas.core.arrays.arrow.extension_types` (via the parquet engine). 36 late-alphabetical tests failed;
+  modules already imported kept working, and the 3.12 leg was unaffected because its rebuilt environment
+  kept the same `python3.12` directory. Reproduction: the full 3.13 suite fails 38; putting
+  `test_make_targets.py` before `test_news_fetcher.py` reproduces with 22; the `DRY=1` test alone is the
+  trigger. Fix: `uv` is stubbed on `PATH` for that one call and forwards to `sys.executable` (the sibling
+  refusal test already used a `uv` stub).
+- **C — a test that could not pass on a clean checkout.**
+  `test_reset_lake_errors_out_on_an_unrecognized_dry_value` asserted `path.exists()` for `_RESET_TARGETS`,
+  which live under the gitignored `data/` root, so it failed on every fresh checkout. It now compares
+  before/after `_fingerprint` values — the real invariant: a refused invocation changes nothing.
+
+Also landed: `quality.yml` gained a `Verify installed dependencies` step (proves the interpreter about to
+run the suite has those three files/submodules; it passing while tests report missing files is the signal
+that the environment changed *during* the session rather than being installed wrong), and its four `uses:`
+refs are pinned to full commit SHAs with `persist-credentials: false`. A `cache-suffix: v2` bump was tried
+on the theory of a corrupt uv cache and **reverted** — there was no cache corruption.
+
+**Actionable:** emulate CI with `GITHUB_ACTIONS=true uv run pytest`, and route every new help assertion
+through `tests/helpers/cli.py` (`strip_ansi`/`help_text`) — never assert on raw `result.stdout`, and never
+try to fix it with a wide `COLUMNS` or `TERM=dumb`.
 
 ## 6. Verify from scratch
 
 ```bash
 uv sync --group dev --group backtesting --group dashboard
 uv run pytest                               # serial; ~11-12 min (683 s recorded); not xdist-friendly
+GITHUB_ACTIONS=true uv run pytest           # CI emulation (Rich/ANSI terminal mode); also required
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy                                 # 201 files
@@ -145,3 +183,9 @@ uv run python -m equity_lake.ml.r01_controls --mode all --protocol-root docs --r
    breaks reproducibility.
 7. Do not switch ingestion to `auto_adjust=True` (raw-at-write-boundary) and never double-count
    vendor-adjusted returns with the ledger's `CASH_DIVIDEND` events.
+8. Never run a real `uv` or `make` target from inside the unit suite — a bare `uv run` resolves its own
+   interpreter and can rebuild `.venv` under the running process (§5 B). Stub `uv` on `PATH` and forward
+   to `sys.executable`.
+9. Assert help content on `strip_ansi(...)`/`help_text(...)` output (`tests/helpers/cli.py`) — CI sets
+   `GITHUB_ACTIONS` and Rich styles option names across ANSI spans (§5 A). A wide `COLUMNS` or
+   `TERMINAL_WIDTH` changes nothing and `TERM=dumb` truncates long option names; neither is a fix.
