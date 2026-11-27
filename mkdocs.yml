@@ -72,6 +72,7 @@ nav:
           - jpx_equity (RS-M03): developer/architecture/market-jpx-equity-feasibility.md
           - krx_equity (RS-M04): developer/architecture/market-krx-equity-feasibility.md
       - Residual Specification and Implementation Plan: plans/20261122-01-residual-spec-and-implementation-plan.md
+      - Residual Implementation Handoff (2026-11-27): handoffs/20261127-01-residual-implementation-handoff.md
       - Research Protocols (R00) and R01 Measured Controls: developer/architecture/research-protocols.md
       - R01 Preregistration (frozen before the run): research/20261123-01-r01-preregistration.md
       - R01 Controls and Scale Results: research/20261123-01-r01-report.md

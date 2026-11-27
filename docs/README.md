@@ -131,6 +131,7 @@ rerun for this update and are not production-data-integrity proof.
 - [decisions/](decisions/) for architecture decision records (ADRs)
 - [reports/](reports/) for current analysis and operational writeups
 - [handoffs/](handoffs/) for cross-thread records; the [20261121 gap accounting](handoffs/20261121-01-gap-accounting.md) preserves prior outcomes, while the [20261122 residual plan](plans/20261122-01-residual-spec-and-implementation-plan.md) is the current work queue. Earlier pickup instructions are historical, not pending implementation.
+  - Current pickup entry: [20261127 residual implementation handoff](handoffs/20261127-01-residual-implementation-handoff.md) — verified state after the residual stages, the three remaining buckets, the known CI issue and the trap list
 - [finding/](finding/) for engineering audit evidence and resolution registers; these are not runtime `data/findings/` artifacts
 - [DAG pipeline remediation](plans/20261006-dag-pipeline-00-handoff-index.md) for the ordered, approval-gated implementation handoffs
 - [archive/](archive/) for superseded implementation notes and spent scripts
