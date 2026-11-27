@@ -757,8 +757,9 @@ def _render_html(payload: Mapping[str, Any]) -> str:
         f"Latest demo date in the inventory: {_e(payload.get('latest_demo_date') or '—')}.</p>"
     )
     footer = (
-        f"<p>{_e(payload.get('demo_data_only'))}. This artifact is a local build for loopback review only; "
-        "it is not a published page and it certifies nothing about any real market.</p>"
+        f"<p>{_e(payload.get('demo_data_only'))}. This artifact is generated offline from the synthetic demonstration lake. "
+        "It may be served by the local loopback preview or published as a static page; either way it certifies nothing about any"
+        " real market.</p>"
         f"<p>Sanitization: allowlisted fields only, negative scan recorded in {_e(REPORT_FILENAME)}. "
         "No price value is serialized.</p>"
     )
