@@ -252,7 +252,14 @@ class TestReleaseReceiptAndRollback:
 
         assert "rollback_run_id" in text
         assert "gh run download" in text
-        assert "--check-receipt release/receipt.json" in text
+        # The retained bundle is ONE private artifact holding the three public files and
+        # the receipt, and the verifier refuses a fourth entry in the allowlisted
+        # directory. So the receipt has to leave that directory before it is checked:
+        # the previous assertion here pinned `--check-receipt release/receipt.json`, which
+        # is exactly the form that made every rollback refuse with "unexpected entries: 1".
+        assert "mv release/receipt.json rollback-receipt.json" in text, text
+        assert "--check-receipt rollback-receipt.json" in text
+        assert "--check-receipt release/receipt.json" not in text
 
     def test_a_dispatch_input_is_never_interpolated_into_a_shell_command(self) -> None:
         """A workflow_dispatch input is string data; it reaches the shell through env only."""

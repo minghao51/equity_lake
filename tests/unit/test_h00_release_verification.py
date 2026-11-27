@@ -237,18 +237,6 @@ class TestDeploymentReceipt:
         summary = verify.verify_receipt(release, moved, expect_commit="a" * 40)
         assert summary["files"] == len(h00.ARTIFACT_FILENAMES)
 
-    def test_the_rollback_workflow_separates_the_receipt_before_verifying(self) -> None:
-        """The download step must move the receipt out of the allowlisted directory.
-
-        A rollback only works if the published directory holds exactly three entries, so
-        the workflow — not the verifier — has to separate the private receipt first.
-        """
-        workflow = (Path(__file__).resolve().parents[2] / ".github/workflows/h00-publish.yml").read_text(encoding="utf-8")
-
-        assert "mv release/receipt.json rollback-receipt.json" in workflow
-        assert "--check-receipt rollback-receipt.json" in workflow
-        assert "--check-receipt release/receipt.json" not in workflow
-
     def test_a_receipt_is_refused_inside_the_public_release_directory(self, release: Path) -> None:
         """Writing the receipt into the artifact would break the three-file allowlist."""
         receipt = verify.build_receipt(release, commit=None)
