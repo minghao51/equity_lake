@@ -70,10 +70,10 @@ Decisions recorded:
    environment has required reviewers (`minghao51`, `prevent_self_review=false`, `can_admins_bypass=false`)
    with the existing `main`-only branch policy preserved. This was set through the GitHub API, and the API
    response — `protection_rules` now includes `required_reviewers` plus `branch_policy` — is the platform
-   evidence. **Awaiting the next dispatch: the footer fix.** The published page's footer claimed it "is not
-   a published page" — false for the deployed bytes; fixed in `src/equity_lake/dashboard/h00.py` with a
-   regression test in `tests/unit/test_h00_sanitized_page.py`, and the live page will carry the corrected
-   footer at the next `h00-publish.yml` dispatch.
+   evidence. **The footer fix is live.** The published page's footer claimed it "is not a published page" —
+   false for the deployed bytes; fixed in `src/equity_lake/dashboard/h00.py` with a regression test in
+   `tests/unit/test_h00_sanitized_page.py` and republished by [run 46011953819](https://github.com/minghao51/equity_lake/actions/runs/46011953819);
+   the live page now reads "may be served by the local loopback preview or published as a static page".
 2. **Optionally inspect the live page once in a browser** to confirm the stale banner behaves. Staleness is
    proven by structural tests and mutation (`tests/unit/test_h00_sanitized_page.py`), not by a real browser.
 
@@ -101,10 +101,15 @@ Decisions recorded:
   split, so `_book_fingerprint`/`_prove_replay_equality` (`src/equity_lake/portfolio/store.py`) refuse and
   nothing changes; there is no separate named early pre-check for it. The sequence-room refusal is named at
   `store.py:1394` ("no deterministic source-sequence room before the earliest retained event").
-- The publish receipt and rollback path are tested (`tests/unit/test_h00_release_verification.py`) and were
-  exercised for the first time by the real publication of run 45980611891 (build → verify → receipt → bundle
-  upload → deploy). No rollback run (`inputs.rollback_run_id`) has ever been dispatched, so the rollback half
-  remains tested but unexercised.
+- The publish receipt and rollback path were exercised for the first time on 2026-11-27: run 45980611891
+  (build → verify → receipt → bundle upload → deploy), then
+  [run 46021167248](https://github.com/minghao51/equity_lake/actions/runs/46021167248), a real
+  `rollback_run_id` dispatch that downloaded run 46011953819's retained bundle, verified it against its
+  receipt and redeployed it. The first rollback attempt (46020397986) failed closed: `h00-release-bundle`
+  carries the private receipt inside the directory that is verified against the three-file allowlist, so
+  `--check-receipt` refused it with "unexpected entries: 1". The workflow now moves the receipt out before
+  verifying, and `tests/unit/test_h00_release_verification.py` pins both halves plus the workflow step.
+  Nothing in this area is untested-but-claimed any more; bundle pruning remains the open operator action.
 - R01's power clears its floor by only 2.6 pp and is synthetic-fixture evidence
   ([R01 report](../research/20261123-01-r01-report.md)).
 - 132 test files lost their now-redundant `# type: ignore[import-untyped]` comments (604 occurrences) after `py.typed` was
