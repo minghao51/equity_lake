@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 import equity_lake.cli.commands.data as data_commands
 from equity_lake.cli.__main__ import app
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -161,9 +162,10 @@ def test_maintenance_dry_run_defaults_and_help_are_preserved(
 
     help_result = runner.invoke(app, [command, "--help"])
     assert help_result.exit_code == 0
-    assert "--dry-run" in help_result.stdout
+    help_stdout = strip_ansi(help_result.stdout)
+    assert "--dry-run" in help_stdout
     if command == "delta-vacuum":
-        assert "--no-dry-run" in help_result.stdout
+        assert "--no-dry-run" in help_stdout
 
 
 def test_cli_rejects_empty_late_target_before_vacuum_call(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

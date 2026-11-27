@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from equity_lake.cli._app import config_app
 from equity_lake.cli.commands import admin as admin_commands  # noqa: F401
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 
 def _write_ticker_config(path: Path) -> Path:
@@ -41,7 +42,7 @@ def test_validation_help_labels_default_ticker_only_scope() -> None:
     result = CliRunner().invoke(config_app, ["validate", "--help"])
 
     assert result.exit_code == 0
-    help_text = " ".join(result.output.replace("│", " ").split())
+    help_text = " ".join(strip_ansi(result.output).replace("│", " ").split())
     assert "default scope is tickers only" in help_text
     assert "not selected by default" in help_text
 

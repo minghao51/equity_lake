@@ -44,6 +44,7 @@ from equity_lake.portfolio.store import (
     prune_ledger,
     verify_ledger_file,
 )
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -495,14 +496,15 @@ class TestCli:
         result = runner.invoke(app, ["portfolio", "prune", "--help"], env={"COLUMNS": "200"})
 
         assert result.exit_code == 0, result.output
-        assert "--before" in result.stdout
-        assert "--apply" in result.stdout
-        assert "--backup" in result.stdout
-        assert "report-only" in result.stdout
-        assert "verified backup" in result.stdout
-        assert "manifest" in result.stdout
-        assert "Exit codes" in result.stdout
-        assert "no-op" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--before" in help_stdout
+        assert "--apply" in help_stdout
+        assert "--backup" in help_stdout
+        assert "report-only" in help_stdout
+        assert "verified backup" in help_stdout
+        assert "manifest" in help_stdout
+        assert "Exit codes" in help_stdout
+        assert "no-op" in help_stdout
 
     def test_cli_report_only_prints_the_plan_and_writes_nothing(self, ledger: Path, tmp_path: Path) -> None:
         before = _snapshot(tmp_path)

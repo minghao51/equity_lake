@@ -27,6 +27,7 @@ from equity_lake.ingestion.orchestrator import run_daily_ingestion
 from equity_lake.ingestion.types import SourceStatus
 from equity_lake.monitoring.health import GOLD_FEATURES_DIR, PipelineMonitor, _price_market_paths
 from equity_lake.storage.delta import delta_table_path, merge_delta, read_delta
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 TABLE = "01_bronze/market_data/us_equity"
 
@@ -318,7 +319,7 @@ def test_the_ingest_commands_expose_lake_dir_and_reject_a_foreign_root(tmp_path:
     outside = tmp_path.parent / "elsewhere"
 
     for command in ("ingest", "backfill", "corporate-actions", "monitor"):
-        help_text = runner.invoke(app, [command, "--help"], catch_exceptions=False).stdout
+        help_text = strip_ansi(runner.invoke(app, [command, "--help"], catch_exceptions=False).stdout)
         assert "--lake-dir" in help_text, command
 
     # An invalid date keeps the command offline even if the root rule is removed, so the

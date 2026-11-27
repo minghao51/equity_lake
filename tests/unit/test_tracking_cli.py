@@ -15,6 +15,7 @@ from typer.testing import CliRunner
 
 from equity_lake.cli.commands import tracking
 from equity_lake.signals.readiness import HistoryState, SignalHistoryObservation
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -36,9 +37,9 @@ def test_doctor_help_exposes_read_only_scope_options() -> None:
     result = runner.invoke(_cli(), ["doctor", "--help"])
 
     assert result.exit_code == 0
-    assert "--watchlist" in result.stdout
-    assert "--ticker-config" in result.stdout
-    assert "--as-of" in result.stdout
+    assert "--watchlist" in strip_ansi(result.stdout)
+    assert "--ticker-config" in strip_ansi(result.stdout)
+    assert "--as-of" in strip_ansi(result.stdout)
 
 
 def test_doctor_passes_explicit_config_and_cutoff_to_observer_without_writes(tmp_path: Path, monkeypatch: Any) -> None:
@@ -96,8 +97,8 @@ def test_signal_history_requires_explicit_date_and_limit() -> None:
     assert result.exit_code != 0
     help_result = runner.invoke(_cli(), ["signal", "history", "--help"])
     assert help_result.exit_code == 0
-    assert "--date" in help_result.stdout
-    assert "--limit" in help_result.stdout
+    assert "--date" in strip_ansi(help_result.stdout)
+    assert "--limit" in strip_ansi(help_result.stdout)
 
 
 def test_signal_history_reads_only_requested_date_and_limit(monkeypatch: Any, tmp_path: Path) -> None:

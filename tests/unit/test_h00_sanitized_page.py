@@ -36,6 +36,7 @@ from equity_lake.core import paths
 from equity_lake.dashboard import h00
 from equity_lake.dashboard.exporter import DashboardExporter
 from equity_lake.devtools.seed_demo import seed_demo
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 #: Canaries that exist on disk in the sandbox and must never appear in the artifact.
 LEDGER_CANARY = "CANARYLEDGERACCOUNT"
@@ -413,6 +414,12 @@ class TestAdoptedWording:
         assert payload["disclaimer"] == h00.PERFORMANCE_DISCLAIMER
         assert payload["demo_data_only"] == h00.DEMO_DATA_ONLY
 
+    def test_footer_does_not_claim_the_page_is_unpublished(self, built: h00.H00Artifact) -> None:
+        """The H00 workflow publishes this page, so a "not a published page" claim would be false."""
+        html = built.index_path.read_text(encoding="utf-8")
+        assert "not a published page" not in html
+        assert "loopback preview or published as a static page" in html
+
     def test_payload_carries_the_machine_readable_provenance(self, built: h00.H00Artifact) -> None:
         payload = json.loads(built.payload_path.read_text(encoding="utf-8"))
         assert payload["provenance"] == "synthetic"
@@ -569,13 +576,13 @@ class TestCli:
         runner = CliRunner()
         listing = runner.invoke(app, ["dashboard", "--help"])
         assert listing.exit_code == 0
-        assert "h00-build" in listing.stdout
-        assert "h00-preview" in listing.stdout
+        assert "h00-build" in strip_ansi(listing.stdout)
+        assert "h00-preview" in strip_ansi(listing.stdout)
 
         build_help = runner.invoke(app, ["dashboard", "h00-build", "--help"])
         assert build_help.exit_code == 0
-        assert "never publishes" in build_help.stdout
+        assert "never publishes" in strip_ansi(build_help.stdout)
 
         preview_help = runner.invoke(app, ["dashboard", "h00-preview", "--help"])
         assert preview_help.exit_code == 0
-        assert "--port" in preview_help.stdout
+        assert "--port" in strip_ansi(preview_help.stdout)

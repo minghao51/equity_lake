@@ -179,6 +179,11 @@ def test_reset_lake_errors_out_on_an_unrecognized_dry_value(tmp_path: Path) -> N
     stub.write_text(f"#!/bin/sh\ntouch {sentinel}\nexit 0\n", encoding="utf-8")
     stub.chmod(0o755)
     env = {**os.environ, "PATH": f"{stub_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    # The reset targets live under the gitignored `data/` root, so a clean checkout
+    # (CI) has none of them. Compare fingerprints instead of demanding ``exists()``:
+    # the invariant is that a refused invocation changes nothing, which holds whether
+    # or not a local lake has been seeded.
+    before = {str(path): _fingerprint(path) for path in _RESET_TARGETS}
 
     for value in ("2", "yes", "true"):
         result = subprocess.run(
@@ -193,8 +198,7 @@ def test_reset_lake_errors_out_on_an_unrecognized_dry_value(tmp_path: Path) -> N
         assert "DRY must be 0, 1, or empty" in result.stderr
         assert f"(got '{value}')" in result.stderr
     assert not sentinel.exists()
-    for path in _RESET_TARGETS:
-        assert path.exists()
+    assert {str(path): _fingerprint(path) for path in _RESET_TARGETS} == before
 
 
 def _fingerprint(path: Path) -> tuple[bool, int]:

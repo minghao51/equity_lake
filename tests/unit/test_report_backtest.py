@@ -42,6 +42,7 @@ from equity_lake.backtesting.result import BacktestResult
 from equity_lake.backtesting.strategy.mean_reversion import BBMeanReversionStrategy
 from equity_lake.backtesting.strategy.momentum import CrossSectionalMomentumStrategy
 from equity_lake.cli.__main__ import app
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -659,9 +660,10 @@ class TestReportBacktestRootAndBasis:
     def test_help_lists_the_root_and_basis_flags(self) -> None:
         result = runner.invoke(app, ["report", "backtest", "--help"], env={"COLUMNS": "220"})
         assert result.exit_code == 0
+        help_stdout = strip_ansi(result.stdout)
         for flag in ("--lake-dir", "--coverage-basis", "--protocol-experiment", "--protocol-digest", "--protocol-root"):
-            assert flag in result.stdout
-        assert "vendor_events_no_clock" in result.stdout
+            assert flag in help_stdout
+        assert "vendor_events_no_clock" in help_stdout
 
     def test_an_unknown_basis_exits_non_zero(self, tmp_path: Path) -> None:
         """Falsified by: passing an unvalidated basis string down to the engine."""

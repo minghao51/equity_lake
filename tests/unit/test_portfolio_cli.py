@@ -35,6 +35,7 @@ from equity_lake.core.paths import PORTFOLIO_DIR
 from equity_lake.portfolio import store as portfolio_store
 from equity_lake.portfolio.csv_import import CANONICAL_CSV_COLUMNS
 from equity_lake.portfolio.store import LedgerStore, portfolio_db_path
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -500,12 +501,13 @@ def test_import_help_documents_canonical_csv_only_and_no_write_dry_run() -> None
     result = runner.invoke(app, ["portfolio", "import", "--help"], env={"COLUMNS": "180"})
 
     assert result.exit_code == 0, result.output
-    assert "--file" in result.stdout
-    assert "--dry-run" in result.stdout
-    assert "--account" in result.stdout
-    assert "canonical CSV" in result.stdout
-    assert "writes nothing" in result.stdout
-    assert "never a real account number" in result.stdout
+    help_stdout = strip_ansi(result.stdout)
+    assert "--file" in help_stdout
+    assert "--dry-run" in help_stdout
+    assert "--account" in help_stdout
+    assert "canonical CSV" in help_stdout
+    assert "writes nothing" in help_stdout
+    assert "never a real account number" in help_stdout
 
 
 def test_import_help_states_the_frozen_exit_contract() -> None:
@@ -642,10 +644,11 @@ def test_read_command_help_states_required_inputs_and_the_exit_contract(command:
     result = runner.invoke(app, ["portfolio", command, "--help"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
-    assert "--as-of" in result.stdout
-    assert "--account" in result.stdout
-    assert "Exit codes" in result.stdout
-    assert "read paths" in result.stdout.lower()
+    help_stdout = strip_ansi(result.stdout)
+    assert "--as-of" in help_stdout
+    assert "--account" in help_stdout
+    assert "Exit codes" in help_stdout
+    assert "read paths" in help_stdout.lower()
 
 
 def test_valuation_help_states_the_staleness_bound_and_marks_requirement() -> None:
@@ -653,18 +656,20 @@ def test_valuation_help_states_the_staleness_bound_and_marks_requirement() -> No
         result = runner.invoke(app, ["portfolio", command, "--help"], env={"COLUMNS": "200"})
 
         assert result.exit_code == 0, result.output
-        assert "--marks" in result.stdout
-        assert "--max-stale-sessions" in result.stdout
-        assert "never above 1" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--marks" in help_stdout
+        assert "--max-stale-sessions" in help_stdout
+        assert "never above 1" in help_stdout
 
 
 def test_reconcile_help_states_the_canonical_statement_only() -> None:
     result = runner.invoke(app, ["portfolio", "reconcile", "--help"], env={"COLUMNS": "200"})
 
     assert result.exit_code == 0, result.output
-    assert "--statement" in result.stdout
-    assert "canonical" in result.stdout
-    assert "never created or mapped from a broker export" in result.stdout
+    help_stdout = strip_ansi(result.stdout)
+    assert "--statement" in help_stdout
+    assert "canonical" in help_stdout
+    assert "never created or mapped from a broker export" in help_stdout
 
 
 def test_positions_reports_the_hand_oracle(tmp_path: Path, isolated_ledger: Path) -> None:

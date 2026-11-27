@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from equity_lake.cli._app import api_app
 from equity_lake.cli.commands import api as api_command  # noqa: F401
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 
 def test_api_defaults_to_loopback_without_confirmation() -> None:
@@ -65,7 +66,7 @@ def test_api_help_discloses_explicit_unauthenticated_exposure_opt_in() -> None:
     result = CliRunner().invoke(api_app, ["--help"], env={"COLUMNS": "180"})
 
     assert result.exit_code == 0
-    assert "--allow-unauthenticated-exposure" in result.output
+    assert "--allow-unauthenticated-exposure" in strip_ansi(result.output)
 
 
 def test_docker_api_default_and_documented_explicit_container_exposure() -> None:

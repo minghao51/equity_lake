@@ -37,6 +37,7 @@ from equity_lake.portfolio.store import (
     restore_ledger,
     verify_ledger_file,
 )
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -458,13 +459,13 @@ class TestCliSurface:
     def test_backup_help_documents_both_modes(self) -> None:
         result = runner.invoke(app, ["portfolio", "backup", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0, result.output
-        assert "--output-dir" in result.stdout
-        assert "--apply" in result.stdout
+        assert "--output-dir" in strip_ansi(result.stdout)
+        assert "--apply" in strip_ansi(result.stdout)
 
     def test_backups_help_documents_the_read_only_listing(self) -> None:
         result = runner.invoke(app, ["portfolio", "backups", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0, result.output
-        assert "--directory" in result.stdout
+        assert "--directory" in strip_ansi(result.stdout)
 
     def test_the_cli_report_only_writes_nothing(self, ledger: Path, tmp_path: Path) -> None:
         """`equity portfolio backup` without ``--apply`` prints a plan and writes nothing."""

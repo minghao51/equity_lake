@@ -11,6 +11,7 @@ from equity_lake.core.availability import (
     ACTION_COVERAGE_SCHEMA_VERSION,  # pyright: ignore[reportMissingImports] -- source import verified by uv
 )
 from equity_lake.devtools.seed_demo import DEMO_UNIVERSE, resolve_universe, seed_demo
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 pytestmark = pytest.mark.slow
 
@@ -246,8 +247,8 @@ def test_cli_demo_seed_help_documents_end_date() -> None:
 
     result = CliRunner().invoke(app, ["demo", "seed", "--help"])
     assert result.exit_code == 0, result.output
-    assert "--end-date" in result.stdout
-    assert "YYYY-MM-DD" in result.stdout
+    assert "--end-date" in strip_ansi(result.stdout)
+    assert "YYYY-MM-DD" in strip_ansi(result.stdout)
 
 
 def test_same_seed_and_end_date_are_identical_on_two_wall_clock_days(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

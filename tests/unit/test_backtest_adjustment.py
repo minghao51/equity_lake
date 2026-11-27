@@ -22,6 +22,7 @@ from equity_lake.core.availability import (  # pyright: ignore[reportMissingImpo
 from equity_lake.core.schemas import CORPORATE_ACTION_SCHEMA
 from equity_lake.storage.delta import merge_delta
 from equity_lake.storage.lake_reader import with_price_adjustment
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 
 @pytest.fixture()
@@ -291,7 +292,7 @@ class TestCliFlag:
 
         result = CliRunner().invoke(app, ["backtest", "--help"])
         assert result.exit_code == 0
-        help_output = " ".join(result.output.split())
+        help_output = " ".join(strip_ansi(result.output).split())
         assert "--adjust" in help_output
         assert "split-only" in help_output
         assert "default: splits" in help_output

@@ -24,6 +24,7 @@ from equity_lake.portfolio.store import (
     restore_ledger,
     verify_ledger_file,
 )
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -240,13 +241,13 @@ class TestCliSurface:
     def test_restore_help_documents_both_modes(self) -> None:
         result = runner.invoke(__import__("equity_lake.cli.__main__", fromlist=["app"]).app, ["portfolio", "restore", "--help"])
         assert result.exit_code == 0
-        assert "--from" in result.stdout
-        assert "--apply" in result.stdout
+        assert "--from" in strip_ansi(result.stdout)
+        assert "--apply" in strip_ansi(result.stdout)
 
     def test_compact_help_documents_both_modes(self) -> None:
         result = runner.invoke(__import__("equity_lake.cli.__main__", fromlist=["app"]).app, ["portfolio", "compact", "--help"])
         assert result.exit_code == 0
-        assert "--apply" in result.stdout
+        assert "--apply" in strip_ansi(result.stdout)
 
     def test_restore_without_a_ledger_exits_non_zero(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """A refusal is a non-zero exit with the reason, never a traceback."""

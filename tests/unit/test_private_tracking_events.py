@@ -15,6 +15,7 @@ import yaml
 from typer.testing import CliRunner
 
 from equity_lake.core.instruments import InstrumentKey
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 tracking = import_module("equity_lake.signals.tracking")
 
@@ -985,15 +986,18 @@ def _seed_pending_event(data_dir: Path, *, suffix: int, session: date = SESSION)
 
 def test_tracking_shadow_help_documents_offline_sink_and_guard_options() -> None:
     unified_app = import_module("equity_lake.cli.__main__").app
-    help_env = {"COLUMNS": "160", "TERM": "dumb"}
+    # No TERM=dumb: under CI's forced-terminal rendering it pins Rich to its 80-column
+    # dumb-terminal size, which truncates --require-strict-coverage to an ellipsis.
+    help_env = {"COLUMNS": "160"}
     shadow_help = runner.invoke(unified_app, ["tracking", "shadow", "--help"], env=help_env)
     assert shadow_help.exit_code == 0
+    shadow_stdout = strip_ansi(shadow_help.stdout)
     for option in ("--as-of", "--rounds", "--require-strict-coverage", "--no-scan", "--lake-dir", "--data-dir"):
-        assert option in shadow_help.stdout
-    assert "in-memory sink" in shadow_help.stdout
+        assert option in shadow_stdout
+    assert "in-memory sink" in shadow_stdout
     deliver_help = runner.invoke(unified_app, ["tracking", "deliver", "--help"], env=help_env)
     assert deliver_help.exit_code == 0
-    assert "--remove-event" in deliver_help.stdout
+    assert "--remove-event" in strip_ansi(deliver_help.stdout)
 
 
 def test_paper_shadow_delivers_to_the_local_sink_without_constructing_an_http_sender(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

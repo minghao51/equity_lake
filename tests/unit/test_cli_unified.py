@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from equity_lake.cli.__main__ import app
 from equity_lake.core.paths import LAKE_DIR
 from equity_lake.ingestion.types import SourceOutcome, SourceStatus
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 runner = CliRunner()
 
@@ -56,8 +57,9 @@ class TestLabelRepairSubcommands:
     def test_label_repair_help(self) -> None:
         result = runner.invoke(app, ["label-repair", "--help"])
         assert result.exit_code == 0
-        assert "report" in result.stdout.lower()
-        assert "--repair" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "report" in help_stdout.lower()
+        assert "--repair" in help_stdout
 
 
 class TestSignalSubcommands:
@@ -69,16 +71,18 @@ class TestSignalSubcommands:
     def test_signal_history_help(self) -> None:
         result = runner.invoke(app, ["signal", "history", "--help"])
         assert result.exit_code == 0
-        assert "--date" in result.stdout
-        assert "--limit" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--date" in help_stdout
+        assert "--limit" in help_stdout
 
 
 class TestDoctorCommand:
     def test_doctor_help(self) -> None:
         result = runner.invoke(app, ["doctor", "--help"])
         assert result.exit_code == 0
-        assert "--as-of" in result.stdout
-        assert "read-only" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--as-of" in help_stdout
+        assert "read-only" in help_stdout
 
     def test_doctor_does_not_initialize_runtime_paths(self) -> None:
         with (
@@ -151,8 +155,9 @@ class TestArenaReportSubcommands:
         """--lake lets the arena read an auxiliary lake (e.g. the demo sample lake)."""
         result = runner.invoke(app, ["arena", "run", "--help"])
         assert result.exit_code == 0
-        assert "--lake" in result.stdout
-        assert "canonical lake" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--lake" in help_stdout
+        assert "canonical lake" in help_stdout
 
     def test_arena_run_help_documents_completion_exit_policy(self) -> None:
         """F04: the help states the PARTIAL label and the nonzero exit policy."""
@@ -188,68 +193,75 @@ class TestPortfolioSubcommands:
     def test_portfolio_import_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "import", "--help"], env={"COLUMNS": "180"})
         assert result.exit_code == 0
-        assert "--file" in result.stdout
-        assert "--dry-run" in result.stdout
-        assert "--account" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--file" in help_stdout
+        assert "--dry-run" in help_stdout
+        assert "--account" in help_stdout
         # ADR-0024 decision 13: the canonical CSV is the only accepted input and
         # --dry-run writes nothing at all.
-        assert "canonical CSV" in result.stdout
-        assert "writes nothing" in result.stdout
-        assert "Exit codes" in result.stdout
+        assert "canonical CSV" in help_stdout
+        assert "writes nothing" in help_stdout
+        assert "Exit codes" in help_stdout
 
     def test_portfolio_positions_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "positions", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--as-of" in result.stdout
-        assert "--marks" in result.stdout
-        assert "--account" in result.stdout
-        assert "--max-stale-sessions" in result.stdout
-        assert "effective-date reconstruction" in result.stdout
-        assert "Exit codes" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--as-of" in help_stdout
+        assert "--marks" in help_stdout
+        assert "--account" in help_stdout
+        assert "--max-stale-sessions" in help_stdout
+        assert "effective-date reconstruction" in help_stdout
+        assert "Exit codes" in help_stdout
 
     def test_portfolio_summary_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "summary", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--as-of" in result.stdout
-        assert "--marks" in result.stdout
-        assert "withholding are **unavailable**, not zero" in result.stdout
-        assert "Exit codes" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--as-of" in help_stdout
+        assert "--marks" in help_stdout
+        assert "withholding are **unavailable**, not zero" in help_stdout
+        assert "Exit codes" in help_stdout
 
     def test_portfolio_reconcile_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "reconcile", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--as-of" in result.stdout
-        assert "--statement" in result.stdout
-        assert "0.00000001 share and 0.01 USD" in result.stdout
-        assert "Exit codes" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--as-of" in help_stdout
+        assert "--statement" in help_stdout
+        assert "0.00000001 share and 0.01 USD" in help_stdout
+        assert "Exit codes" in help_stdout
 
     def test_portfolio_migrate_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "migrate", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--apply" in result.stdout
-        assert "--report-only" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--apply" in help_stdout
+        assert "--report-only" in help_stdout
         # ADR-0031: the default writes nothing and there is no down-migration.
-        assert "writes nothing" in result.stdout
-        assert "no down-migration" in result.stdout
-        assert "Exit codes" in result.stdout
+        assert "writes nothing" in help_stdout
+        assert "no down-migration" in help_stdout
+        assert "Exit codes" in help_stdout
 
     def test_portfolio_backup_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "backup", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--output-dir" in result.stdout
-        assert "--apply" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--output-dir" in help_stdout
+        assert "--apply" in help_stdout
         # RS-P02 / ADR-0031 decision 3: report-only default, local copy only, no pruning.
-        assert "writes nothing" in result.stdout
-        assert "off-host" in result.stdout
-        assert "pruning" in result.stdout
-        assert "Exit codes" in result.stdout
+        assert "writes nothing" in help_stdout
+        assert "off-host" in help_stdout
+        assert "pruning" in help_stdout
+        assert "Exit codes" in help_stdout
 
     def test_portfolio_backups_help(self) -> None:
         result = runner.invoke(app, ["portfolio", "backups", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
-        assert "--directory" in result.stdout
-        assert "read-only" in result.stdout
-        assert "Exit codes" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--directory" in help_stdout
+        assert "read-only" in help_stdout
+        assert "Exit codes" in help_stdout
 
 
 class TestDemoSubcommands:
@@ -280,9 +292,10 @@ class TestApiSubcommands:
     def test_api_serve_help(self) -> None:
         result = runner.invoke(app, ["api", "serve", "--help"], env={"COLUMNS": "180"})
         assert result.exit_code == 0
-        assert "API" in result.stdout or "api" in result.stdout.lower()
-        assert "non-loopback" in result.stdout  # guard documented in --host help
-        assert "--allow-unauthenticated-exposure" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "API" in help_stdout or "api" in help_stdout.lower()
+        assert "non-loopback" in help_stdout  # guard documented in --host help
+        assert "--allow-unauthenticated-exposure" in help_stdout
 
 
 class TestApiServeNonLoopbackGuard:
@@ -569,7 +582,7 @@ class TestNativeCommands:
         # The help text must advertise the negation.
         help_result = runner.invoke(app, ["delta-vacuum", "--help"])
         assert help_result.exit_code == 0
-        assert "--no-dry-run" in help_result.stdout
+        assert "--no-dry-run" in strip_ansi(help_result.stdout)
 
     def test_delta_compact_resolves_canonical_medallion_paths(self) -> None:
         """Regression test (P0): delta-compact must resolve dataset ids to canonical paths."""
@@ -851,7 +864,7 @@ class TestBackfillScope:
         """The scoped-landing flag is discoverable (AGENTS.md CLI change matrix)."""
         result = runner.invoke(app, ["backfill", "--help"])
         assert result.exit_code == 0
-        assert "--tickers" in result.stdout
+        assert "--tickers" in strip_ansi(result.stdout)
 
     def test_backfill_threads_the_explicit_ticker_scope(self) -> None:
         """``--tickers`` reaches ``backfill_date_range``, deduplicated and ordered.
@@ -982,8 +995,9 @@ class TestSecProcessOption:
     def test_sec_help_preserves_process_flag_and_explains_cost_gate(self) -> None:
         result = runner.invoke(app, ["sec", "--help"])
         assert result.exit_code == 0
-        assert "--process" in result.stdout
-        assert "actual-cost" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "--process" in help_stdout
+        assert "actual-cost" in help_stdout
 
     def test_sec_process_fails_before_fetch_without_cost_adapter(self) -> None:
         with patch("equity_lake.sources.sec_fulltext.SECFilingFetcher") as fetcher:
@@ -1156,7 +1170,7 @@ class TestQueryDefaults:
 
         result = runner.invoke(app, ["query", "--help"])
         assert result.exit_code == 0
-        assert DUCKDB_DEFAULT_PATH.name in result.stdout
+        assert DUCKDB_DEFAULT_PATH.name in strip_ansi(result.stdout)
 
 
 class TestQueryErrorContract:
@@ -1429,8 +1443,9 @@ class TestWidenCommand:
     def test_widen_help(self) -> None:
         result = runner.invoke(app, ["widen", "--help"])
         assert result.exit_code == 0
-        assert "range fetch per ticker" in result.stdout
-        assert "--lake-dir" in result.stdout
+        help_stdout = strip_ansi(result.stdout)
+        assert "range fetch per ticker" in help_stdout
+        assert "--lake-dir" in help_stdout
 
 
 class TestFeaturesCommand:
@@ -1439,11 +1454,12 @@ class TestFeaturesCommand:
     def test_features_help_scan(self) -> None:
         result = runner.invoke(app, ["features", "--help"], env={"COLUMNS": "200"})
         assert result.exit_code == 0
+        help_stdout = strip_ansi(result.stdout)
         for flag in ("--tickers", "--start", "--end", "--coverage-basis", "--lake-dir", "--dry-run"):
-            assert flag in result.stdout
-        assert "source_clock" in result.stdout
-        assert "vendor_events_no_clock" in result.stdout
-        assert "without writing Gold rows" in result.stdout
+            assert flag in help_stdout
+        assert "source_clock" in help_stdout
+        assert "vendor_events_no_clock" in help_stdout
+        assert "without writing Gold rows" in help_stdout
 
     def test_features_requires_an_explicit_ticker_scope(self) -> None:
         result = runner.invoke(app, ["features", "--tickers", "", "--start", "2024-01-02", "--end", "2024-01-03"])

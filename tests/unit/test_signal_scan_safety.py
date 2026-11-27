@@ -17,6 +17,7 @@ from equity_lake.cli.__main__ import app
 from equity_lake.core.instruments import InstrumentKey
 from equity_lake.signals.models import Signal, SignalConfig, Watchlist
 from equity_lake.signals.scanner import SignalScanner
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 
 def _configs(tmp_path: Path) -> tuple[Path, Path]:
@@ -163,8 +164,8 @@ def test_empty_watchlist_live_scan_exits_cleanly_without_traceback(tmp_path: Pat
 def test_signal_scan_help_explains_safe_dry_run() -> None:
     result = CliRunner().invoke(app, ["signal", "scan", "--help"])
     assert result.exit_code == 0
-    assert "--dry-run" in result.stdout
-    assert "without scanning" in result.stdout
+    assert "--dry-run" in strip_ansi(result.stdout)
+    assert "without scanning" in strip_ansi(result.stdout)
 
 
 def test_live_scan_initializes_paths_and_saves_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

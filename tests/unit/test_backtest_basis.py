@@ -49,6 +49,7 @@ from equity_lake.ingestion.corporate_actions import (  # pyright: ignore[reportM
 )
 from equity_lake.storage.delta import merge_delta, write_delta
 from equity_lake.storage.lake_reader import with_price_adjustment
+from tests.helpers.cli import strip_ansi  # pyright: ignore[reportMissingImports] -- resolved by pytest's rootdir sys.path
 
 MARKET = "us_equity"
 MIC = "XNYS"
@@ -417,10 +418,11 @@ class TestBacktestCli:
 
         result = CliRunner().invoke(app, ["backtest", "--help"], env={"COLUMNS": "220"})
         assert result.exit_code == 0
+        help_stdout = strip_ansi(result.stdout)
         for flag in ("--lake-dir", "--coverage-basis"):
-            assert flag in result.stdout
-        assert "vendor_events_no_clock" in result.stdout
-        assert "source_clock" in result.stdout
+            assert flag in help_stdout
+        assert "vendor_events_no_clock" in help_stdout
+        assert "source_clock" in help_stdout
 
     def test_an_unknown_basis_exits_non_zero(self) -> None:
         from typer.testing import CliRunner
