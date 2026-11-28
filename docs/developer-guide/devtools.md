@@ -155,6 +155,30 @@ The former `devtools/sync_schedule.py` (workflow-cron sync against
 `config/settings.yaml`) was retired with `.github/workflows/pages.yml`: no workflow
 publishes on a schedule any more, so there is no workflow cron to keep in sync.
 
+## H00 bundle inventory — `devtools/inventory_h00_bundles.py`
+
+Report-only answer to which retained bundles are verified recovery points and which artifact ids it suggests for a separate
+owner approval (stage H3; proposed ADR-0038); only the exact-name `h00-release-bundle` of `h00-publish.yml` is in scope. Each
+copy is refused by name: a missing/symlinked directory, a nested entry, a wrong entry set, bytes failing `verify_h00_release`,
+a missing/invalid/mismatched receipt, or expiry. Releases group by the ordered triple of verified public digests; active is
+the release `--active` proves; distinct releases rank by the successful run's `created_at`. It protects active, the three most
+recent distinct verified releases and every `--pin`, withholding the list with a named reason for a truncated/duplicated
+listing, a pending run or an unrecoverable release.
+
+```bash
+gh api repos/$OWNER/$REPO/actions/workflows/h00-publish.yml/runs?per_page=100 > runs.json
+gh api repos/$OWNER/$REPO/actions/artifacts?per_page=100 > artifacts.json
+gh run download <run> -n h00-release-bundle -D bundles/<artifact-id>   # once per artifact id
+mkdir -p live && curl -fsS https://<owner>.github.io/equity_lake/index.html -o live/index.html
+curl -fsS https://<owner>.github.io/equity_lake/payload.json -o live/payload.json
+curl -fsS https://<owner>.github.io/equity_lake/sanitization-report.json -o live/sanitization-report.json
+uv run python -m equity_lake.devtools.inventory_h00_bundles --bundles bundles --active live \
+  --artifacts artifacts.json --runs runs.json --out inventory.json
+```
+
+It deletes nothing, follows no link, calls no API and writes only `--out`. Its artifact ids are
+suggestions for a separate owner approval under proposed ADR-0038; 0 = complete, 1 = refused, 2 = empty.
+
 ## R02 artifact verification — `devtools/verify_r02_artifacts.py`
 
 Read-only verifier for the archived R02 research artifacts (RS-R02-D1): it checks every
