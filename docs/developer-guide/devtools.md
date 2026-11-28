@@ -176,6 +176,28 @@ uv run python -m equity_lake.devtools.verify_r02_artifacts \
   --lake-dir data/lake_real
 ```
 
+## Text availability audit — `devtools/audit_text_availability.py`
+
+Read-only, offline answer to whether a close-of-session decision could have seen a text
+corpus before anything is modelled (stage R1). It refuses `clock unknown` (missing, naive,
+date-only or unparseable `source_available_at`), `clock is not source-issued` (evidence kind
+outside the source-issued set), `section missing`, `content digest missing`, `equal-clock
+conflict` and `observable session unestablished`. A midnight-shaped clock is **warned**, never
+forgiven into proof: admission still requires an aware clock plus a source-issued evidence
+kind, so a midnight timestamp alone never establishes a verified first-public clock. Copies are
+deduplicated only when every copy carries the same digest; later revisions supersede earlier
+rows; per-session and per-issuer coverage is reported with the events still correctly
+invisible. Two checks are computed — `session-mapping invariant` (a real issuer session, never
+before the clock's UTC date, non-decreasing in clock order) and `future-safety invariant` (a
+guard on the synthetic future events' mapping, not proof that leakage is impossible) — and a
+failing check is a refusal. No network, no LLM, no fit; the report is value-free and written
+only with `--out`. Exit 0 = clean, 1 = any refusal, 2 = nothing to audit.
+
+```bash
+uv run python -m equity_lake.devtools.audit_text_availability \
+  --events /tmp/text-events.csv --start 2026-01-02 --end 2026-01-16
+```
+
 ## Markdown lint gate — `devtools/markdown_lint.py`
 
 The recursive Markdown gate behind `make lint-md`: `pymarkdown` scanned recursively so
