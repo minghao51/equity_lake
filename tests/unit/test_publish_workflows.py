@@ -261,6 +261,36 @@ class TestReleaseReceiptAndRollback:
         assert "--check-receipt rollback-receipt.json" in text
         assert "--check-receipt release/receipt.json" not in text
 
+    def test_a_rollback_restores_its_receipt_so_the_lineage_chains(self) -> None:
+        """The rollback path re-uploads a four-entry bundle, guarded before it goes out.
+
+        `release/` is uploaded as the next `h00-release-bundle` on both paths, so a rollback
+        that left the receipt outside would retain a three-entry bundle and the following
+        rollback would have no receipt to check. The restage moves the original receipt
+        back and a fail-closed shell guard proves the four-entry layout first.
+        """
+        steps = _load(PUBLISHER)["jobs"]["build"]["steps"]
+        runs = [str(step.get("run", "")) for step in steps]
+        checked = next(index for index, run in enumerate(runs) if "--check-receipt rollback-receipt.json" in run)
+        restage = next(index for index, run in enumerate(runs) if "mv rollback-receipt.json release/receipt.json" in run)
+        pages_stage = next(index for index, run in enumerate(runs) if "cp release/index.html" in run)
+        retained = next(index for index, step in enumerate(steps) if "upload-artifact" in str(step.get("uses", "")))
+
+        assert checked < restage < pages_stage < retained, "the restage belongs on the rollback path, before both uploads"
+        assert steps[restage]["if"] == "inputs.rollback_run_id != ''"
+        assert steps[pages_stage]["if"] == "inputs.rollback_run_id != ''"
+
+        run = str(steps[restage]["run"])
+        # The receipt is the original one: never rewritten, never re-checked here.
+        assert "--receipt-out" not in run
+        assert "--check-receipt" not in run
+        # The retained layout guard is shell-only and fails closed on the four exact names.
+        assert "set -euo pipefail" in run
+        assert "index.html payload.json receipt.json sanitization-report.json" in run
+        assert "! -type f" in run
+        assert run.count("exit 1") >= 2
+        assert steps[retained]["with"]["path"] == "release"
+
     def test_a_dispatch_input_is_never_interpolated_into_a_shell_command(self) -> None:
         """A workflow_dispatch input is string data; it reaches the shell through env only."""
         text = _code(PUBLISHER.read_text(encoding="utf-8"))

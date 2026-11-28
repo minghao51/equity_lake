@@ -60,7 +60,10 @@ publish anything. It:
 Dispatching it with a `rollback_run_id` skips the build: the job downloads that run's
 `h00-release-bundle`, verifies the bytes against the recorded receipt (including its commit
 binding) and deploys only then. A bundle whose bytes no longer match its receipt is refused,
-so a rollback can never deploy a re-typed substitute. GitHub retains artifacts by age rather
+so a rollback can never deploy a re-typed substitute. A rollback re-uploads its own retained
+bundle with the **original verified receipt restored unchanged** (never regenerated, never
+re-checked against the rollback runner's commit), so rollbacks chain: a second rollback can be
+sourced from the first rollback's bundle. GitHub retains artifacts by age rather
 than count, so pruning down to the last three bundles is an operator action, not automation.
 
 Two legacy deployers are **retired** and cannot publish:

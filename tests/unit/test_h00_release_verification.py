@@ -7,8 +7,12 @@ path rather than a property of the build. Every fixture is a real directory on d
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +22,36 @@ from equity_lake.devtools import verify_h00_release as verify
 
 CANARY = "CANARY-RELEASE-SECRET-4c1f"
 DIGEST_CANARY = "b" * 64
+REPO_ROOT = Path(__file__).parents[2]
+RECEIPT_NAME = "receipt.json"
+
+
+def _cli(*args: str) -> subprocess.CompletedProcess[str]:
+    """Run the real devtool CLI in a subprocess, the way the workflow invokes it."""
+    inherited = os.environ.get("PYTHONPATH", "")
+    path = os.pathsep.join([str(REPO_ROOT / "src"), inherited]) if inherited else str(REPO_ROOT / "src")
+    return subprocess.run(
+        [sys.executable, "-m", "equity_lake.devtools.verify_h00_release", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": path},
+    )
+
+
+def _stage_public(source: Path, target: Path) -> None:
+    """Copy exactly the three public names, as the workflow does for `dist/`."""
+    target.mkdir(parents=True, exist_ok=True)
+    for name in h00.ARTIFACT_FILENAMES:
+        shutil.copy2(source / name, target / name)
+
+
+def _digests(directory: Path) -> dict[str, str]:
+    return {name: hashlib.sha256((directory / name).read_bytes()).hexdigest() for name in h00.ARTIFACT_FILENAMES}
+
+
+def _retained_names(directory: Path) -> list[str]:
+    return sorted(path.name for path in directory.iterdir())
 
 
 @pytest.fixture
@@ -278,3 +312,94 @@ class TestDeploymentReceipt:
 
         with pytest.raises(verify.ReleaseVerificationError):
             verify.build_receipt(release)
+
+
+class TestRollbackLineageChains:
+    """A rollback's own retained bundle is a valid source for the next rollback."""
+
+    def test_the_second_rollback_verifies_from_the_first_rollbacks_bundle(self, release: Path, tmp_path: Path) -> None:
+        """Pin the SECOND hop of the retained lineage, through the real CLI.
+
+        Hop 1 is the build: `dist` is verified, a receipt is written outside it, and the
+        three public files plus the receipt are retained as one bundle. A rollback then
+        downloads that bundle, moves the receipt out, verifies the bytes and — the fix —
+        moves the *original* receipt back, so its own bundle again holds four entries.
+        Without that restage the re-uploaded bundle holds three entries and hop 2 here
+        fails at `--check-receipt` with "the release receipt is missing".
+        """
+        commit = "a" * 40
+
+        # Hop 1 — build and retain: receipt written beside the bundle, three files staged.
+        bundle1 = tmp_path / "bundle-1"
+        bundle1.mkdir()
+        written = _cli("--dir", str(release), "--receipt-out", str(bundle1 / RECEIPT_NAME), "--commit", commit)
+        assert written.returncode == 0, written.stderr
+        _stage_public(release, bundle1)
+        receipt1 = (bundle1 / RECEIPT_NAME).read_bytes()
+        assert _retained_names(bundle1) == sorted([*h00.ARTIFACT_FILENAMES, RECEIPT_NAME])
+        public1 = _digests(bundle1)
+
+        # Rollback #1 — download, move the receipt out, verify, restore it verbatim.
+        release1 = tmp_path / "rollback-1" / "release"
+        shutil.copytree(bundle1, release1)
+        moved1 = tmp_path / "rollback-1" / "rollback-receipt.json"
+        shutil.move(str(release1 / RECEIPT_NAME), moved1)
+        assert _retained_names(release1) == sorted(h00.ARTIFACT_FILENAMES)
+        checked1 = _cli("--dir", str(release1), "--check-receipt", str(moved1))
+        assert checked1.returncode == 0, checked1.stderr
+        assert "receipt verification passed" in checked1.stdout
+        shutil.move(str(moved1), release1 / RECEIPT_NAME)
+
+        # The restage puts the ORIGINAL bytes back: four entries, not a regenerated receipt.
+        assert _retained_names(release1) == sorted([*h00.ARTIFACT_FILENAMES, RECEIPT_NAME])
+        assert (release1 / RECEIPT_NAME).read_bytes() == receipt1
+
+        # Rollback #1's Pages staging holds exactly the three allowlisted names, no receipt.
+        dist1 = tmp_path / "rollback-1" / "dist"
+        _stage_public(release1, dist1)
+        assert _retained_names(dist1) == sorted(h00.ARTIFACT_FILENAMES)
+        assert not (dist1 / RECEIPT_NAME).exists()
+        staged1 = _cli("--dir", str(dist1))
+        assert staged1.returncode == 0, staged1.stderr
+        assert _digests(dist1) == public1
+
+        # Rollback #2 — sourced from rollback #1's re-uploaded bundle: the second hop.
+        bundle2 = tmp_path / "bundle-2"
+        bundle2.mkdir()
+        for name in (*h00.ARTIFACT_FILENAMES, RECEIPT_NAME):
+            shutil.copy2(release1 / name, bundle2 / name)
+        assert _retained_names(bundle2) == sorted([*h00.ARTIFACT_FILENAMES, RECEIPT_NAME])
+        release2 = tmp_path / "rollback-2" / "release"
+        shutil.copytree(bundle2, release2)
+        moved2 = tmp_path / "rollback-2" / "rollback-receipt.json"
+        shutil.move(str(release2 / RECEIPT_NAME), moved2)
+        checked2 = _cli("--dir", str(release2), "--check-receipt", str(moved2))
+        assert checked2.returncode == 0, checked2.stderr
+        assert (moved2).read_bytes() == receipt1
+        shutil.move(str(moved2), release2 / RECEIPT_NAME)
+        dist2 = tmp_path / "rollback-2" / "dist"
+        _stage_public(release2, dist2)
+        assert _retained_names(dist2) == sorted(h00.ARTIFACT_FILENAMES)
+        staged2 = _cli("--dir", str(dist2))
+        assert staged2.returncode == 0, staged2.stderr
+        assert _digests(dist2) == public1, "hop 2 must deploy the same verified public bytes"
+
+        # The broken alternative is genuinely refused: a re-uploaded bundle without the
+        # receipt leaves the next rollback with no evidence.
+        without_receipt = tmp_path / "broken" / "release"
+        shutil.copytree(bundle2, without_receipt)
+        (without_receipt / RECEIPT_NAME).unlink()
+        broken = _cli("--dir", str(without_receipt), "--check-receipt", str(tmp_path / "broken" / "rollback-receipt.json"))
+        assert broken.returncode != 0
+        assert "the release receipt is missing" in broken.stderr
+
+    def test_the_pages_staging_never_receives_the_restaged_receipt(self, release: Path, tmp_path: Path) -> None:
+        """Restoring the receipt to `release/` must not leak into the public `dist/`."""
+        (release / RECEIPT_NAME).write_text("{}\n", encoding="utf-8")  # the restaged retained bundle
+        public = tmp_path / "pages"
+        _stage_public(release, public)
+
+        assert _retained_names(public) == sorted(h00.ARTIFACT_FILENAMES)
+        assert verify.verify_release(public)["files"] == len(h00.ARTIFACT_FILENAMES)
+        with pytest.raises(verify.ReleaseVerificationError, match="not the allowlist"):
+            verify.verify_release(release)
