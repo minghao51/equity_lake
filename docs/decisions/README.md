@@ -16,6 +16,21 @@ enforced contracts when guidance conflicts.
 - ADRs are immutable once accepted. To reverse or amend a decision, write a
   new ADR and mark the old one superseded, linking both ways.
 
+## Proposed operating decisions
+
+See the [owner decision sheet](../plans/20261127-02-owner-decisions.md) for the approval and input
+gates and the separate one-off run decisions.
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+| [0038](0038-h00-rollback-bundle-retention.md) | Recoverable H00 bundle retention | Proposed |
+| [0039](0039-bounded-private-notification-delivery.md) | Bounded private notification pilot | Proposed; deferred to backlog |
+| [0040](0040-encrypted-off-host-ledger-backup.md) | Encrypted off-host ledger recovery drill | Proposed |
+| [0041](0041-ledger-backup-file-pruning.md) | Separate local backup-file pruning policy | Proposed |
+| [0042](0042-in-place-ledger-vacuum.md) | Defer in-place SQLite compaction | Proposed |
+| [0043](0043-real-root-non-us-admission.md) | Market-specific real-root admission | Proposed |
+| [0044](0044-paid-vendor-total-return-series.md) | Defer paid total-return procurement | Proposed |
+
 ## Index
 
 | ADR | Decision | Status |

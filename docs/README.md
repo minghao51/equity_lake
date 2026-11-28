@@ -11,7 +11,15 @@ When guidance conflicts, follow the order defined in `AGENTS.md`: enforced
 contracts first, then accepted decision records in `decisions/`, then these
 architecture pages and guides.
 
-## Current status — 2026-11-23
+## Current owner decisions
+
+- [Owner decision sheet](plans/20261127-02-owner-decisions.md): proposed ADRs and run gates for the remaining operating work.
+- [Operational and research specification](plans/20261127-03-operational-and-research-specification.md): sequenced tasks, acceptance evidence and approval gates. Live notifications are on the backlog.
+- [Unstructured predictor feasibility](research/20261127-01-unstructured-predictor-feasibility.md): a separate research proposal, not a change to R02-D2.
+
+The [2026-11-27 handoff](handoffs/20261127-01-residual-implementation-handoff.md) supersedes the publication status below: H00 is live and its rollback path was exercised.
+
+## Residual verification snapshot — 2026-11-23 (historical)
 
 The [residual specification and implementation plan](plans/20261122-01-residual-spec-and-implementation-plan.md)
 §11 is the record. Its stages were implemented locally and merged one at a time, each merge re-verified in the
