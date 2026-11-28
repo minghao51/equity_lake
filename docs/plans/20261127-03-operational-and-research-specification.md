@@ -277,3 +277,28 @@ An independent review returned fix-then-ship; the three blocking findings — di
 deduplication, the tautological check, and a devtools-guide sentence that overstated the midnight
 handling — are fixed. The tool has **not** seen any real or realistic text, so it establishes no
 coverage claim for any source; that needs an approved packet under Phase 0 step 2.
+
+**H3 — retained-bundle inventory on real platform state: two distinct recovery points.**
+Read-only snapshot, 2026-11-28: four `h00-publish.yml` runs (three successes, one failure) and
+three `h00-release-bundle` artifacts, all expiring 2027-02-25. Verified by hand and then by the
+new inventory tool:
+
+| artifact | run | contents | public bytes | receipt | usable recovery point |
+| --- | --- | --- | --- | --- | --- |
+| 15188823010 | 45980611891 build | four | distinct (8492 B) | verifies, commit `be0a12f` | yes |
+| 15203433999 | 46011953819 build | four | distinct (8567 B) | verifies, commit `e8ee001` | yes |
+| 15207528817 | 46021167248 rollback | **three — no receipt** | identical to 15203433999 and to the live site | absent | **no** |
+
+So the platform holds **two** distinct verified releases plus one receipt-less copy of the active
+one, produced by the rollback that ran before the receipt-restaging fix. That is the concrete case
+ADR-0038 anticipated: ranking copies by count or recency would have counted a broken copy as a
+third recovery point, and the "keep the last three" rule would have protected one copy and one
+unusable file instead of two real recovery points. `devtools/inventory_h00_bundles.py` (offline, read-only, no `gh` call, writes only `--out`) now
+produces this inventory from three operator snapshots — the artifacts listing, the runs listing and
+the downloaded bundle directories — plus the live bytes as `--active`. It reports **no candidate
+suggestions**, withheld explicitly because fewer than three distinct verified releases exist;
+candidates are suggestions for a separate owner approval and never authorization — not because a
+deletion rule fired. The live bytes match the active release, so the site is serving exactly the
+verified 8567-byte artifact. Both receipts are bound to commits that no longer exist on `main`
+(`be0a12f` predates the history rewrite; `e8ee001` was rewritten), and both still verify, which is
+the property the rollback path relies on: provenance is recorded, not re-derived.
